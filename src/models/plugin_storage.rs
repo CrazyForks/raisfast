@@ -22,13 +22,6 @@ pub struct PluginStorageRow {
 
 /// Get a plugin's KV data
 pub async fn get(pool: &Pool, plugin_id: &str, key: &str) -> AppResult<Option<String>> {
-    raisfast_derive::check_schema!(
-        "plugin_storage",
-        "plugin_id",
-        "storage_key",
-        "expires_at",
-        "value"
-    );
     let row = sqlx::query_as::<_, PluginStorageRow>(&format!(
         "SELECT * FROM plugin_storage WHERE plugin_id = {} AND storage_key = {}",
         Driver::ph(1),
@@ -44,15 +37,10 @@ pub async fn get(pool: &Pool, plugin_id: &str, key: &str) -> AppResult<Option<St
             if let Some(exp) = &r.expires_at {
                 let now = crate::utils::tz::now_utc();
                 if exp < &now {
-                    let _ = sqlx::query(&format!(
-                        "DELETE FROM plugin_storage WHERE plugin_id = {} AND storage_key = {}",
-                        Driver::ph(1),
-                        Driver::ph(2),
-                    ))
-                    .bind(plugin_id)
-                    .bind(key)
-                    .execute(pool)
-                    .await;
+                    let _ = raisfast_derive::crud_delete!(
+                        pool, "plugin_storage", "plugin_id" => plugin_id,
+                        and: ["storage_key" => key]
+                    );
                     return Ok(None);
                 }
             }
@@ -70,42 +58,19 @@ pub async fn set(
     value: &str,
     ttl_seconds: Option<i64>,
 ) -> AppResult<()> {
-    raisfast_derive::check_schema!(
-        "plugin_storage",
-        "plugin_id",
-        "storage_key",
-        "value",
-        "expires_at",
-        "updated_at"
-    );
     let expires_at = ttl_seconds.map(|t| {
         crate::utils::tz::now_utc()
             .checked_add_signed(chrono::Duration::seconds(t))
             .unwrap_or_else(crate::utils::tz::now_utc)
     });
+    let now = crate::utils::tz::now_utc();
 
-    let now = crate::db::Driver::now_fn();
-    let assignments = format!(
-        "value = {}, expires_at = {}, updated_at = {now}",
-        crate::db::Driver::excluded_col("value"),
-        crate::db::Driver::excluded_col("expires_at"),
-    );
-    let sql = format!(
-        "INSERT INTO plugin_storage (plugin_id, storage_key, value, expires_at, updated_at) \
-         VALUES ({}, {}, {}, {}, {now}) {}",
-        Driver::ph(1),
-        Driver::ph(2),
-        Driver::ph(3),
-        Driver::ph(4),
-        crate::db::Driver::upsert_clause("plugin_id, storage_key", &assignments)
-    );
-    sqlx::query(&sql)
-        .bind(plugin_id)
-        .bind(key)
-        .bind(value)
-        .bind(expires_at)
-        .execute(pool)
-        .await?;
+    raisfast_derive::crud_upsert!(
+        pool, "plugin_storage",
+        key: ["plugin_id", "storage_key"],
+        bind: ["plugin_id" => plugin_id, "storage_key" => key, "value" => value, "expires_at" => expires_at, "updated_at" => now],
+        update: ["value", "expires_at", "updated_at"]
+    )?;
 
     Ok(())
 }

@@ -73,6 +73,8 @@ impl JobHandler for RebuildSearchIndexHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(feature = "search-tantivy")]
+    use crate::db::DbDriver;
     use crate::search::NoopSearchEngine;
 
     #[tokio::test]

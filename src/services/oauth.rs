@@ -5,7 +5,6 @@
 //! - Handle callback (code exchange → user info → find/create/bind user → issue JWT)
 //! - Bind/unbind OAuth accounts
 
-use crate::db::DbDriver;
 use crate::types::snowflake_id::SnowflakeId;
 use chrono::Utc;
 #[cfg(feature = "export-types")]
@@ -304,7 +303,6 @@ async fn auto_register_user(
     user_info: &OAuthUserInfo,
     aspect_engine: &AspectEngine,
 ) -> AppResult<crate::models::user::User> {
-    raisfast_derive::check_schema!("users", "avatar", "updated_at", "id");
     let base_username = user_info.display_name.clone().unwrap_or_else(|| {
         format!(
             "{provider_name}_{}",
@@ -326,19 +324,11 @@ async fn auto_register_user(
     .await?;
 
     if let Some(avatar) = &user_info.avatar_url {
-        let now = crate::utils::tz::now_utc();
-        let sql = format!(
-            "UPDATE users SET avatar = {}, updated_at = {} WHERE id = {}",
-            crate::db::Driver::ph(1),
-            crate::db::Driver::ph(2),
-            crate::db::Driver::ph(3)
-        );
-        sqlx::query(&sql)
-            .bind(avatar)
-            .bind(now)
-            .bind(user.id)
-            .execute(pool)
-            .await?;
+        let now = crate::utils::tz::now_str();
+        raisfast_derive::crud_update!(pool, "users",
+            bind: ["avatar" => avatar, "updated_at" => &now],
+            where: "id" => user.id
+        )?;
     }
 
     if !email.is_empty() {

@@ -3,7 +3,6 @@
 use chrono::Utc;
 
 use crate::aspects::engine::AspectEngine;
-use crate::db::DbDriver;
 use crate::errors::app_error::{AppError, AppResult};
 use crate::event::Event;
 use crate::middleware::auth::AuthUser;
@@ -53,16 +52,6 @@ pub async fn reset_password(
     new_password: &str,
     _tenant_id: Option<&str>,
 ) -> AppResult<()> {
-    raisfast_derive::check_schema!(
-        "user_credentials",
-        "id",
-        "auth_type",
-        "user_id",
-        "credential_data",
-        "updated_at"
-    );
-    raisfast_derive::check_schema!("password_reset_tokens", "used_at", "id");
-    raisfast_derive::check_schema!("refresh_tokens", "user_id");
     let reset_token = crate::models::password_reset::find_by_token(pool, token)
         .await?
         .ok_or_else(|| AppError::BadRequest("invalid_or_expired_token".into()))?;
@@ -75,54 +64,28 @@ pub async fn reset_password(
     let new_hash = crate::services::auth::hash_password(new_password)?;
 
     in_transaction!(pool, tx, {
-        let now = crate::utils::tz::now_utc();
-
-        let sql = format!(
-            "SELECT id, auth_type FROM user_credentials WHERE user_id = {} AND auth_type = {} LIMIT 1",
-            crate::db::Driver::ph(1),
-            crate::db::Driver::ph(2)
-        );
-        let row: Option<(i64, crate::models::user_credential::AuthType)> = sqlx::query_as(&sql)
-            .bind(reset_token.user_id)
-            .bind(crate::models::user_credential::AuthType::Email)
-            .fetch_optional(&mut *tx)
-            .await?;
-        if let Some((cred_id, _)) = row {
-            let sql = format!(
-                "UPDATE user_credentials SET credential_data = {}, updated_at = {} WHERE id = {}",
-                crate::db::Driver::ph(1),
-                crate::db::Driver::ph(2),
-                crate::db::Driver::ph(3)
-            );
-            sqlx::query(&sql)
-                .bind(crate::models::user_credential::wrap_password_hash(
-                    &new_hash,
-                ))
-                .bind(now)
-                .bind(cred_id)
-                .execute(&mut *tx)
-                .await?;
+        let row = raisfast_derive::crud_find!(
+            &mut *tx,
+            "user_credentials",
+            (SnowflakeId, crate::models::user_credential::AuthType),
+            "user_id" => reset_token.user_id,
+            and: ["auth_type" => crate::models::user_credential::AuthType::Email]
+        )?;
+        if let Some((cred_id, _)) = row.into_iter().next() {
+            let now = crate::utils::tz::now_str();
+            raisfast_derive::crud_update!(&mut *tx, "user_credentials",
+                bind: ["credential_data" => crate::models::user_credential::wrap_password_hash(&new_hash), "updated_at" => &now],
+                where: "id" => cred_id
+            )?;
         }
 
-        let sql = format!(
-            "UPDATE password_reset_tokens SET used_at = {} WHERE id = {}",
-            crate::db::Driver::ph(1),
-            crate::db::Driver::ph(2)
-        );
-        sqlx::query(&sql)
-            .bind(now)
-            .bind(reset_token.id)
-            .execute(&mut *tx)
-            .await?;
+        let now = crate::utils::tz::now_utc();
+        raisfast_derive::crud_update!(&mut *tx, "password_reset_tokens",
+            bind: ["used_at" => now],
+            where: "id" => reset_token.id
+        )?;
 
-        let del_sql = format!(
-            "DELETE FROM refresh_tokens WHERE user_id = {}",
-            crate::db::Driver::ph(1)
-        );
-        sqlx::query(&del_sql)
-            .bind(reset_token.user_id)
-            .execute(&mut *tx)
-            .await?;
+        raisfast_derive::crud_delete!(&mut *tx, "refresh_tokens", "user_id" => reset_token.user_id)?;
         Ok::<_, crate::errors::app_error::AppError>(())
     })?;
 
@@ -187,6 +150,7 @@ pub async fn set_password(
 mod tests {
     use super::*;
     use crate::commands::CreateUserCmd;
+    use crate::db::DbDriver;
 
     async fn setup_pool() -> crate::db::Pool {
         crate::test_pool!()

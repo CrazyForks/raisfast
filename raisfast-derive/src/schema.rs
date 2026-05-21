@@ -79,8 +79,11 @@ impl Dialect {
 
     /// Numbered placeholder for position `idx` (1-based).
     pub fn ph(&self, idx: usize) -> String {
-        let c = self.cfg();
-        format!("{}{}", c.ph_prefix, idx)
+        match self {
+            Dialect::Postgres => format!("${idx}"),
+            Dialect::Sqlite => format!("?{idx}"),
+            Dialect::Mysql => "?".to_string(),
+        }
     }
 
     /// Unnumbered placeholder token for runtime `sqlx::query()` calls.
@@ -108,6 +111,22 @@ impl Dialect {
     /// Schema file extension (including leading dot).
     pub fn schema_ext(&self) -> &'static str {
         self.cfg().schema_ext
+    }
+
+    /// UPSERT conflict clause.
+    pub fn upsert_clause(&self, conflict_cols: &str, assignments: &str) -> String {
+        match self {
+            Dialect::Mysql => format!("ON DUPLICATE KEY UPDATE {assignments}"),
+            _ => format!("ON CONFLICT({conflict_cols}) DO UPDATE SET {assignments}"),
+        }
+    }
+
+    /// Reference to the new/excluded value in an UPSERT.
+    pub fn excluded_col(&self, col: &str) -> String {
+        match self {
+            Dialect::Mysql => format!("VALUES({col})"),
+            _ => format!("excluded.{col}"),
+        }
     }
 }
 

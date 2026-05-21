@@ -162,7 +162,6 @@ pub enum VerifyResult {
 
 /// Clean up expired verification code records
 pub async fn cleanup_expired(pool: &crate::db::Pool) -> AppResult<u64> {
-    raisfast_derive::check_schema!("sms_codes", "expires_at");
     let now = crate::utils::tz::now_utc();
     let sql = format!("DELETE FROM sms_codes WHERE expires_at < {}", Driver::ph(1));
     let result = sqlx::query(&sql).bind(now).execute(pool).await?;

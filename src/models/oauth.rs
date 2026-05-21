@@ -79,8 +79,7 @@ pub async fn consume_state(
         .await?;
 
     if state.is_some() {
-        let del_sql = format!("DELETE FROM oauth_states WHERE id = {}", Driver::ph(1));
-        sqlx::query(&del_sql).bind(id).execute(pool).await?;
+        raisfast_derive::crud_delete!(pool, "oauth_states", "id" => id)?;
     }
 
     Ok(state)
@@ -88,7 +87,6 @@ pub async fn consume_state(
 
 /// Clean up expired OAuth state records
 pub async fn cleanup_expired_states(pool: &crate::db::Pool) -> AppResult<u64> {
-    raisfast_derive::check_schema!("oauth_states", "expires_at");
     let sql = format!(
         "DELETE FROM oauth_states WHERE expires_at <= {}",
         crate::db::Driver::now_fn(),

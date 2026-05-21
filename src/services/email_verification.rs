@@ -1,6 +1,5 @@
 //! Email verification service.
 
-use crate::db::DbDriver;
 use crate::types::snowflake_id::SnowflakeId;
 use chrono::Utc;
 
@@ -32,14 +31,6 @@ pub async fn trigger_email_verification(
 ///
 /// Validates the token, marks it as used, and updates user_credentials.verified = 1.
 pub async fn verify_email(pool: &crate::db::Pool, token: &str) -> AppResult<()> {
-    raisfast_derive::check_schema!("email_verification_tokens", "verified_at", "id");
-    raisfast_derive::check_schema!(
-        "user_credentials",
-        "verified",
-        "updated_at",
-        "user_id",
-        "auth_type"
-    );
     let verification = crate::models::email_verification::find_by_token(pool, token)
         .await?
         .ok_or_else(|| AppError::BadRequest("invalid_or_expired_token".into()))?;
@@ -50,29 +41,17 @@ pub async fn verify_email(pool: &crate::db::Pool, token: &str) -> AppResult<()> 
 
     in_transaction!(pool, tx, {
         let now = crate::utils::tz::now_utc();
-        let sql = format!(
-            "UPDATE email_verification_tokens SET verified_at = {} WHERE id = {}",
-            crate::db::Driver::ph(1),
-            crate::db::Driver::ph(2)
-        );
-        sqlx::query(&sql)
-            .bind(now)
-            .bind(verification.id)
-            .execute(&mut *tx)
-            .await?;
+        raisfast_derive::crud_update!(&mut *tx, "email_verification_tokens",
+            bind: ["verified_at" => now],
+            where: "id" => verification.id
+        )?;
 
-        let sql = format!(
-            "UPDATE user_credentials SET verified = 1, updated_at = {} WHERE user_id = {} AND auth_type = {}",
-            crate::db::Driver::ph(1),
-            crate::db::Driver::ph(2),
-            crate::db::Driver::ph(3)
-        );
-        sqlx::query(&sql)
-            .bind(now)
-            .bind(verification.user_id)
-            .bind(crate::models::user_credential::AuthType::Email)
-            .execute(&mut *tx)
-            .await?;
+        let now = crate::utils::tz::now_str();
+        raisfast_derive::crud_update!(&mut *tx, "user_credentials",
+            bind: ["verified" => 1i64, "updated_at" => &now],
+            where: "user_id" => verification.user_id,
+            and: ["auth_type" => crate::models::user_credential::AuthType::Email]
+        )?;
         Ok::<_, crate::errors::app_error::AppError>(())
     })?;
     Ok(())

@@ -134,26 +134,10 @@ pub async fn create_definition(
     initial_step: &str,
 ) -> anyhow::Result<WorkflowDefinition> {
     let now = crate::utils::tz::now_utc();
-    let sql = format!(
-        "INSERT INTO workflow_definitions (id, name, description, steps, initial_step, created_at, updated_at) VALUES ({}, {}, {}, {}, {}, {}, {})",
-        Driver::ph(1),
-        Driver::ph(2),
-        Driver::ph(3),
-        Driver::ph(4),
-        Driver::ph(5),
-        Driver::ph(6),
-        Driver::ph(7)
-    );
-    sqlx::query(&sql)
-        .bind(id)
-        .bind(name)
-        .bind(description)
-        .bind(steps)
-        .bind(initial_step)
-        .bind(now)
-        .bind(now)
-        .execute(pool)
-        .await?;
+    raisfast_derive::crud_insert!(
+        pool, "workflow_definitions",
+        ["id" => id, "name" => name, "description" => description, "steps" => steps, "initial_step" => initial_step, "created_at" => now, "updated_at" => now]
+    )?;
     get_definition(pool, id)
         .await?
         .ok_or_else(|| anyhow::anyhow!("failed to fetch created workflow definition"))
@@ -164,33 +148,19 @@ pub async fn get_definition(
     pool: &Pool,
     id: SnowflakeId,
 ) -> anyhow::Result<Option<WorkflowDefinition>> {
-    let sql = format!(
-        "SELECT id, name, description, steps, initial_step, version, enabled, created_at, updated_at FROM workflow_definitions WHERE id = {}",
-        Driver::ph(1)
-    );
-    let row = sqlx::query_as::<_, WorkflowDefinition>(&sql)
-        .bind(id)
-        .fetch_optional(pool)
-        .await?;
-    Ok(row)
+    Ok(raisfast_derive::crud_find!(pool, "workflow_definitions", WorkflowDefinition, "id" => id)?)
 }
 
 /// List all workflow definitions
 pub async fn list_definitions(pool: &Pool) -> anyhow::Result<Vec<WorkflowDefinition>> {
-    let sql = "SELECT id, name, description, steps, initial_step, version, enabled, created_at, updated_at FROM workflow_definitions ORDER BY created_at DESC";
-    let rows = sqlx::query_as::<_, WorkflowDefinition>(sql)
-        .fetch_all(pool)
-        .await?;
-    Ok(rows)
+    Ok(
+        raisfast_derive::crud_list!(pool, "workflow_definitions", WorkflowDefinition, order_by: "created_at DESC")?,
+    )
 }
 
 /// Delete workflow definition
 pub async fn delete_definition(pool: &Pool, id: SnowflakeId) -> anyhow::Result<()> {
-    let sql = format!(
-        "DELETE FROM workflow_definitions WHERE id = {}",
-        Driver::ph(1)
-    );
-    sqlx::query(&sql).bind(id).execute(pool).await?;
+    raisfast_derive::crud_delete!(pool, "workflow_definitions", "id" => id)?;
     Ok(())
 }
 
@@ -204,26 +174,10 @@ pub async fn create_instance(
 ) -> anyhow::Result<WorkflowInstance> {
     let now = crate::utils::tz::now_utc();
     let ctx_str = serde_json::to_string(context)?;
-    let sql = format!(
-        "INSERT INTO workflow_instances (id, definition_id, status, context, triggered_by, started_at, updated_at) VALUES ({}, {}, {}, {}, {}, {}, {})",
-        Driver::ph(1),
-        Driver::ph(2),
-        Driver::ph(3),
-        Driver::ph(4),
-        Driver::ph(5),
-        Driver::ph(6),
-        Driver::ph(7)
-    );
-    sqlx::query(&sql)
-        .bind(id)
-        .bind(definition_id)
-        .bind(WorkflowInstanceStatus::Running)
-        .bind(&ctx_str)
-        .bind(triggered_by)
-        .bind(now)
-        .bind(now)
-        .execute(pool)
-        .await?;
+    raisfast_derive::crud_insert!(
+        pool, "workflow_instances",
+        ["id" => id, "definition_id" => definition_id, "status" => WorkflowInstanceStatus::Running, "context" => ctx_str, "triggered_by" => triggered_by, "started_at" => now, "updated_at" => now]
+    )?;
     get_instance(pool, id)
         .await?
         .ok_or_else(|| anyhow::anyhow!("failed to fetch created workflow instance"))
@@ -234,15 +188,7 @@ pub async fn get_instance(
     pool: &Pool,
     id: SnowflakeId,
 ) -> anyhow::Result<Option<WorkflowInstance>> {
-    let sql = format!(
-        "SELECT id, definition_id, status, current_step, context, triggered_by, started_at, completed_at, updated_at FROM workflow_instances WHERE id = {}",
-        Driver::ph(1)
-    );
-    let row = sqlx::query_as::<_, WorkflowInstance>(&sql)
-        .bind(id)
-        .fetch_optional(pool)
-        .await?;
-    Ok(row)
+    Ok(raisfast_derive::crud_find!(pool, "workflow_instances", WorkflowInstance, "id" => id)?)
 }
 
 /// List workflow instances
@@ -341,34 +287,11 @@ pub async fn create_step_log(
 ) -> anyhow::Result<StepLog> {
     let now = crate::utils::tz::now_utc();
     let input_str = input.map(|v| serde_json::to_string(v).unwrap_or_default());
-    let sql = format!(
-        "INSERT INTO workflow_step_logs (id, instance_id, step_id, step_name, status, input, started_at) VALUES ({}, {}, {}, {}, {}, {}, {})",
-        Driver::ph(1),
-        Driver::ph(2),
-        Driver::ph(3),
-        Driver::ph(4),
-        Driver::ph(5),
-        Driver::ph(6),
-        Driver::ph(7)
-    );
-    sqlx::query(&sql)
-        .bind(id)
-        .bind(instance_id)
-        .bind(step_id)
-        .bind(step_name)
-        .bind(WorkflowStepStatus::Running)
-        .bind(&input_str)
-        .bind(now)
-        .execute(pool)
-        .await?;
-    let fetch_sql = format!(
-        "SELECT id, instance_id, step_id, step_name, status, input, output, error, started_at, completed_at FROM workflow_step_logs WHERE id = {}",
-        Driver::ph(1)
-    );
-    sqlx::query_as::<_, StepLog>(&fetch_sql)
-        .bind(id)
-        .fetch_one(pool)
-        .await
+    raisfast_derive::crud_insert!(
+        pool, "workflow_step_logs",
+        ["id" => id, "instance_id" => instance_id, "step_id" => step_id, "step_name" => step_name, "status" => WorkflowStepStatus::Running, "input" => input_str, "started_at" => now]
+    )?;
+    raisfast_derive::crud_find_one!(pool, "workflow_step_logs", StepLog, "id" => id)
         .map_err(|e| anyhow::anyhow!("failed to fetch created step log: {e}"))
 }
 
@@ -380,54 +303,30 @@ pub async fn complete_step_log(
 ) -> anyhow::Result<()> {
     let now = crate::utils::tz::now_utc();
     let output_str = output.map(|v| serde_json::to_string(v).unwrap_or_default());
-    let sql = format!(
-        "UPDATE workflow_step_logs SET status = {}, output = {}, completed_at = {} WHERE id = {}",
-        Driver::ph(1),
-        Driver::ph(2),
-        Driver::ph(3),
-        Driver::ph(4)
-    );
-    sqlx::query(&sql)
-        .bind(WorkflowStepStatus::Completed)
-        .bind(&output_str)
-        .bind(now)
-        .bind(id)
-        .execute(pool)
-        .await?;
+    raisfast_derive::crud_update!(
+        pool, "workflow_step_logs",
+        bind: ["status" => WorkflowStepStatus::Completed, "output" => output_str, "completed_at" => now],
+        where: "id" => id
+    )?;
     Ok(())
 }
 
 /// Mark step execution as failed
 pub async fn fail_step_log(pool: &Pool, id: SnowflakeId, error: &str) -> anyhow::Result<()> {
     let now = crate::utils::tz::now_utc();
-    let sql = format!(
-        "UPDATE workflow_step_logs SET status = {}, error = {}, completed_at = {} WHERE id = {}",
-        Driver::ph(1),
-        Driver::ph(2),
-        Driver::ph(3),
-        Driver::ph(4)
-    );
-    sqlx::query(&sql)
-        .bind(WorkflowStepStatus::Failed)
-        .bind(error)
-        .bind(now)
-        .bind(id)
-        .execute(pool)
-        .await?;
+    raisfast_derive::crud_update!(
+        pool, "workflow_step_logs",
+        bind: ["status" => WorkflowStepStatus::Failed, "error" => error, "completed_at" => now],
+        where: "id" => id
+    )?;
     Ok(())
 }
 
 /// List step logs for an instance
 pub async fn list_step_logs(pool: &Pool, instance_id: SnowflakeId) -> anyhow::Result<Vec<StepLog>> {
-    let sql = format!(
-        "SELECT id, instance_id, step_id, step_name, status, input, output, error, started_at, completed_at FROM workflow_step_logs WHERE instance_id = {} ORDER BY started_at ASC",
-        Driver::ph(1)
-    );
-    let rows = sqlx::query_as::<_, StepLog>(&sql)
-        .bind(instance_id)
-        .fetch_all(pool)
-        .await?;
-    Ok(rows)
+    Ok(
+        raisfast_derive::crud_find_all!(pool, "workflow_step_logs", StepLog, "instance_id" => instance_id, order_by: "started_at ASC")?,
+    )
 }
 
 #[cfg(test)]

@@ -34,21 +34,16 @@ impl JobQueue for DefaultJobQueue {
         let payload = serialize_job(&new_job.job);
         let max_attempts = new_job.max_attempts.unwrap_or(3);
 
-        sqlx::query(&format!(
-            "INSERT INTO jobs ({COL_ID}, job_type, payload, status, max_attempts, run_after, created_at, updated_at)
-             VALUES ({}, {}, {}, {}, {}, {}, {}, {})",
-            Driver::ph(1), Driver::ph(2), Driver::ph(3), Driver::ph(4), Driver::ph(5), Driver::ph(6), Driver::ph(7), Driver::ph(8)
-        ))
-        .bind(id)
-        .bind(job_type)
-        .bind(&payload)
-        .bind(JobStatus::Pending)
-        .bind(max_attempts)
-        .bind(new_job.run_after)
-        .bind(now)
-        .bind(now)
-        .execute(&self.pool)
-        .await?;
+        raisfast_derive::crud_insert!(&self.pool, "jobs", [
+            "id" => id,
+            "job_type" => job_type,
+            "payload" => &payload,
+            "status" => JobStatus::Pending,
+            "max_attempts" => max_attempts,
+            "run_after" => new_job.run_after,
+            "created_at" => now,
+            "updated_at" => now
+        ])?;
 
         tracing::debug!("enqueued job {id} type={job_type}");
         Ok(())
@@ -118,17 +113,10 @@ impl JobQueue for DefaultJobQueue {
         let id: i64 = id
             .parse()
             .map_err(|e| AppError::Internal(anyhow::anyhow!("invalid id: {e}")))?;
-        sqlx::query(&format!(
-            "UPDATE jobs SET status = {}, updated_at = {} WHERE {COL_ID} = {}",
-            Driver::ph(1),
-            Driver::ph(2),
-            Driver::ph(3)
-        ))
-        .bind(JobStatus::Completed)
-        .bind(now)
-        .bind(id)
-        .execute(&self.pool)
-        .await?;
+        raisfast_derive::crud_update!(&self.pool, "jobs",
+            bind: ["status" => JobStatus::Completed, "updated_at" => now],
+            where: "id" => id
+        )?;
         tracing::debug!("job {id} completed");
         Ok(())
     }
@@ -140,13 +128,11 @@ impl JobQueue for DefaultJobQueue {
             .map_err(|e| AppError::Internal(anyhow::anyhow!("invalid id: {e}")))?;
 
         in_transaction!(&self.pool, tx, {
-            let row = sqlx::query(&format!(
+            let sql = format!(
                 "SELECT attempts, max_attempts FROM jobs WHERE {COL_ID} = {}",
                 Driver::ph(1)
-            ))
-            .bind(id)
-            .fetch_optional(&mut *tx)
-            .await?;
+            );
+            let row = sqlx::query(&sql).bind(id).fetch_optional(&mut *tx).await?;
 
             let Some(r) = row else {
                 return Err(AppError::not_found("job"));
@@ -156,19 +142,10 @@ impl JobQueue for DefaultJobQueue {
             let max_attempts: i32 = r.get("max_attempts");
 
             if attempts >= max_attempts {
-                sqlx::query(&format!(
-                    "UPDATE jobs SET status = {}, error = {}, updated_at = {} WHERE {COL_ID} = {}",
-                    Driver::ph(1),
-                    Driver::ph(2),
-                    Driver::ph(3),
-                    Driver::ph(4)
-                ))
-                .bind(JobStatus::Dead)
-                .bind(error)
-                .bind(now)
-                .bind(id)
-                .execute(&mut *tx)
-                .await?;
+                raisfast_derive::crud_update!(&mut *tx, "jobs",
+                    bind: ["status" => JobStatus::Dead, "error" => error, "updated_at" => now],
+                    where: "id" => id
+                )?;
                 tracing::error!("job {id} dead: {error}");
                 return Ok::<_, AppError>(());
             }
@@ -177,17 +154,10 @@ impl JobQueue for DefaultJobQueue {
             let run_after =
                 crate::utils::tz::now_utc() + chrono::Duration::from_std(delay).unwrap_or_default();
 
-            sqlx::query(&format!(
-                "UPDATE jobs SET status = {}, error = {}, run_after = {}, updated_at = {} WHERE {COL_ID} = {}",
-                Driver::ph(1), Driver::ph(2), Driver::ph(3), Driver::ph(4), Driver::ph(5)
-            ))
-            .bind(JobStatus::Pending)
-            .bind(error)
-            .bind(run_after)
-            .bind(now)
-            .bind(id)
-            .execute(&mut *tx)
-            .await?;
+            raisfast_derive::crud_update!(&mut *tx, "jobs",
+                bind: ["status" => JobStatus::Pending, "error" => error, "run_after" => run_after, "updated_at" => now],
+                where: "id" => id
+            )?;
 
             tracing::warn!(
                 "job {id} failed (attempt {attempts}/{max_attempts}), retry after {run_after}"
@@ -201,19 +171,10 @@ impl JobQueue for DefaultJobQueue {
         let id: i64 = id
             .parse()
             .map_err(|e| AppError::Internal(anyhow::anyhow!("invalid id: {e}")))?;
-        sqlx::query(&format!(
-            "UPDATE jobs SET status = {}, error = {}, updated_at = {} WHERE {COL_ID} = {}",
-            Driver::ph(1),
-            Driver::ph(2),
-            Driver::ph(3),
-            Driver::ph(4)
-        ))
-        .bind(JobStatus::Dead)
-        .bind(error)
-        .bind(now)
-        .bind(id)
-        .execute(&self.pool)
-        .await?;
+        raisfast_derive::crud_update!(&self.pool, "jobs",
+            bind: ["status" => JobStatus::Dead, "error" => error, "updated_at" => now],
+            where: "id" => id
+        )?;
         tracing::error!("job {id} dead: {error}");
         Ok(())
     }
@@ -345,20 +306,17 @@ impl JobQueue for DefaultJobQueue {
         let id: i64 = id
             .parse()
             .map_err(|e| AppError::Internal(anyhow::anyhow!("invalid id: {e}")))?;
-        let result = sqlx::query(&format!(
-            "UPDATE jobs SET status = {}, attempts = 0, error = NULL, run_after = NULL, updated_at = {}
-             WHERE {COL_ID} = {} AND status = {}",
-            Driver::ph(1),
-            Driver::ph(2),
-            Driver::ph(3),
-            Driver::ph(4)
-        ))
-        .bind(JobStatus::Pending)
-        .bind(now)
-        .bind(id)
-        .bind(JobStatus::Dead)
-        .execute(&self.pool)
-        .await?;
+        let result = raisfast_derive::crud_update!(&self.pool, "jobs",
+            bind: [
+                "status" => JobStatus::Pending,
+                "attempts" => 0i32,
+                "error" => None::<String>,
+                "run_after" => None::<crate::utils::tz::Timestamp>,
+                "updated_at" => now
+            ],
+            where: "id" => id,
+            and: ["status" => JobStatus::Dead]
+        )?;
 
         if result.rows_affected() == 0 {
             return Err(AppError::not_found("job"));
@@ -372,13 +330,8 @@ impl JobQueue for DefaultJobQueue {
         let id: i64 = id
             .parse()
             .map_err(|e| AppError::Internal(anyhow::anyhow!("invalid id: {e}")))?;
-        let result = sqlx::query(&format!(
-            "DELETE FROM jobs WHERE {COL_ID} = {}",
-            Driver::ph(1)
-        ))
-        .bind(id)
-        .execute(&self.pool)
-        .await?;
+        let result: crate::db::DbQueryResult =
+            raisfast_derive::crud_delete!(&self.pool, "jobs", "id" => id)?;
 
         if result.rows_affected() == 0 {
             return Err(AppError::not_found("job"));

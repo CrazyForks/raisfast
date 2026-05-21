@@ -226,33 +226,21 @@ pub async fn register(
             AppError::Internal(anyhow::anyhow!("failed to fetch newly created user"))
         })?;
 
+        let verified = !require_email_verification;
         let (cred_id, cred_now) = (
             crate::utils::id::new_snowflake_id(),
             crate::utils::tz::now_utc(),
         );
-        let verified = if !require_email_verification { 1 } else { 0 };
-        let cred_sql = format!(
-            "INSERT INTO user_credentials (id, user_id, auth_type, identifier, credential_data, verified, created_at, updated_at) VALUES ({}, {}, {}, {}, {}, {}, {}, {})",
-            crate::db::Driver::ph(1),
-            crate::db::Driver::ph(2),
-            crate::db::Driver::ph(3),
-            crate::db::Driver::ph(4),
-            crate::db::Driver::ph(5),
-            crate::db::Driver::ph(6),
-            crate::db::Driver::ph(7),
-            crate::db::Driver::ph(8)
-        );
-        sqlx::query(&cred_sql)
-            .bind(cred_id)
-            .bind(user.id)
-            .bind(AuthType::Email)
-            .bind(&req.email)
-            .bind(&cred_data)
-            .bind(verified)
-            .bind(cred_now)
-            .bind(cred_now)
-            .execute(&mut *tx)
-            .await?;
+        raisfast_derive::crud_insert!(&mut *tx, "user_credentials", [
+            "id" => cred_id,
+            "user_id" => user.id,
+            "auth_type" => AuthType::Email,
+            "identifier" => &req.email,
+            "credential_data" => &cred_data,
+            "verified" => if verified { 1 } else { 0 },
+            "created_at" => cred_now,
+            "updated_at" => cred_now
+        ])?;
 
         Ok::<_, crate::errors::app_error::AppError>(user)
     })?;
@@ -373,14 +361,6 @@ pub async fn refresh(
     jwt_refresh_expires: u64,
     tenant_id: Option<&str>,
 ) -> AppResult<LoginResponse> {
-    raisfast_derive::check_schema!(
-        "refresh_tokens",
-        "token",
-        "id",
-        "user_id",
-        "expires_at",
-        "created_at"
-    );
     let stored = crate::models::refresh_token::find_by_token(pool, refresh_token_str)
         .await?
         .ok_or_else(|| AppError::Unauthorized)?;
@@ -411,29 +391,15 @@ pub async fn refresh(
     let now = crate::utils::tz::now_str();
 
     in_transaction!(pool, tx, {
-        sqlx::query(&format!(
-            "DELETE FROM refresh_tokens WHERE token = {}",
-            crate::db::Driver::ph(1)
-        ))
-        .bind(refresh_token_str)
-        .execute(&mut *tx)
-        .await?;
+        raisfast_derive::crud_delete!(&mut *tx, "refresh_tokens", "token" => refresh_token_str)?;
 
-        sqlx::query(&format!(
-            "INSERT INTO refresh_tokens (id, user_id, token, expires_at, created_at) VALUES ({}, {}, {}, {}, {})",
-            crate::db::Driver::ph(1),
-            crate::db::Driver::ph(2),
-            crate::db::Driver::ph(3),
-            crate::db::Driver::ph(4),
-            crate::db::Driver::ph(5)
-        ))
-        .bind(new_id)
-        .bind(user.id)
-        .bind(&new_refresh_token)
-        .bind(&new_expires_str)
-        .bind(&now)
-        .execute(&mut *tx)
-        .await?;
+        raisfast_derive::crud_insert!(&mut *tx, "refresh_tokens", [
+            "id" => new_id,
+            "user_id" => user.id,
+            "token" => &new_refresh_token,
+            "expires_at" => &new_expires_str,
+            "created_at" => now
+        ])?;
         Ok::<_, crate::errors::app_error::AppError>(())
     })?;
 
@@ -465,7 +431,6 @@ pub async fn change_password(
     auth: &AuthUser,
     req: UpdatePasswordRequest,
 ) -> AppResult<()> {
-    raisfast_derive::check_schema!("refresh_tokens", "user_id");
     let uid = auth.ensure_authenticated()?;
     let tenant_id = auth.tenant_id();
     let _user = crate::models::user::find_by_id(pool, SnowflakeId(uid), tenant_id)
@@ -494,13 +459,7 @@ pub async fn change_password(
     )
     .await?;
 
-    sqlx::query(&format!(
-        "DELETE FROM refresh_tokens WHERE user_id = {}",
-        crate::db::Driver::ph(1)
-    ))
-    .bind(_user.id)
-    .execute(pool)
-    .await?;
+    crate::models::refresh_token::delete_by_user(pool, _user.id).await?;
     Ok(())
 }
 

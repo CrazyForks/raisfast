@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM cron_schedules WHERE plugin_id = ?1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "76bb2c1b9157327efb0fb9bd87e7c2e1d4bc1add749664cb7949b33dbc14b551"
+}

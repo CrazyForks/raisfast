@@ -130,17 +130,15 @@ pub async fn has_reversal_for(
     pool: &crate::db::Pool,
     related_tx_id: SnowflakeId,
 ) -> AppResult<bool> {
-    let count: i64 = raisfast_derive::crud_count!(
+    Ok(raisfast_derive::crud_exists!(
         pool, "wallet_transactions", "related_tx_id" => related_tx_id,
         and: ["tx_type" => WalletTxType::Refund]
-    )?;
-    Ok(count > 0)
+    )?)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::DbDriver;
 
     async fn setup_pool() -> crate::db::Pool {
         crate::test_pool!()
@@ -176,25 +174,18 @@ mod tests {
             crate::utils::tz::now_utc(),
         );
         let tx_no = format!("TX_{tx_id}");
-        sqlx::query(&format!(
-            "INSERT INTO wallet_transactions (id, wallet_id, user_id, entry_type, amount, balance_after, tx_type, currency, transaction_no, created_at) VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}, {})",
-            crate::db::Driver::ph(1), crate::db::Driver::ph(2), crate::db::Driver::ph(3),
-            crate::db::Driver::ph(4), crate::db::Driver::ph(5), crate::db::Driver::ph(6),
-            crate::db::Driver::ph(7), crate::db::Driver::ph(8), crate::db::Driver::ph(9),
-            crate::db::Driver::ph(10),
-        ))
-        .bind(tx_id)
-        .bind(w.id)
-        .bind(user.id)
-        .bind(WalletEntryType::Credit)
-        .bind(1000_i64)
-        .bind(1000_i64)
-        .bind(WalletTxType::Recharge)
-        .bind("CNY")
-        .bind(&tx_no)
-        .bind(now)
-        .execute(pool)
-        .await
+        raisfast_derive::crud_insert!(pool, "wallet_transactions", [
+            "id" => tx_id,
+            "wallet_id" => w.id,
+            "user_id" => user.id,
+            "entry_type" => WalletEntryType::Credit,
+            "amount" => 1000_i64,
+            "balance_after" => 1000_i64,
+            "tx_type" => WalletTxType::Recharge,
+            "currency" => "CNY",
+            "transaction_no" => &tx_no,
+            "created_at" => now
+        ])
         .unwrap();
 
         let tx = find_tx_by_transaction_no(pool, &tx_no)
@@ -296,26 +287,19 @@ mod tests {
             crate::utils::tz::now_utc(),
         );
         let rev_no = format!("REV_{rev_id}");
-        sqlx::query(&format!(
-            "INSERT INTO wallet_transactions (id, wallet_id, user_id, entry_type, amount, balance_after, tx_type, currency, transaction_no, related_tx_id, created_at) VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {})",
-            crate::db::Driver::ph(1), crate::db::Driver::ph(2), crate::db::Driver::ph(3),
-            crate::db::Driver::ph(4), crate::db::Driver::ph(5), crate::db::Driver::ph(6),
-            crate::db::Driver::ph(7), crate::db::Driver::ph(8), crate::db::Driver::ph(9),
-            crate::db::Driver::ph(10), crate::db::Driver::ph(11),
-        ))
-        .bind(rev_id)
-        .bind(tx.wallet_id)
-        .bind(tx.user_id)
-        .bind(WalletEntryType::Debit)
-        .bind(1000_i64)
-        .bind(0_i64)
-        .bind(WalletTxType::Refund)
-        .bind("CNY")
-        .bind(&rev_no)
-        .bind(tx.id)
-        .bind(rev_now)
-        .execute(&pool)
-        .await
+        raisfast_derive::crud_insert!(&pool, "wallet_transactions", [
+            "id" => rev_id,
+            "wallet_id" => tx.wallet_id,
+            "user_id" => tx.user_id,
+            "entry_type" => WalletEntryType::Debit,
+            "amount" => 1000_i64,
+            "balance_after" => 0_i64,
+            "tx_type" => WalletTxType::Refund,
+            "currency" => "CNY",
+            "transaction_no" => &rev_no,
+            "related_tx_id" => tx.id,
+            "created_at" => rev_now
+        ])
         .unwrap();
 
         assert!(has_reversal_for(&pool, tx.id).await.unwrap());

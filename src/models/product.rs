@@ -281,20 +281,27 @@ mod tests {
     }
 
     async fn set_status(pool: &crate::db::Pool, id: SnowflakeId, status: &str) {
-        sqlx::query("UPDATE products SET status = ? WHERE id = ?")
-            .bind(status)
-            .bind(id)
-            .execute(pool)
-            .await
-            .unwrap();
+        sqlx::query(&format!(
+            "UPDATE products SET status = {} WHERE id = {}",
+            crate::db::Driver::ph(1),
+            crate::db::Driver::ph(2)
+        ))
+        .bind(status)
+        .bind(id)
+        .execute(pool)
+        .await
+        .unwrap();
     }
 
     async fn get_version(pool: &crate::db::Pool, id: SnowflakeId) -> i64 {
-        let (v,): (i64,) = sqlx::query_as("SELECT version FROM products WHERE id = ?")
-            .bind(id)
-            .fetch_one(pool)
-            .await
-            .unwrap();
+        let (v,): (i64,) = sqlx::query_as(&format!(
+            "SELECT version FROM products WHERE id = {}",
+            crate::db::Driver::ph(1)
+        ))
+        .bind(id)
+        .fetch_one(pool)
+        .await
+        .unwrap();
         v
     }
 

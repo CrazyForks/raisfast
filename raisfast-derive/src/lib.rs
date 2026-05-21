@@ -176,6 +176,34 @@ pub fn check_schema(input: TokenStream) -> TokenStream {
     crud::check_schema(input)
 }
 
+/// `crud_exists!(pool, "table", "col" => val [, tenant: expr, and: ["c" => v, ...]])`
+///
+/// `SELECT EXISTS(SELECT 1 FROM table WHERE col = ? [...])` → `bool`.
+/// Uses `sqlx::query_scalar` with compile-time verified SQL.
+#[proc_macro]
+pub fn crud_exists(input: TokenStream) -> TokenStream {
+    crud::crud_exists(input)
+}
+
+/// `crud_upsert!(pool, "table", key: ["conflict_col"], bind: ["col" => val, ...], update: ["col1", "col2"] [, tenant: expr])`
+///
+/// Generates `INSERT INTO table (...) VALUES (...) ON CONFLICT(...) DO UPDATE SET ...`
+/// via `sqlx::query!()` (compile-time verified).
+#[proc_macro]
+pub fn crud_upsert(input: TokenStream) -> TokenStream {
+    crud::crud_upsert(input)
+}
+
+/// `crud_patch!(pool, "table", bind: [...], optional: [...], raw: [...], where: "pk" => val, and: [...] [, tenant: tid])`
+///
+/// Dynamic partial UPDATE — only non-None `optional:` fields are included in SET.
+/// `bind:` fields are always set. `raw:` fields use SQL expressions.
+/// Generates runtime `sqlx::query()`.
+#[proc_macro]
+pub fn crud_patch(input: TokenStream) -> TokenStream {
+    crud::crud_patch(input)
+}
+
 /// `crud_update!(pool, "table", bind: [...], raw: [...], where: "pk" => val, and: [...] [, tenant: tid])`
 ///
 /// Generates a runtime `sqlx::query()` UPDATE.

@@ -165,13 +165,7 @@ async fn tx_find_wallet_by_id(
     tx: &mut DbConnection,
     id: SnowflakeId,
 ) -> AppResult<Option<wallet::Wallet>> {
-    raisfast_derive::check_schema!("wallets", "id");
-    let sql = format!("SELECT * FROM wallets WHERE id = {}", Driver::ph(1));
-    sqlx::query_as::<_, wallet::Wallet>(&sql)
-        .bind(id)
-        .fetch_optional(tx)
-        .await
-        .map_err(Into::into)
+    Ok(raisfast_derive::crud_find!(tx, "wallets", wallet::Wallet, "id" => id)?)
 }
 
 async fn tx_find_or_create(
@@ -179,70 +173,29 @@ async fn tx_find_or_create(
     user_id: SnowflakeId,
     currency: &str,
 ) -> AppResult<wallet::Wallet> {
-    raisfast_derive::check_schema!(
-        "wallets",
-        "id",
-        "user_id",
-        "currency",
-        "created_at",
-        "updated_at"
-    );
-    let sql = format!(
-        "SELECT * FROM wallets WHERE user_id = {} AND currency = {}",
-        Driver::ph(1),
-        Driver::ph(2)
-    );
-    if let Some(w) = sqlx::query_as::<_, wallet::Wallet>(&sql)
-        .bind(user_id)
-        .bind(currency)
-        .fetch_optional(&mut *tx)
-        .await?
-    {
+    if let Some(w) = raisfast_derive::crud_find!(
+        &mut *tx, "wallets", wallet::Wallet, "user_id" => user_id,
+        and: ["currency" => currency]
+    )? {
         return Ok(w);
     }
     let (id, now) = (
         crate::utils::id::new_snowflake_id(),
         crate::utils::tz::now_utc(),
     );
-    let sql = format!(
-        "INSERT INTO wallets (id, user_id, currency, created_at, updated_at) VALUES ({}, {}, {}, {}, {})",
-        Driver::ph(1),
-        Driver::ph(2),
-        Driver::ph(3),
-        Driver::ph(4),
-        Driver::ph(5)
+    let insert_result = raisfast_derive::crud_insert!(
+        &mut *tx, "wallets",
+        ["id" => id, "user_id" => user_id, "currency" => currency, "created_at" => now, "updated_at" => now]
     );
-    let insert_result = sqlx::query(&sql)
-        .bind(id)
-        .bind(user_id)
-        .bind(currency)
-        .bind(now)
-        .bind(now)
-        .execute(&mut *tx)
-        .await;
 
     match insert_result {
         Ok(_) => {
-            let sql = format!("SELECT * FROM wallets WHERE id = {}", Driver::ph(1));
-            sqlx::query_as::<_, wallet::Wallet>(&sql)
-                .bind(id)
-                .fetch_one(&mut *tx)
-                .await
-                .map_err(Into::into)
+            Ok(raisfast_derive::crud_find_one!(&mut *tx, "wallets", wallet::Wallet, "id" => id)?)
         }
-        Err(_) => {
-            let sql = format!(
-                "SELECT * FROM wallets WHERE user_id = {} AND currency = {}",
-                Driver::ph(1),
-                Driver::ph(2)
-            );
-            sqlx::query_as::<_, wallet::Wallet>(&sql)
-                .bind(user_id)
-                .bind(currency)
-                .fetch_one(&mut *tx)
-                .await
-                .map_err(Into::into)
-        }
+        Err(_) => Ok(raisfast_derive::crud_find_one!(
+            &mut *tx, "wallets", wallet::Wallet, "user_id" => user_id,
+            and: ["currency" => currency]
+        )?),
     }
 }
 
@@ -250,47 +203,23 @@ async fn tx_find_tx_by_id(
     tx: &mut DbConnection,
     id: SnowflakeId,
 ) -> AppResult<Option<WalletTransaction>> {
-    raisfast_derive::check_schema!("wallet_transactions", "id");
-    let sql = format!(
-        "SELECT * FROM wallet_transactions WHERE id = {}",
-        Driver::ph(1)
-    );
-    sqlx::query_as::<_, WalletTransaction>(&sql)
-        .bind(id)
-        .fetch_optional(tx)
-        .await
-        .map_err(Into::into)
+    Ok(raisfast_derive::crud_find!(tx, "wallet_transactions", WalletTransaction, "id" => id)?)
 }
 
 async fn tx_find_tx_by_transaction_no(
     tx: &mut DbConnection,
     transaction_no: &str,
 ) -> AppResult<Option<WalletTransaction>> {
-    raisfast_derive::check_schema!("wallet_transactions", "transaction_no");
-    let sql = format!(
-        "SELECT * FROM wallet_transactions WHERE transaction_no = {}",
-        Driver::ph(1)
-    );
-    sqlx::query_as::<_, WalletTransaction>(&sql)
-        .bind(transaction_no)
-        .fetch_optional(tx)
-        .await
-        .map_err(Into::into)
+    Ok(
+        raisfast_derive::crud_find!(tx, "wallet_transactions", WalletTransaction, "transaction_no" => transaction_no)?,
+    )
 }
 
 async fn tx_has_reversal_for(tx: &mut DbConnection, related_tx_id: SnowflakeId) -> AppResult<bool> {
-    raisfast_derive::check_schema!("wallet_transactions", "related_tx_id", "tx_type");
-    let sql = format!(
-        "SELECT COUNT(*) as count FROM wallet_transactions WHERE related_tx_id = {} AND tx_type = {}",
-        Driver::ph(1),
-        Driver::ph(2)
-    );
-    let (count,): (i64,) = sqlx::query_as(&sql)
-        .bind(related_tx_id)
-        .bind(WalletTxType::Refund)
-        .fetch_one(tx)
-        .await?;
-    Ok(count > 0)
+    Ok(raisfast_derive::crud_exists!(
+        tx, "wallet_transactions", "related_tx_id" => related_tx_id,
+        and: ["tx_type" => WalletTxType::Refund]
+    )?)
 }
 
 async fn apply_wallet_delta(
@@ -750,51 +679,12 @@ async fn insert_tx(
         crate::utils::id::new_snowflake_id(),
         crate::utils::tz::now_utc(),
     );
-    let sql = format!(
-        "INSERT INTO wallet_transactions (id, wallet_id, user_id, entry_type, amount, balance_after, tx_type, currency, transaction_no, related_tx_id, reference_type, reference_id, counterparty_wallet_id, metadata, created_at) VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {})",
-        Driver::ph(1),
-        Driver::ph(2),
-        Driver::ph(3),
-        Driver::ph(4),
-        Driver::ph(5),
-        Driver::ph(6),
-        Driver::ph(7),
-        Driver::ph(8),
-        Driver::ph(9),
-        Driver::ph(10),
-        Driver::ph(11),
-        Driver::ph(12),
-        Driver::ph(13),
-        Driver::ph(14),
-        Driver::ph(15)
-    );
-    sqlx::query(&sql)
-        .bind(id)
-        .bind(wallet_id)
-        .bind(user_id)
-        .bind(entry_type)
-        .bind(amount)
-        .bind(balance_after)
-        .bind(tx_type)
-        .bind(currency)
-        .bind(transaction_no)
-        .bind(related_tx_id)
-        .bind(reference_type)
-        .bind(reference_id)
-        .bind(counterparty_wallet_id)
-        .bind(metadata)
-        .bind(now)
-        .execute(&mut *tx)
-        .await?;
+    raisfast_derive::crud_insert!(
+        &mut *tx, "wallet_transactions",
+        ["id" => id, "wallet_id" => wallet_id, "user_id" => user_id, "entry_type" => entry_type, "amount" => amount, "balance_after" => balance_after, "tx_type" => tx_type, "currency" => currency, "transaction_no" => transaction_no, "related_tx_id" => related_tx_id, "reference_type" => reference_type, "reference_id" => reference_id, "counterparty_wallet_id" => counterparty_wallet_id, "metadata" => metadata, "created_at" => now]
+    )?;
 
-    let sql = format!(
-        "SELECT * FROM wallet_transactions WHERE id = {}",
-        Driver::ph(1)
-    );
-    let row = sqlx::query_as::<_, WalletTransaction>(&sql)
-        .bind(id)
-        .fetch_one(&mut *tx)
-        .await?;
+    let row = raisfast_derive::crud_find_one!(&mut *tx, "wallet_transactions", WalletTransaction, "id" => id)?;
 
     Ok(row)
 }
