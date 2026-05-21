@@ -40,17 +40,10 @@ pub async fn verify_email(pool: &crate::db::Pool, token: &str) -> AppResult<()> 
     }
 
     in_transaction!(pool, tx, {
-        let now = crate::utils::tz::now_utc();
-        raisfast_derive::crud_update!(&mut *tx, "email_verification_tokens",
-            bind: ["verified_at" => now],
-            where: ("id", verification.id)
-        )?;
+        crate::models::email_verification::tx_mark_verified(&mut tx, verification.id).await?;
 
-        let now = crate::utils::tz::now_str();
-        raisfast_derive::crud_update!(&mut *tx, "user_credentials",
-            bind: ["verified" => 1i64, "updated_at" => &now],
-            where: AND(("user_id", verification.user_id), ("auth_type", crate::models::user_credential::AuthType::Email))
-        )?;
+        crate::models::user_credential::tx_verify_email_by_user(&mut tx, verification.user_id)
+            .await?;
         Ok::<_, crate::errors::app_error::AppError>(())
     })?;
     Ok(())

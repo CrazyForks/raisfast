@@ -1199,6 +1199,133 @@ pub fn check_schema(input: TokenStream) -> TokenStream {
     TokenStream::new()
 }
 
+// ── crud_resolve_ids! ─────────────────────────────────────────────────
+
+pub fn crud_resolve_ids(input: TokenStream) -> TokenStream {
+    expand_resolve_ids(input)
+}
+
+fn expand_resolve_ids(input: TokenStream) -> TokenStream {
+    let parsed = parse_macro_input!(input as ResolveIdsInput);
+    let pool = &parsed.pool;
+    let table = &parsed.table;
+    let ids = &parsed.ids;
+    let d = dialect();
+
+    let numbered = matches!(d, Dialect::Sqlite | Dialect::Postgres);
+    let numbered_lit = syn::LitBool::new(numbered, proc_macro2::Span::call_site());
+    let ph_prefix_lit = syn::LitStr::new(
+        match d {
+            Dialect::Postgres => "$",
+            _ => "?",
+        },
+        proc_macro2::Span::call_site(),
+    );
+
+    let expanded = quote! {
+        {
+            let __table: &str = #table;
+            let __ids: &[i64] = #ids;
+            if __ids.is_empty() {
+                Ok::<Vec<i64>, sqlx::Error>(Vec::new())
+            } else if !crate::db::driver::is_safe_identifier(__table) {
+                Err(sqlx::Error::Configuration(
+                    format!("invalid table name: {__table}").into()
+                ))
+            } else {
+                let __phs: Vec<String> = (1..=__ids.len())
+                    .map(|__i| {
+                        if #numbered_lit {
+                            format!(concat!(#ph_prefix_lit, "{}"), __i)
+                        } else {
+                            "?".to_string()
+                        }
+                    })
+                    .collect();
+                let __sql = format!("SELECT id FROM {} WHERE id IN ({})", __table, __phs.join(", "));
+                let mut __q = sqlx::query(&__sql);
+                for &__id in __ids {
+                    __q = __q.bind(__id);
+                }
+                let __rows = __q.fetch_all(#pool).await?;
+                let mut __found = std::collections::HashSet::<i64>::new();
+                for __row in &__rows {
+                    let __v: i64 = __row.try_get("id").unwrap_or(0);
+                    if __v > 0 {
+                        __found.insert(__v);
+                    }
+                }
+                let mut __result = Vec::with_capacity(__ids.len());
+                for &__id in __ids {
+                    if !__found.contains(&__id) {
+                        return Err(sqlx::Error::RowNotFound.into());
+                    }
+                    __result.push(__id);
+                }
+                Ok(__result)
+            }
+        }
+    };
+    TokenStream::from(expanded)
+}
+
+// ── crud_resolve_id! ──────────────────────────────────────────────────
+
+pub fn crud_resolve_id(input: TokenStream) -> TokenStream {
+    expand_resolve_id(input)
+}
+
+fn expand_resolve_id(input: TokenStream) -> TokenStream {
+    let parsed = parse_macro_input!(input as ResolveIdInput);
+    let pool = &parsed.pool;
+    let table = &parsed.table;
+    let id = &parsed.id;
+    let d = dialect();
+
+    let ph1 = d.ph(1);
+    let ph1_lit = syn::LitStr::new(&ph1, proc_macro2::Span::call_site());
+
+    if let Some(tid_expr) = &parsed.tid {
+        let (tenant_sql, tenant_bind) = emit_tenant_code(&Some(tid_expr.clone()), d, None);
+        let expanded = quote! {
+            {
+                let __table: &str = #table;
+                if !crate::db::driver::is_safe_identifier(__table) {
+                    Ok::<Option<i64>, sqlx::Error>(None)
+                } else {
+                    let __id: i64 = #id;
+                    let __pool: &crate::db::Pool = #pool;
+                    let mut __ph_idx: usize = 2;
+                    #tenant_sql
+                    let __sql = format!("SELECT id FROM {} WHERE id = {}{}", __table, #ph1_lit, __tenant_sql);
+                    let mut __q = sqlx::query_scalar::<_, i64>(&__sql).bind(__id);
+                    #tenant_bind
+                    __q.fetch_optional(__pool).await
+                }
+            }
+        };
+        TokenStream::from(expanded)
+    } else {
+        let expanded = quote! {
+            {
+                let __table: &str = #table;
+                if !crate::db::driver::is_safe_identifier(__table) {
+                    Ok::<Option<i64>, sqlx::Error>(None)
+                } else {
+                    let __id: i64 = #id;
+                    let __pool: &crate::db::Pool = #pool;
+                    let __sql = format!("SELECT id FROM {} WHERE id = {}", __table, #ph1_lit);
+                    sqlx::query_scalar::<_, i64>(&__sql)
+                        .bind(__id)
+                        .fetch_optional(__pool)
+                        .await
+                }
+            }
+        };
+        TokenStream::from(expanded)
+    }
+}
+
 // ══════════════════════════════════════════════════════════════════════════
 // Input parsing structs
 // ══════════════════════════════════════════════════════════════════════════
@@ -2341,6 +2468,65 @@ impl syn::parse::Parse for QueryPagedInput {
             where_cols,
             where_vals,
         })
+    }
+}
+
+// ── ResolveId input ──
+
+/// `crud_resolve_id!(pool, table, id [, tenant: expr])`
+struct ResolveIdInput {
+    pool: syn::Expr,
+    table: syn::Expr,
+    id: syn::Expr,
+    tid: Option<syn::Expr>,
+}
+
+/// `crud_resolve_ids!(pool, table, ids)`
+struct ResolveIdsInput {
+    pool: syn::Expr,
+    table: syn::Expr,
+    ids: syn::Expr,
+}
+
+impl syn::parse::Parse for ResolveIdInput {
+    fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
+        let pool: syn::Expr = input.parse()?;
+        let _: syn::Token![,] = input.parse()?;
+        let table: syn::Expr = input.parse()?;
+        let _: syn::Token![,] = input.parse()?;
+        let id: syn::Expr = input.parse()?;
+
+        let mut tid = None;
+        while input.parse::<syn::Token![,]>().is_ok() {
+            let section: syn::Ident = input.call(syn::Ident::parse_any)?;
+            let _: syn::Token![:] = input.parse()?;
+            if section == "tenant" {
+                tid = Some(input.parse()?);
+            } else {
+                return Err(syn::Error::new(
+                    section.span(),
+                    format!("unknown section: {}", section),
+                ));
+            }
+        }
+
+        Ok(Self {
+            pool,
+            table,
+            id,
+            tid,
+        })
+    }
+}
+
+impl syn::parse::Parse for ResolveIdsInput {
+    fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
+        let pool: syn::Expr = input.parse()?;
+        let _: syn::Token![,] = input.parse()?;
+        let table: syn::Expr = input.parse()?;
+        let _: syn::Token![,] = input.parse()?;
+        let ids: syn::Expr = input.parse()?;
+        Ok(Self { pool, table, ids })
     }
 }
 

@@ -4,12 +4,12 @@ use async_trait::async_trait;
 
 use crate::aspects::engine::AspectEngine;
 use crate::db::pool::DbConnection;
-use crate::db::{DbDriver, Driver};
 use crate::errors::app_error::{AppError, AppResult};
 use crate::event::Event;
 use crate::models::currencies;
 use crate::models::wallet;
 use crate::models::wallet::WalletStatus;
+use crate::models::wallet_transaction;
 use crate::models::wallet_transaction::WalletTransaction;
 use crate::models::wallet_transaction::{WalletEntryType, WalletReferenceType, WalletTxType};
 use crate::types::snowflake_id::SnowflakeId;
@@ -165,7 +165,7 @@ async fn tx_find_wallet_by_id(
     tx: &mut DbConnection,
     id: SnowflakeId,
 ) -> AppResult<Option<wallet::Wallet>> {
-    Ok(raisfast_derive::crud_find!(tx, "wallets", wallet::Wallet, where: ("id", id))?)
+    wallet::tx_find_by_id(tx, id).await
 }
 
 async fn tx_find_or_create(
@@ -173,52 +173,25 @@ async fn tx_find_or_create(
     user_id: SnowflakeId,
     currency: &str,
 ) -> AppResult<wallet::Wallet> {
-    if let Some(w) = raisfast_derive::crud_find!(
-        &mut *tx, "wallets", wallet::Wallet, where: AND(("user_id", user_id), ("currency", currency))
-    )? {
-        return Ok(w);
-    }
-    let (id, now) = (
-        crate::utils::id::new_snowflake_id(),
-        crate::utils::tz::now_utc(),
-    );
-    let insert_result = raisfast_derive::crud_insert!(
-        &mut *tx, "wallets",
-        ["id" => id, "user_id" => user_id, "currency" => currency, "created_at" => now, "updated_at" => now]
-    );
-
-    match insert_result {
-        Ok(_) => Ok(
-            raisfast_derive::crud_find_one!(&mut *tx, "wallets", wallet::Wallet, where: ("id", id))?,
-        ),
-        Err(_) => Ok(raisfast_derive::crud_find_one!(
-            &mut *tx, "wallets", wallet::Wallet, where: AND(("user_id", user_id), ("currency", currency))
-        )?),
-    }
+    wallet::tx_find_or_create(tx, user_id, currency).await
 }
 
 async fn tx_find_tx_by_id(
     tx: &mut DbConnection,
     id: SnowflakeId,
 ) -> AppResult<Option<WalletTransaction>> {
-    Ok(
-        raisfast_derive::crud_find!(tx, "wallet_transactions", WalletTransaction, where: ("id", id))?,
-    )
+    wallet_transaction::tx_find_by_id(tx, id).await
 }
 
 async fn tx_find_tx_by_transaction_no(
     tx: &mut DbConnection,
     transaction_no: &str,
 ) -> AppResult<Option<WalletTransaction>> {
-    Ok(
-        raisfast_derive::crud_find!(tx, "wallet_transactions", WalletTransaction, where: ("transaction_no", transaction_no))?,
-    )
+    wallet_transaction::tx_find_by_transaction_no(tx, transaction_no).await
 }
 
 async fn tx_has_reversal_for(tx: &mut DbConnection, related_tx_id: SnowflakeId) -> AppResult<bool> {
-    Ok(raisfast_derive::crud_exists!(
-        tx, "wallet_transactions", where: AND(("related_tx_id", related_tx_id), ("tx_type", WalletTxType::Refund))
-    )?)
+    wallet_transaction::tx_has_reversal_for(tx, related_tx_id).await
 }
 
 async fn apply_wallet_delta(
@@ -228,55 +201,7 @@ async fn apply_wallet_delta(
     delta: i64,
     current_balance: i64,
 ) -> AppResult<()> {
-    raisfast_derive::check_schema!("wallets", "balance", "version", "updated_at", "id");
-    if delta > 0 {
-        let _ = current_balance
-            .checked_add(delta)
-            .ok_or_else(|| AppError::BadRequest("balance_overflow".into()))?;
-        let sql = format!(
-            "UPDATE wallets SET balance = balance + {}, version = version + 1, updated_at = {} WHERE id = {} AND version = {}",
-            Driver::ph(1),
-            Driver::ph(2),
-            Driver::ph(3),
-            Driver::ph(4)
-        );
-        let affected = sqlx::query(&sql)
-            .bind(delta)
-            .bind(crate::utils::tz::now_str())
-            .bind(wallet_id)
-            .bind(version)
-            .execute(&mut *tx)
-            .await?
-            .rows_affected();
-        if affected == 0 {
-            return Err(AppError::Conflict("concurrent_wallet_update".into()));
-        }
-    } else {
-        let abs = -delta;
-        let sql = format!(
-            "UPDATE wallets SET balance = balance - {}, version = version + 1, updated_at = {} WHERE id = {} AND balance >= {} AND version = {}",
-            Driver::ph(1),
-            Driver::ph(2),
-            Driver::ph(3),
-            Driver::ph(4),
-            Driver::ph(5)
-        );
-        let affected = sqlx::query(&sql)
-            .bind(abs)
-            .bind(crate::utils::tz::now_str())
-            .bind(wallet_id)
-            .bind(abs)
-            .bind(version)
-            .execute(&mut *tx)
-            .await?
-            .rows_affected();
-        if affected == 0 {
-            return Err(AppError::BadRequest(
-                "insufficient_balance_or_concurrent_update".into(),
-            ));
-        }
-    }
-    Ok(())
+    wallet::apply_wallet_delta(tx, wallet_id, version, delta, current_balance).await
 }
 
 async fn reverse_single_tx(
@@ -324,11 +249,11 @@ async fn reverse_single_tx(
         WalletTxType::Refund,
         &original.currency,
         reversal_tx_no,
-        Some(*original.id),
+        Some(original.id),
         original.reference_type,
-        original.reference_id.as_deref(),
+        original.reference_id.clone(),
         None,
-        Some(&serde_json::json!({"reversal": true}).to_string()),
+        Some(serde_json::json!({"reversal": true}).to_string()),
     )
     .await
 }
@@ -385,9 +310,9 @@ pub async fn credit_wallet(
             transaction_no,
             None,
             reference_type,
-            reference_id,
+            reference_id.map(|s| s.to_string()),
             None,
-            metadata,
+            metadata.map(|s| s.to_string()),
         )
         .await
     })
@@ -445,9 +370,9 @@ pub async fn debit_wallet(
             transaction_no,
             None,
             reference_type,
-            reference_id,
+            reference_id.map(|s| s.to_string()),
             None,
-            metadata,
+            metadata.map(|s| s.to_string()),
         )
         .await
     })
@@ -545,9 +470,9 @@ pub async fn transfer(
             transaction_no,
             None,
             reference_type,
-            reference_id,
-            Some(*updated_to.id),
-            metadata,
+            reference_id.map(|s| s.to_string()),
+            Some(updated_to.id),
+            metadata.map(|s| s.to_string()),
         )
         .await?;
 
@@ -564,9 +489,9 @@ pub async fn transfer(
             &in_no,
             None,
             reference_type,
-            reference_id,
-            Some(*updated_from.id),
-            metadata,
+            reference_id.map(|s| s.to_string()),
+            Some(updated_from.id),
+            metadata.map(|s| s.to_string()),
         )
         .await?;
 
@@ -649,42 +574,30 @@ async fn insert_tx(
     tx_type: WalletTxType,
     currency: &str,
     transaction_no: &str,
-    related_tx_id: Option<i64>,
+    related_tx_id: Option<SnowflakeId>,
     reference_type: Option<WalletReferenceType>,
-    reference_id: Option<&str>,
-    counterparty_wallet_id: Option<i64>,
-    metadata: Option<&str>,
+    reference_id: Option<String>,
+    counterparty_wallet_id: Option<SnowflakeId>,
+    metadata: Option<String>,
 ) -> AppResult<WalletTransaction> {
     debug_assert!(balance_after >= 0, "balance_after must be non-negative");
-    raisfast_derive::check_schema!(
-        "wallet_transactions",
-        "id",
-        "wallet_id",
-        "user_id",
-        "entry_type",
-        "amount",
-        "balance_after",
-        "tx_type",
-        "currency",
-        "transaction_no",
-        "related_tx_id",
-        "reference_type",
-        "reference_id",
-        "counterparty_wallet_id",
-        "metadata",
-        "created_at"
-    );
-    let (id, now) = (
-        crate::utils::id::new_snowflake_id(),
-        crate::utils::tz::now_utc(),
-    );
-    raisfast_derive::crud_insert!(
-        &mut *tx, "wallet_transactions",
-        ["id" => id, "wallet_id" => wallet_id, "user_id" => user_id, "entry_type" => entry_type, "amount" => amount, "balance_after" => balance_after, "tx_type" => tx_type, "currency" => currency, "transaction_no" => transaction_no, "related_tx_id" => related_tx_id, "reference_type" => reference_type, "reference_id" => reference_id, "counterparty_wallet_id" => counterparty_wallet_id, "metadata" => metadata, "created_at" => now]
-    )?;
-
-    let row = raisfast_derive::crud_find_one!(&mut *tx, "wallet_transactions", WalletTransaction, where: ("id", id))?;
-
+    let row = wallet_transaction::tx_insert(
+        &mut *tx,
+        wallet_id,
+        user_id,
+        entry_type,
+        amount,
+        balance_after,
+        tx_type,
+        currency,
+        transaction_no,
+        related_tx_id,
+        reference_type,
+        reference_id,
+        counterparty_wallet_id,
+        metadata,
+    )
+    .await?;
     Ok(row)
 }
 

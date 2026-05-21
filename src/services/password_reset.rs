@@ -64,27 +64,22 @@ pub async fn reset_password(
     let new_hash = crate::services::auth::hash_password(new_password)?;
 
     in_transaction!(pool, tx, {
-        let row = raisfast_derive::crud_find!(
-            &mut *tx,
-            "user_credentials",
-            (SnowflakeId, crate::models::user_credential::AuthType),
-            where: AND(("user_id", reset_token.user_id), ("auth_type", crate::models::user_credential::AuthType::Email))
-        )?;
-        if let Some((cred_id, _)) = row.into_iter().next() {
-            let now = crate::utils::tz::now_str();
-            raisfast_derive::crud_update!(&mut *tx, "user_credentials",
-                bind: ["credential_data" => crate::models::user_credential::wrap_password_hash(&new_hash), "updated_at" => &now],
-                where: ("id", cred_id)
-            )?;
-        }
+        let (cred_id, _) = crate::models::user_credential::tx_find_email_cred_by_user(
+            &mut tx,
+            reset_token.user_id,
+        )
+        .await?
+        .ok_or_else(|| AppError::not_found("credential"))?;
+        crate::models::user_credential::tx_update_credential_data(
+            &mut tx,
+            cred_id,
+            &crate::models::user_credential::wrap_password_hash(&new_hash),
+        )
+        .await?;
 
-        let now = crate::utils::tz::now_utc();
-        raisfast_derive::crud_update!(&mut *tx, "password_reset_tokens",
-            bind: ["used_at" => now],
-            where: ("id", reset_token.id)
-        )?;
+        crate::models::password_reset::tx_mark_used(&mut tx, reset_token.id).await?;
 
-        raisfast_derive::crud_delete!(&mut *tx, "refresh_tokens", where: ("user_id", reset_token.user_id))?;
+        crate::models::refresh_token::tx_delete_by_user(&mut tx, reset_token.user_id).await?;
         Ok::<_, crate::errors::app_error::AppError>(())
     })?;
 

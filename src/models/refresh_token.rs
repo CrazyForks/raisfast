@@ -71,6 +71,42 @@ pub async fn delete_by_user(pool: &crate::db::Pool, user_id: SnowflakeId) -> App
     Ok(())
 }
 
+pub async fn tx_delete_by_token(
+    tx: &mut crate::db::pool::DbConnection,
+    token: &str,
+) -> AppResult<()> {
+    raisfast_derive::crud_delete!(&mut *tx, "refresh_tokens", where: ("token", token))?;
+    Ok(())
+}
+
+pub async fn tx_create_token(
+    tx: &mut crate::db::pool::DbConnection,
+    user_id: SnowflakeId,
+    token: &str,
+    expires_at: &str,
+) -> AppResult<()> {
+    let (id, now) = (
+        crate::utils::id::new_snowflake_id(),
+        crate::utils::tz::now_utc(),
+    );
+    raisfast_derive::crud_insert!(&mut *tx, "refresh_tokens", [
+        "id" => id,
+        "user_id" => user_id,
+        "token" => token,
+        "expires_at" => expires_at,
+        "created_at" => now
+    ])?;
+    Ok(())
+}
+
+pub async fn tx_delete_by_user(
+    tx: &mut crate::db::pool::DbConnection,
+    user_id: SnowflakeId,
+) -> AppResult<()> {
+    raisfast_derive::crud_delete!(&mut *tx, "refresh_tokens", where: ("user_id", user_id))?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

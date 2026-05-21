@@ -7,7 +7,6 @@
 use chrono::Utc;
 
 use crate::commands::CreateMediaCmd;
-use crate::db::DbDriver;
 use crate::errors::app_error::{AppError, AppResult};
 use crate::middleware::auth::AuthUser;
 use crate::models::media;
@@ -232,21 +231,9 @@ pub async fn admin_delete_media(
     media_id: &str,
     auth: &AuthUser,
 ) -> AppResult<()> {
-    let sql = format!(
-        "SELECT id FROM media WHERE id = {}{}",
-        crate::db::Driver::ph(1),
-        crate::db::tenant::tenant_filter_ph(auth.tenant_id(), 2)
-    );
-    let (media_pk,): (i64,) = raisfast_derive::crud_query!(
-        pool,
-        (i64,),
-        &sql,
-        [media_id],
-        fetch_optional,
-        tenant: auth.tenant_id()
-    )
-    .map_err(|e| AppError::Internal(anyhow::anyhow!("{e}")))?
-    .ok_or_else(|| AppError::not_found("media"))?;
+    let media_pk: i64 = crate::models::media::resolve_id(pool, media_id, auth.tenant_id())
+        .await?
+        .ok_or_else(|| AppError::not_found("media"))?;
 
     let m = crate::models::media::find_by_id(pool, SnowflakeId(media_pk), auth.tenant_id())
         .await?
@@ -276,21 +263,9 @@ pub async fn delete_media(
         .await?
         .ok_or(AppError::Unauthorized)?;
 
-    let sql2 = format!(
-        "SELECT id FROM media WHERE id = {}{}",
-        crate::db::Driver::ph(1),
-        crate::db::tenant::tenant_filter_ph(auth.tenant_id(), 2)
-    );
-    let (media_pk,): (i64,) = raisfast_derive::crud_query!(
-        pool,
-        (i64,),
-        &sql2,
-        [media_id],
-        fetch_optional,
-        tenant: auth.tenant_id()
-    )
-    .map_err(|e| AppError::Internal(anyhow::anyhow!("{e}")))?
-    .ok_or_else(|| AppError::not_found("media"))?;
+    let media_pk: i64 = crate::models::media::resolve_id(pool, media_id, auth.tenant_id())
+        .await?
+        .ok_or_else(|| AppError::not_found("media"))?;
 
     let m = crate::models::media::find_by_id(pool, SnowflakeId(media_pk), auth.tenant_id())
         .await?

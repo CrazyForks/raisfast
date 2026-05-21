@@ -104,6 +104,18 @@ pub async fn cleanup_expired(pool: &crate::db::Pool) -> AppResult<u64> {
     Ok(result.rows_affected())
 }
 
+pub async fn tx_mark_verified(
+    tx: &mut crate::db::pool::DbConnection,
+    id: SnowflakeId,
+) -> AppResult<()> {
+    let now = crate::utils::tz::now_str();
+    raisfast_derive::crud_update!(&mut *tx, "email_verification_tokens",
+        bind: ["verified_at" => now],
+        where: ("id", id)
+    )?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

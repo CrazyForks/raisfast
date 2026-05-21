@@ -15,7 +15,6 @@ use slug::slugify;
 use crate::aspects::engine::AspectEngine;
 use crate::aspects::slug_aspect;
 use crate::commands::{CreatePostCmd, UpdatePostCmd};
-use crate::db::DbDriver;
 use crate::dto::{CreatePostRequest, PostResponse, UpdatePostRequest};
 use crate::errors::app_error::{AppError, AppResult};
 use crate::event::*;
@@ -24,34 +23,6 @@ use crate::models::post::{PostJoinedRow, PostStatus};
 use crate::policy::Policy;
 use crate::search::SearchEngine;
 use crate::types::snowflake_id::SnowflakeId;
-
-pub async fn find_existing_id(
-    pool: &crate::db::Pool,
-    table: &str,
-    id: SnowflakeId,
-    tenant_id: Option<&str>,
-) -> AppResult<Option<i64>> {
-    if tenant_id.is_none() {
-        return Ok(Some(*id));
-    }
-    if !crate::db::driver::is_safe_identifier(table) {
-        return Ok(Some(*id));
-    }
-    let filter = if tenant_id.is_some() {
-        format!(" AND tenant_id = {}", crate::db::Driver::ph(2))
-    } else {
-        String::new()
-    };
-    let sql = format!(
-        "SELECT id FROM {table} WHERE id = {}{filter}",
-        crate::db::Driver::ph(1)
-    );
-    let mut q = sqlx::query_scalar::<_, i64>(&sql).bind(id);
-    bind_tenant!(q, tenant_id);
-    q.fetch_optional(pool)
-        .await
-        .map_err(|e| AppError::Internal(anyhow::anyhow!("resolve id in {table} failed: {e}")))
-}
 
 // ─── Trait ───
 
@@ -179,7 +150,7 @@ impl PostService for PostServiceImpl {
 
         let category_id = if let Some(ref raw_id) = req.category_id {
             let parsed = crate::types::snowflake_id::parse_id(raw_id)?;
-            find_existing_id(&self.pool, "categories", parsed, auth.tenant_id()).await?
+            raisfast_derive::crud_resolve_id!(&self.pool, "categories", *parsed, tenant: auth.tenant_id())?
         } else {
             None
         };
@@ -189,7 +160,7 @@ impl PostService for PostServiceImpl {
                 for raw_id in ids {
                     let parsed = crate::types::snowflake_id::parse_id(raw_id)?;
                     if let Some(int_id) =
-                        find_existing_id(&self.pool, "tags", parsed, auth.tenant_id()).await?
+                        raisfast_derive::crud_resolve_id!(&self.pool, "tags", *parsed, tenant: auth.tenant_id())?
                     {
                         resolved.push(int_id);
                     }
@@ -333,8 +304,7 @@ impl PostService for PostServiceImpl {
         req: UpdatePostRequest,
     ) -> AppResult<PostResponse> {
         let parsed_id = crate::types::snowflake_id::parse_id(id)?;
-        let int_id = find_existing_id(&self.pool, "posts", parsed_id, auth.tenant_id())
-            .await?
+        let int_id = raisfast_derive::crud_resolve_id!(&self.pool, "posts", *parsed_id, tenant: auth.tenant_id())?
             .ok_or_else(|| AppError::not_found("post"))?;
 
         let existing =
@@ -356,8 +326,7 @@ impl PostService for PostServiceImpl {
 
     async fn admin_delete(&self, auth: &AuthUser, id: &str) -> AppResult<()> {
         let parsed_id = crate::types::snowflake_id::parse_id(id)?;
-        let int_id = find_existing_id(&self.pool, "posts", parsed_id, auth.tenant_id())
-            .await?
+        let int_id = raisfast_derive::crud_resolve_id!(&self.pool, "posts", *parsed_id, tenant: auth.tenant_id())?
             .ok_or_else(|| AppError::not_found("post"))?;
 
         let existing =
@@ -379,7 +348,7 @@ impl PostService for PostServiceImpl {
                 continue;
             };
             let Some(int_id) =
-                find_existing_id(&self.pool, "posts", parsed_id, auth.tenant_id()).await?
+                raisfast_derive::crud_resolve_id!(&self.pool, "posts", *parsed_id, tenant: auth.tenant_id())?
             else {
                 continue;
             };
@@ -508,7 +477,7 @@ impl PostServiceImpl {
 
         let category_id = if let Some(ref raw_id) = req.category_id {
             let parsed = crate::types::snowflake_id::parse_id(raw_id)?;
-            find_existing_id(&self.pool, "categories", parsed, auth.tenant_id()).await?
+            raisfast_derive::crud_resolve_id!(&self.pool, "categories", *parsed, tenant: auth.tenant_id())?
         } else {
             None
         };
@@ -518,7 +487,7 @@ impl PostServiceImpl {
                 for raw_id in ids {
                     let parsed = crate::types::snowflake_id::parse_id(raw_id)?;
                     if let Some(int_id) =
-                        find_existing_id(&self.pool, "tags", parsed, auth.tenant_id()).await?
+                        raisfast_derive::crud_resolve_id!(&self.pool, "tags", *parsed, tenant: auth.tenant_id())?
                     {
                         resolved.push(int_id);
                     }
@@ -944,15 +913,23 @@ mod tests {
     #[tokio::test]
     async fn resolve_id_numeric_no_tenant() {
         let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
-        let result = find_existing_id(&pool, "users", SnowflakeId(42), None).await;
+        sqlx::query(crate::db::schema::SCHEMA_SQL)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO users (id, username, role, status, registered_via) VALUES (42, 'u', 'user', 'active', 'email')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let result = raisfast_derive::crud_resolve_id!(&pool, "users", *SnowflakeId(42));
         assert_eq!(result.unwrap(), Some(42));
     }
 
     #[tokio::test]
     async fn resolve_id_unsafe_table() {
         let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
-        let result = find_existing_id(&pool, "drop table", SnowflakeId(999), None).await;
-        assert_eq!(result.unwrap(), Some(999));
+        let result = raisfast_derive::crud_resolve_id!(&pool, "drop table", *SnowflakeId(999));
+        assert_eq!(result.unwrap(), None);
     }
 
     #[tokio::test]
@@ -970,8 +947,7 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
-        let result = find_existing_id(&pool, "posts", SnowflakeId(1), Some("t1"))
-            .await
+        let result = raisfast_derive::crud_resolve_id!(&pool, "posts", *SnowflakeId(1), tenant: Some("t1"))
             .unwrap();
         assert_eq!(result, Some(1));
     }
@@ -991,8 +967,7 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
-        let result = find_existing_id(&pool, "posts", SnowflakeId(1), Some("wrong"))
-            .await
+        let result = raisfast_derive::crud_resolve_id!(&pool, "posts", *SnowflakeId(1), tenant: Some("wrong"))
             .unwrap();
         assert_eq!(result, None);
     }
@@ -1004,8 +979,7 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
-        let result = find_existing_id(&pool, "users", SnowflakeId(99999), Some("t1"))
-            .await
+        let result = raisfast_derive::crud_resolve_id!(&pool, "users", *SnowflakeId(99999), tenant: Some("t1"))
             .unwrap();
         assert_eq!(result, None);
     }

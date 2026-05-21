@@ -34,6 +34,8 @@
 //! | `crud_exists!` | `SELECT EXISTS(SELECT 1 ... WHERE WhereExpr)` |
 //! | `crud_query_paged!` | paginated data + COUNT |
 //! | `crud_join_paged!` | paginated JOIN + COUNT |
+//! | `crud_resolve_id!` | `SELECT id FROM table WHERE id = ?` → `Option<i64>` |
+//! | `crud_resolve_ids!` | `SELECT id FROM table WHERE id IN (...)` → `Vec<i64>` (validates all exist) |
 //!
 //! ### Schema validation
 //!
@@ -220,6 +222,32 @@ pub fn crud_update(input: TokenStream) -> TokenStream {
 #[proc_macro]
 pub fn crud_query_paged(input: TokenStream) -> TokenStream {
     crud::crud_query_paged(input)
+}
+
+/// `crud_resolve_id!(pool, table, id [, tenant: expr])`
+///
+/// Resolves a SnowflakeId to an `i64` by verifying it exists in the target table.
+/// Returns `sqlx::Result<Option<i64>>` — `Some(id)` if found, `None` if not.
+///
+/// The `table` parameter is a runtime `&str` expression (not a literal).
+/// Performs `is_safe_identifier()` check before querying.
+/// When `tenant:` is provided, adds `AND tenant_id = ?` filter.
+#[proc_macro]
+pub fn crud_resolve_id(input: TokenStream) -> TokenStream {
+    crud::crud_resolve_id(input)
+}
+
+/// `crud_resolve_ids!(pool, table, ids)`
+///
+/// Batch version of `crud_resolve_id!`. Resolves a slice of `i64` IDs by verifying
+/// they ALL exist in the target table via a single `SELECT id FROM table WHERE id IN (...)`.
+///
+/// Returns `Result<Vec<i64>, sqlx::Error>` — the validated ID list on success.
+/// Returns `sqlx::Error::RowNotFound` if any ID is missing.
+/// Returns error on unsafe table name.
+#[proc_macro]
+pub fn crud_resolve_ids(input: TokenStream) -> TokenStream {
+    crud::crud_resolve_ids(input)
 }
 
 /// `#[aspect_service(entity = "posts", model = Post)]`

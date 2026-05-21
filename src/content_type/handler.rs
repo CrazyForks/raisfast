@@ -14,7 +14,7 @@ use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use super::repository::{ContentQuery, ContentRepository, SaveContext, find_existing_id};
+use super::repository::{ContentQuery, ContentRepository, SaveContext};
 use super::rule_engine::compile_rule_sql;
 use super::schema::{ContentKind, ContentTypeSchema, FieldType, RelationType, check_api_access};
 use crate::AppState;
@@ -750,8 +750,7 @@ pub async fn do_list(
                             .unwrap_or_else(|| format!("{}_id", field.name));
                         let parsed_id =
                             crate::types::snowflake_id::parse_id(v).unwrap_or(SnowflakeId(-1));
-                        let int_id = find_existing_id(&state.pool, &rel.target, parsed_id)
-                            .await
+                        let int_id = raisfast_derive::crud_resolve_id!(&state.pool, &rel.target, *parsed_id)
                             .ok()
                             .flatten()
                             .unwrap_or(-1);
@@ -1209,8 +1208,7 @@ async fn do_admin_list(
                             .unwrap_or_else(|| format!("{}_id", field.name));
                         let parsed_id =
                             crate::types::snowflake_id::parse_id(v).unwrap_or(SnowflakeId(-1));
-                        let int_id = find_existing_id(&state.pool, &rel.target, parsed_id)
-                            .await
+                        let int_id = raisfast_derive::crud_resolve_id!(&state.pool, &rel.target, *parsed_id)
                             .ok()
                             .flatten()
                             .unwrap_or(-1);

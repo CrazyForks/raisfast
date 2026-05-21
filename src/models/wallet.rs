@@ -89,6 +89,117 @@ pub async fn find_all_wallets(
     Ok(result)
 }
 
+pub async fn tx_find_by_id(
+    tx: &mut crate::db::pool::DbConnection,
+    id: SnowflakeId,
+) -> AppResult<Option<Wallet>> {
+    Ok(raisfast_derive::crud_find!(tx, "wallets", Wallet, where: ("id", id))?)
+}
+
+pub async fn tx_find_by_user_and_currency(
+    tx: &mut crate::db::pool::DbConnection,
+    user_id: SnowflakeId,
+    currency: &str,
+) -> AppResult<Option<Wallet>> {
+    Ok(raisfast_derive::crud_find!(
+        &mut *tx, "wallets", Wallet, where: AND(("user_id", user_id), ("currency", currency))
+    )?)
+}
+
+pub async fn tx_create(
+    tx: &mut crate::db::pool::DbConnection,
+    user_id: SnowflakeId,
+    currency: &str,
+) -> AppResult<Wallet> {
+    let (id, now) = (
+        crate::utils::id::new_snowflake_id(),
+        crate::utils::tz::now_utc(),
+    );
+    raisfast_derive::crud_insert!(
+        &mut *tx, "wallets",
+        ["id" => id, "user_id" => user_id, "currency" => currency, "created_at" => now, "updated_at" => now]
+    )?;
+    Ok(raisfast_derive::crud_find_one!(&mut *tx, "wallets", Wallet, where: ("id", id))?)
+}
+
+pub async fn tx_find_or_create(
+    tx: &mut crate::db::pool::DbConnection,
+    user_id: SnowflakeId,
+    currency: &str,
+) -> AppResult<Wallet> {
+    if let Some(w) = tx_find_by_user_and_currency(tx, user_id, currency).await? {
+        return Ok(w);
+    }
+    match tx_create(tx, user_id, currency).await {
+        Ok(w) => Ok(w),
+        Err(_) => Ok(raisfast_derive::crud_find_one!(
+            &mut *tx, "wallets", Wallet, where: AND(("user_id", user_id), ("currency", currency))
+        )?),
+    }
+}
+
+pub async fn apply_wallet_delta(
+    tx: &mut crate::db::pool::DbConnection,
+    wallet_id: SnowflakeId,
+    version: i64,
+    delta: i64,
+    current_balance: i64,
+) -> AppResult<()> {
+    use crate::db::Driver;
+    use crate::db::driver::DbDriver;
+    raisfast_derive::check_schema!("wallets", "balance", "version", "updated_at", "id");
+    if delta > 0 {
+        let _ = current_balance.checked_add(delta).ok_or_else(|| {
+            crate::errors::app_error::AppError::BadRequest("balance_overflow".into())
+        })?;
+        let sql = format!(
+            "UPDATE wallets SET balance = balance + {}, version = version + 1, updated_at = {} WHERE id = {} AND version = {}",
+            Driver::ph(1),
+            Driver::ph(2),
+            Driver::ph(3),
+            Driver::ph(4)
+        );
+        let affected = sqlx::query(&sql)
+            .bind(delta)
+            .bind(crate::utils::tz::now_str())
+            .bind(wallet_id)
+            .bind(version)
+            .execute(&mut *tx)
+            .await?
+            .rows_affected();
+        if affected == 0 {
+            return Err(crate::errors::app_error::AppError::Conflict(
+                "concurrent_wallet_update".into(),
+            ));
+        }
+    } else {
+        let abs = -delta;
+        let sql = format!(
+            "UPDATE wallets SET balance = balance - {}, version = version + 1, updated_at = {} WHERE id = {} AND balance >= {} AND version = {}",
+            Driver::ph(1),
+            Driver::ph(2),
+            Driver::ph(3),
+            Driver::ph(4),
+            Driver::ph(5)
+        );
+        let affected = sqlx::query(&sql)
+            .bind(abs)
+            .bind(crate::utils::tz::now_str())
+            .bind(wallet_id)
+            .bind(abs)
+            .bind(version)
+            .execute(&mut *tx)
+            .await?
+            .rows_affected();
+        if affected == 0 {
+            return Err(crate::errors::app_error::AppError::BadRequest(
+                "insufficient_balance_or_concurrent_update".into(),
+            ));
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

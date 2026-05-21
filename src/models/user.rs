@@ -6,6 +6,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+use crate::db::driver::DbDriver;
 use crate::errors::app_error::{AppError, AppResult};
 use crate::types::snowflake_id::SnowflakeId;
 use crate::utils::tz::Timestamp;
@@ -216,6 +217,69 @@ pub async fn delete_by_id(
     tenant_id: Option<&str>,
 ) -> AppResult<()> {
     raisfast_derive::crud_delete!(pool, "users", where: ("id", id), tenant: tenant_id)?;
+    Ok(())
+}
+
+pub async fn tx_create(
+    tx: &mut crate::db::pool::DbConnection,
+    cmd: &crate::commands::user::CreateUserCmd,
+    tenant_id: Option<&str>,
+) -> AppResult<User> {
+    let (id, now) = (
+        crate::utils::id::new_snowflake_id(),
+        crate::utils::tz::now_utc(),
+    );
+    let registered_via = cmd.registered_via;
+    if let Some(tid) = tenant_id {
+        raisfast_derive::crud_insert!(&mut *tx, "users", [
+            "id" => id,
+            "tenant_id" => tid,
+            "username" => &cmd.username,
+            "created_at" => now,
+            "updated_at" => now,
+            "role" => UserRole::Reader,
+            "status" => UserStatus::Active,
+            "registered_via" => registered_via
+        ])?;
+    } else {
+        raisfast_derive::crud_insert!(&mut *tx, "users", [
+            "id" => id,
+            "username" => &cmd.username,
+            "created_at" => now,
+            "updated_at" => now,
+            "role" => UserRole::Reader,
+            "status" => UserStatus::Active,
+            "registered_via" => registered_via
+        ])?;
+    }
+    Ok(tx_find_by_id(tx, id, tenant_id)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("user not found after insert"))?)
+}
+
+pub async fn tx_find_by_id(
+    tx: &mut crate::db::pool::DbConnection,
+    id: SnowflakeId,
+    tenant_id: Option<&str>,
+) -> AppResult<Option<User>> {
+    let filter = crate::db::tenant::tenant_filter_ph(tenant_id, 2);
+    let sql = format!(
+        "SELECT * FROM users WHERE id = {}{filter}",
+        crate::db::Driver::ph(1)
+    );
+    let mut q = sqlx::query_as::<_, User>(&sql).bind(id);
+    if let Some(tid) = tenant_id {
+        q = q.bind(tid);
+    }
+    Ok(q.fetch_optional(&mut *tx).await?)
+}
+
+pub async fn update_avatar(pool: &crate::db::Pool, id: SnowflakeId, avatar: &str) -> AppResult<()> {
+    let now = crate::utils::tz::now_str();
+    raisfast_derive::crud_update!(pool, "users",
+        bind: ["avatar" => avatar, "updated_at" => now],
+        where: ("id", id)
+    )?;
     Ok(())
 }
 

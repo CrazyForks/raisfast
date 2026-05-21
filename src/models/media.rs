@@ -182,6 +182,23 @@ pub async fn delete(
     AppError::expect_affected(&result, "media")
 }
 
+pub async fn resolve_id(
+    pool: &crate::db::Pool,
+    media_id: &str,
+    tenant_id: Option<&str>,
+) -> AppResult<Option<i64>> {
+    let filter = crate::db::tenant::tenant_filter_ph(tenant_id, 2);
+    let sql = format!(
+        "SELECT id FROM media WHERE id = {}{filter}",
+        crate::db::Driver::ph(1)
+    );
+    let mut q = sqlx::query_scalar::<_, i64>(&sql).bind(media_id.parse::<i64>().unwrap_or(0));
+    if let Some(tid) = tenant_id {
+        q = q.bind(tid);
+    }
+    Ok(q.fetch_optional(pool).await?)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

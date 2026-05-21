@@ -531,7 +531,7 @@ impl ContentRepository {
                 continue;
             }
             let parsed_ids: Vec<i64> = ids.iter().filter_map(|s| s.parse().ok()).collect();
-            let int_ids = find_existing_ids(&self.pool, target_table, &parsed_ids).await?;
+            let int_ids = raisfast_derive::crud_resolve_ids!(&self.pool, target_table, &parsed_ids)?;
             for target_int_id in int_ids {
                 let jsql = crate::db::Driver::insert_ignore_sql(
                     through_table,
@@ -563,7 +563,7 @@ impl ContentRepository {
                 continue;
             }
             let parsed_ids: Vec<i64> = ids.iter().filter_map(|s| s.parse().ok()).collect();
-            let int_ids = find_existing_ids(&self.pool, target_table, &parsed_ids).await?;
+            let int_ids = raisfast_derive::crud_resolve_ids!(&self.pool, target_table, &parsed_ids)?;
             let usql = format!(
                 "UPDATE {target_table} SET {fk_col} = {} WHERE {COL_ID} = {}",
                 crate::db::Driver::ph(1),
@@ -819,7 +819,7 @@ impl ContentRepository {
                 continue;
             }
             let parsed_ids: Vec<i64> = ids.iter().filter_map(|s| s.parse().ok()).collect();
-            let int_ids = find_existing_ids(&self.pool, target_table, &parsed_ids).await?;
+            let int_ids = raisfast_derive::crud_resolve_ids!(&self.pool, target_table, &parsed_ids)?;
             for target_int_id in int_ids {
                 let jsql = crate::db::Driver::insert_ignore_sql(
                     through_table,
@@ -863,7 +863,7 @@ impl ContentRepository {
                 continue;
             }
             let parsed_ids: Vec<i64> = ids.iter().filter_map(|s| s.parse().ok()).collect();
-            let int_ids = find_existing_ids(&self.pool, target_table, &parsed_ids).await?;
+            let int_ids = raisfast_derive::crud_resolve_ids!(&self.pool, target_table, &parsed_ids)?;
             let usql = format!(
                 "UPDATE {target_table} SET {fk_col} = {} WHERE {COL_ID} = {}",
                 crate::db::Driver::ph(1),
@@ -1488,62 +1488,7 @@ pub(crate) async fn find_existing_id(
     target_table: &str,
     id: SnowflakeId,
 ) -> Result<Option<i64>, AppError> {
-    if !crate::db::driver::is_safe_identifier(target_table) {
-        return Err(AppError::BadRequest(format!(
-            "invalid target table: {target_table}"
-        )));
-    }
-    let sql = format!(
-        "SELECT {COL_ID} FROM {target_table} WHERE {COL_ID} = {}",
-        crate::db::Driver::ph(1)
-    );
-    let result = sqlx::query_scalar::<_, i64>(&sql)
-        .bind(id)
-        .fetch_optional(pool)
-        .await?;
-    Ok(result)
-}
-
-async fn find_existing_ids(
-    pool: &Pool,
-    target_table: &str,
-    ids: &[i64],
-) -> Result<Vec<i64>, AppError> {
-    if ids.is_empty() {
-        return Ok(Vec::new());
-    }
-    if !crate::db::driver::is_safe_identifier(target_table) {
-        return Err(AppError::BadRequest(format!(
-            "invalid target table: {target_table}"
-        )));
-    }
-    let placeholders: Vec<String> = (1..=ids.len()).map(crate::db::Driver::ph).collect();
-    let sql = format!(
-        "SELECT {COL_ID} FROM {target_table} WHERE {COL_ID} IN ({})",
-        placeholders.join(", ")
-    );
-    let mut q = sqlx::query(&sql);
-    for id in ids {
-        q = q.bind(id);
-    }
-    let rows = q.fetch_all(pool).await?;
-    let mut found: std::collections::HashSet<i64> = std::collections::HashSet::new();
-    for row in &rows {
-        let int_id: i64 = row.try_get(COL_ID).unwrap_or(0);
-        if int_id > 0 {
-            found.insert(int_id);
-        }
-    }
-    let mut result = Vec::new();
-    for &int_id in ids {
-        if !found.contains(&int_id) {
-            return Err(AppError::BadRequest(format!(
-                "relation target id '{int_id}' not found in {target_table}"
-            )));
-        }
-        result.push(int_id);
-    }
-    Ok(result)
+    Ok(raisfast_derive::crud_resolve_id!(pool, target_table, *id)?)
 }
 
 /// Generate SQL and column index for querying table column names

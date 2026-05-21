@@ -324,11 +324,7 @@ async fn auto_register_user(
     .await?;
 
     if let Some(avatar) = &user_info.avatar_url {
-        let now = crate::utils::tz::now_str();
-        raisfast_derive::crud_update!(pool, "users",
-            bind: ["avatar" => avatar, "updated_at" => &now],
-            where: ("id", user.id)
-        )?;
+        crate::models::user::update_avatar(pool, user.id, avatar).await?;
     }
 
     if !email.is_empty() {

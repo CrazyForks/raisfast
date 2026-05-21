@@ -7,7 +7,6 @@
 //! - Refresh token generation and rotation
 //! - User registration, login, logout
 
-use crate::db::DbDriver;
 use crate::types::snowflake_id::SnowflakeId;
 
 use argon2::password_hash::SaltString;
@@ -191,56 +190,29 @@ pub async fn register(
     validate_password_strength(&req.password)?;
     let password_hash = hash_password(&req.password)?;
     let cred_data = crate::models::user_credential::wrap_password_hash(&password_hash);
-    let (id, now) = (
-        crate::utils::id::new_snowflake_id(),
-        crate::utils::tz::now_utc(),
-    );
     let registered_via = crate::models::user::RegisteredVia::Email;
 
     let user = in_transaction!(pool, tx, {
-        raisfast_derive::crud_insert!(
-            &mut *tx,
-            "users",
-            [
-                "id" => id,
-                "username" => &req.username,
-                "created_at" => now,
-                "updated_at" => now,
-                "role" => UserRole::Reader,
-                "status" => UserStatus::Active,
-                "registered_via" => registered_via
-            ],
-            tenant: tenant_id
-        )?;
-
-        let filter = crate::db::tenant::tenant_filter_ph(tenant_id, 2);
-        let sql = format!(
-            "SELECT * FROM users WHERE id = {}{filter}",
-            crate::db::Driver::ph(1)
-        );
-        let mut q = sqlx::query_as::<_, crate::models::user::User>(&sql).bind(id);
-        if let Some(tid) = tenant_id {
-            q = q.bind(tid);
-        }
-        let user = q.fetch_optional(&mut *tx).await?.ok_or_else(|| {
-            AppError::Internal(anyhow::anyhow!("failed to fetch newly created user"))
-        })?;
+        let user = crate::models::user::tx_create(
+            &mut tx,
+            &crate::commands::user::CreateUserCmd {
+                username: req.username.clone(),
+                registered_via,
+            },
+            tenant_id,
+        )
+        .await?;
 
         let verified = !require_email_verification;
-        let (cred_id, cred_now) = (
-            crate::utils::id::new_snowflake_id(),
-            crate::utils::tz::now_utc(),
-        );
-        raisfast_derive::crud_insert!(&mut *tx, "user_credentials", [
-            "id" => cred_id,
-            "user_id" => user.id,
-            "auth_type" => AuthType::Email,
-            "identifier" => &req.email,
-            "credential_data" => &cred_data,
-            "verified" => if verified { 1 } else { 0 },
-            "created_at" => cred_now,
-            "updated_at" => cred_now
-        ])?;
+        crate::models::user_credential::tx_create(
+            &mut tx,
+            user.id,
+            AuthType::Email,
+            &req.email,
+            &cred_data,
+            verified,
+        )
+        .await?;
 
         Ok::<_, crate::errors::app_error::AppError>(user)
     })?;
@@ -387,19 +359,17 @@ pub async fn refresh(
     let new_refresh_token = generate_refresh_token_string_internal()?;
     let new_expires_at = Utc::now() + chrono::Duration::seconds(jwt_refresh_expires as i64);
     let new_expires_str = new_expires_at.to_rfc3339();
-    let new_id = crate::utils::id::new_id();
-    let now = crate::utils::tz::now_str();
 
     in_transaction!(pool, tx, {
-        raisfast_derive::crud_delete!(&mut *tx, "refresh_tokens", where: ("token", refresh_token_str))?;
+        crate::models::refresh_token::tx_delete_by_token(&mut tx, refresh_token_str).await?;
 
-        raisfast_derive::crud_insert!(&mut *tx, "refresh_tokens", [
-            "id" => new_id,
-            "user_id" => user.id,
-            "token" => &new_refresh_token,
-            "expires_at" => &new_expires_str,
-            "created_at" => now
-        ])?;
+        crate::models::refresh_token::tx_create_token(
+            &mut tx,
+            user.id,
+            &new_refresh_token,
+            &new_expires_str,
+        )
+        .await?;
         Ok::<_, crate::errors::app_error::AppError>(())
     })?;
 

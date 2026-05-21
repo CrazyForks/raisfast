@@ -131,6 +131,63 @@ pub async fn has_reversal_for(
     )?)
 }
 
+pub async fn tx_find_by_id(
+    tx: &mut crate::db::pool::DbConnection,
+    id: SnowflakeId,
+) -> AppResult<Option<WalletTransaction>> {
+    Ok(
+        raisfast_derive::crud_find!(tx, "wallet_transactions", WalletTransaction, where: ("id", id))?,
+    )
+}
+
+pub async fn tx_find_by_transaction_no(
+    tx: &mut crate::db::pool::DbConnection,
+    transaction_no: &str,
+) -> AppResult<Option<WalletTransaction>> {
+    Ok(
+        raisfast_derive::crud_find!(tx, "wallet_transactions", WalletTransaction, where: ("transaction_no", transaction_no))?,
+    )
+}
+
+pub async fn tx_has_reversal_for(
+    tx: &mut crate::db::pool::DbConnection,
+    related_tx_id: SnowflakeId,
+) -> AppResult<bool> {
+    Ok(raisfast_derive::crud_exists!(
+        tx, "wallet_transactions", where: AND(("related_tx_id", related_tx_id), ("tx_type", WalletTxType::Refund))
+    )?)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn tx_insert(
+    tx: &mut crate::db::pool::DbConnection,
+    wallet_id: SnowflakeId,
+    user_id: SnowflakeId,
+    entry_type: WalletEntryType,
+    amount: i64,
+    balance_after: i64,
+    tx_type: WalletTxType,
+    currency: &str,
+    transaction_no: &str,
+    related_tx_id: Option<SnowflakeId>,
+    reference_type: Option<WalletReferenceType>,
+    reference_id: Option<String>,
+    counterparty_wallet_id: Option<SnowflakeId>,
+    metadata: Option<String>,
+) -> AppResult<WalletTransaction> {
+    let (id, now) = (
+        crate::utils::id::new_snowflake_id(),
+        crate::utils::tz::now_utc(),
+    );
+    raisfast_derive::crud_insert!(
+        &mut *tx, "wallet_transactions",
+        ["id" => id, "wallet_id" => wallet_id, "user_id" => user_id, "entry_type" => entry_type, "amount" => amount, "balance_after" => balance_after, "tx_type" => tx_type, "currency" => currency, "transaction_no" => transaction_no, "related_tx_id" => related_tx_id, "reference_type" => reference_type, "reference_id" => reference_id, "counterparty_wallet_id" => counterparty_wallet_id, "metadata" => metadata, "created_at" => now]
+    )?;
+    Ok(
+        raisfast_derive::crud_find_one!(&mut *tx, "wallet_transactions", WalletTransaction, where: ("id", id))?,
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -8,7 +8,6 @@ use crate::commands::{
     CreatePaymentTransactionCmd, CreateWalletOutboxCmd,
 };
 use crate::config::app::AppConfig;
-use crate::db::DbDriver;
 use crate::dto::payment::*;
 use crate::errors::app_error::{AppError, AppResult};
 use crate::event::Event;
@@ -1127,15 +1126,11 @@ pub async fn refund_payment_order(
             return Err(AppError::BadRequest("concurrent_status_change".into()));
         }
 
-        let sql = format!(
-            "SELECT * FROM payment_refunds WHERE provider_refund_id = {} LIMIT 1",
-            crate::db::Driver::ph(1)
-        );
-        let refund = sqlx::query_as::<_, PaymentRefund>(&sql)
-            .bind(&provider_refund_id)
-            .fetch_one(&mut *tx)
-            .await
-            .map_err(|e: sqlx::Error| AppError::from(e))?;
+        let refund = crate::models::payment_refund::tx_find_by_provider_refund_id(
+            &mut tx,
+            &provider_refund_id,
+        )
+        .await?;
 
         let outbox_cmd = CreateWalletOutboxCmd {
             user_id: payment_order.user_id,

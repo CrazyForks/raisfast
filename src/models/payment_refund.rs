@@ -192,6 +192,21 @@ pub async fn tx_sum_refunded_by_order(
     Ok(total)
 }
 
+pub async fn tx_find_by_provider_refund_id(
+    tx: &mut crate::db::pool::DbConnection,
+    provider_refund_id: &str,
+) -> AppResult<PaymentRefund> {
+    let sql = format!(
+        "SELECT * FROM payment_refunds WHERE provider_refund_id = {} LIMIT 1",
+        crate::db::Driver::ph(1)
+    );
+    sqlx::query_as::<_, PaymentRefund>(&sql)
+        .bind(provider_refund_id)
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(|e: sqlx::Error| crate::errors::app_error::AppError::from(e))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

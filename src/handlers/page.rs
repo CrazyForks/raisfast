@@ -16,7 +16,6 @@ use crate::errors::response::{ApiResponse, PaginatedData};
 use crate::errors::validation;
 use crate::middleware::auth::AuthUser;
 use crate::models::page::PageStatus;
-use crate::services::post::find_existing_id;
 use crate::types::snowflake_id::SnowflakeId;
 use crate::utils::pagination::PaginationParams;
 
@@ -156,7 +155,7 @@ async fn resolve_page_parent_id(
         return Ok(None);
     };
     let parsed_id = crate::types::snowflake_id::parse_id(&raw_id)?;
-    find_existing_id(pool, "pages", parsed_id, None).await
+    raisfast_derive::crud_resolve_id!(pool, "pages", *parsed_id).map_err(Into::into)
 }
 
 // ── DTO ──

@@ -16,7 +16,6 @@ use crate::errors::response::{ApiResponse, PaginatedData};
 use crate::errors::validation;
 use crate::middleware::auth::AuthUser;
 use crate::models::post::PostStatus;
-use crate::services::post::{self as post_service};
 use crate::utils::pagination::PaginationParams;
 
 #[derive(Debug, Deserialize)]
@@ -184,13 +183,13 @@ pub async fn list(
 
     let cat_id = if let Some(ref cid) = query.category_id {
         let parsed = crate::types::snowflake_id::parse_id(cid)?;
-        post_service::find_existing_id(&state.pool, "categories", parsed, None).await?
+        raisfast_derive::crud_resolve_id!(&state.pool, "categories", *parsed)?
     } else {
         None
     };
     let tg_id = if let Some(ref tid) = query.tag_id {
         let parsed = crate::types::snowflake_id::parse_id(tid)?;
-        post_service::find_existing_id(&state.pool, "tags", parsed, None).await?
+        raisfast_derive::crud_resolve_id!(&state.pool, "tags", *parsed)?
     } else {
         None
     };

@@ -135,3 +135,65 @@ pub async fn find_by_id(
     raisfast_derive::crud_find!(pool, "user_credentials", UserCredential, where: ("id", id))
         .map_err(Into::into)
 }
+
+pub async fn tx_create(
+    tx: &mut crate::db::pool::DbConnection,
+    user_id: SnowflakeId,
+    auth_type: AuthType,
+    identifier: &str,
+    credential_data: &str,
+    verified: bool,
+) -> AppResult<()> {
+    let (id, now) = (
+        crate::utils::id::new_snowflake_id(),
+        crate::utils::tz::now_utc(),
+    );
+    raisfast_derive::crud_insert!(&mut *tx, "user_credentials", [
+        "id" => id,
+        "user_id" => user_id,
+        "auth_type" => auth_type,
+        "identifier" => identifier,
+        "credential_data" => credential_data,
+        "verified" => if verified { 1i64 } else { 0i64 },
+        "created_at" => now,
+        "updated_at" => now
+    ])?;
+    Ok(())
+}
+
+pub async fn tx_find_email_cred_by_user(
+    tx: &mut crate::db::pool::DbConnection,
+    user_id: SnowflakeId,
+) -> AppResult<Option<(SnowflakeId, AuthType)>> {
+    Ok(raisfast_derive::crud_find!(
+        &mut *tx,
+        "user_credentials",
+        (SnowflakeId, AuthType),
+        where: AND(("user_id", user_id), ("auth_type", AuthType::Email))
+    )?)
+}
+
+pub async fn tx_update_credential_data(
+    tx: &mut crate::db::pool::DbConnection,
+    id: SnowflakeId,
+    credential_data: &str,
+) -> AppResult<()> {
+    let now = crate::utils::tz::now_str();
+    raisfast_derive::crud_update!(&mut *tx, "user_credentials",
+        bind: ["credential_data" => credential_data, "updated_at" => now],
+        where: ("id", id)
+    )?;
+    Ok(())
+}
+
+pub async fn tx_verify_email_by_user(
+    tx: &mut crate::db::pool::DbConnection,
+    user_id: SnowflakeId,
+) -> AppResult<()> {
+    let now = crate::utils::tz::now_str();
+    raisfast_derive::crud_update!(&mut *tx, "user_credentials",
+        bind: ["verified" => 1i64, "updated_at" => now],
+        where: AND(("user_id", user_id), ("auth_type", AuthType::Email))
+    )?;
+    Ok(())
+}
