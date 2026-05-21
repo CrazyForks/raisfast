@@ -185,16 +185,19 @@ pub async fn update_status(
     let sql = if let Some(col) = timestamp_col {
         validate_timestamp_col(col)?;
         format!(
-            "UPDATE orders SET status = {}, {} = datetime('now'), updated_at = datetime('now') WHERE id = {}{}",
+            "UPDATE orders SET status = {}, {} = {}, updated_at = {} WHERE id = {}{}",
             ph(1),
             col,
+            crate::db::dialect::now_fn(),
+            crate::db::dialect::now_fn(),
             ph(2),
             tenant_filter_ph(tenant_id, 3)
         )
     } else {
         format!(
-            "UPDATE orders SET status = {}, updated_at = datetime('now') WHERE id = {}{}",
+            "UPDATE orders SET status = {}, updated_at = {} WHERE id = {}{}",
             ph(1),
+            crate::db::dialect::now_fn(),
             ph(2),
             tenant_filter_ph(tenant_id, 3)
         )
@@ -221,7 +224,7 @@ pub async fn update_shipped(
             "tracking_no" => tracking_no,
             "carrier" => carrier,
         ],
-        raw: ["updated_at" => "datetime('now')"],
+        raw: ["updated_at" => crate::db::dialect::now_fn()],
         where: "id" => id,
         tenant: tenant_id
     )?;
@@ -237,7 +240,7 @@ pub async fn update_admin_remark(
     raisfast_derive::crud_update!(
         pool, "orders",
         bind: ["admin_remark" => admin_remark],
-        raw: ["updated_at" => "datetime('now')"],
+        raw: ["updated_at" => crate::db::dialect::now_fn()],
         where: "id" => id,
         tenant: tenant_id
     )?;
@@ -253,7 +256,7 @@ pub async fn update_delivery_data(
     raisfast_derive::crud_update!(
         pool, "orders",
         bind: ["delivery_data" => delivery_data],
-        raw: ["updated_at" => "datetime('now')"],
+        raw: ["updated_at" => crate::db::dialect::now_fn()],
         where: "id" => id,
         tenant: tenant_id
     )?;
@@ -319,16 +322,19 @@ pub async fn tx_update_status_cas(
     let sql = if let Some(col) = timestamp_col {
         validate_timestamp_col(col)?;
         format!(
-            "UPDATE orders SET status = {}, {} = datetime('now'), updated_at = datetime('now') WHERE id = {} AND status = {}",
+            "UPDATE orders SET status = {}, {} = {}, updated_at = {} WHERE id = {} AND status = {}",
             ph(1),
             col,
+            crate::db::dialect::now_fn(),
+            crate::db::dialect::now_fn(),
             ph(2),
             ph(3)
         )
     } else {
         format!(
-            "UPDATE orders SET status = {}, updated_at = datetime('now') WHERE id = {} AND status = {}",
+            "UPDATE orders SET status = {}, updated_at = {} WHERE id = {} AND status = {}",
             ph(1),
+            crate::db::dialect::now_fn(),
             ph(2),
             ph(3)
         )
@@ -354,7 +360,7 @@ pub async fn tx_update_shipped(
             "tracking_no" => tracking_no,
             "carrier" => carrier
         ],
-        raw: ["updated_at" => "datetime('now')"],
+        raw: ["updated_at" => crate::db::dialect::now_fn()],
         where: "id" => id,
         and: ["status" => OrderStatus::Paid.as_str()]
     )?;

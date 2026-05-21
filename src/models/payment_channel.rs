@@ -114,7 +114,7 @@ pub async fn update(
             "is_active" => is_active_val,
             "sort_order" => cmd.sort_order,
         ],
-        raw: ["updated_at" => "datetime('now')", "version" => "version + 1"],
+        raw: ["updated_at" => crate::db::dialect::now_fn(), "version" => "version + 1"],
         where: "id" => cmd.id,
         and: ["version" => cmd.version],
         tenant: tenant_id

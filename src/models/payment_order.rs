@@ -185,7 +185,7 @@ pub async fn update_provider_order_id(
     raisfast_derive::crud_update!(
         pool, "payment_orders",
         bind: ["provider_order_id" => provider_order_id, "provider_data" => provider_data],
-        raw: ["updated_at" => "datetime('now')"],
+        raw: ["updated_at" => crate::db::dialect::now_fn()],
         where: "id" => id,
         tenant: tenant_id
     )?;
@@ -202,16 +202,19 @@ pub async fn tx_update_status_cas(
     raisfast_derive::check_schema!("payment_orders", "status", "updated_at", "version", "id");
     let sql = if let Some(col) = timestamp_col {
         format!(
-            "UPDATE payment_orders SET status = {}, {} = datetime('now'), updated_at = datetime('now'), version = version + 1 WHERE id = {} AND status = {}",
+            "UPDATE payment_orders SET status = {}, {} = {}, updated_at = {}, version = version + 1 WHERE id = {} AND status = {}",
             ph(1),
             col,
+            crate::db::dialect::now_fn(),
+            crate::db::dialect::now_fn(),
             ph(2),
             ph(3)
         )
     } else {
         format!(
-            "UPDATE payment_orders SET status = {}, updated_at = datetime('now'), version = version + 1 WHERE id = {} AND status = {}",
+            "UPDATE payment_orders SET status = {}, updated_at = {}, version = version + 1 WHERE id = {} AND status = {}",
             ph(1),
+            crate::db::dialect::now_fn(),
             ph(2),
             ph(3)
         )

@@ -140,16 +140,30 @@ pub async fn ensure_schema(pool: &Pool) -> anyhow::Result<()> {
         let schema_label = db_label();
         let checksum = sha256_hex(crate::db::schema::SCHEMA_SQL);
 
-        sqlx::query(
-            "CREATE TABLE IF NOT EXISTS _migrations (\
-             filename TEXT PRIMARY KEY, \
-             checksum TEXT NOT NULL, \
-             applied_at TEXT NOT NULL DEFAULT (datetime('now'))\
-             )",
-        )
-        .execute(pool)
-        .await
-        .map_err(|e| anyhow::anyhow!("create _migrations table failed: {e}"))?;
+        {
+            #[cfg(feature = "db-sqlite")]
+            let sql = "CREATE TABLE IF NOT EXISTS _migrations (\
+                 filename TEXT PRIMARY KEY, \
+                 checksum TEXT NOT NULL, \
+                 applied_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))\
+                 )";
+            #[cfg(feature = "db-postgres")]
+            let sql = "CREATE TABLE IF NOT EXISTS _migrations (\
+                 filename TEXT PRIMARY KEY, \
+                 checksum TEXT NOT NULL, \
+                 applied_at TEXT NOT NULL DEFAULT NOW()\
+                 )";
+            #[cfg(feature = "db-mysql")]
+            let sql = "CREATE TABLE IF NOT EXISTS _migrations (\
+                 filename TEXT PRIMARY KEY, \
+                 checksum TEXT NOT NULL, \
+                 applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP\
+                 )";
+            sqlx::query(sql)
+                .execute(pool)
+                .await
+                .map_err(|e| anyhow::anyhow!("create _migrations table failed: {e}"))?;
+        }
 
         let ph = crate::db::dialect::ph;
         sqlx::query(&format!(
@@ -282,11 +296,16 @@ async fn ensure_migrations_table_schema(pool: &Pool) {
     let _ = sqlx::query("ALTER TABLE _migrations ADD COLUMN checksum TEXT NOT NULL DEFAULT ''")
         .execute(pool)
         .await;
-    let _ = sqlx::query(
-        "ALTER TABLE _migrations ADD COLUMN applied_at TEXT NOT NULL DEFAULT (datetime('now'))",
-    )
-    .execute(pool)
-    .await;
+    {
+        #[cfg(feature = "db-sqlite")]
+        let sql = "ALTER TABLE _migrations ADD COLUMN applied_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))";
+        #[cfg(feature = "db-postgres")]
+        let sql = "ALTER TABLE _migrations ADD COLUMN applied_at TEXT NOT NULL DEFAULT NOW()";
+        #[cfg(feature = "db-mysql")]
+        let sql =
+            "ALTER TABLE _migrations ADD COLUMN applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP";
+        let _ = sqlx::query(sql).execute(pool).await;
+    }
 }
 
 /// Check if the `_migrations` table exists (branched by database type).

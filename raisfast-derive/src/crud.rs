@@ -1325,13 +1325,9 @@ fn expand_update(input: TokenStream) -> TokenStream {
             .map(|c| syn::LitStr::new(&format!("{} = ?", c), table.span()))
             .collect();
 
-        // Static SET fragments for raw: columns (always present)
-        let raw_set_lits: Vec<syn::LitStr> = raw_pairs
-            .iter()
-            .map(|(rc, rv)| {
-                syn::LitStr::new(&format!("{} = {}", rc.value(), rv.value()), table.span())
-            })
-            .collect();
+        // Raw column names and expressions (built at runtime via format!)
+        let raw_col_names: Vec<syn::LitStr> = raw_pairs.iter().map(|(rc, _)| rc.clone()).collect();
+        let raw_exprs: Vec<&syn::Expr> = raw_pairs.iter().map(|(_, rv)| rv).collect();
 
         // Optional column name literals
         let opt_col_lits: Vec<syn::LitStr> = opt_cols
@@ -1360,7 +1356,7 @@ fn expand_update(input: TokenStream) -> TokenStream {
                     let __pkv = #pk_val;
                     let mut __sets: Vec<String> = Vec::new();
                     #(__sets.push(#bind_set_lits.to_string());)*
-                    #(__sets.push(#raw_set_lits.to_string());)*
+                    #(__sets.push(format!("{} = {}", #raw_col_names, #raw_exprs));)*
                     #(
                         if #opt_idents.is_some() {
                             __sets.push(format!("{} = ?", #opt_col_lits));
@@ -1402,7 +1398,7 @@ fn expand_update(input: TokenStream) -> TokenStream {
                     let __pkv = #pk_val;
                     let mut __sets: Vec<String> = Vec::new();
                     #(__sets.push(#bind_set_lits.to_string());)*
-                    #(__sets.push(#raw_set_lits.to_string());)*
+                    #(__sets.push(format!("{} = {}", #raw_col_names, #raw_exprs));)*
                     #(
                         if #opt_idents.is_some() {
                             __sets.push(format!("{} = ?", #opt_col_lits));
@@ -1438,10 +1434,8 @@ fn expand_update(input: TokenStream) -> TokenStream {
         set_parts.push(d.ph(ph_idx));
         ph_idx += 1;
     }
-    let raw_set: Vec<String> = raw_pairs
-        .iter()
-        .map(|(rc, rv)| format!("{} = {}", rc.value(), rv.value()))
-        .collect();
+    let raw_col_names: Vec<syn::LitStr> = raw_pairs.iter().map(|(rc, _)| rc.clone()).collect();
+    let raw_exprs: Vec<&syn::Expr> = raw_pairs.iter().map(|(_, rv)| rv).collect();
 
     let pk_ph = d.ph(ph_idx);
     ph_idx += 1;
@@ -1455,13 +1449,13 @@ fn expand_update(input: TokenStream) -> TokenStream {
         })
         .collect();
 
-    let set_static: Vec<String> = bind_col_strs
+    let set_str_prefix = bind_col_strs
         .iter()
         .zip(set_parts.iter())
         .map(|(c, p)| format!("{} = {}", c, p))
-        .chain(raw_set)
-        .collect();
-    let set_str = set_static.join(", ");
+        .collect::<Vec<String>>()
+        .join(", ");
+
     let and_str = and_parts.join("");
 
     if parsed.tid.is_some() {
@@ -1470,13 +1464,12 @@ fn expand_update(input: TokenStream) -> TokenStream {
 
         // Store SQL fragments as literals for the generated format!() call
         let table_lit = syn::LitStr::new(&table_str, table.span());
-        let set_lit = syn::LitStr::new(&set_str, table.span());
+        let set_prefix_lit = syn::LitStr::new(&set_str_prefix, table.span());
         let pk_col_lit = syn::LitStr::new(&pk_col.value(), table.span());
         let pk_ph_lit = syn::LitStr::new(&pk_ph, table.span());
         let and_lit = syn::LitStr::new(&and_str, table.span());
         let tenant_ph_lit = syn::LitStr::new(&tenant_ph, table.span());
 
-        // E0716 fix: pre-bind all values to named locals
         let val_idents: Vec<syn::Ident> = (0..bind_vals.len())
             .map(|i| syn::Ident::new(&format!("__uv_{}", i), proc_macro2::Span::call_site()))
             .collect();
@@ -1484,43 +1477,102 @@ fn expand_update(input: TokenStream) -> TokenStream {
             .map(|i| syn::Ident::new(&format!("__ua_{}", i), proc_macro2::Span::call_site()))
             .collect();
 
-        let expanded = quote! {
-            {
-                #(let #val_idents = #bind_vals;)*
-                #(let #and_idents = #and_vals;)*
-                let __pkv = #pk_val;
-                let _sql = match #tid {
-                    Some(_tid) => format!(
-                        "UPDATE {} SET {} WHERE {} = {}{} AND tenant_id = {}",
-                        #table_lit, #set_lit, #pk_col_lit, #pk_ph_lit, #and_lit, #tenant_ph_lit
-                    ),
-                    None => format!(
-                        "UPDATE {} SET {} WHERE {} = {}{}",
-                        #table_lit, #set_lit, #pk_col_lit, #pk_ph_lit, #and_lit
-                    ),
-                };
-                let mut _q = sqlx::query(&_sql)#(.bind(#val_idents))*;
-                _q = _q.bind(__pkv);
-                #(_q = _q.bind(#and_idents);)*
-                if let Some(_tid) = #tid {
-                    _q = _q.bind(_tid);
+        let has_raw = !raw_pairs.is_empty();
+        let expanded = if has_raw {
+            let sep = if set_str_prefix.is_empty() { "" } else { ", " };
+            let raw_parts: Vec<String> = raw_col_names
+                .iter()
+                .zip(raw_exprs.iter())
+                .enumerate()
+                .map(|(i, (c, _))| {
+                    if i == 0 {
+                        format!("{} = {{}}", c.value())
+                    } else {
+                        format!(", {} = {{}}", c.value())
+                    }
+                })
+                .collect();
+            let raw_fmt = format!("{}{}", sep, raw_parts.join(""));
+            let raw_fmt_lit = syn::LitStr::new(&raw_fmt, table.span());
+            quote! {
+                {
+                    #(let #val_idents = #bind_vals;)*
+                    #(let #and_idents = #and_vals;)*
+                    let __pkv = #pk_val;
+                    let __raw_suffix = format!(#raw_fmt_lit #(, #raw_exprs)*);
+                    let __set = format!("{}{}", #set_prefix_lit, __raw_suffix);
+                    let _sql = match #tid {
+                        Some(_tid) => format!(
+                            "UPDATE {} SET {} WHERE {} = {}{} AND tenant_id = {}",
+                            #table_lit, __set, #pk_col_lit, #pk_ph_lit, #and_lit, #tenant_ph_lit
+                        ),
+                        None => format!(
+                            "UPDATE {} SET {} WHERE {} = {}{}",
+                            #table_lit, __set, #pk_col_lit, #pk_ph_lit, #and_lit
+                        ),
+                    };
+                    let mut _q = sqlx::query(&_sql)#(.bind(#val_idents))*;
+                    _q = _q.bind(__pkv);
+                    #(_q = _q.bind(#and_idents);)*
+                    if let Some(_tid) = #tid {
+                        _q = _q.bind(_tid);
+                    }
+                    _q.execute(#pool).await
                 }
-                _q.execute(#pool).await
+            }
+        } else {
+            quote! {
+                {
+                    #(let #val_idents = #bind_vals;)*
+                    #(let #and_idents = #and_vals;)*
+                    let __pkv = #pk_val;
+                    let _sql = match #tid {
+                        Some(_tid) => format!(
+                            "UPDATE {} SET {} WHERE {} = {}{} AND tenant_id = {}",
+                            #table_lit, #set_prefix_lit, #pk_col_lit, #pk_ph_lit, #and_lit, #tenant_ph_lit
+                        ),
+                        None => format!(
+                            "UPDATE {} SET {} WHERE {} = {}{}",
+                            #table_lit, #set_prefix_lit, #pk_col_lit, #pk_ph_lit, #and_lit
+                        ),
+                    };
+                    let mut _q = sqlx::query(&_sql)#(.bind(#val_idents))*;
+                    _q = _q.bind(__pkv);
+                    #(_q = _q.bind(#and_idents);)*
+                    if let Some(_tid) = #tid {
+                        _q = _q.bind(_tid);
+                    }
+                    _q.execute(#pool).await
+                }
             }
         };
         TokenStream::from(expanded)
     } else {
-        let sql = syn::LitStr::new(
-            &format!(
-                "UPDATE {} SET {} WHERE {} = {}{}",
-                table_str,
-                set_str,
-                pk_col.value(),
-                pk_ph,
-                and_str
-            ),
-            table.span(),
-        );
+        let has_raw = !raw_pairs.is_empty();
+        let sql = if has_raw {
+            syn::LitStr::new(
+                &format!(
+                    "UPDATE {} SET {{}}{{}} WHERE {} = {}{}",
+                    table_str,
+                    pk_col.value(),
+                    pk_ph,
+                    and_str
+                ),
+                table.span(),
+            )
+        } else {
+            syn::LitStr::new(
+                &format!(
+                    "UPDATE {} SET {} WHERE {} = {}{}",
+                    table_str,
+                    set_str_prefix,
+                    pk_col.value(),
+                    pk_ph,
+                    and_str
+                ),
+                table.span(),
+            )
+        };
         // E0716 fix: pre-bind all values to named locals
         let val_idents: Vec<syn::Ident> = (0..bind_vals.len())
             .map(|i| syn::Ident::new(&format!("__uv_{}", i), proc_macro2::Span::call_site()))
@@ -1529,12 +1581,42 @@ fn expand_update(input: TokenStream) -> TokenStream {
             .map(|i| syn::Ident::new(&format!("__ua_{}", i), proc_macro2::Span::call_site()))
             .collect();
 
-        let expanded = quote! {
-            {
-                #(let #val_idents = #bind_vals;)*
-                #(let #and_idents = #and_vals;)*
-                let __pkv = #pk_val;
-                sqlx::query(#sql)#(.bind(#val_idents))*.bind(__pkv)#(.bind(#and_idents))*.execute(#pool).await
+        let expanded = if has_raw {
+            let sep = if set_str_prefix.is_empty() { "" } else { ", " };
+            let raw_parts: Vec<String> = raw_col_names
+                .iter()
+                .zip(raw_exprs.iter())
+                .enumerate()
+                .map(|(i, (c, _))| {
+                    if i == 0 {
+                        format!("{} = {{}}", c.value())
+                    } else {
+                        format!(", {} = {{}}", c.value())
+                    }
+                })
+                .collect();
+            let raw_fmt = format!("{}{}", sep, raw_parts.join(""));
+            let raw_fmt_lit = syn::LitStr::new(&raw_fmt, table.span());
+            let set_prefix_lit = syn::LitStr::new(&set_str_prefix, table.span());
+            quote! {
+                {
+                    #(let #val_idents = #bind_vals;)*
+                    #(let #and_idents = #and_vals;)*
+                    let __pkv = #pk_val;
+                    let __raw_suffix = format!(#raw_fmt_lit #(, #raw_exprs)*);
+                    let __set = format!("{}{}", #set_prefix_lit, __raw_suffix);
+                    let _sql = format!(#sql, __set, "");
+                    sqlx::query(&_sql)#(.bind(#val_idents))*.bind(__pkv)#(.bind(#and_idents))*.execute(#pool).await
+                }
+            }
+        } else {
+            quote! {
+                {
+                    #(let #val_idents = #bind_vals;)*
+                    #(let #and_idents = #and_vals;)*
+                    let __pkv = #pk_val;
+                    sqlx::query(#sql)#(.bind(#val_idents))*.bind(__pkv)#(.bind(#and_idents))*.execute(#pool).await
+                }
             }
         };
         TokenStream::from(expanded)
@@ -2788,7 +2870,7 @@ struct UpdateInput {
     bind_vals: Vec<syn::Expr>,
     opt_cols: Vec<syn::LitStr>,
     opt_vals: Vec<syn::Expr>,
-    raw_pairs: Vec<(syn::LitStr, syn::LitStr)>,
+    raw_pairs: Vec<(syn::LitStr, syn::Expr)>,
     pk_col: syn::LitStr,
     pk_val: syn::Expr,
     and_cols: Vec<syn::LitStr>,
@@ -2815,16 +2897,16 @@ fn parse_kv_bracket(
     Ok((cols, vals))
 }
 
-/// Parse `["col" => "raw_sql", ...]` bracket content into (col, raw_value) pairs.
-/// Both sides are string literals — the right side is a raw SQL expression.
+/// Parse `["col" => expr, ...]` bracket content into (col, raw_expr) pairs.
+/// The left side is a string literal; the right side is any expression.
 fn parse_raw_bracket(
     content: &syn::parse::ParseBuffer,
-) -> syn::Result<Vec<(syn::LitStr, syn::LitStr)>> {
+) -> syn::Result<Vec<(syn::LitStr, syn::Expr)>> {
     let mut pairs = Vec::new();
     while !content.is_empty() {
         let col: syn::LitStr = content.parse()?;
         let _: syn::Token![=>] = content.parse()?;
-        let val: syn::LitStr = content.parse()?;
+        let val: syn::Expr = content.parse()?;
         pairs.push((col, val));
         let _ = content.parse::<syn::Token![,]>();
     }
@@ -2842,7 +2924,7 @@ impl syn::parse::Parse for UpdateInput {
         let mut bind_vals = Vec::new();
         let mut opt_cols = Vec::new();
         let mut opt_vals = Vec::new();
-        let mut raw_pairs: Vec<(syn::LitStr, syn::LitStr)> = Vec::new();
+        let mut raw_pairs: Vec<(syn::LitStr, syn::Expr)> = Vec::new();
         let mut pk_col = None;
         let mut pk_val = None;
         let mut and_cols = Vec::new();

@@ -89,7 +89,8 @@ pub async fn fetch_pending(pool: &crate::db::Pool, limit: i64) -> AppResult<Vec<
 pub async fn mark_processing(pool: &crate::db::Pool, id: SnowflakeId) -> AppResult<()> {
     raisfast_derive::check_schema!("wallet_outbox", "status", "updated_at", "id");
     let sql = format!(
-        "UPDATE wallet_outbox SET status = 'processing', updated_at = datetime('now') WHERE id = {} AND status IN ('pending', 'failed')",
+        "UPDATE wallet_outbox SET status = 'processing', updated_at = {} WHERE id = {} AND status IN ('pending', 'failed')",
+        crate::db::dialect::now_fn(),
         ph(1)
     );
     sqlx::query(&sql).bind(id).execute(pool).await?;
@@ -98,7 +99,7 @@ pub async fn mark_processing(pool: &crate::db::Pool, id: SnowflakeId) -> AppResu
 
 pub async fn mark_completed(pool: &crate::db::Pool, id: SnowflakeId) -> AppResult<()> {
     raisfast_derive::crud_update!(pool, "wallet_outbox",
-        raw: ["status" => "'completed'", "updated_at" => "datetime('now')"],
+        raw: ["status" => "'completed'", "updated_at" => crate::db::dialect::now_fn()],
         where: "id" => id
     )?;
     Ok(())
@@ -115,8 +116,9 @@ pub async fn mark_failed(pool: &crate::db::Pool, id: SnowflakeId, error: &str) -
         "id"
     );
     let sql = format!(
-        "UPDATE wallet_outbox SET status = CASE WHEN attempts + 1 >= max_attempts THEN 'dead' ELSE 'failed' END, attempts = attempts + 1, last_error = {}, updated_at = datetime('now') WHERE id = {}",
+        "UPDATE wallet_outbox SET status = CASE WHEN attempts + 1 >= max_attempts THEN 'dead' ELSE 'failed' END, attempts = attempts + 1, last_error = {}, updated_at = {} WHERE id = {}",
         ph(1),
+        crate::db::dialect::now_fn(),
         ph(2)
     );
     sqlx::query(&sql).bind(error).bind(id).execute(pool).await?;

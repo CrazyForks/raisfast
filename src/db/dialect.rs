@@ -166,6 +166,28 @@ pub fn returning_col(col: &str) -> String {
     }
 }
 
+/// Returns an INSERT IGNORE (or equivalent) SQL statement.
+///
+/// - SQLite: `INSERT OR IGNORE INTO {table} ({columns}) VALUES ({placeholders})`
+/// - MySQL: `INSERT IGNORE INTO {table} ({columns}) VALUES ({placeholders})`
+/// - PostgreSQL: `INSERT INTO {table} ({columns}) VALUES ({placeholders}) ON CONFLICT DO NOTHING`
+#[must_use]
+pub fn insert_ignore_sql(table: &str, columns: &str, placeholders: &str) -> String {
+    assert!(is_safe_identifier(table), "unsafe table name: {table}");
+    #[cfg(feature = "db-sqlite")]
+    {
+        format!("INSERT OR IGNORE INTO {table} ({columns}) VALUES ({placeholders})")
+    }
+    #[cfg(feature = "db-mysql")]
+    {
+        format!("INSERT IGNORE INTO {table} ({columns}) VALUES ({placeholders})")
+    }
+    #[cfg(feature = "db-postgres")]
+    {
+        format!("INSERT INTO {table} ({columns}) VALUES ({placeholders}) ON CONFLICT DO NOTHING")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

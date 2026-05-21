@@ -90,7 +90,7 @@ pub async fn update_status(
     raisfast_derive::crud_update!(
         pool, "payment_refunds",
         bind: ["status" => status],
-        raw: ["updated_at" => "datetime('now')"],
+        raw: ["updated_at" => crate::db::dialect::now_fn()],
         where: "id" => id,
         tenant: tenant_id
     )?;

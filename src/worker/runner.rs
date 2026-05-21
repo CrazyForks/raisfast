@@ -122,7 +122,7 @@ impl WorkerRunner {
 mod tests {
     use super::*;
     use crate::types::snowflake_id::SnowflakeId;
-    use crate::worker::{Job, LogJobHandler, NewJob, SqliteJobQueue};
+    use crate::worker::{DefaultJobQueue, Job, LogJobHandler, NewJob};
 
     struct FailHandler;
 
@@ -135,13 +135,13 @@ mod tests {
         }
     }
 
-    async fn setup() -> (Arc<SqliteJobQueue>, Arc<JobHandlerRegistry>) {
+    async fn setup() -> (Arc<DefaultJobQueue>, Arc<JobHandlerRegistry>) {
         let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
         sqlx::query(crate::db::schema::SCHEMA_SQL)
             .execute(&pool)
             .await
             .unwrap();
-        let queue = Arc::new(SqliteJobQueue::new(pool));
+        let queue = Arc::new(DefaultJobQueue::new(pool));
         let mut registry = JobHandlerRegistry::new();
         registry.register("generate_sitemap", Box::new(LogJobHandler));
         registry.register("send_welcome_email", Box::new(FailHandler));

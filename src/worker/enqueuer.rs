@@ -109,7 +109,7 @@ mod tests {
     use crate::models::media::Media;
     use crate::models::post::{CommentOpenStatus, PostStatus};
     use crate::models::user::{RegisteredVia, User, UserRole, UserStatus};
-    use crate::worker::SqliteJobQueue;
+    use crate::worker::DefaultJobQueue;
 
     fn ts() -> crate::utils::tz::Timestamp {
         "2025-01-01T00:00:00Z".parse().unwrap()
@@ -210,14 +210,14 @@ mod tests {
         }
     }
 
-    async fn setup() -> (EventBus, Arc<SqliteJobQueue>) {
+    async fn setup() -> (EventBus, Arc<DefaultJobQueue>) {
         let bus = EventBus::new(16);
         let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
         sqlx::query(crate::db::schema::SCHEMA_SQL)
             .execute(&pool)
             .await
             .unwrap();
-        let queue = Arc::new(SqliteJobQueue::new(pool));
+        let queue = Arc::new(DefaultJobQueue::new(pool));
         (bus, queue)
     }
 

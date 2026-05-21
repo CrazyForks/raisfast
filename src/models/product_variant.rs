@@ -136,7 +136,7 @@ pub async fn update(
             "sort_order" => cmd.sort_order,
             "is_active" => cmd.is_active,
         ],
-        raw: ["updated_at" => "datetime('now')"],
+        raw: ["updated_at" => crate::db::dialect::now_fn()],
         where: "id" => cmd.id,
         tenant: tenant_id
     )?;
@@ -148,7 +148,7 @@ pub async fn delete_by_id(
     id: SnowflakeId,
     tenant_id: Option<&str>,
 ) -> AppResult<bool> {
-    let result: sqlx::sqlite::SqliteQueryResult =
+    let result: crate::db::DbQueryResult =
         raisfast_derive::crud_delete!(pool, "product_variants", "id" => id, tenant: tenant_id)?;
     Ok(result.rows_affected() > 0)
 }

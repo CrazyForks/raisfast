@@ -932,7 +932,7 @@ mod tests {
             .await
             .unwrap();
 
-        let queue = std::sync::Arc::new(super::super::SqliteJobQueue::new(pool.clone()));
+        let queue = std::sync::Arc::new(super::super::DefaultJobQueue::new(pool.clone()));
 
         // Manually insert a schedule with next_run_at in the past
         let now = Utc::now();
@@ -979,7 +979,7 @@ mod tests {
             .await
             .unwrap();
 
-        let queue = std::sync::Arc::new(super::super::SqliteJobQueue::new(pool.clone()));
+        let queue = std::sync::Arc::new(super::super::DefaultJobQueue::new(pool.clone()));
 
         let now = Utc::now();
         let future = (now + chrono::Duration::hours(1)).to_rfc3339();
@@ -1323,7 +1323,7 @@ mod tests {
             .await
             .unwrap();
 
-        let queue = std::sync::Arc::new(super::super::SqliteJobQueue::new(pool.clone()));
+        let queue = std::sync::Arc::new(super::super::DefaultJobQueue::new(pool.clone()));
         let scheduler = CronScheduler::new(pool.clone(), queue, std::time::Duration::from_secs(60));
 
         let now = Utc::now();

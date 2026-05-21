@@ -808,11 +808,11 @@ async fn spawn_workers(
     cache: Arc<dyn crate::cache::CacheStore>,
 ) {
     use crate::worker::{
-        CronScheduler, JobEnqueuer, JobHandlerRegistry, PluginCronDispatcher, SqliteJobQueue,
+        CronScheduler, DefaultJobQueue, JobEnqueuer, JobHandlerRegistry, PluginCronDispatcher,
         WorkerRunner, seed_defaults,
     };
 
-    let queue = Arc::new(SqliteJobQueue::new(pool.clone()));
+    let queue = Arc::new(DefaultJobQueue::new(pool.clone()));
 
     if let Err(e) = async {
         sqlx::query(crate::db::schema::SCHEMA_SQL)

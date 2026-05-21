@@ -532,10 +532,14 @@ impl ContentRepository {
             let parsed_ids: Vec<i64> = ids.iter().filter_map(|s| s.parse().ok()).collect();
             let int_ids = find_existing_ids(&self.pool, target_table, &parsed_ids).await?;
             for target_int_id in int_ids {
-                let jsql = format!(
-                    "INSERT OR IGNORE INTO {through_table} ({source_col}, {target_col}) VALUES ({}, {})",
-                    crate::db::dialect::ph(1),
-                    crate::db::dialect::ph(2)
+                let jsql = crate::db::dialect::insert_ignore_sql(
+                    through_table,
+                    &format!("{source_col}, {target_col}"),
+                    &format!(
+                        "{}, {}",
+                        crate::db::dialect::ph(1),
+                        crate::db::dialect::ph(2)
+                    ),
                 );
                 sqlx::query(&jsql)
                     .bind(source_int_id)
@@ -820,10 +824,14 @@ impl ContentRepository {
             let parsed_ids: Vec<i64> = ids.iter().filter_map(|s| s.parse().ok()).collect();
             let int_ids = find_existing_ids(&self.pool, target_table, &parsed_ids).await?;
             for target_int_id in int_ids {
-                let jsql = format!(
-                    "INSERT OR IGNORE INTO {through_table} ({source_col}, {target_col}) VALUES ({}, {})",
-                    crate::db::dialect::ph(1),
-                    crate::db::dialect::ph(2)
+                let jsql = crate::db::dialect::insert_ignore_sql(
+                    through_table,
+                    &format!("{source_col}, {target_col}"),
+                    &format!(
+                        "{}, {}",
+                        crate::db::dialect::ph(1),
+                        crate::db::dialect::ph(2)
+                    ),
                 );
                 sqlx::query(&jsql)
                     .bind(source_int_id)

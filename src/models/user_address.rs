@@ -133,7 +133,7 @@ pub async fn update(
             "is_default" => cmd.is_default,
             "address_type" => &cmd.address_type,
         ],
-        raw: ["updated_at" => "datetime('now')"],
+        raw: ["updated_at" => crate::db::dialect::now_fn()],
         where: "id" => cmd.id,
         and: ["user_id" => cmd.user_id],
         tenant: tenant_id
@@ -147,7 +147,7 @@ pub async fn delete_by_id(
     user_id: SnowflakeId,
     tenant_id: Option<&str>,
 ) -> AppResult<bool> {
-    let result: sqlx::sqlite::SqliteQueryResult = raisfast_derive::crud_delete!(
+    let result: crate::db::DbQueryResult = raisfast_derive::crud_delete!(
         pool,
         "user_addresses",
         "id" => id,

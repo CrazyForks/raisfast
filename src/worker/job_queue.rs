@@ -14,11 +14,11 @@ use super::{
 };
 
 /// `SQLite` persisted job queue
-pub struct SqliteJobQueue {
+pub struct DefaultJobQueue {
     pool: Pool,
 }
 
-impl SqliteJobQueue {
+impl DefaultJobQueue {
     #[must_use]
     pub fn new(pool: Pool) -> Self {
         Self { pool }
@@ -26,7 +26,7 @@ impl SqliteJobQueue {
 }
 
 #[async_trait::async_trait]
-impl JobQueue for SqliteJobQueue {
+impl JobQueue for DefaultJobQueue {
     async fn enqueue(&self, new_job: NewJob) -> AppResult<()> {
         let id = crate::utils::id::new_id();
         let now = crate::utils::tz::now_utc();
@@ -411,13 +411,13 @@ mod tests {
     use crate::types::snowflake_id::SnowflakeId;
     use crate::worker::{Job, NewJob};
 
-    async fn setup() -> SqliteJobQueue {
+    async fn setup() -> DefaultJobQueue {
         let pool = Pool::connect("sqlite::memory:").await.unwrap();
         sqlx::query(crate::db::schema::SCHEMA_SQL)
             .execute(&pool)
             .await
             .unwrap();
-        SqliteJobQueue::new(pool)
+        DefaultJobQueue::new(pool)
     }
 
     fn sample_job() -> NewJob {
@@ -435,7 +435,7 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
-        let q = SqliteJobQueue::new(pool);
+        let q = DefaultJobQueue::new(pool);
         q.enqueue(sample_job()).await.unwrap();
         let jobs = q.dequeue(10).await.unwrap();
         assert_eq!(jobs.len(), 1);

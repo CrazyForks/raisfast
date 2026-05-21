@@ -11,9 +11,9 @@ mod dispatcher;
 mod enqueuer;
 mod handler;
 pub mod handlers;
+mod job_queue;
 mod runner;
 mod scheduler;
-mod sqlite_queue;
 
 use crate::types::snowflake_id::SnowflakeId;
 use serde::{Deserialize, Serialize};
@@ -42,6 +42,7 @@ define_enum!(
 pub use dispatcher::PluginCronDispatcher;
 pub use enqueuer::JobEnqueuer;
 pub use handler::{JobHandler, JobHandlerRegistry, LogJobHandler};
+pub use job_queue::DefaultJobQueue;
 pub use runner::WorkerRunner;
 pub use scheduler::{
     CronExecutionLog, CronSchedule, CronScheduler, cleanup_execution_logs, complete_execution_log,
@@ -50,7 +51,6 @@ pub use scheduler::{
     recent_execution_logs, remove_plugin_crons, seed_defaults, sync_plugin_crons, toggle_schedule,
     update_schedule,
 };
-pub use sqlite_queue::SqliteJobQueue;
 
 /// Job types and parameters
 #[derive(Debug, Clone, Serialize, Deserialize)]
