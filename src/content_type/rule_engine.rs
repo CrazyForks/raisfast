@@ -35,6 +35,7 @@
 //! database backends and adjust caching strategies. See `AppConfig::rule_engine`.
 
 use crate::config::app::RuleEngineConfig;
+use crate::db::DbDriver;
 use serde_json::Value;
 use std::cmp::Ordering;
 
@@ -579,17 +580,17 @@ impl<'a> SqlContext<'a> {
             Operand::StringLit(s) => {
                 let idx = self.next_param();
                 self.params.push(s.clone());
-                crate::db::dialect::ph(idx)
+                crate::db::Driver::ph(idx)
             }
             Operand::NumberLit(n) => {
                 let idx = self.next_param();
                 self.params.push(n.to_string());
-                crate::db::dialect::ph(idx)
+                crate::db::Driver::ph(idx)
             }
             Operand::BoolLit(b) => {
                 let idx = self.next_param();
                 self.params.push(if *b { "1" } else { "0" }.to_string());
-                crate::db::dialect::ph(idx)
+                crate::db::Driver::ph(idx)
             }
             Operand::Null => "NULL".to_string(),
             Operand::Length(inner) => {
@@ -621,12 +622,12 @@ pub fn compile_rule_sql(
         if expr_has_auth_id(&rule.expr) {
             let idx = offset + params.len() + 1;
             params.push(auth.user_id().map_or_else(String::new, |id| id.to_string()));
-            sql = sql.replace("__AUTH_ID__", &crate::db::dialect::ph(idx));
+            sql = sql.replace("__AUTH_ID__", &crate::db::Driver::ph(idx));
         }
         if expr_has_auth_role(&rule.expr) {
             let idx = offset + params.len() + 1;
             params.push(auth.role().to_string());
-            sql = sql.replace("__AUTH_ROLE__", &crate::db::dialect::ph(idx));
+            sql = sql.replace("__AUTH_ROLE__", &crate::db::Driver::ph(idx));
         }
     }
 

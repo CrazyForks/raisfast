@@ -1,4 +1,5 @@
 use super::*;
+use raisfast::DbDriver;
 
 async fn setup_with_post() -> (axum::Router, AppState, String, String) {
     let (mut app, state) = test_app().await;
@@ -73,7 +74,7 @@ async fn nested_comment() {
 
     let approve_sql = format!(
         "UPDATE comments SET status = 'approved' WHERE id = {}",
-        raisfast::db::dialect::ph(1)
+        raisfast::db::Driver::ph(1)
     );
     sqlx::query(&approve_sql)
         .bind(pid)

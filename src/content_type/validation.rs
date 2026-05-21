@@ -16,6 +16,7 @@ use sqlx::Row;
 
 use super::schema::{ContentTypeSchema, FieldType, RelationType};
 use crate::constants::COL_ID;
+use crate::db::DbDriver;
 use crate::db::Pool;
 use crate::errors::app_error::AppError;
 
@@ -379,15 +380,15 @@ async fn check_unique_fields(
                 "SELECT COUNT(*) as cnt FROM {} WHERE {} = {} AND {COL_ID} != {}",
                 ct.table,
                 field.name,
-                crate::db::dialect::ph(1),
-                crate::db::dialect::ph(2)
+                crate::db::Driver::ph(1),
+                crate::db::Driver::ph(2)
             );
         } else {
             sql_builder = format!(
                 "SELECT COUNT(*) as cnt FROM {} WHERE {} = {}",
                 ct.table,
                 field.name,
-                crate::db::dialect::ph(1)
+                crate::db::Driver::ph(1)
             );
         }
         let sql = &sql_builder;

@@ -1,5 +1,6 @@
 //! Email verification service.
 
+use crate::db::DbDriver;
 use crate::types::snowflake_id::SnowflakeId;
 use chrono::Utc;
 
@@ -51,8 +52,8 @@ pub async fn verify_email(pool: &crate::db::Pool, token: &str) -> AppResult<()> 
         let now = crate::utils::tz::now_utc();
         let sql = format!(
             "UPDATE email_verification_tokens SET verified_at = {} WHERE id = {}",
-            crate::db::dialect::ph(1),
-            crate::db::dialect::ph(2)
+            crate::db::Driver::ph(1),
+            crate::db::Driver::ph(2)
         );
         sqlx::query(&sql)
             .bind(now)
@@ -62,9 +63,9 @@ pub async fn verify_email(pool: &crate::db::Pool, token: &str) -> AppResult<()> 
 
         let sql = format!(
             "UPDATE user_credentials SET verified = 1, updated_at = {} WHERE user_id = {} AND auth_type = {}",
-            crate::db::dialect::ph(1),
-            crate::db::dialect::ph(2),
-            crate::db::dialect::ph(3)
+            crate::db::Driver::ph(1),
+            crate::db::Driver::ph(2),
+            crate::db::Driver::ph(3)
         );
         sqlx::query(&sql)
             .bind(now)
@@ -102,6 +103,7 @@ pub async fn resend_verification(
 
 #[cfg(test)]
 mod tests {
+    use crate::DbDriver;
     use crate::commands::CreateUserCmd;
 
     async fn setup_pool() -> crate::db::Pool {
@@ -164,7 +166,7 @@ mod tests {
             .unwrap();
         let sql = format!(
             "SELECT COUNT(*) FROM email_verification_tokens WHERE user_id = {} AND verified_at IS NULL",
-            crate::db::dialect::ph(1),
+            crate::db::Driver::ph(1),
         );
         let (count_before,): (i64,) = sqlx::query_as(&sql)
             .bind(user.id)
@@ -193,7 +195,7 @@ mod tests {
             .unwrap();
         let sql = format!(
             "SELECT token FROM email_verification_tokens WHERE user_id = {} AND verified_at IS NULL LIMIT 1",
-            crate::db::dialect::ph(1),
+            crate::db::Driver::ph(1),
         );
         let (token_str,): (String,) = sqlx::query_as(&sql)
             .bind(user.id)
@@ -232,7 +234,7 @@ mod tests {
             .unwrap();
         let sql = format!(
             "SELECT COUNT(*) FROM email_verification_tokens WHERE user_id = {} AND verified_at IS NULL",
-            crate::db::dialect::ph(1),
+            crate::db::Driver::ph(1),
         );
         let (count,): (i64,) = sqlx::query_as(&sql)
             .bind(user.id)
@@ -252,7 +254,7 @@ mod tests {
             .unwrap();
         let sql = format!(
             "SELECT token FROM email_verification_tokens WHERE user_id = {} AND verified_at IS NULL LIMIT 1",
-            crate::db::dialect::ph(1),
+            crate::db::Driver::ph(1),
         );
         let (token_str,): (String,) = sqlx::query_as(&sql)
             .bind(user.id)

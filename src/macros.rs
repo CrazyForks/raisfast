@@ -169,87 +169,70 @@ macro_rules! define_enum {
             }
         }
 
-        // ── sqlx support: SQLite ──────────────────────────────────────
+        $crate::__define_enum_sqlx!($name);
+    };
+}
+
+#[macro_export]
+macro_rules! __define_enum_sqlx {
+    ($name:ident) => {
         #[cfg(feature = "db-sqlite")]
-        impl sqlx::Type<sqlx::Sqlite> for $name {
-            fn type_info() -> sqlx::sqlite::SqliteTypeInfo {
-                <String as sqlx::Type<sqlx::Sqlite>>::type_info()
+        $crate::__define_enum_sqlx_impl! {
+            $name,
+            db = sqlx::Sqlite,
+            type_info = sqlx::sqlite::SqliteTypeInfo,
+            value_ref = sqlx::sqlite::SqliteValueRef<'_>,
+            arg_buf = Vec<sqlx::sqlite::SqliteArgumentValue<'q>>,
+        }
+
+        #[cfg(feature = "db-postgres")]
+        $crate::__define_enum_sqlx_impl! {
+            $name,
+            db = sqlx::Postgres,
+            type_info = sqlx::postgres::PgTypeInfo,
+            value_ref = sqlx::postgres::PgValueRef<'_>,
+            arg_buf = sqlx::postgres::PgArgumentBuffer,
+        }
+
+        #[cfg(feature = "db-mysql")]
+        $crate::__define_enum_sqlx_impl! {
+            $name,
+            db = sqlx::MySql,
+            type_info = sqlx::mysql::MySqlTypeInfo,
+            value_ref = sqlx::mysql::MySqlValueRef<'_>,
+            arg_buf = sqlx::mysql::MySqlArgumentBuffer,
+        }
+    };
+}
+
+#[macro_export]
+macro_rules! __define_enum_sqlx_impl {
+    (
+        $name:ident,
+        db = $db:ty,
+        type_info = $type_info:ty,
+        value_ref = $value_ref:ty,
+        arg_buf = $arg_buf:ty,
+    ) => {
+        impl sqlx::Type<$db> for $name {
+            fn type_info() -> $type_info {
+                <String as sqlx::Type<$db>>::type_info()
             }
         }
 
-        #[cfg(feature = "db-sqlite")]
-        impl sqlx::Decode<'_, sqlx::Sqlite> for $name {
-            fn decode(
-                value: sqlx::sqlite::SqliteValueRef<'_>,
-            ) -> Result<Self, sqlx::error::BoxDynError> {
-                let s = <String as sqlx::Decode<'_, sqlx::Sqlite>>::decode(value)?;
+        impl sqlx::Decode<'_, $db> for $name {
+            fn decode(value: $value_ref) -> Result<Self, sqlx::error::BoxDynError> {
+                let s = <String as sqlx::Decode<'_, $db>>::decode(value)?;
                 s.parse().map_err(Into::into)
             }
         }
 
-        #[cfg(feature = "db-sqlite")]
-        impl<'q> sqlx::Encode<'q, sqlx::Sqlite> for $name {
+        impl<'q> sqlx::Encode<'q, $db> for $name {
             fn encode_by_ref(
                 &self,
-                buf: &mut Vec<sqlx::sqlite::SqliteArgumentValue<'q>>,
+                buf: &mut $arg_buf,
             ) -> Result<sqlx::encode::IsNull, sqlx::error::BoxDynError> {
-                <&str as sqlx::Encode<'q, sqlx::Sqlite>>::encode(self.as_str(), buf)
-            }
-        }
-
-        // ── sqlx support: PostgreSQL ──────────────────────────────────
-        #[cfg(feature = "db-postgres")]
-        impl sqlx::Type<sqlx::Postgres> for $name {
-            fn type_info() -> sqlx::postgres::PgTypeInfo {
-                <String as sqlx::Type<sqlx::Postgres>>::type_info()
-            }
-        }
-
-        #[cfg(feature = "db-postgres")]
-        impl sqlx::Decode<'_, sqlx::Postgres> for $name {
-            fn decode(
-                value: sqlx::postgres::PgValueRef<'_>,
-            ) -> Result<Self, sqlx::error::BoxDynError> {
-                let s = <String as sqlx::Decode<'_, sqlx::Postgres>>::decode(value)?;
-                s.parse().map_err(Into::into)
-            }
-        }
-
-        #[cfg(feature = "db-postgres")]
-        impl<'q> sqlx::Encode<'q, sqlx::Postgres> for $name {
-            fn encode_by_ref(
-                &self,
-                buf: &mut sqlx::postgres::PgArgumentBuffer,
-            ) -> Result<sqlx::encode::IsNull, sqlx::error::BoxDynError> {
-                <&str as sqlx::Encode<'q, sqlx::Postgres>>::encode(self.as_str(), buf)
-            }
-        }
-
-        // ── sqlx support: MySQL ──────────────────────────────────────
-        #[cfg(feature = "db-mysql")]
-        impl sqlx::Type<sqlx::MySql> for $name {
-            fn type_info() -> sqlx::mysql::MySqlTypeInfo {
-                <String as sqlx::Type<sqlx::MySql>>::type_info()
-            }
-        }
-
-        #[cfg(feature = "db-mysql")]
-        impl sqlx::Decode<'_, sqlx::MySql> for $name {
-            fn decode(
-                value: sqlx::mysql::MySqlValueRef<'_>,
-            ) -> Result<Self, sqlx::error::BoxDynError> {
-                let s = <String as sqlx::Decode<'_, sqlx::MySql>>::decode(value)?;
-                s.parse().map_err(Into::into)
-            }
-        }
-
-        #[cfg(feature = "db-mysql")]
-        impl<'q> sqlx::Encode<'q, sqlx::MySql> for $name {
-            fn encode_by_ref(
-                &self,
-                buf: &mut sqlx::mysql::MySqlArgumentBuffer,
-            ) -> Result<sqlx::encode::IsNull, sqlx::error::BoxDynError> {
-                <&str as sqlx::Encode<'q, sqlx::MySql>>::encode(self.as_str(), buf)
+                <&str as sqlx::Encode<'q, $db>>::encode(self.as_str(), buf)
             }
         }
     };

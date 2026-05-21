@@ -308,7 +308,7 @@ mod tests {
 
     #[test]
     fn expect_affected_zero_rows() {
-        let result = sqlx::sqlite::SqliteQueryResult::default();
+        let result = crate::db::DbQueryResult::default();
         let outcome = AppError::expect_affected(&result, "user");
         assert!(outcome.is_err());
         match outcome.unwrap_err() {

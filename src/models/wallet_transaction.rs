@@ -140,6 +140,7 @@ pub async fn has_reversal_for(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::DbDriver;
 
     async fn setup_pool() -> crate::db::Pool {
         crate::test_pool!()
@@ -177,10 +178,10 @@ mod tests {
         let tx_no = format!("TX_{tx_id}");
         sqlx::query(&format!(
             "INSERT INTO wallet_transactions (id, wallet_id, user_id, entry_type, amount, balance_after, tx_type, currency, transaction_no, created_at) VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}, {})",
-            crate::db::dialect::ph(1), crate::db::dialect::ph(2), crate::db::dialect::ph(3),
-            crate::db::dialect::ph(4), crate::db::dialect::ph(5), crate::db::dialect::ph(6),
-            crate::db::dialect::ph(7), crate::db::dialect::ph(8), crate::db::dialect::ph(9),
-            crate::db::dialect::ph(10),
+            crate::db::Driver::ph(1), crate::db::Driver::ph(2), crate::db::Driver::ph(3),
+            crate::db::Driver::ph(4), crate::db::Driver::ph(5), crate::db::Driver::ph(6),
+            crate::db::Driver::ph(7), crate::db::Driver::ph(8), crate::db::Driver::ph(9),
+            crate::db::Driver::ph(10),
         ))
         .bind(tx_id)
         .bind(w.id)
@@ -297,10 +298,10 @@ mod tests {
         let rev_no = format!("REV_{rev_id}");
         sqlx::query(&format!(
             "INSERT INTO wallet_transactions (id, wallet_id, user_id, entry_type, amount, balance_after, tx_type, currency, transaction_no, related_tx_id, created_at) VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {})",
-            crate::db::dialect::ph(1), crate::db::dialect::ph(2), crate::db::dialect::ph(3),
-            crate::db::dialect::ph(4), crate::db::dialect::ph(5), crate::db::dialect::ph(6),
-            crate::db::dialect::ph(7), crate::db::dialect::ph(8), crate::db::dialect::ph(9),
-            crate::db::dialect::ph(10), crate::db::dialect::ph(11),
+            crate::db::Driver::ph(1), crate::db::Driver::ph(2), crate::db::Driver::ph(3),
+            crate::db::Driver::ph(4), crate::db::Driver::ph(5), crate::db::Driver::ph(6),
+            crate::db::Driver::ph(7), crate::db::Driver::ph(8), crate::db::Driver::ph(9),
+            crate::db::Driver::ph(10), crate::db::Driver::ph(11),
         ))
         .bind(rev_id)
         .bind(tx.wallet_id)

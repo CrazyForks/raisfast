@@ -6,6 +6,7 @@ use super::schema::{ContentTypeSchema, FieldType, RelationType};
 
 use crate::aspects::ColumnDef;
 use crate::constants::COL_ID;
+use crate::db::DbDriver;
 
 /// Generate CREATE TABLE SQL from a content type definition
 ///
@@ -14,12 +15,12 @@ use crate::constants::COL_ID;
 #[must_use]
 pub fn generate_create_table(ct: &ContentTypeSchema, protocol_columns: &[ColumnDef]) -> String {
     let table = ct.table.as_str();
-    if !crate::db::dialect::is_safe_identifier(table) {
+    if !crate::db::driver::is_safe_identifier(table) {
         return format!("-- unsafe table name skipped: {table}");
     }
     let mut cols = Vec::new();
 
-    cols.push(format!("    {COL_ID} INTEGER PRIMARY KEY"));
+    cols.push(format!("    {COL_ID} {}", crate::db::Driver::pk_type()));
 
     for field in &ct.fields {
         if field.field_type == FieldType::Relation {
@@ -34,14 +35,15 @@ pub fn generate_create_table(ct: &ContentTypeSchema, protocol_columns: &[ColumnD
                         .relation
                         .as_ref()
                         .map_or("users", |r| r.target.as_str());
-                    if !crate::db::dialect::is_safe_identifier(&fk)
-                        || !crate::db::dialect::is_safe_identifier(target_table)
+                    if !crate::db::driver::is_safe_identifier(&fk)
+                        || !crate::db::driver::is_safe_identifier(target_table)
                     {
                         continue;
                     }
                     let not_null = if field.required { " NOT NULL" } else { "" };
+                    let fk_type = crate::db::Driver::fk_type();
                     cols.push(format!(
-                        "    {fk} INTEGER{not_null} REFERENCES {target_table}(id)"
+                        "    {fk} {fk_type}{not_null} REFERENCES {target_table}(id)"
                     ));
                 }
                 Some(RelationType::ManyToMany | RelationType::ManyWay) => {
@@ -105,7 +107,7 @@ pub fn generate_create_table(ct: &ContentTypeSchema, protocol_columns: &[ColumnD
 pub fn generate_junction_tables(ct: &ContentTypeSchema) -> Vec<String> {
     let mut tables = Vec::new();
 
-    let is_safe = crate::db::dialect::is_safe_identifier;
+    let is_safe = crate::db::driver::is_safe_identifier;
     for field in &ct.fields {
         if let Some(ref rel) = field.relation
             && matches!(
@@ -129,12 +131,14 @@ pub fn generate_junction_tables(ct: &ContentTypeSchema) -> Vec<String> {
                 continue;
             }
 
+            let fk_t = crate::db::Driver::fk_type();
             let sql = format!(
                 "CREATE TABLE IF NOT EXISTS {through} (\n\
-                 {source_col} INTEGER NOT NULL REFERENCES {source_table}({COL_ID}),\n\
-                 {target_col} INTEGER NOT NULL REFERENCES {target_table}({COL_ID}),\n\
+                 {source_col} {fk_t} NOT NULL REFERENCES {source_table}({COL_ID}),\n\
+                 {target_col} {fk_t} NOT NULL REFERENCES {target_table}({COL_ID}),\n\
                  PRIMARY KEY ({source_col}, {target_col})\n\
                  )",
+                fk_t = fk_t,
                 through = through,
                 source_col = source_col,
                 source_table = ct.table,
@@ -361,50 +365,12 @@ pub fn generate_rebuild_migration(
     sql.push_str("-- Back up your database before running.\n");
     sql.push_str("--\n\n");
 
-    #[cfg(feature = "db-sqlite")]
-    {
-        sql.push_str("PRAGMA foreign_keys = OFF;\n\n");
-        sql.push_str("BEGIN TRANSACTION;\n\n");
-        sql.push_str(&create);
-        sql.push_str(&format!("INSERT INTO {temp} SELECT * FROM {table};\n\n"));
-        sql.push_str(&format!("DROP TABLE {table};\n\n"));
-        sql.push_str(&format!("ALTER TABLE {temp} RENAME TO {table};\n\n"));
-        for idx in &indexes {
-            sql.push_str(idx);
-            sql.push_str(";\n");
-        }
-        sql.push_str("\nPRAGMA foreign_key_check;\n\n");
-        sql.push_str("COMMIT;\n\n");
-        sql.push_str("PRAGMA foreign_keys = ON;\n");
-    }
-
-    #[cfg(feature = "db-postgres")]
-    {
-        sql.push_str("BEGIN;\n\n");
-        sql.push_str(&create);
-        sql.push_str(&format!("INSERT INTO {temp} SELECT * FROM {table};\n\n"));
-        sql.push_str(&format!("DROP TABLE {table};\n\n"));
-        sql.push_str(&format!("ALTER TABLE {temp} RENAME TO {table};\n\n"));
-        for idx in &indexes {
-            sql.push_str(idx);
-            sql.push_str(";\n");
-        }
-        sql.push_str("\nCOMMIT;\n");
-    }
-
-    #[cfg(feature = "db-mysql")]
-    {
-        sql.push_str("SET FOREIGN_KEY_CHECKS = 0;\n\n");
-        sql.push_str(&create);
-        sql.push_str(&format!("INSERT INTO {temp} SELECT * FROM {table};\n\n"));
-        sql.push_str(&format!("DROP TABLE {table};\n\n"));
-        sql.push_str(&format!("ALTER TABLE {temp} RENAME TO {table};\n\n"));
-        for idx in &indexes {
-            sql.push_str(idx);
-            sql.push_str(";\n");
-        }
-        sql.push_str("\nSET FOREIGN_KEY_CHECKS = 1;\n");
-    }
+    sql.push_str(&crate::db::Driver::rebuild_wrapper_sql(
+        table,
+        &temp,
+        &format!("{create}\n"),
+        &indexes,
+    ));
 
     sql
 }
@@ -416,12 +382,7 @@ fn generate_create_table_for_rebuild(
 ) -> String {
     let mut cols = Vec::new();
 
-    #[cfg(feature = "db-sqlite")]
-    cols.push(format!("    {COL_ID} INTEGER PRIMARY KEY"));
-    #[cfg(feature = "db-postgres")]
-    cols.push(format!("    {COL_ID} BIGINT PRIMARY KEY"));
-    #[cfg(feature = "db-mysql")]
-    cols.push(format!("    {COL_ID} BIGINT PRIMARY KEY"));
+    cols.push(format!("    {COL_ID} {}", crate::db::Driver::pk_type()));
 
     for field in &ct.fields {
         if field.field_type == FieldType::Relation {
@@ -437,8 +398,9 @@ fn generate_create_table_for_rebuild(
                         .as_ref()
                         .map_or("users", |r| r.target.as_str());
                     let not_null = if field.required { " NOT NULL" } else { "" };
+                    let fk_type = crate::db::Driver::fk_type();
                     cols.push(format!(
-                        "    {fk} INTEGER{not_null} REFERENCES {target_table}(id)"
+                        "    {fk} {fk_type}{not_null} REFERENCES {target_table}(id)"
                     ));
                 }
                 Some(RelationType::OneToMany) => {}

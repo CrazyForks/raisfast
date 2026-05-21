@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use crate::db::Pool;
-use crate::db::dialect::ph;
+use crate::db::{DbDriver, Driver};
 use crate::types::snowflake_id::SnowflakeId;
 use crate::utils::tz::Timestamp;
 
@@ -136,13 +136,13 @@ pub async fn create_definition(
     let now = crate::utils::tz::now_utc();
     let sql = format!(
         "INSERT INTO workflow_definitions (id, name, description, steps, initial_step, created_at, updated_at) VALUES ({}, {}, {}, {}, {}, {}, {})",
-        ph(1),
-        ph(2),
-        ph(3),
-        ph(4),
-        ph(5),
-        ph(6),
-        ph(7)
+        Driver::ph(1),
+        Driver::ph(2),
+        Driver::ph(3),
+        Driver::ph(4),
+        Driver::ph(5),
+        Driver::ph(6),
+        Driver::ph(7)
     );
     sqlx::query(&sql)
         .bind(id)
@@ -166,7 +166,7 @@ pub async fn get_definition(
 ) -> anyhow::Result<Option<WorkflowDefinition>> {
     let sql = format!(
         "SELECT id, name, description, steps, initial_step, version, enabled, created_at, updated_at FROM workflow_definitions WHERE id = {}",
-        ph(1)
+        Driver::ph(1)
     );
     let row = sqlx::query_as::<_, WorkflowDefinition>(&sql)
         .bind(id)
@@ -186,7 +186,10 @@ pub async fn list_definitions(pool: &Pool) -> anyhow::Result<Vec<WorkflowDefinit
 
 /// Delete workflow definition
 pub async fn delete_definition(pool: &Pool, id: SnowflakeId) -> anyhow::Result<()> {
-    let sql = format!("DELETE FROM workflow_definitions WHERE id = {}", ph(1));
+    let sql = format!(
+        "DELETE FROM workflow_definitions WHERE id = {}",
+        Driver::ph(1)
+    );
     sqlx::query(&sql).bind(id).execute(pool).await?;
     Ok(())
 }
@@ -203,13 +206,13 @@ pub async fn create_instance(
     let ctx_str = serde_json::to_string(context)?;
     let sql = format!(
         "INSERT INTO workflow_instances (id, definition_id, status, context, triggered_by, started_at, updated_at) VALUES ({}, {}, {}, {}, {}, {}, {})",
-        ph(1),
-        ph(2),
-        ph(3),
-        ph(4),
-        ph(5),
-        ph(6),
-        ph(7)
+        Driver::ph(1),
+        Driver::ph(2),
+        Driver::ph(3),
+        Driver::ph(4),
+        Driver::ph(5),
+        Driver::ph(6),
+        Driver::ph(7)
     );
     sqlx::query(&sql)
         .bind(id)
@@ -233,7 +236,7 @@ pub async fn get_instance(
 ) -> anyhow::Result<Option<WorkflowInstance>> {
     let sql = format!(
         "SELECT id, definition_id, status, current_step, context, triggered_by, started_at, completed_at, updated_at FROM workflow_instances WHERE id = {}",
-        ph(1)
+        Driver::ph(1)
     );
     let row = sqlx::query_as::<_, WorkflowInstance>(&sql)
         .bind(id)
@@ -253,12 +256,12 @@ pub async fn list_instances(
     let offset = (page - 1) * page_size;
     let sql = format!(
         "SELECT id, definition_id, status, current_step, context, triggered_by, started_at, completed_at, updated_at FROM workflow_instances WHERE ({} IS NULL OR definition_id = {}) AND ({} IS NULL OR status = {}) ORDER BY started_at DESC LIMIT {} OFFSET {}",
-        ph(1),
-        ph(2),
-        ph(3),
-        ph(4),
-        ph(5),
-        ph(6)
+        Driver::ph(1),
+        Driver::ph(2),
+        Driver::ph(3),
+        Driver::ph(4),
+        Driver::ph(5),
+        Driver::ph(6)
     );
     let rows = sqlx::query_as::<_, WorkflowInstance>(&sql)
         .bind(definition_id)
@@ -272,10 +275,10 @@ pub async fn list_instances(
 
     let count_sql = format!(
         "SELECT COUNT(*) as count FROM workflow_instances WHERE ({} IS NULL OR definition_id = {}) AND ({} IS NULL OR status = {})",
-        ph(1),
-        ph(2),
-        ph(3),
-        ph(4)
+        Driver::ph(1),
+        Driver::ph(2),
+        Driver::ph(3),
+        Driver::ph(4)
     );
     let (count,): (i64,) = sqlx::query_as(&count_sql)
         .bind(definition_id)
@@ -308,12 +311,12 @@ pub async fn update_instance_step(
     };
     let sql = format!(
         "UPDATE workflow_instances SET status = {}, current_step = {}, context = {}, completed_at = COALESCE({}, completed_at), updated_at = {} WHERE id = {}",
-        ph(1),
-        ph(2),
-        ph(3),
-        ph(4),
-        ph(5),
-        ph(6)
+        Driver::ph(1),
+        Driver::ph(2),
+        Driver::ph(3),
+        Driver::ph(4),
+        Driver::ph(5),
+        Driver::ph(6)
     );
     sqlx::query(&sql)
         .bind(status)
@@ -340,13 +343,13 @@ pub async fn create_step_log(
     let input_str = input.map(|v| serde_json::to_string(v).unwrap_or_default());
     let sql = format!(
         "INSERT INTO workflow_step_logs (id, instance_id, step_id, step_name, status, input, started_at) VALUES ({}, {}, {}, {}, {}, {}, {})",
-        ph(1),
-        ph(2),
-        ph(3),
-        ph(4),
-        ph(5),
-        ph(6),
-        ph(7)
+        Driver::ph(1),
+        Driver::ph(2),
+        Driver::ph(3),
+        Driver::ph(4),
+        Driver::ph(5),
+        Driver::ph(6),
+        Driver::ph(7)
     );
     sqlx::query(&sql)
         .bind(id)
@@ -360,7 +363,7 @@ pub async fn create_step_log(
         .await?;
     let fetch_sql = format!(
         "SELECT id, instance_id, step_id, step_name, status, input, output, error, started_at, completed_at FROM workflow_step_logs WHERE id = {}",
-        ph(1)
+        Driver::ph(1)
     );
     sqlx::query_as::<_, StepLog>(&fetch_sql)
         .bind(id)
@@ -379,10 +382,10 @@ pub async fn complete_step_log(
     let output_str = output.map(|v| serde_json::to_string(v).unwrap_or_default());
     let sql = format!(
         "UPDATE workflow_step_logs SET status = {}, output = {}, completed_at = {} WHERE id = {}",
-        ph(1),
-        ph(2),
-        ph(3),
-        ph(4)
+        Driver::ph(1),
+        Driver::ph(2),
+        Driver::ph(3),
+        Driver::ph(4)
     );
     sqlx::query(&sql)
         .bind(WorkflowStepStatus::Completed)
@@ -399,10 +402,10 @@ pub async fn fail_step_log(pool: &Pool, id: SnowflakeId, error: &str) -> anyhow:
     let now = crate::utils::tz::now_utc();
     let sql = format!(
         "UPDATE workflow_step_logs SET status = {}, error = {}, completed_at = {} WHERE id = {}",
-        ph(1),
-        ph(2),
-        ph(3),
-        ph(4)
+        Driver::ph(1),
+        Driver::ph(2),
+        Driver::ph(3),
+        Driver::ph(4)
     );
     sqlx::query(&sql)
         .bind(WorkflowStepStatus::Failed)
@@ -418,7 +421,7 @@ pub async fn fail_step_log(pool: &Pool, id: SnowflakeId, error: &str) -> anyhow:
 pub async fn list_step_logs(pool: &Pool, instance_id: SnowflakeId) -> anyhow::Result<Vec<StepLog>> {
     let sql = format!(
         "SELECT id, instance_id, step_id, step_name, status, input, output, error, started_at, completed_at FROM workflow_step_logs WHERE instance_id = {} ORDER BY started_at ASC",
-        ph(1)
+        Driver::ph(1)
     );
     let rows = sqlx::query_as::<_, StepLog>(&sql)
         .bind(instance_id)

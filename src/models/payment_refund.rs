@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
-use crate::db::dialect::ph;
 use crate::db::tenant::tenant_filter_ph;
+use crate::db::{DbDriver, Driver};
 use crate::errors::app_error::AppResult;
 use crate::types::snowflake_id::SnowflakeId;
 use crate::utils::tz::Timestamp;
@@ -90,7 +90,7 @@ pub async fn update_status(
     raisfast_derive::crud_update!(
         pool, "payment_refunds",
         bind: ["status" => status],
-        raw: ["updated_at" => crate::db::dialect::now_fn()],
+        raw: ["updated_at" => crate::db::Driver::now_fn()],
         where: "id" => id,
         tenant: tenant_id
     )?;
@@ -104,7 +104,7 @@ pub async fn sum_refunded_by_order(
 ) -> AppResult<i64> {
     let sql = format!(
         "SELECT COALESCE(SUM(amount), 0) as total FROM payment_refunds WHERE payment_order_id = {} AND status IN ('pending', 'processing', 'succeeded'){}",
-        ph(1),
+        Driver::ph(1),
         tenant_filter_ph(tenant_id, 2)
     );
     let (total,) = raisfast_derive::crud_query!(
@@ -173,13 +173,13 @@ pub async fn tx_sum_refunded_by_order(
     let sql = if tenant_id.is_some() {
         format!(
             "SELECT COALESCE(SUM(amount), 0) FROM payment_refunds WHERE payment_order_id = {} AND tenant_id = {} AND status IN ('succeeded', 'pending', 'processing')",
-            ph(1),
-            ph(2)
+            Driver::ph(1),
+            Driver::ph(2)
         )
     } else {
         format!(
             "SELECT COALESCE(SUM(amount), 0) FROM payment_refunds WHERE payment_order_id = {} AND status IN ('succeeded', 'pending', 'processing')",
-            ph(1)
+            Driver::ph(1)
         )
     };
     let (total,) = raisfast_derive::crud_query!(

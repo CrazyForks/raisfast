@@ -7,6 +7,7 @@
 use std::path::Path;
 
 use raisfast::config::app::AppConfig;
+use raisfast::db::{DbDriver, Driver};
 
 // ── Result types ─────────────────────────────────────────────
 
@@ -316,34 +317,8 @@ async fn check_core_tables(pool: &raisfast::db::Pool) -> Vec<String> {
 
     let mut missing = Vec::new();
     for table in &core_tables {
-        let result: Result<(i64,), sqlx::Error> = {
-            #[cfg(feature = "db-sqlite")]
-            {
-                sqlx::query_as(&format!(
-                    "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='{table}'"
-                ))
-                .fetch_one(pool)
-                .await
-            }
-            #[cfg(feature = "db-postgres")]
-            {
-                sqlx::query_as(&format!(
-                    "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public' AND table_name = '{table}'"
-                ))
-                .fetch_one(pool)
-                .await
-            }
-            #[cfg(feature = "db-mysql")]
-            {
-                sqlx::query_as(&format!(
-                    "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = '{table}'"
-                ))
-                .fetch_one(pool)
-                .await
-            }
-        };
-
-        if result.map(|(c,)| c).unwrap_or(0) == 0 {
+        let exists = Driver::table_exists(pool, table).await;
+        if !exists {
             missing.push(table.to_string());
         }
     }

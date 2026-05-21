@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use crate::config::app::AppConfig;
 use crate::db::Pool;
-use crate::db::dialect::ph;
+use crate::db::{DbDriver, Driver};
 use crate::errors::app_error::AppResult;
 use crate::models::payment_channel;
 use crate::models::payment_order::PaymentStatus;
@@ -31,7 +31,7 @@ impl JobHandler for ExpirePaymentOrdersHandler {
 
         let sql = format!(
             "SELECT * FROM payment_orders WHERE status = 'pending' AND created_at < {} LIMIT 500",
-            ph(1)
+            Driver::ph(1)
         );
         let orders: Vec<crate::models::payment_order::PaymentOrder> = sqlx::query_as(&sql)
             .bind(cutoff.format("%Y-%m-%dT%H:%M:%SZ").to_string())

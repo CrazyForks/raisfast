@@ -440,7 +440,7 @@ impl ContentTypeSchema {
 
         let mut fields = Vec::new();
         for (raw_name, value) in &toml.fields {
-            let name = crate::db::dialect::sanitize_identifier(raw_name).ok_or_else(|| {
+            let name = crate::db::driver::sanitize_identifier(raw_name).ok_or_else(|| {
                 AppError::Internal(anyhow::anyhow!(
                     "field name '{raw_name}' contains invalid characters (only alphanumeric and underscore allowed)"
                 ))
@@ -681,7 +681,7 @@ impl ContentTypeSchema {
     fn validate_indexes(mut indexes: Vec<IndexDef>) -> Result<Vec<IndexDef>, AppError> {
         for idx in &mut indexes {
             for field in &mut idx.fields {
-                *field = crate::db::dialect::sanitize_identifier(field)
+                *field = crate::db::driver::sanitize_identifier(field)
                     .ok_or_else(|| {
                         AppError::Internal(anyhow::anyhow!(
                             "index field '{field}' contains invalid characters"
@@ -1042,7 +1042,7 @@ fn parse_relation_config(table: &toml::Table) -> Result<RelationConfig, AppError
     };
 
     let raw_target = table.get("target").and_then(|v| v.as_str()).unwrap_or("");
-    let target = crate::db::dialect::sanitize_identifier(raw_target).ok_or_else(|| {
+    let target = crate::db::driver::sanitize_identifier(raw_target).ok_or_else(|| {
         AppError::Internal(anyhow::anyhow!(
             "relation target '{raw_target}' contains invalid characters"
         ))
@@ -1052,7 +1052,7 @@ fn parse_relation_config(table: &toml::Table) -> Result<RelationConfig, AppError
         .get("foreign_key")
         .and_then(|v| v.as_str())
         .map(|raw_fk| {
-            crate::db::dialect::sanitize_identifier(raw_fk).ok_or_else(|| {
+            crate::db::driver::sanitize_identifier(raw_fk).ok_or_else(|| {
                 AppError::Internal(anyhow::anyhow!(
                     "relation foreign_key '{raw_fk}' contains invalid characters"
                 ))
@@ -1065,7 +1065,7 @@ fn parse_relation_config(table: &toml::Table) -> Result<RelationConfig, AppError
         .get("through")
         .and_then(|v| v.as_str())
         .map(|raw_through| {
-            crate::db::dialect::sanitize_identifier(raw_through).ok_or_else(|| {
+            crate::db::driver::sanitize_identifier(raw_through).ok_or_else(|| {
                 AppError::Internal(anyhow::anyhow!(
                     "relation through '{raw_through}' contains invalid characters"
                 ))

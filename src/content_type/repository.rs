@@ -1,7 +1,7 @@
 //! Generic content repository — dynamic SQL CRUD
 //!
 //! Provides unified CRUD operations for all content types, dynamically building SQL.
-//! Uses `crate::db::dialect::ph()` to support multi-database placeholders.
+//! Uses `crate::db::Driver::ph()` to support multi-database placeholders.
 //!
 //! Query results are extracted column-by-column via `Row::get()`, building `serde_json::Value`
 //! directly, avoiding the performance overhead of `json_object()` double serialization.
@@ -13,6 +13,7 @@ use serde_json::{Value, json};
 
 use super::schema::{ContentTypeSchema, FieldType, RelationType};
 use crate::constants::*;
+use crate::db::DbDriver;
 use crate::db::DbRow;
 use crate::db::Pool;
 use crate::errors::app_error::AppError;
@@ -108,7 +109,7 @@ impl ContentRepository {
         if let Some(ref tid) = tid {
             where_clauses.push(format!(
                 "{COL_TENANT_ID} = {}",
-                crate::db::dialect::ph(param_idx)
+                crate::db::Driver::ph(param_idx)
             ));
             params.push(json!(tid));
             param_idx += 1;
@@ -121,8 +122,8 @@ impl ContentRepository {
                     .as_ref()
                     .is_some_and(|r| r.foreign_key.as_deref() == Some(key.as_str()))
             });
-            if (matches_field || matches_fk) && crate::db::dialect::is_safe_identifier(key) {
-                where_clauses.push(format!("{key} = {}", crate::db::dialect::ph(param_idx)));
+            if (matches_field || matches_fk) && crate::db::driver::is_safe_identifier(key) {
+                where_clauses.push(format!("{key} = {}", crate::db::Driver::ph(param_idx)));
                 params.push(val.clone());
                 param_idx += 1;
             }
@@ -132,8 +133,8 @@ impl ContentRepository {
             where_clauses.push(format!(
                 "json_extract({}, {}) = {}",
                 COL_META,
-                crate::db::dialect::ph(param_idx),
-                crate::db::dialect::ph(param_idx + 1)
+                crate::db::Driver::ph(param_idx),
+                crate::db::Driver::ph(param_idx + 1)
             ));
             params.push(json!(format!("$.{path}")));
             params.push(json!(val));
@@ -221,10 +222,10 @@ impl ContentRepository {
         let select_cols = columns.join(", ");
         let tid = self.resolve_tenant(ct, tenant_id);
 
-        let mut where_parts = vec![format!("{COL_ID} = {}", crate::db::dialect::ph(1))];
+        let mut where_parts = vec![format!("{COL_ID} = {}", crate::db::Driver::ph(1))];
         let mut idx = 2;
         if tid.is_some() {
-            where_parts.push(format!("{COL_TENANT_ID} = {}", crate::db::dialect::ph(idx)));
+            where_parts.push(format!("{COL_TENANT_ID} = {}", crate::db::Driver::ph(idx)));
             idx += 1;
         }
 
@@ -265,7 +266,7 @@ impl ContentRepository {
 
         let mut where_parts = Vec::new();
         if tid.is_some() {
-            where_parts.push(format!("{COL_TENANT_ID} = {}", crate::db::dialect::ph(1)));
+            where_parts.push(format!("{COL_TENANT_ID} = {}", crate::db::Driver::ph(1)));
         }
 
         let columns = ct.column_names(None, true);
@@ -329,7 +330,7 @@ impl ContentRepository {
         let select_cols = columns.join(", ");
         let tid = self.resolve_tenant(ct, tenant_id);
 
-        let mut where_parts = vec![format!("slug = {}", crate::db::dialect::ph(1))];
+        let mut where_parts = vec![format!("slug = {}", crate::db::Driver::ph(1))];
 
         for (column, condition) in ct.query_filters() {
             where_parts.push(format!("{} {}", column, condition));
@@ -339,7 +340,7 @@ impl ContentRepository {
         }
 
         if tid.is_some() {
-            where_parts.push(format!("{COL_TENANT_ID} = {}", crate::db::dialect::ph(2)));
+            where_parts.push(format!("{COL_TENANT_ID} = {}", crate::db::Driver::ph(2)));
         }
 
         let sql = format!(
@@ -395,13 +396,13 @@ impl ContentRepository {
         let mut idx = 1;
 
         cols.push(COL_ID.to_string());
-        placeholders.push(crate::db::dialect::ph(idx));
+        placeholders.push(crate::db::Driver::ph(idx));
         idx += 1;
         values.push(new_id.to_string());
 
         if let Some(ref tid) = tid {
             cols.push(COL_TENANT_ID.to_string());
-            placeholders.push(crate::db::dialect::ph(idx));
+            placeholders.push(crate::db::Driver::ph(idx));
             idx += 1;
             values.push(tid.clone());
         }
@@ -462,7 +463,7 @@ impl ContentRepository {
             {
                 continue;
             }
-            if !crate::db::dialect::is_safe_identifier(key) {
+            if !crate::db::driver::is_safe_identifier(key) {
                 continue;
             }
 
@@ -470,7 +471,7 @@ impl ContentRepository {
                 let target_id = value_to_string(val);
                 if target_id.is_empty() {
                     cols.push(fk_col.clone());
-                    placeholders.push(crate::db::dialect::ph(idx));
+                    placeholders.push(crate::db::Driver::ph(idx));
                     idx += 1;
                     values.push(String::new());
                 } else {
@@ -483,7 +484,7 @@ impl ContentRepository {
                             ))
                         })?;
                     cols.push(fk_col.clone());
-                    placeholders.push(crate::db::dialect::ph(idx));
+                    placeholders.push(crate::db::Driver::ph(idx));
                     idx += 1;
                     values.push(int_id.to_string());
                 }
@@ -491,7 +492,7 @@ impl ContentRepository {
             }
 
             cols.push(key.clone());
-            placeholders.push(crate::db::dialect::ph(idx));
+            placeholders.push(crate::db::Driver::ph(idx));
             idx += 1;
             values.push(value_to_string(val));
         }
@@ -513,9 +514,9 @@ impl ContentRepository {
         let source_int_id = new_id;
 
         for (field_name, through_table, target_table, source_col, target_col) in &junction_fields {
-            if !crate::db::dialect::is_safe_identifier(through_table)
-                || !crate::db::dialect::is_safe_identifier(source_col)
-                || !crate::db::dialect::is_safe_identifier(target_col)
+            if !crate::db::driver::is_safe_identifier(through_table)
+                || !crate::db::driver::is_safe_identifier(source_col)
+                || !crate::db::driver::is_safe_identifier(target_col)
             {
                 tracing::warn!(
                     "skipping junction with unsafe identifier: through={through_table}, source={source_col}, target={target_col}"
@@ -532,14 +533,10 @@ impl ContentRepository {
             let parsed_ids: Vec<i64> = ids.iter().filter_map(|s| s.parse().ok()).collect();
             let int_ids = find_existing_ids(&self.pool, target_table, &parsed_ids).await?;
             for target_int_id in int_ids {
-                let jsql = crate::db::dialect::insert_ignore_sql(
+                let jsql = crate::db::Driver::insert_ignore_sql(
                     through_table,
                     &format!("{source_col}, {target_col}"),
-                    &format!(
-                        "{}, {}",
-                        crate::db::dialect::ph(1),
-                        crate::db::dialect::ph(2)
-                    ),
+                    &format!("{}, {}", crate::db::Driver::ph(1), crate::db::Driver::ph(2)),
                 );
                 sqlx::query(&jsql)
                     .bind(source_int_id)
@@ -550,8 +547,8 @@ impl ContentRepository {
         }
 
         for (field_name, target_table, fk_col) in &otm_fields {
-            if !crate::db::dialect::is_safe_identifier(target_table)
-                || !crate::db::dialect::is_safe_identifier(fk_col)
+            if !crate::db::driver::is_safe_identifier(target_table)
+                || !crate::db::driver::is_safe_identifier(fk_col)
             {
                 tracing::warn!(
                     "skipping one-to-many with unsafe identifier: target={target_table}, fk={fk_col}"
@@ -569,8 +566,8 @@ impl ContentRepository {
             let int_ids = find_existing_ids(&self.pool, target_table, &parsed_ids).await?;
             let usql = format!(
                 "UPDATE {target_table} SET {fk_col} = {} WHERE {COL_ID} = {}",
-                crate::db::dialect::ph(1),
-                crate::db::dialect::ph(2)
+                crate::db::Driver::ph(1),
+                crate::db::Driver::ph(2)
             );
             for target_int_id in int_ids {
                 sqlx::query(&usql)
@@ -590,7 +587,7 @@ impl ContentRepository {
         let sql = format!(
             "SELECT {select_cols} FROM {} WHERE {COL_ID} = {}",
             ct.table,
-            crate::db::dialect::ph(1)
+            crate::db::Driver::ph(1)
         );
         let row = sqlx::query(&sql)
             .bind(new_id.to_string())
@@ -699,7 +696,7 @@ impl ContentRepository {
 
         for (key, val) in obj.iter() {
             if ct.get_field(key).is_some() || ct.is_protocol_column(key) {
-                if !crate::db::dialect::is_safe_identifier(key) {
+                if !crate::db::driver::is_safe_identifier(key) {
                     continue;
                 }
                 if junction_field_names.contains(&key.as_str())
@@ -710,7 +707,7 @@ impl ContentRepository {
                 if let Some((fk_col, target_table)) = fk_relation_map.get(key) {
                     let target_id = value_to_string(val);
                     if target_id.is_empty() {
-                        set_clauses.push(format!("{fk_col} = {}", crate::db::dialect::ph(idx)));
+                        set_clauses.push(format!("{fk_col} = {}", crate::db::Driver::ph(idx)));
                         idx += 1;
                         values.push(String::new());
                     } else {
@@ -722,13 +719,13 @@ impl ContentRepository {
                                     "relation target '{target_id}' not found in {target_table}"
                                 ))
                             })?;
-                        set_clauses.push(format!("{fk_col} = {}", crate::db::dialect::ph(idx)));
+                        set_clauses.push(format!("{fk_col} = {}", crate::db::Driver::ph(idx)));
                         idx += 1;
                         values.push(int_id.to_string());
                     }
                     continue;
                 }
-                set_clauses.push(format!("{key} = {}", crate::db::dialect::ph(idx)));
+                set_clauses.push(format!("{key} = {}", crate::db::Driver::ph(idx)));
                 idx += 1;
                 values.push(value_to_string(val));
             }
@@ -746,11 +743,11 @@ impl ContentRepository {
         if !set_clauses.is_empty() {
             let set_value_count = values.len();
 
-            let mut where_parts = vec![format!("{COL_ID} = {}", crate::db::dialect::ph(idx))];
+            let mut where_parts = vec![format!("{COL_ID} = {}", crate::db::Driver::ph(idx))];
             idx += 1;
 
             if let Some(ref tid) = tid {
-                where_parts.push(format!("{COL_TENANT_ID} = {}", crate::db::dialect::ph(idx)));
+                where_parts.push(format!("{COL_TENANT_ID} = {}", crate::db::Driver::ph(idx)));
                 idx += 1;
                 values.push(tid.clone());
             }
@@ -758,7 +755,7 @@ impl ContentRepository {
             if let Some(ref lock_col) = decl.lock_column
                 && let Some(current_version) = obj.get(lock_col).and_then(|v| v.as_i64())
             {
-                where_parts.push(format!("{lock_col} = {}", crate::db::dialect::ph(idx)));
+                where_parts.push(format!("{lock_col} = {}", crate::db::Driver::ph(idx)));
                 values.push(current_version.to_string());
             }
 
@@ -793,9 +790,9 @@ impl ContentRepository {
         }
 
         for (field_name, through_table, target_table, source_col, target_col) in &junction_fields {
-            if !crate::db::dialect::is_safe_identifier(through_table)
-                || !crate::db::dialect::is_safe_identifier(source_col)
-                || !crate::db::dialect::is_safe_identifier(target_col)
+            if !crate::db::driver::is_safe_identifier(through_table)
+                || !crate::db::driver::is_safe_identifier(source_col)
+                || !crate::db::driver::is_safe_identifier(target_col)
             {
                 tracing::warn!(
                     "skipping junction with unsafe identifier: through={through_table}, source={source_col}, target={target_col}"
@@ -807,7 +804,7 @@ impl ContentRepository {
             };
             let del_sql = format!(
                 "DELETE FROM {through_table} WHERE {source_col} = {}",
-                crate::db::dialect::ph(1)
+                crate::db::Driver::ph(1)
             );
             sqlx::query(&del_sql)
                 .bind(source_int_id)
@@ -824,14 +821,10 @@ impl ContentRepository {
             let parsed_ids: Vec<i64> = ids.iter().filter_map(|s| s.parse().ok()).collect();
             let int_ids = find_existing_ids(&self.pool, target_table, &parsed_ids).await?;
             for target_int_id in int_ids {
-                let jsql = crate::db::dialect::insert_ignore_sql(
+                let jsql = crate::db::Driver::insert_ignore_sql(
                     through_table,
                     &format!("{source_col}, {target_col}"),
-                    &format!(
-                        "{}, {}",
-                        crate::db::dialect::ph(1),
-                        crate::db::dialect::ph(2)
-                    ),
+                    &format!("{}, {}", crate::db::Driver::ph(1), crate::db::Driver::ph(2)),
                 );
                 sqlx::query(&jsql)
                     .bind(source_int_id)
@@ -842,8 +835,8 @@ impl ContentRepository {
         }
 
         for (field_name, target_table, fk_col) in &otm_fields {
-            if !crate::db::dialect::is_safe_identifier(target_table)
-                || !crate::db::dialect::is_safe_identifier(fk_col)
+            if !crate::db::driver::is_safe_identifier(target_table)
+                || !crate::db::driver::is_safe_identifier(fk_col)
             {
                 tracing::warn!(
                     "skipping one-to-many with unsafe identifier: target={target_table}, fk={fk_col}"
@@ -855,7 +848,7 @@ impl ContentRepository {
             };
             let clear_sql = format!(
                 "UPDATE {target_table} SET {fk_col} = NULL WHERE {fk_col} = {}",
-                crate::db::dialect::ph(1)
+                crate::db::Driver::ph(1)
             );
             sqlx::query(&clear_sql)
                 .bind(source_int_id)
@@ -873,8 +866,8 @@ impl ContentRepository {
             let int_ids = find_existing_ids(&self.pool, target_table, &parsed_ids).await?;
             let usql = format!(
                 "UPDATE {target_table} SET {fk_col} = {} WHERE {COL_ID} = {}",
-                crate::db::dialect::ph(1),
-                crate::db::dialect::ph(2)
+                crate::db::Driver::ph(1),
+                crate::db::Driver::ph(2)
             );
             for target_int_id in int_ids {
                 sqlx::query(&usql)
@@ -960,11 +953,11 @@ impl ContentRepository {
         let has_cleanup = !source_junctions.is_empty() || !reverse_junctions.is_empty();
 
         let mut idx = 1;
-        let mut where_parts = vec![format!("{COL_ID} = {}", crate::db::dialect::ph(idx))];
+        let mut where_parts = vec![format!("{COL_ID} = {}", crate::db::Driver::ph(idx))];
         idx += 1;
         let mut values: Vec<String> = Vec::new();
         if let Some(ref tid) = tid {
-            where_parts.push(format!("{COL_TENANT_ID} = {}", crate::db::dialect::ph(idx)));
+            where_parts.push(format!("{COL_TENANT_ID} = {}", crate::db::Driver::ph(idx)));
             idx += 1;
             values.push(tid.clone());
         }
@@ -988,14 +981,14 @@ impl ContentRepository {
 
             if let Some(sid) = source_int_id {
                 for (through, source_col) in &source_junctions {
-                    if !crate::db::dialect::is_safe_identifier(through)
-                        || !crate::db::dialect::is_safe_identifier(source_col)
+                    if !crate::db::driver::is_safe_identifier(through)
+                        || !crate::db::driver::is_safe_identifier(source_col)
                     {
                         continue;
                     }
                     let sql = format!(
                         "DELETE FROM {through} WHERE {source_col} = {}",
-                        crate::db::dialect::ph(1)
+                        crate::db::Driver::ph(1)
                     );
                     sqlx::query(&sql)
                         .bind(sid)
@@ -1009,14 +1002,14 @@ impl ContentRepository {
                 }
 
                 for (through, target_col) in &reverse_junctions {
-                    if !crate::db::dialect::is_safe_identifier(through)
-                        || !crate::db::dialect::is_safe_identifier(target_col)
+                    if !crate::db::driver::is_safe_identifier(through)
+                        || !crate::db::driver::is_safe_identifier(target_col)
                     {
                         continue;
                     }
                     let sql = format!(
                         "DELETE FROM {through} WHERE {target_col} = {}",
-                        crate::db::dialect::ph(1)
+                        crate::db::Driver::ph(1)
                     );
                     sqlx::query(&sql)
                         .bind(sid)
@@ -1041,7 +1034,7 @@ impl ContentRepository {
                     "UPDATE {} SET {} = {} WHERE {}",
                     ct.table,
                     col,
-                    crate::db::dialect::ph(idx),
+                    crate::db::Driver::ph(idx),
                     where_parts.join(" AND ")
                 );
                 let mut query = sqlx::query(&sql);
@@ -1083,7 +1076,7 @@ impl ContentRepository {
                 "UPDATE {} SET {} = {} WHERE {}",
                 ct.table,
                 col,
-                crate::db::dialect::ph(idx),
+                crate::db::Driver::ph(idx),
                 where_parts.join(" AND ")
             );
             let mut query = sqlx::query(&sql);
@@ -1136,7 +1129,7 @@ impl ContentRepository {
         let mut set_parts = vec![format!(
             "{} = {}",
             COL_DELETED_AT,
-            crate::db::dialect::ph(idx)
+            crate::db::Driver::ph(idx)
         )];
         idx += 1;
 
@@ -1144,16 +1137,16 @@ impl ContentRepository {
             set_parts.push(format!(
                 "{} = {}",
                 COL_DELETED_BY,
-                crate::db::dialect::ph(idx)
+                crate::db::Driver::ph(idx)
             ));
             idx += 1;
         }
 
-        let mut where_parts = vec![format!("{COL_ID} = {}", crate::db::dialect::ph(idx))];
+        let mut where_parts = vec![format!("{COL_ID} = {}", crate::db::Driver::ph(idx))];
         idx += 1;
 
         if tid.is_some() {
-            where_parts.push(format!("{COL_TENANT_ID} = {}", crate::db::dialect::ph(idx)));
+            where_parts.push(format!("{COL_TENANT_ID} = {}", crate::db::Driver::ph(idx)));
         }
 
         let sql = format!(
@@ -1315,55 +1308,12 @@ impl ContentRepository {
         &self,
         table: &str,
     ) -> Result<Vec<(String, String)>, AppError> {
-        if !crate::db::dialect::is_safe_identifier(table) {
+        if !crate::db::driver::is_safe_identifier(table) {
             return Err(AppError::BadRequest(format!("invalid table name: {table}")));
         }
-        #[cfg(feature = "db-sqlite")]
-        {
-            let sql = format!("PRAGMA table_info({table})");
-            let rows = sqlx::query(&sql).fetch_all(&self.pool).await?;
-            let mut cols = Vec::new();
-            for row in &rows {
-                let name: String = row.try_get(1).unwrap_or_default();
-                let typ: String = row.try_get(2).unwrap_or_default();
-                if !name.is_empty() {
-                    cols.push((name, typ));
-                }
-            }
-            Ok(cols)
-        }
-        #[cfg(feature = "db-postgres")]
-        {
-            let sql = format!(
-                "SELECT column_name, data_type FROM information_schema.columns WHERE table_name = '{table}'"
-            );
-            let rows = sqlx::query(&sql).fetch_all(&self.pool).await?;
-            let mut cols = Vec::new();
-            for row in &rows {
-                let name: String = row.try_get(0).unwrap_or_default();
-                let typ: String = row.try_get(1).unwrap_or_default();
-                if !name.is_empty() {
-                    cols.push((name, typ));
-                }
-            }
-            Ok(cols)
-        }
-        #[cfg(feature = "db-mysql")]
-        {
-            let sql = format!(
-                "SELECT column_name, data_type FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = '{table}'"
-            );
-            let rows = sqlx::query(&sql).fetch_all(&self.pool).await?;
-            let mut cols = Vec::new();
-            for row in &rows {
-                let name: String = row.try_get(0).unwrap_or_default();
-                let typ: String = row.try_get(1).unwrap_or_default();
-                if !name.is_empty() {
-                    cols.push((name, typ));
-                }
-            }
-            Ok(cols)
-        }
+        crate::db::Driver::fetch_columns_with_types(&self.pool, table)
+            .await
+            .map_err(|e| AppError::Internal(anyhow::Error::from(e).context("fetch columns")))
     }
 }
 
@@ -1486,7 +1436,7 @@ fn build_order_by(sort: Option<&str>, ct: &ContentTypeSchema) -> String {
         if !valid_sort_columns
             .iter()
             .any(|v| v.eq_ignore_ascii_case(col))
-            || !crate::db::dialect::is_safe_identifier(col)
+            || !crate::db::driver::is_safe_identifier(col)
         {
             continue;
         }
@@ -1538,14 +1488,14 @@ pub(crate) async fn find_existing_id(
     target_table: &str,
     id: SnowflakeId,
 ) -> Result<Option<i64>, AppError> {
-    if !crate::db::dialect::is_safe_identifier(target_table) {
+    if !crate::db::driver::is_safe_identifier(target_table) {
         return Err(AppError::BadRequest(format!(
             "invalid target table: {target_table}"
         )));
     }
     let sql = format!(
         "SELECT {COL_ID} FROM {target_table} WHERE {COL_ID} = {}",
-        crate::db::dialect::ph(1)
+        crate::db::Driver::ph(1)
     );
     let result = sqlx::query_scalar::<_, i64>(&sql)
         .bind(id)
@@ -1562,12 +1512,12 @@ async fn find_existing_ids(
     if ids.is_empty() {
         return Ok(Vec::new());
     }
-    if !crate::db::dialect::is_safe_identifier(target_table) {
+    if !crate::db::driver::is_safe_identifier(target_table) {
         return Err(AppError::BadRequest(format!(
             "invalid target table: {target_table}"
         )));
     }
-    let placeholders: Vec<String> = (1..=ids.len()).map(crate::db::dialect::ph).collect();
+    let placeholders: Vec<String> = (1..=ids.len()).map(crate::db::Driver::ph).collect();
     let sql = format!(
         "SELECT {COL_ID} FROM {target_table} WHERE {COL_ID} IN ({})",
         placeholders.join(", ")
@@ -1598,40 +1548,14 @@ async fn find_existing_ids(
 
 /// Generate SQL and column index for querying table column names
 ///
-/// - `SQLite` `PRAGMA table_info`: column name is in column 2 (index=1)
-/// - PostgreSQL/MySQL `information_schema`: column name is in column 1 (index=0)
-///
 /// # Errors
 ///
 /// Returns `AppError::BadRequest` if the table name contains invalid characters.
 pub(crate) fn fetch_columns_sql(table: &str) -> Result<(String, usize), AppError> {
-    if !crate::db::dialect::is_safe_identifier(table) {
+    if !crate::db::driver::is_safe_identifier(table) {
         return Err(AppError::BadRequest(format!("invalid table name: {table}")));
     }
-    #[cfg(feature = "db-sqlite")]
-    {
-        Ok((format!("PRAGMA table_info({table})"), 1))
-    }
-    #[cfg(feature = "db-postgres")]
-    {
-        Ok((
-            format!(
-                "SELECT column_name FROM information_schema.columns WHERE table_name = '{}'",
-                table
-            ),
-            0,
-        ))
-    }
-    #[cfg(feature = "db-mysql")]
-    {
-        Ok((
-            format!(
-                "SELECT column_name FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = '{}'",
-                table
-            ),
-            0,
-        ))
-    }
+    Ok(crate::db::Driver::column_names_sql(table))
 }
 
 #[cfg(test)]

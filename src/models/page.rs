@@ -6,8 +6,8 @@ use ts_rs::TS;
 
 use crate::commands::{CreatePageCmd, UpdatePageCmd};
 
-use crate::db::dialect::ph;
 use crate::db::tenant::tenant_filter_ph;
+use crate::db::{DbDriver, Driver};
 use crate::errors::app_error::{AppError, AppResult};
 use crate::models::post::CommentOpenStatus;
 use crate::types::snowflake_id::SnowflakeId;
@@ -440,69 +440,69 @@ pub async fn update(
 
     if cmd.updated_by.is_some() {
         idx += 1;
-        sets.push(format!("updated_by = {}", ph(idx)));
+        sets.push(format!("updated_by = {}", Driver::ph(idx)));
     }
     if cmd.title.is_some() {
         idx += 1;
-        sets.push(format!("title = {}", ph(idx)));
+        sets.push(format!("title = {}", Driver::ph(idx)));
     }
     if cmd.slug.is_some() {
         idx += 1;
-        sets.push(format!("slug = {}", ph(idx)));
+        sets.push(format!("slug = {}", Driver::ph(idx)));
     }
     if cmd.content.is_some() {
         idx += 1;
-        sets.push(format!("content = {}", ph(idx)));
+        sets.push(format!("content = {}", Driver::ph(idx)));
     }
     if cmd.blocks.is_some() {
         idx += 1;
-        sets.push(format!("blocks = {}", ph(idx)));
+        sets.push(format!("blocks = {}", Driver::ph(idx)));
     }
     if cmd.meta_title.is_some() {
         idx += 1;
-        sets.push(format!("meta_title = {}", ph(idx)));
+        sets.push(format!("meta_title = {}", Driver::ph(idx)));
     }
     if cmd.meta_description.is_some() {
         idx += 1;
-        sets.push(format!("meta_description = {}", ph(idx)));
+        sets.push(format!("meta_description = {}", Driver::ph(idx)));
     }
     if cmd.og_image.is_some() {
         idx += 1;
-        sets.push(format!("og_image = {}", ph(idx)));
+        sets.push(format!("og_image = {}", Driver::ph(idx)));
     }
     if cmd.template.is_some() {
         idx += 1;
-        sets.push(format!("template = {}", ph(idx)));
+        sets.push(format!("template = {}", Driver::ph(idx)));
     }
     if cmd.parent_id.is_some() {
         idx += 1;
-        sets.push(format!("parent_id = {}", ph(idx)));
+        sets.push(format!("parent_id = {}", Driver::ph(idx)));
     }
     if cmd.sort_order.is_some() {
         idx += 1;
-        sets.push(format!("sort_order = {}", ph(idx)));
+        sets.push(format!("sort_order = {}", Driver::ph(idx)));
     }
     if cmd.status.is_some() {
         idx += 1;
-        sets.push(format!("status = {}", ph(idx)));
+        sets.push(format!("status = {}", Driver::ph(idx)));
         idx += 1;
-        let s1 = ph(idx);
+        let s1 = Driver::ph(idx);
         idx += 1;
-        let s2 = ph(idx);
+        let s2 = Driver::ph(idx);
         sets.push(format!(
             "published_at = COALESCE(published_at, CASE WHEN {s1} = 'published' THEN {s2} ELSE NULL END)"
         ));
     }
     if cmd.cover_image.is_some() {
         idx += 1;
-        sets.push(format!("cover_image = {}", ph(idx)));
+        sets.push(format!("cover_image = {}", Driver::ph(idx)));
     }
 
     idx += 1;
-    sets.push(format!("updated_at = {}", ph(idx)));
+    sets.push(format!("updated_at = {}", Driver::ph(idx)));
 
     idx += 1;
-    let id_ph = ph(idx);
+    let id_ph = Driver::ph(idx);
     let tf = tenant_filter_ph(tenant_id, idx + 1);
     let sql = format!(
         "UPDATE pages SET {} WHERE id = {id_ph}{tf}",
@@ -591,27 +591,30 @@ pub async fn update_status(
     );
     let now = crate::utils::tz::now_utc();
     let mut idx = 1;
-    let status_ph = ph(idx);
+    let status_ph = Driver::ph(idx);
 
     let updated_by_clause = if updated_by.is_some() {
         idx += 1;
-        format!(", updated_by = {}", ph(idx))
+        format!(", updated_by = {}", Driver::ph(idx))
     } else {
         String::new()
     };
 
     let published_at_clause = if status == PageStatus::Published {
         idx += 1;
-        format!(", published_at = COALESCE(published_at, {})", ph(idx))
+        format!(
+            ", published_at = COALESCE(published_at, {})",
+            Driver::ph(idx)
+        )
     } else {
         String::new()
     };
 
     idx += 1;
-    let updated_at_clause = format!(", updated_at = {}", ph(idx));
+    let updated_at_clause = format!(", updated_at = {}", Driver::ph(idx));
 
     idx += 1;
-    let id_ph = ph(idx);
+    let id_ph = Driver::ph(idx);
     let tf = tenant_filter_ph(tenant_id, idx + 1);
 
     let sql = format!(
@@ -662,7 +665,7 @@ pub async fn list_sitemap(
     let filter = tenant_filter_ph(tenant_id, 2);
     let sql = format!(
         "SELECT slug, updated_at FROM pages WHERE status = {}{filter} ORDER BY sort_order ASC",
-        ph(1)
+        Driver::ph(1)
     );
     Ok(raisfast_derive::crud_query!(
         pool,

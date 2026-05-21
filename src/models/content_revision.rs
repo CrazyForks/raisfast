@@ -10,7 +10,7 @@ use sqlx::FromRow;
 #[cfg(feature = "export-types")]
 use ts_rs::TS;
 
-use crate::db::dialect::ph;
+use crate::db::{DbDriver, Driver};
 use crate::errors::app_error::{AppError, AppResult};
 use crate::types::snowflake_id::SnowflakeId;
 use crate::utils::tz::Timestamp;
@@ -79,8 +79,8 @@ async fn next_revision_number(
     );
     let sql = format!(
         "SELECT COALESCE(MAX(revision_number), 0) FROM content_revisions WHERE content_type = {} AND record_id = {}",
-        ph(1),
-        ph(2),
+        Driver::ph(1),
+        Driver::ph(2),
     );
     let max: i64 = sqlx::query_scalar(&sql)
         .bind(content_type)

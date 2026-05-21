@@ -37,7 +37,7 @@ use cron::Schedule;
 use ts_rs::TS;
 
 use crate::db::Pool;
-use crate::db::dialect::ph;
+use crate::db::{DbDriver, Driver};
 use crate::errors::app_error::{AppError, AppResult};
 use crate::plugins::CronEntry;
 use crate::types::snowflake_id::SnowflakeId;
@@ -178,8 +178,9 @@ pub async fn create_schedule_with_plugin(
     let (int_id,): (i64,) = sqlx::query_as(&format!(
         "INSERT INTO cron_schedules (label, job_type, payload, cron_expr, enabled, next_run_at, plugin_id, created_at, updated_at)
          VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {})
-         RETURNING id",
-        ph(1), ph(2), ph(3), ph(4), ph(5), ph(6), ph(7), ph(8), ph(9)
+         {}",
+        Driver::ph(1), Driver::ph(2), Driver::ph(3), Driver::ph(4), Driver::ph(5), Driver::ph(6), Driver::ph(7), Driver::ph(8), Driver::ph(9),
+        crate::db::Driver::returning_col("id")
     ))
     .bind(label)
     .bind(job_type)
@@ -213,7 +214,7 @@ pub async fn find_by_id(pool: &Pool, id: SnowflakeId) -> AppResult<Option<CronSc
     let row = sqlx::query_as::<_, CronScheduleRow>(&format!(
         "SELECT id, label, job_type, payload, cron_expr, enabled, last_run_at, next_run_at, plugin_id, created_at, updated_at
          FROM cron_schedules WHERE id = {}",
-        ph(1)
+        Driver::ph(1)
     ))
     .bind(id)
     .fetch_optional(pool)
@@ -239,9 +240,9 @@ pub async fn toggle_schedule(pool: &Pool, id: SnowflakeId, enabled: bool) -> App
     let now = crate::utils::tz::now_utc();
     let result = sqlx::query(&format!(
         "UPDATE cron_schedules SET enabled = {}, updated_at = {} WHERE id = {}",
-        ph(1),
-        ph(2),
-        ph(3)
+        Driver::ph(1),
+        Driver::ph(2),
+        Driver::ph(3)
     ))
     .bind(enabled)
     .bind(now)
@@ -292,7 +293,7 @@ pub async fn update_schedule(
 
     sqlx::query(&format!(
         "UPDATE cron_schedules SET label = {}, job_type = {}, payload = {}, cron_expr = {}, enabled = {}, next_run_at = {}, updated_at = {} WHERE id = {}",
-        ph(1), ph(2), ph(3), ph(4), ph(5), ph(6), ph(7), ph(8)
+        Driver::ph(1), Driver::ph(2), Driver::ph(3), Driver::ph(4), Driver::ph(5), Driver::ph(6), Driver::ph(7), Driver::ph(8)
     ))
     .bind(&schedule.label)
     .bind(&schedule.job_type)
@@ -310,10 +311,13 @@ pub async fn update_schedule(
 
 /// Delete a schedule
 pub async fn delete_schedule(pool: &Pool, id: SnowflakeId) -> AppResult<()> {
-    let result = sqlx::query(&format!("DELETE FROM cron_schedules WHERE id = {}", ph(1)))
-        .bind(id)
-        .execute(pool)
-        .await?;
+    let result = sqlx::query(&format!(
+        "DELETE FROM cron_schedules WHERE id = {}",
+        Driver::ph(1)
+    ))
+    .bind(id)
+    .execute(pool)
+    .await?;
 
     if result.rows_affected() == 0 {
         return Err(AppError::not_found("cron_schedule"));
@@ -366,7 +370,7 @@ impl CronScheduler {
         let rows = sqlx::query_as::<_, CronScheduleRow>(&format!(
             "SELECT id, label, job_type, payload, cron_expr, enabled, last_run_at, next_run_at, plugin_id, created_at, updated_at
              FROM cron_schedules WHERE enabled = 1 AND next_run_at <= {}",
-            ph(1)
+            Driver::ph(1)
         ))
         .bind(now)
         .fetch_all(&self.pool)
@@ -419,7 +423,7 @@ impl CronScheduler {
                     if let Some(ref lid) = log_id {
                         sqlx::query(&format!(
                             "UPDATE cron_execution_log SET status = {}, duration_ms = {}, finished_at = {} WHERE id = {}",
-                            ph(1), ph(2), ph(3), ph(4)
+                            Driver::ph(1), Driver::ph(2), Driver::ph(3), Driver::ph(4)
                         ))
                         .bind(CronExecStatus::Completed)
                         .bind(elapsed)
@@ -434,7 +438,7 @@ impl CronScheduler {
                         let err_str = e.to_string();
                         sqlx::query(&format!(
                             "UPDATE cron_execution_log SET status = {}, duration_ms = {}, error = {}, finished_at = {} WHERE id = {}",
-                            ph(1), ph(2), ph(3), ph(4), ph(5)
+                            Driver::ph(1), Driver::ph(2), Driver::ph(3), Driver::ph(4), Driver::ph(5)
                         ))
                         .bind(CronExecStatus::Failed)
                         .bind(elapsed)
@@ -451,10 +455,10 @@ impl CronScheduler {
             if let Some(next) = &next {
                 sqlx::query(&format!(
                     "UPDATE cron_schedules SET last_run_at = {}, next_run_at = {}, updated_at = {} WHERE id = {}",
-                    ph(1),
-                    ph(2),
-                    ph(3),
-                    ph(4)
+                    Driver::ph(1),
+                    Driver::ph(2),
+                    Driver::ph(3),
+                    Driver::ph(4)
                 ))
                 .bind(now)
                 .bind(next)
@@ -561,12 +565,12 @@ pub async fn create_execution_log(
     sqlx::query(&format!(
         "INSERT INTO cron_execution_log (id, schedule_id, job_type, label, status, started_at)
          VALUES ({}, {}, {}, {}, {}, {})",
-        ph(1),
-        ph(2),
-        ph(3),
-        ph(4),
-        ph(5),
-        ph(6)
+        Driver::ph(1),
+        Driver::ph(2),
+        Driver::ph(3),
+        Driver::ph(4),
+        Driver::ph(5),
+        Driver::ph(6)
     ))
     .bind(id)
     .bind(schedule_id)
@@ -589,7 +593,7 @@ pub async fn complete_execution_log(
     let now = crate::utils::tz::now_utc();
     sqlx::query(&format!(
         "UPDATE cron_execution_log SET status = {}, duration_ms = {}, finished_at = {} WHERE id = {}",
-        ph(1), ph(2), ph(3), ph(4)
+        Driver::ph(1), Driver::ph(2), Driver::ph(3), Driver::ph(4)
     ))
     .bind(CronExecStatus::Completed)
     .bind(duration_ms)
@@ -610,7 +614,7 @@ pub async fn fail_execution_log(
     let now = crate::utils::tz::now_utc();
     sqlx::query(&format!(
         "UPDATE cron_execution_log SET status = {}, duration_ms = {}, error = {}, finished_at = {} WHERE id = {}",
-        ph(1), ph(2), ph(3), ph(4), ph(5)
+        Driver::ph(1), Driver::ph(2), Driver::ph(3), Driver::ph(4), Driver::ph(5)
     ))
     .bind(CronExecStatus::Failed)
     .bind(duration_ms)
@@ -633,7 +637,7 @@ pub async fn list_execution_logs(
          FROM cron_execution_log el
          WHERE el.schedule_id = {}
          ORDER BY el.started_at DESC LIMIT {}",
-        ph(1), ph(2)
+        Driver::ph(1), Driver::ph(2)
     ))
     .bind(schedule_id)
     .bind(limit)
@@ -652,7 +656,7 @@ pub async fn recent_execution_logs(pool: &Pool, limit: i64) -> AppResult<Vec<Cro
         "SELECT id, schedule_id, job_type, label, status, duration_ms, error, started_at, finished_at
          FROM cron_execution_log
          ORDER BY started_at DESC LIMIT {}",
-        ph(1)
+        Driver::ph(1)
     ))
     .bind(limit)
     .fetch_all(pool)
@@ -669,7 +673,7 @@ pub async fn cleanup_execution_logs(pool: &Pool, retention_days: i64) -> AppResu
     let threshold = crate::utils::tz::now_utc() - chrono::Duration::days(retention_days);
     let result = sqlx::query(&format!(
         "DELETE FROM cron_execution_log WHERE started_at < {}",
-        ph(1)
+        Driver::ph(1)
     ))
     .bind(threshold)
     .execute(pool)
@@ -697,7 +701,7 @@ pub async fn sync_plugin_crons(
     in_transaction!(pool, tx, {
         let old = sqlx::query_as::<_, PluginCronRow>(&format!(
             "SELECT id, job_type FROM cron_schedules WHERE plugin_id = {}",
-            ph(1)
+            Driver::ph(1)
         ))
         .bind(plugin_id)
         .fetch_all(&mut *tx)
@@ -707,10 +711,13 @@ pub async fn sync_plugin_crons(
 
         for row in &old {
             if !new_types.contains(&row.job_type.as_str()) {
-                sqlx::query(&format!("DELETE FROM cron_schedules WHERE id = {}", ph(1)))
-                    .bind(row.id)
-                    .execute(&mut *tx)
-                    .await?;
+                sqlx::query(&format!(
+                    "DELETE FROM cron_schedules WHERE id = {}",
+                    Driver::ph(1)
+                ))
+                .bind(row.id)
+                .execute(&mut *tx)
+                .await?;
                 tracing::info!(
                     "removed stale cron '{}' for plugin {plugin_id}",
                     row.job_type
@@ -721,8 +728,8 @@ pub async fn sync_plugin_crons(
         for entry in entries {
             let existing: Option<(i64,)> = sqlx::query_as(&format!(
                 "SELECT id FROM cron_schedules WHERE plugin_id = {} AND job_type = {}",
-                ph(1),
-                ph(2)
+                Driver::ph(1),
+                Driver::ph(2)
             ))
             .bind(plugin_id)
             .bind(&entry.job_type)
@@ -734,7 +741,7 @@ pub async fn sync_plugin_crons(
                 let next = next_run(&entry.cron_expr, crate::utils::tz::now_utc())?;
                 sqlx::query(&format!(
                     "UPDATE cron_schedules SET label = {}, payload = {}, cron_expr = {}, enabled = {}, next_run_at = {}, updated_at = {} WHERE id = {}",
-                    ph(1), ph(2), ph(3), ph(4), ph(5), ph(6), ph(7)
+                    Driver::ph(1), Driver::ph(2), Driver::ph(3), Driver::ph(4), Driver::ph(5), Driver::ph(6), Driver::ph(7)
                 ))
                 .bind(&entry.label)
                 .bind(&entry.payload)
@@ -754,7 +761,7 @@ pub async fn sync_plugin_crons(
                 sqlx::query(&format!(
                     "INSERT INTO cron_schedules (id, label, job_type, payload, cron_expr, enabled, next_run_at, plugin_id, created_at, updated_at)
                      VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}, {})",
-                    ph(1), ph(2), ph(3), ph(4), ph(5), ph(6), ph(7), ph(8), ph(9), ph(10)
+                    Driver::ph(1), Driver::ph(2), Driver::ph(3), Driver::ph(4), Driver::ph(5), Driver::ph(6), Driver::ph(7), Driver::ph(8), Driver::ph(9), Driver::ph(10)
                 ))
                 .bind(id)
                 .bind(&entry.label)
@@ -783,7 +790,7 @@ pub async fn sync_plugin_crons(
 pub async fn remove_plugin_crons(pool: &Pool, plugin_id: &str) -> AppResult<()> {
     let result = sqlx::query(&format!(
         "DELETE FROM cron_schedules WHERE plugin_id = {}",
-        ph(1)
+        Driver::ph(1)
     ))
     .bind(plugin_id)
     .execute(pool)

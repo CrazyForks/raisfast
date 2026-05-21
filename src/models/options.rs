@@ -21,13 +21,14 @@ define_enum!(
 );
 
 /// Options table row model (with full metadata)
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, sqlx::FromRow)]
 pub struct OptionRow {
     pub id: SnowflakeId,
     pub tenant_id: Option<String>,
     pub option_key: String,
     pub value: String,
     #[serde(rename = "type")]
+    #[sqlx(rename = "type")]
     pub type_: OptionType,
     pub group_name: String,
     pub label: String,
@@ -37,70 +38,6 @@ pub struct OptionRow {
     pub autoload: bool,
     pub sort_order: i64,
     pub updated_at: Timestamp,
-}
-
-#[cfg(feature = "db-sqlite")]
-impl<'r> sqlx::FromRow<'r, sqlx::sqlite::SqliteRow> for OptionRow {
-    fn from_row(row: &'r sqlx::sqlite::SqliteRow) -> Result<Self, sqlx::Error> {
-        use sqlx::Row;
-        Ok(Self {
-            id: row.try_get("id")?,
-            tenant_id: row.try_get("tenant_id").ok(),
-            option_key: row.try_get("option_key")?,
-            value: row.try_get("value")?,
-            type_: row.try_get("type")?,
-            group_name: row.try_get("group_name")?,
-            label: row.try_get("label")?,
-            description: row.try_get("description")?,
-            validation: row.try_get("validation")?,
-            is_public: row.try_get("is_public")?,
-            autoload: row.try_get("autoload")?,
-            sort_order: row.try_get("sort_order")?,
-            updated_at: row.try_get("updated_at")?,
-        })
-    }
-}
-#[cfg(feature = "db-postgres")]
-impl<'r> sqlx::FromRow<'r, sqlx::postgres::PgRow> for OptionRow {
-    fn from_row(row: &'r sqlx::postgres::PgRow) -> Result<Self, sqlx::Error> {
-        use sqlx::Row;
-        Ok(Self {
-            id: row.try_get("id")?,
-            tenant_id: row.try_get("tenant_id").ok(),
-            option_key: row.try_get("option_key")?,
-            value: row.try_get("value")?,
-            type_: row.try_get("type")?,
-            group_name: row.try_get("group_name")?,
-            label: row.try_get("label")?,
-            description: row.try_get("description")?,
-            validation: row.try_get("validation")?,
-            is_public: row.try_get("is_public")?,
-            autoload: row.try_get("autoload")?,
-            sort_order: row.try_get("sort_order")?,
-            updated_at: row.try_get("updated_at")?,
-        })
-    }
-}
-#[cfg(feature = "db-mysql")]
-impl<'r> sqlx::FromRow<'r, sqlx::mysql::MySqlRow> for OptionRow {
-    fn from_row(row: &'r sqlx::mysql::MySqlRow) -> Result<Self, sqlx::Error> {
-        use sqlx::Row;
-        Ok(Self {
-            id: row.try_get("id")?,
-            tenant_id: row.try_get("tenant_id").ok(),
-            option_key: row.try_get("option_key")?,
-            value: row.try_get("value")?,
-            type_: row.try_get("type")?,
-            group_name: row.try_get("group_name")?,
-            label: row.try_get("label")?,
-            description: row.try_get("description")?,
-            validation: row.try_get("validation")?,
-            is_public: row.try_get("is_public")?,
-            autoload: row.try_get("autoload")?,
-            sort_order: row.try_get("sort_order")?,
-            updated_at: row.try_get("updated_at")?,
-        })
-    }
 }
 
 /// Query all autoload options (preloaded at startup)

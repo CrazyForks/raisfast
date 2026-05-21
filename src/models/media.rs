@@ -8,8 +8,8 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::db::dialect::ph;
 use crate::db::tenant::tenant_filter_ph;
+use crate::db::{DbDriver, Driver};
 use crate::errors::app_error::{AppError, AppResult};
 use crate::types::snowflake_id::SnowflakeId;
 use crate::utils::tz::Timestamp;
@@ -134,7 +134,7 @@ pub async fn stats(
 
     let total_sql = format!(
         "SELECT COUNT(*), COALESCE(SUM(size), 0) FROM media WHERE user_id = {}{filter}",
-        ph(1)
+        Driver::ph(1)
     );
     let (total_files, total_size) = raisfast_derive::crud_query!(
         pool,
@@ -147,7 +147,7 @@ pub async fn stats(
 
     let by_type_sql = format!(
         "SELECT mimetype, COUNT(*), COALESCE(SUM(size), 0) FROM media WHERE user_id = {}{filter} GROUP BY mimetype ORDER BY COUNT(*) DESC",
-        ph(1)
+        Driver::ph(1)
     );
     let rows = raisfast_derive::crud_query!(
         pool,

@@ -7,6 +7,7 @@ use super::model::{
     update_instance_step,
 };
 use super::validate::{resolve_next_step, validate_steps};
+use crate::db::DbDriver;
 use crate::db::Pool;
 use crate::errors::app_error::{AppError, AppResult};
 use crate::types::snowflake_id::SnowflakeId;
@@ -84,7 +85,7 @@ impl WorkflowService {
     async fn get_definition_by_pk(&self, id: SnowflakeId) -> AppResult<WorkflowDefinition> {
         let sql = format!(
             "SELECT id, name, description, steps, initial_step, version, enabled, created_at, updated_at FROM workflow_definitions WHERE id = {}",
-            crate::db::dialect::ph(1)
+            crate::db::Driver::ph(1)
         );
         sqlx::query_as::<_, WorkflowDefinition>(&sql)
             .bind(id)

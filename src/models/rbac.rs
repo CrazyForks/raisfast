@@ -8,7 +8,7 @@ use sqlx::FromRow;
 use ts_rs::TS;
 
 use crate::commands::CreatePermissionCmd;
-use crate::db::dialect::ph;
+use crate::db::{DbDriver, Driver};
 use crate::errors::app_error::{AppError, AppResult};
 use crate::types::snowflake_id::SnowflakeId;
 use crate::utils::tz::Timestamp;
@@ -61,7 +61,7 @@ pub async fn find_role_by_id(pool: &crate::db::Pool, id: SnowflakeId) -> AppResu
 
 /// Find role ID by role name (returns integer PK)
 pub async fn find_role_id_by_name(pool: &crate::db::Pool, name: &str) -> AppResult<Option<i64>> {
-    let sql = format!("SELECT id FROM roles WHERE name = {}", ph(1));
+    let sql = format!("SELECT id FROM roles WHERE name = {}", Driver::ph(1));
     Ok(raisfast_derive::crud_scalar!(
         pool,
         i64,

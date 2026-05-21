@@ -7,6 +7,7 @@
 
 use serde_json::{Value, json};
 
+use crate::db::DbDriver;
 use crate::db::Pool;
 use crate::errors::app_error::AppError;
 
@@ -81,7 +82,7 @@ impl StatsService {
                 let tid = crate::db::tenant::resolve_tenant(tenant_id).to_string();
                 let sql = format!(
                     "SELECT status, COUNT(*) as cnt FROM {table} WHERE tenant_id = {} GROUP BY status",
-                    crate::db::dialect::ph(1)
+                    crate::db::Driver::ph(1)
                 );
                 let rows: Vec<(String, i64)> = sqlx::query_as::<_, (String, i64)>(&sql)
                     .bind(&tid)
@@ -132,13 +133,13 @@ impl StatsService {
 
         let date_expr = date_trunc_day_expr("created_at");
 
-        let ago = crate::db::dialect::ago_expr(days);
+        let ago = crate::db::Driver::ago_expr(days);
         let sql = if has_tenant {
             format!(
                 "SELECT {date_expr} as d, COUNT(*) as cnt FROM {table} \
                  WHERE tenant_id = {} AND created_at >= {ago} \
                  GROUP BY d ORDER BY d",
-                crate::db::dialect::ph(1)
+                crate::db::Driver::ph(1)
             )
         } else {
             format!(
@@ -206,7 +207,7 @@ impl StatsService {
             let tid = crate::db::tenant::resolve_tenant(tenant_id).to_string();
             let sql = format!(
                 "SELECT status, COUNT(*) as cnt FROM {table} WHERE tenant_id = {} GROUP BY status",
-                crate::db::dialect::ph(1)
+                crate::db::Driver::ph(1)
             );
             sqlx::query_as::<_, (String, i64)>(&sql)
                 .bind(&tid)
@@ -319,82 +320,22 @@ async fn count_table(
 
 /// Check if a table has a specific column
 async fn has_column(pool: &Pool, table: &str, column: &str) -> bool {
-    #[cfg(feature = "db-sqlite")]
-    {
-        let sql = format!("PRAGMA table_info({table})");
-        let rows = sqlx::query_as::<_, (i32, String, String, bool, Option<String>, bool)>(&sql)
-            .fetch_all(pool)
-            .await
-            .unwrap_or_default();
-        rows.iter().any(|(_, name, _, _, _, _)| name == column)
-    }
-    #[cfg(feature = "db-postgres")]
-    {
-        let sql = "SELECT column_name FROM information_schema.columns WHERE table_name = $1";
-        let rows = sqlx::query_as::<_, (String,)>(sql)
-            .bind(table)
-            .fetch_all(pool)
-            .await
-            .unwrap_or_default();
-        rows.iter().any(|(name,)| name == column)
-    }
-    #[cfg(feature = "db-mysql")]
-    {
-        let sql = "SELECT column_name FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = ?";
-        let rows = sqlx::query_as::<_, (String,)>(sql)
-            .bind(table)
-            .fetch_all(pool)
-            .await
-            .unwrap_or_default();
-        rows.iter().any(|(name,)| name == column)
-    }
+    crate::db::Driver::has_column(pool, table, column).await
 }
 
 /// Get all content-type-related table names from the database
 async fn get_content_tables(pool: &Pool) -> Result<Vec<String>, AppError> {
     let excluded_tables = "'users','refresh_tokens','media','plugin_storage','roles','permissions','options','tenants','pending_jobs','cron_schedules','cron_execution_log'";
-    #[cfg(feature = "db-sqlite")]
-    {
-        let sql = format!(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%%' AND name NOT IN ({excluded_tables})"
-        );
-        let rows = sqlx::query_as::<_, (String,)>(&sql)
-            .fetch_all(pool)
-            .await
-            .map_err(|e| AppError::Internal(anyhow::anyhow!("{e}")))?;
-        Ok(rows.into_iter().map(|(n,)| n).collect())
-    }
-    #[cfg(feature = "db-postgres")]
-    {
-        let sql = format!(
-            "SELECT tablename FROM pg_tables WHERE schemaname = 'public' AND tablename NOT IN ({excluded_tables})"
-        );
-        let rows = sqlx::query_as::<_, (String,)>(&sql)
-            .fetch_all(pool)
-            .await
-            .map_err(|e| AppError::Internal(anyhow::anyhow!("{e}")))?;
-        Ok(rows.into_iter().map(|(n,)| n).collect())
-    }
-    #[cfg(feature = "db-mysql")]
-    {
-        let sql = format!(
-            "SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name NOT IN ({excluded_tables})"
-        );
-        let rows = sqlx::query_as::<_, (String,)>(&sql)
-            .fetch_all(pool)
-            .await
-            .map_err(|e| AppError::Internal(anyhow::anyhow!("{e}")))?;
-        Ok(rows.into_iter().map(|(n,)| n).collect())
-    }
+    Ok(crate::db::Driver::list_user_tables(pool, excluded_tables).await)
 }
 
 /// Date truncation expression (truncate to day)
 fn date_trunc_day_expr(col: &str) -> String {
-    crate::db::dialect::date_trunc_day(col)
+    crate::db::Driver::date_trunc_day(col)
 }
 
 fn validate_table_name(table: &str) -> Result<(), AppError> {
-    if crate::db::dialect::is_safe_identifier(table) {
+    if crate::db::driver::is_safe_identifier(table) {
         Ok(())
     } else {
         Err(AppError::BadRequest(format!("invalid table name: {table}")))

@@ -9,7 +9,7 @@ use sqlx::FromRow;
 #[cfg(feature = "export-types")]
 use ts_rs::TS;
 
-use crate::db::dialect::ph;
+use crate::db::{DbDriver, Driver};
 use crate::errors::app_error::AppResult;
 use crate::types::snowflake_id::SnowflakeId;
 use crate::utils::tz::Timestamp;
@@ -96,7 +96,7 @@ pub async fn list_by_user(
     );
     let sql = format!(
         "SELECT id, name, token_prefix, scopes, last_used_at, expires_at, created_at FROM api_tokens WHERE user_id = {} ORDER BY created_at DESC",
-        ph(1)
+        Driver::ph(1)
     );
     let rows = sqlx::query_as::<_, ApiTokenListItem>(&sql)
         .bind(user_id)

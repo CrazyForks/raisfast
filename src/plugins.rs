@@ -72,48 +72,8 @@ use crate::errors::app_error::{AppError, AppResult};
 
 /// Convert sqlx arbitrary query result rows to a JSON array string
 ///
-/// Only supports the currently compiled database backend.
-#[cfg(feature = "db-sqlite")]
-pub(crate) fn rows_to_json(rows: &[sqlx::sqlite::SqliteRow]) -> String {
-    use sqlx::{Column, Row};
-    if rows.is_empty() {
-        return "[]".to_string();
-    }
-    let columns: Vec<String> = rows[0]
-        .columns()
-        .iter()
-        .map(|c| c.name().to_string())
-        .collect();
-    let result: Vec<serde_json::Map<String, serde_json::Value>> = rows
-        .iter()
-        .map(|row| {
-            let mut map = serde_json::Map::new();
-            for (i, col) in columns.iter().enumerate() {
-                let val: Option<String> = row.try_get::<Option<String>, _>(i).ok().flatten();
-                match val {
-                    Some(v) => {
-                        if let Ok(n) = v.parse::<i64>() {
-                            map.insert(col.clone(), serde_json::Value::Number(n.into()));
-                        } else if let Ok(b) = v.parse::<bool>() {
-                            map.insert(col.clone(), serde_json::Value::Bool(b));
-                        } else {
-                            map.insert(col.clone(), serde_json::Value::String(v));
-                        }
-                    }
-
-                    None => {
-                        map.insert(col.clone(), serde_json::Value::Null);
-                    }
-                }
-            }
-            map
-        })
-        .collect();
-    serde_json::to_string(&result).unwrap_or_else(|_| "[]".to_string())
-}
-
-#[cfg(feature = "db-postgres")]
-pub(crate) fn rows_to_json(rows: &[sqlx::postgres::PgRow]) -> String {
+/// Works with the currently compiled database backend via the `DbRow` type alias.
+pub(crate) fn rows_to_json(rows: &[crate::db::DbRow]) -> String {
     use sqlx::{Column, Row};
     if rows.is_empty() {
         return "[]".to_string();
@@ -131,65 +91,28 @@ pub(crate) fn rows_to_json(rows: &[sqlx::postgres::PgRow]) -> String {
                 if let Ok(v) = row.try_get::<Option<i64>, _>(i) {
                     map.insert(
                         col.clone(),
-                        serde_json::Value::Number(v.unwrap_or(0).into()),
+                        v.map_or(serde_json::Value::Null, |n| {
+                            serde_json::Value::Number(n.into())
+                        }),
                     );
                 } else if let Ok(v) = row.try_get::<Option<f64>, _>(i) {
                     map.insert(
                         col.clone(),
-                        serde_json::Number::from_f64(v.unwrap_or(0.0))
-                            .map_or(serde_json::Value::Null, serde_json::Value::Number),
+                        v.and_then(|f| {
+                            serde_json::Number::from_f64(f).map(serde_json::Value::Number)
+                        })
+                        .unwrap_or(serde_json::Value::Null),
                     );
                 } else if let Ok(v) = row.try_get::<Option<bool>, _>(i) {
-                    map.insert(col.clone(), serde_json::Value::Bool(v.unwrap_or(false)));
-                } else if let Ok(v) = row.try_get::<Option<String>, _>(i) {
-                    match v {
-                        Some(s) => map.insert(col.clone(), serde_json::Value::String(s)),
-                        None => map.insert(col.clone(), serde_json::Value::Null),
-                    };
-                } else {
-                    map.insert(col.clone(), serde_json::Value::Null);
-                }
-            }
-            map
-        })
-        .collect();
-    serde_json::to_string(&result).unwrap_or_else(|_| "[]".to_string())
-}
-
-#[cfg(feature = "db-mysql")]
-pub(crate) fn rows_to_json(rows: &[sqlx::mysql::MySqlRow]) -> String {
-    use sqlx::{Column, Row};
-    if rows.is_empty() {
-        return "[]".to_string();
-    }
-    let columns: Vec<String> = rows[0]
-        .columns()
-        .iter()
-        .map(|c| c.name().to_string())
-        .collect();
-    let result: Vec<serde_json::Map<String, serde_json::Value>> = rows
-        .iter()
-        .map(|row| {
-            let mut map = serde_json::Map::new();
-            for (i, col) in columns.iter().enumerate() {
-                if let Ok(v) = row.try_get::<Option<i64>, _>(i) {
                     map.insert(
                         col.clone(),
-                        serde_json::Value::Number(v.unwrap_or(0).into()),
+                        v.map_or(serde_json::Value::Null, serde_json::Value::Bool),
                     );
-                } else if let Ok(v) = row.try_get::<Option<f64>, _>(i) {
+                } else if let Ok(v) = row.try_get::<Option<String>, _>(i) {
                     map.insert(
                         col.clone(),
-                        serde_json::Number::from_f64(v.unwrap_or(0.0))
-                            .map_or(serde_json::Value::Null, serde_json::Value::Number),
+                        v.map_or(serde_json::Value::Null, serde_json::Value::String),
                     );
-                } else if let Ok(v) = row.try_get::<Option<bool>, _>(i) {
-                    map.insert(col.clone(), serde_json::Value::Bool(v.unwrap_or(false)));
-                } else if let Ok(v) = row.try_get::<Option<String>, _>(i) {
-                    match v {
-                        Some(s) => map.insert(col.clone(), serde_json::Value::String(s)),
-                        None => map.insert(col.clone(), serde_json::Value::Null),
-                    };
                 } else {
                     map.insert(col.clone(), serde_json::Value::Null);
                 }

@@ -11,6 +11,7 @@
 //! On first startup, automatically executes `SCHEMA_SQL` to create tables + seed data (idempotent).
 //! On every startup, automatically runs pending incremental migrations from `migrations/{db}/`.
 
+use crate::db::DbDriver;
 use std::time::Duration;
 
 use crate::db::pool::Pool;
@@ -165,7 +166,7 @@ pub async fn ensure_schema(pool: &Pool) -> anyhow::Result<()> {
                 .map_err(|e| anyhow::anyhow!("create _migrations table failed: {e}"))?;
         }
 
-        let ph = crate::db::dialect::ph;
+        let ph = crate::db::Driver::ph;
         sqlx::query(&format!(
             "INSERT INTO _migrations (filename, checksum) VALUES ({}, {})",
             ph(1),
@@ -228,7 +229,7 @@ async fn run_pending_migrations(pool: &Pool) -> anyhow::Result<()> {
         return Ok(());
     }
 
-    let ph = crate::db::dialect::ph;
+    let ph = crate::db::Driver::ph;
     let check_sql = format!(
         "SELECT checksum FROM _migrations WHERE filename = {}",
         ph(1)

@@ -7,6 +7,7 @@
 //! - Refresh token generation and rotation
 //! - User registration, login, logout
 
+use crate::db::DbDriver;
 use crate::types::snowflake_id::SnowflakeId;
 
 use argon2::password_hash::SaltString;
@@ -215,7 +216,7 @@ pub async fn register(
         let filter = crate::db::tenant::tenant_filter_ph(tenant_id, 2);
         let sql = format!(
             "SELECT * FROM users WHERE id = {}{filter}",
-            crate::db::dialect::ph(1)
+            crate::db::Driver::ph(1)
         );
         let mut q = sqlx::query_as::<_, crate::models::user::User>(&sql).bind(id);
         if let Some(tid) = tenant_id {
@@ -232,14 +233,14 @@ pub async fn register(
         let verified = if !require_email_verification { 1 } else { 0 };
         let cred_sql = format!(
             "INSERT INTO user_credentials (id, user_id, auth_type, identifier, credential_data, verified, created_at, updated_at) VALUES ({}, {}, {}, {}, {}, {}, {}, {})",
-            crate::db::dialect::ph(1),
-            crate::db::dialect::ph(2),
-            crate::db::dialect::ph(3),
-            crate::db::dialect::ph(4),
-            crate::db::dialect::ph(5),
-            crate::db::dialect::ph(6),
-            crate::db::dialect::ph(7),
-            crate::db::dialect::ph(8)
+            crate::db::Driver::ph(1),
+            crate::db::Driver::ph(2),
+            crate::db::Driver::ph(3),
+            crate::db::Driver::ph(4),
+            crate::db::Driver::ph(5),
+            crate::db::Driver::ph(6),
+            crate::db::Driver::ph(7),
+            crate::db::Driver::ph(8)
         );
         sqlx::query(&cred_sql)
             .bind(cred_id)
@@ -412,7 +413,7 @@ pub async fn refresh(
     in_transaction!(pool, tx, {
         sqlx::query(&format!(
             "DELETE FROM refresh_tokens WHERE token = {}",
-            crate::db::dialect::ph(1)
+            crate::db::Driver::ph(1)
         ))
         .bind(refresh_token_str)
         .execute(&mut *tx)
@@ -420,11 +421,11 @@ pub async fn refresh(
 
         sqlx::query(&format!(
             "INSERT INTO refresh_tokens (id, user_id, token, expires_at, created_at) VALUES ({}, {}, {}, {}, {})",
-            crate::db::dialect::ph(1),
-            crate::db::dialect::ph(2),
-            crate::db::dialect::ph(3),
-            crate::db::dialect::ph(4),
-            crate::db::dialect::ph(5)
+            crate::db::Driver::ph(1),
+            crate::db::Driver::ph(2),
+            crate::db::Driver::ph(3),
+            crate::db::Driver::ph(4),
+            crate::db::Driver::ph(5)
         ))
         .bind(new_id)
         .bind(user.id)
@@ -495,7 +496,7 @@ pub async fn change_password(
 
     sqlx::query(&format!(
         "DELETE FROM refresh_tokens WHERE user_id = {}",
-        crate::db::dialect::ph(1)
+        crate::db::Driver::ph(1)
     ))
     .bind(_user.id)
     .execute(pool)

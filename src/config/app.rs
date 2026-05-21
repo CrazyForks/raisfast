@@ -5,6 +5,7 @@
 
 use std::env;
 
+use crate::db::DbDriver;
 use base64::Engine;
 use serde::{Deserialize, Serialize};
 
@@ -385,7 +386,7 @@ impl Default for RuleEngineConfig {
             prefix_request_query: "@request.query.".into(),
             prefix_now: "@now".into(),
             prefix_cross_table: "@table.".into(),
-            sql_now_fn: crate::db::dialect::now_fn().into(),
+            sql_now_fn: crate::db::Driver::now_fn().into(),
             sql_isset_op: "IS NOT NULL".into(),
             sql_length_fn: "LENGTH".into(),
             sql_like_wildcard: "%".into(),

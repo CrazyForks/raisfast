@@ -1,4 +1,5 @@
 use super::*;
+use raisfast::DbDriver;
 
 async fn has_tenant_id_column(pool: &raisfast::db::Pool) -> bool {
     #[cfg(feature = "db-sqlite")]
@@ -44,9 +45,9 @@ async fn create_user_in_tenant(
     let hash = raisfast::services::auth::hash_password("TestPass123!").unwrap();
     let sql = format!(
         "INSERT INTO users (tenant_id, username, role, status, registered_via) VALUES ({}, {}, {}, 'active', 'email') RETURNING id",
-        raisfast::db::dialect::ph(1),
-        raisfast::db::dialect::ph(2),
-        raisfast::db::dialect::ph(3)
+        raisfast::db::Driver::ph(1),
+        raisfast::db::Driver::ph(2),
+        raisfast::db::Driver::ph(3)
     );
     let int_id: i64 = sqlx::query_scalar(&sql)
         .bind(tenant_id)
@@ -60,12 +61,12 @@ async fn create_user_in_tenant(
     let cred_now = raisfast::utils::tz::now_utc();
     let cred_sql = format!(
         "INSERT INTO user_credentials (id, user_id, auth_type, identifier, credential_data, verified, created_at, updated_at) VALUES ({}, {}, 'email', {}, {}, 1, {}, {})",
-        raisfast::db::dialect::ph(1),
-        raisfast::db::dialect::ph(2),
-        raisfast::db::dialect::ph(3),
-        raisfast::db::dialect::ph(4),
-        raisfast::db::dialect::ph(5),
-        raisfast::db::dialect::ph(6)
+        raisfast::db::Driver::ph(1),
+        raisfast::db::Driver::ph(2),
+        raisfast::db::Driver::ph(3),
+        raisfast::db::Driver::ph(4),
+        raisfast::db::Driver::ph(5),
+        raisfast::db::Driver::ph(6)
     );
     sqlx::query(&cred_sql)
         .bind(cred_id)
@@ -90,12 +91,12 @@ async fn create_published_post_in_tenant(
     let now = chrono::Utc::now().to_rfc3339();
     let sql = format!(
         "INSERT INTO posts (tenant_id, title, slug, content, excerpt, status, created_by, updated_by, created_at, updated_at) VALUES ({}, {}, {}, 'content', 'excerpt', 'published', {}, NULL, {}, {})",
-        raisfast::db::dialect::ph(1),
-        raisfast::db::dialect::ph(2),
-        raisfast::db::dialect::ph(3),
-        raisfast::db::dialect::ph(4),
-        raisfast::db::dialect::ph(5),
-        raisfast::db::dialect::ph(6)
+        raisfast::db::Driver::ph(1),
+        raisfast::db::Driver::ph(2),
+        raisfast::db::Driver::ph(3),
+        raisfast::db::Driver::ph(4),
+        raisfast::db::Driver::ph(5),
+        raisfast::db::Driver::ph(6)
     );
     sqlx::query(&sql)
         .bind(tenant_id)

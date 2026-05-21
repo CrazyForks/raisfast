@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use crate::commands::{CreateProductCmd, UpdateProductCmd};
+use crate::db::DbDriver;
 use crate::errors::app_error::{AppError, AppResult};
 use crate::types::snowflake_id::SnowflakeId;
 use crate::utils::tz::Timestamp;
@@ -214,7 +215,7 @@ pub async fn update(
             "sale_price" => cmd.sale_price,
             "has_variants" => cmd.has_variants,
         ],
-        raw: ["updated_at" => crate::db::dialect::now_fn(), "version" => "version + 1"],
+        raw: ["updated_at" => crate::db::Driver::now_fn(), "version" => "version + 1"],
         where: "id" => cmd.id,
         and: ["version" => cmd.version],
         tenant: tenant_id

@@ -3,6 +3,7 @@
 use chrono::Utc;
 
 use crate::aspects::engine::AspectEngine;
+use crate::db::DbDriver;
 use crate::errors::app_error::{AppError, AppResult};
 use crate::event::Event;
 use crate::middleware::auth::AuthUser;
@@ -78,8 +79,8 @@ pub async fn reset_password(
 
         let sql = format!(
             "SELECT id, auth_type FROM user_credentials WHERE user_id = {} AND auth_type = {} LIMIT 1",
-            crate::db::dialect::ph(1),
-            crate::db::dialect::ph(2)
+            crate::db::Driver::ph(1),
+            crate::db::Driver::ph(2)
         );
         let row: Option<(i64, crate::models::user_credential::AuthType)> = sqlx::query_as(&sql)
             .bind(reset_token.user_id)
@@ -89,9 +90,9 @@ pub async fn reset_password(
         if let Some((cred_id, _)) = row {
             let sql = format!(
                 "UPDATE user_credentials SET credential_data = {}, updated_at = {} WHERE id = {}",
-                crate::db::dialect::ph(1),
-                crate::db::dialect::ph(2),
-                crate::db::dialect::ph(3)
+                crate::db::Driver::ph(1),
+                crate::db::Driver::ph(2),
+                crate::db::Driver::ph(3)
             );
             sqlx::query(&sql)
                 .bind(crate::models::user_credential::wrap_password_hash(
@@ -105,8 +106,8 @@ pub async fn reset_password(
 
         let sql = format!(
             "UPDATE password_reset_tokens SET used_at = {} WHERE id = {}",
-            crate::db::dialect::ph(1),
-            crate::db::dialect::ph(2)
+            crate::db::Driver::ph(1),
+            crate::db::Driver::ph(2)
         );
         sqlx::query(&sql)
             .bind(now)
@@ -116,7 +117,7 @@ pub async fn reset_password(
 
         let del_sql = format!(
             "DELETE FROM refresh_tokens WHERE user_id = {}",
-            crate::db::dialect::ph(1)
+            crate::db::Driver::ph(1)
         );
         sqlx::query(&del_sql)
             .bind(reset_token.user_id)
@@ -231,7 +232,7 @@ mod tests {
             .unwrap();
         let sql = format!(
             "SELECT COUNT(*) FROM password_reset_tokens WHERE user_id = {} AND used_at IS NULL",
-            crate::db::dialect::ph(1),
+            crate::db::Driver::ph(1),
         );
         let (count,): (i64,) = sqlx::query_as(&sql)
             .bind(user.id)
@@ -270,7 +271,7 @@ mod tests {
             .unwrap();
         let sql = format!(
             "SELECT token FROM password_reset_tokens WHERE user_id = {} AND used_at IS NULL LIMIT 1",
-            crate::db::dialect::ph(1),
+            crate::db::Driver::ph(1),
         );
         let (token_str,): (String,) = sqlx::query_as(&sql)
             .bind(user.id)

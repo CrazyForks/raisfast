@@ -5,7 +5,7 @@
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 
-use crate::db::dialect::ph;
+use crate::db::{DbDriver, Driver};
 use crate::errors::app_error::AppResult;
 use crate::types::snowflake_id::SnowflakeId;
 use crate::utils::tz::Timestamp;
@@ -70,8 +70,8 @@ pub async fn consume_state(
     raisfast_derive::check_schema!("oauth_states", "id", "expires_at");
     let sql = format!(
         "SELECT * FROM oauth_states WHERE id = {} AND expires_at > {}",
-        ph(1),
-        crate::db::dialect::now_fn(),
+        Driver::ph(1),
+        crate::db::Driver::now_fn(),
     );
     let state = sqlx::query_as::<_, OAuthState>(&sql)
         .bind(id)
@@ -79,7 +79,7 @@ pub async fn consume_state(
         .await?;
 
     if state.is_some() {
-        let del_sql = format!("DELETE FROM oauth_states WHERE id = {}", ph(1));
+        let del_sql = format!("DELETE FROM oauth_states WHERE id = {}", Driver::ph(1));
         sqlx::query(&del_sql).bind(id).execute(pool).await?;
     }
 
@@ -91,7 +91,7 @@ pub async fn cleanup_expired_states(pool: &crate::db::Pool) -> AppResult<u64> {
     raisfast_derive::check_schema!("oauth_states", "expires_at");
     let sql = format!(
         "DELETE FROM oauth_states WHERE expires_at <= {}",
-        crate::db::dialect::now_fn(),
+        crate::db::Driver::now_fn(),
     );
     let result = sqlx::query(&sql).execute(pool).await?;
     Ok(result.rows_affected())

@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 #[cfg(feature = "export-types")]
 use ts_rs::TS;
 
+use crate::db::DbDriver;
 use crate::errors::app_error::{AppError, AppResult};
 use crate::types::snowflake_id::SnowflakeId;
 use crate::utils::tz::Timestamp;
@@ -136,7 +137,7 @@ pub async fn update(
             "sort_order" => cmd.sort_order,
             "is_active" => cmd.is_active,
         ],
-        raw: ["updated_at" => crate::db::dialect::now_fn()],
+        raw: ["updated_at" => crate::db::Driver::now_fn()],
         where: "id" => cmd.id,
         tenant: tenant_id
     )?;

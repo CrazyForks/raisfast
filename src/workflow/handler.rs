@@ -9,7 +9,7 @@ use ts_rs::TS;
 
 use super::model::{StepDef, WorkflowInstanceStatus};
 use crate::AppState;
-use crate::db::dialect;
+use crate::db::{DbDriver, Driver};
 use crate::errors::app_error::{AppError, AppResult};
 use crate::errors::response::ApiResponse;
 
@@ -203,7 +203,7 @@ pub async fn start(
     let wf_id = crate::types::snowflake_id::parse_id(&id)?;
     let triggered_by_int: Option<i64> = match &body.triggered_by {
         Some(uid) if !uid.is_empty() => {
-            let sql = format!("SELECT id FROM users WHERE id = {}", dialect::ph(1));
+            let sql = format!("SELECT id FROM users WHERE id = {}", Driver::ph(1));
             sqlx::query_scalar::<_, i64>(&sql)
                 .bind(uid.parse::<i64>().unwrap_or(0))
                 .fetch_optional(&state.pool)

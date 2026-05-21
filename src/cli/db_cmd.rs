@@ -1,8 +1,9 @@
 //! `db` subcommand: database migration, backup, seed data.
 
+use raisfast::DbDriver;
 use raisfast::config::app::AppConfig;
+use raisfast::db::Driver;
 use raisfast::db::connection::init_pool;
-use raisfast::db::dialect;
 
 // ── migrate ──────────────────────────────────────────────────────
 
@@ -43,7 +44,7 @@ pub async fn seed(
 
     let existing: i64 = sqlx::query_scalar(&format!(
         "SELECT COUNT(*) FROM users WHERE username = {}",
-        dialect::ph(1)
+        Driver::ph(1)
     ))
     .bind(username)
     .fetch_one(&pool)
@@ -77,14 +78,14 @@ pub async fn seed(
         Some(tid) => {
             sqlx::query(&format!(
                 "INSERT INTO users (id, tenant_id, username, created_at, updated_at, role, status, registered_via) VALUES ({}, {}, {}, {}, {}, {}, {}, {})",
-                dialect::ph(1),
-                dialect::ph(2),
-                dialect::ph(3),
-                dialect::ph(4),
-                dialect::ph(5),
-                dialect::ph(6),
-                dialect::ph(7),
-                dialect::ph(8),
+                Driver::ph(1),
+                Driver::ph(2),
+                Driver::ph(3),
+                Driver::ph(4),
+                Driver::ph(5),
+                Driver::ph(6),
+                Driver::ph(7),
+                Driver::ph(8),
             ))
             .bind(id)
             .bind(&tid)
@@ -100,13 +101,13 @@ pub async fn seed(
         None => {
             sqlx::query(&format!(
                 "INSERT INTO users (id, username, created_at, updated_at, role, status, registered_via) VALUES ({}, {}, {}, {}, {}, {}, {})",
-                dialect::ph(1),
-                dialect::ph(2),
-                dialect::ph(3),
-                dialect::ph(4),
-                dialect::ph(5),
-                dialect::ph(6),
-                dialect::ph(7),
+                Driver::ph(1),
+                Driver::ph(2),
+                Driver::ph(3),
+                Driver::ph(4),
+                Driver::ph(5),
+                Driver::ph(6),
+                Driver::ph(7),
             ))
             .bind(id)
             .bind(username)
@@ -122,7 +123,7 @@ pub async fn seed(
 
     let (user_id,): (i64,) = sqlx::query_as(&format!(
         "SELECT id FROM users WHERE id = {}",
-        dialect::ph(1)
+        Driver::ph(1)
     ))
     .bind(id)
     .fetch_one(&pool)
@@ -135,13 +136,13 @@ pub async fn seed(
     );
     sqlx::query(&format!(
         "INSERT INTO user_credentials (id, user_id, auth_type, identifier, credential_data, verified, created_at, updated_at) VALUES ({}, {}, {}, {}, {}, 1, {}, {})",
-        dialect::ph(1),
-        dialect::ph(2),
-        dialect::ph(3),
-        dialect::ph(4),
-        dialect::ph(5),
-        dialect::ph(6),
-        dialect::ph(7),
+        Driver::ph(1),
+        Driver::ph(2),
+        Driver::ph(3),
+        Driver::ph(4),
+        Driver::ph(5),
+        Driver::ph(6),
+        Driver::ph(7),
     ))
     .bind(cred_id)
     .bind(user_id)

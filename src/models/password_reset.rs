@@ -5,7 +5,7 @@
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 
-use crate::db::dialect::ph;
+use crate::db::{DbDriver, Driver};
 use crate::errors::app_error::AppResult;
 use crate::types::snowflake_id::SnowflakeId;
 use crate::utils::tz::Timestamp;
@@ -101,7 +101,7 @@ pub async fn cleanup_expired(pool: &crate::db::Pool) -> AppResult<u64> {
     let now = crate::utils::tz::now_utc();
     let sql = format!(
         "DELETE FROM password_reset_tokens WHERE expires_at < {} AND used_at IS NULL",
-        ph(1),
+        Driver::ph(1),
     );
     let result = sqlx::query(&sql).bind(now).execute(pool).await?;
     Ok(result.rows_affected())
@@ -162,7 +162,7 @@ mod tests {
 
         let sql = format!(
             "SELECT used_at FROM password_reset_tokens WHERE id = {}",
-            crate::db::dialect::ph(1),
+            crate::db::Driver::ph(1),
         );
         let (used_at,): (Option<String>,) = sqlx::query_as(&sql)
             .bind(row.id)

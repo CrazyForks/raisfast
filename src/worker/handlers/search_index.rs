@@ -99,9 +99,10 @@ mod tests {
     #[cfg(feature = "search-tantivy")]
     async fn create_user(pool: &crate::db::Pool) -> i64 {
         let id = crate::utils::id::new_id();
-        let (user_id,): (i64,) = sqlx::query_as(
-            "INSERT INTO users (id, username, role, status, registered_via) VALUES (?, 'testuser', 'author', 'active', 'email') RETURNING id",
-        )
+        let (user_id,): (i64,) = sqlx::query_as(&format!(
+            "INSERT INTO users (id, username, role, status, registered_via) VALUES (?, 'testuser', 'author', 'active', 'email') {}",
+            crate::db::Driver::returning_col("id"),
+        ))
         .bind(id)
         .fetch_one(pool)
         .await
@@ -116,7 +117,8 @@ mod tests {
         let published = crate::models::post::PostStatus::Published.as_str();
         let (int_id,): (i64,) = sqlx::query_as(&format!(
             "INSERT INTO posts (id, title, slug, content, status, created_by, updated_by, view_count, is_pinned, created_at, updated_at) \
-             VALUES (?, ?, ?, ?, '{published}', ?, NULL, 0, 0, ?, ?) RETURNING id",
+             VALUES (?, ?, ?, ?, '{published}', ?, NULL, 0, 0, ?, ?) {}",
+            crate::db::Driver::returning_col("id"),
         ))
         .bind(id)
         .bind(title)

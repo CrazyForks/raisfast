@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::db::dialect::ph;
+use crate::db::{DbDriver, Driver};
 use crate::errors::app_error::AppResult;
 use crate::types::snowflake_id::SnowflakeId;
 use crate::utils::tz::Timestamp;
@@ -185,7 +185,7 @@ pub async fn update_provider_order_id(
     raisfast_derive::crud_update!(
         pool, "payment_orders",
         bind: ["provider_order_id" => provider_order_id, "provider_data" => provider_data],
-        raw: ["updated_at" => crate::db::dialect::now_fn()],
+        raw: ["updated_at" => crate::db::Driver::now_fn()],
         where: "id" => id,
         tenant: tenant_id
     )?;
@@ -203,20 +203,20 @@ pub async fn tx_update_status_cas(
     let sql = if let Some(col) = timestamp_col {
         format!(
             "UPDATE payment_orders SET status = {}, {} = {}, updated_at = {}, version = version + 1 WHERE id = {} AND status = {}",
-            ph(1),
+            Driver::ph(1),
             col,
-            crate::db::dialect::now_fn(),
-            crate::db::dialect::now_fn(),
-            ph(2),
-            ph(3)
+            crate::db::Driver::now_fn(),
+            crate::db::Driver::now_fn(),
+            Driver::ph(2),
+            Driver::ph(3)
         )
     } else {
         format!(
             "UPDATE payment_orders SET status = {}, updated_at = {}, version = version + 1 WHERE id = {} AND status = {}",
-            ph(1),
-            crate::db::dialect::now_fn(),
-            ph(2),
-            ph(3)
+            Driver::ph(1),
+            crate::db::Driver::now_fn(),
+            Driver::ph(2),
+            Driver::ph(3)
         )
     };
     let result = sqlx::query(&sql)

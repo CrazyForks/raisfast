@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use crate::config::app::AppConfig;
 use crate::db::Pool;
-use crate::db::dialect::ph;
+use crate::db::{DbDriver, Driver};
 use crate::errors::app_error::AppResult;
 use crate::models::payment_channel;
 use crate::models::payment_order::PaymentStatus;
@@ -35,8 +35,8 @@ impl JobHandler for ReconcilePaymentsHandler {
 
         let sql = format!(
             "SELECT * FROM payment_orders WHERE status = 'paid' AND paid_at >= {} AND paid_at < {} LIMIT 500",
-            ph(1),
-            ph(2)
+            Driver::ph(1),
+            Driver::ph(2)
         );
         let orders: Vec<crate::models::payment_order::PaymentOrder> = sqlx::query_as(&sql)
             .bind(&yesterday_start)

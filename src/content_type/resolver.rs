@@ -18,6 +18,7 @@ fn extract_id_i64(v: &Value) -> Option<i64> {
     v.as_i64()
         .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
 }
+use crate::db::DbDriver;
 use crate::db::Pool;
 use crate::errors::app_error::AppError;
 
@@ -78,8 +79,8 @@ async fn resolve_many_to_one_batch(
         .clone()
         .unwrap_or_else(|| format!("{}_id", field.name));
 
-    if !crate::db::dialect::is_safe_identifier(&fk)
-        || !crate::db::dialect::is_safe_identifier(&rel.target)
+    if !crate::db::driver::is_safe_identifier(&fk)
+        || !crate::db::driver::is_safe_identifier(&rel.target)
     {
         tracing::warn!(
             "skipping many_to_one resolution with unsafe identifier: fk={fk}, target={}",
@@ -120,9 +121,7 @@ async fn resolve_many_to_one_batch(
         deduped
     };
 
-    let placeholders: Vec<String> = (1..=deduped_ids.len())
-        .map(crate::db::dialect::ph)
-        .collect();
+    let placeholders: Vec<String> = (1..=deduped_ids.len()).map(crate::db::Driver::ph).collect();
     let sql = format!(
         "SELECT {select_cols} FROM {target_table} WHERE {COL_ID} IN ({})",
         placeholders.join(", ")
@@ -177,8 +176,8 @@ async fn resolve_one_to_many_batch(
         .clone()
         .unwrap_or_else(|| format!("{}_id", ct.singular));
 
-    if !crate::db::dialect::is_safe_identifier(&fk_col)
-        || !crate::db::dialect::is_safe_identifier(&rel.target)
+    if !crate::db::driver::is_safe_identifier(&fk_col)
+        || !crate::db::driver::is_safe_identifier(&rel.target)
     {
         tracing::warn!(
             "skipping one_to_many resolution with unsafe identifier: fk={fk_col}, target={}",
@@ -206,9 +205,7 @@ async fn resolve_one_to_many_batch(
     let columns = fetch_column_names(pool, target_table).await;
     let select_cols = columns.join(", ");
 
-    let placeholders: Vec<String> = (1..=deduped_ids.len())
-        .map(crate::db::dialect::ph)
-        .collect();
+    let placeholders: Vec<String> = (1..=deduped_ids.len()).map(crate::db::Driver::ph).collect();
     let sql = format!(
         "SELECT {select_cols}, {fk_col} as __fk FROM {target_table} WHERE {fk_col} IN ({})",
         placeholders.join(", ")
@@ -260,10 +257,10 @@ async fn resolve_many_to_many_batch(
     let source_col = format!("{}_id", ct.singular);
     let target_col = format!("{}_id", rel.target);
 
-    if !crate::db::dialect::is_safe_identifier(&through)
-        || !crate::db::dialect::is_safe_identifier(&source_col)
-        || !crate::db::dialect::is_safe_identifier(&target_col)
-        || !crate::db::dialect::is_safe_identifier(target_table)
+    if !crate::db::driver::is_safe_identifier(&through)
+        || !crate::db::driver::is_safe_identifier(&source_col)
+        || !crate::db::driver::is_safe_identifier(&target_col)
+        || !crate::db::driver::is_safe_identifier(target_table)
     {
         tracing::warn!(
             "skipping many_to_many resolution with unsafe identifier: through={through}, source={source_col}, target={target_col}, table={target_table}"
@@ -289,9 +286,7 @@ async fn resolve_many_to_many_batch(
     let columns = fetch_column_names(pool, target_table).await;
     let select_cols = columns.join(", ");
 
-    let placeholders: Vec<String> = (1..=deduped_ids.len())
-        .map(crate::db::dialect::ph)
-        .collect();
+    let placeholders: Vec<String> = (1..=deduped_ids.len()).map(crate::db::Driver::ph).collect();
     let sql = format!(
         "SELECT {select_cols}, {through}.{source_col} as __source_id \
          FROM {target_table} \
@@ -342,7 +337,7 @@ async fn fetch_column_names(pool: &Pool, table: &str) -> Vec<String> {
         }
     }
 
-    if !crate::db::dialect::is_safe_identifier(table) {
+    if !crate::db::driver::is_safe_identifier(table) {
         tracing::warn!(table, "rejected unsafe table name in fetch_column_names");
         return vec![COL_ID.into()];
     }

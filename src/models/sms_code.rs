@@ -2,7 +2,7 @@
 
 use sqlx::FromRow;
 
-use crate::db::dialect::ph;
+use crate::db::{DbDriver, Driver};
 use crate::errors::app_error::AppResult;
 use crate::types::snowflake_id::SnowflakeId;
 use crate::utils::tz::Timestamp;
@@ -164,7 +164,7 @@ pub enum VerifyResult {
 pub async fn cleanup_expired(pool: &crate::db::Pool) -> AppResult<u64> {
     raisfast_derive::check_schema!("sms_codes", "expires_at");
     let now = crate::utils::tz::now_utc();
-    let sql = format!("DELETE FROM sms_codes WHERE expires_at < {}", ph(1));
+    let sql = format!("DELETE FROM sms_codes WHERE expires_at < {}", Driver::ph(1));
     let result = sqlx::query(&sql).bind(now).execute(pool).await?;
     Ok(result.rows_affected())
 }

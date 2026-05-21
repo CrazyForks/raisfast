@@ -6,7 +6,7 @@
 use sqlx::FromRow;
 
 use crate::db::Pool;
-use crate::db::dialect::ph;
+use crate::db::{DbDriver, Driver};
 use crate::errors::app_error::AppResult;
 use crate::utils::tz::Timestamp;
 
@@ -31,8 +31,8 @@ pub async fn get(pool: &Pool, plugin_id: &str, key: &str) -> AppResult<Option<St
     );
     let row = sqlx::query_as::<_, PluginStorageRow>(&format!(
         "SELECT * FROM plugin_storage WHERE plugin_id = {} AND storage_key = {}",
-        ph(1),
-        ph(2),
+        Driver::ph(1),
+        Driver::ph(2),
     ))
     .bind(plugin_id)
     .bind(key)
@@ -46,8 +46,8 @@ pub async fn get(pool: &Pool, plugin_id: &str, key: &str) -> AppResult<Option<St
                 if exp < &now {
                     let _ = sqlx::query(&format!(
                         "DELETE FROM plugin_storage WHERE plugin_id = {} AND storage_key = {}",
-                        ph(1),
-                        ph(2),
+                        Driver::ph(1),
+                        Driver::ph(2),
                     ))
                     .bind(plugin_id)
                     .bind(key)
@@ -84,20 +84,20 @@ pub async fn set(
             .unwrap_or_else(crate::utils::tz::now_utc)
     });
 
-    let now = crate::db::dialect::now_fn();
+    let now = crate::db::Driver::now_fn();
     let assignments = format!(
         "value = {}, expires_at = {}, updated_at = {now}",
-        crate::db::dialect::excluded_col("value"),
-        crate::db::dialect::excluded_col("expires_at"),
+        crate::db::Driver::excluded_col("value"),
+        crate::db::Driver::excluded_col("expires_at"),
     );
     let sql = format!(
         "INSERT INTO plugin_storage (plugin_id, storage_key, value, expires_at, updated_at) \
          VALUES ({}, {}, {}, {}, {now}) {}",
-        ph(1),
-        ph(2),
-        ph(3),
-        ph(4),
-        crate::db::dialect::upsert_clause("plugin_id, storage_key", &assignments)
+        Driver::ph(1),
+        Driver::ph(2),
+        Driver::ph(3),
+        Driver::ph(4),
+        crate::db::Driver::upsert_clause("plugin_id, storage_key", &assignments)
     );
     sqlx::query(&sql)
         .bind(plugin_id)

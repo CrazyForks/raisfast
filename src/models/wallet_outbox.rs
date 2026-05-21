@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 
-use crate::db::dialect::ph;
+use crate::db::{DbDriver, Driver};
 use crate::errors::app_error::AppResult;
 use crate::types::snowflake_id::SnowflakeId;
 use crate::utils::tz::Timestamp;
@@ -77,7 +77,7 @@ pub async fn fetch_pending(pool: &crate::db::Pool, limit: i64) -> AppResult<Vec<
     );
     let sql = format!(
         "SELECT * FROM wallet_outbox WHERE status IN ('pending', 'failed') AND attempts < max_attempts ORDER BY created_at ASC LIMIT {}",
-        ph(1)
+        Driver::ph(1)
     );
     sqlx::query_as::<_, WalletOutbox>(&sql)
         .bind(limit)
@@ -90,8 +90,8 @@ pub async fn mark_processing(pool: &crate::db::Pool, id: SnowflakeId) -> AppResu
     raisfast_derive::check_schema!("wallet_outbox", "status", "updated_at", "id");
     let sql = format!(
         "UPDATE wallet_outbox SET status = 'processing', updated_at = {} WHERE id = {} AND status IN ('pending', 'failed')",
-        crate::db::dialect::now_fn(),
-        ph(1)
+        crate::db::Driver::now_fn(),
+        Driver::ph(1)
     );
     sqlx::query(&sql).bind(id).execute(pool).await?;
     Ok(())
@@ -99,7 +99,7 @@ pub async fn mark_processing(pool: &crate::db::Pool, id: SnowflakeId) -> AppResu
 
 pub async fn mark_completed(pool: &crate::db::Pool, id: SnowflakeId) -> AppResult<()> {
     raisfast_derive::crud_update!(pool, "wallet_outbox",
-        raw: ["status" => "'completed'", "updated_at" => crate::db::dialect::now_fn()],
+        raw: ["status" => "'completed'", "updated_at" => crate::db::Driver::now_fn()],
         where: "id" => id
     )?;
     Ok(())
@@ -117,9 +117,9 @@ pub async fn mark_failed(pool: &crate::db::Pool, id: SnowflakeId, error: &str) -
     );
     let sql = format!(
         "UPDATE wallet_outbox SET status = CASE WHEN attempts + 1 >= max_attempts THEN 'dead' ELSE 'failed' END, attempts = attempts + 1, last_error = {}, updated_at = {} WHERE id = {}",
-        ph(1),
-        crate::db::dialect::now_fn(),
-        ph(2)
+        Driver::ph(1),
+        crate::db::Driver::now_fn(),
+        Driver::ph(2)
     );
     sqlx::query(&sql).bind(error).bind(id).execute(pool).await?;
     Ok(())

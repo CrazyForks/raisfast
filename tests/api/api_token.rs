@@ -1,4 +1,5 @@
 use super::*;
+use raisfast::DbDriver;
 
 async fn setup() -> (axum::Router, String, raisfast::db::Pool) {
     let (app, state) = test_app().await;
@@ -188,12 +189,12 @@ async fn delete_token_non_owner_forbidden() {
     let cred_now = raisfast::utils::tz::now_utc();
     let cred_sql = format!(
         "INSERT INTO user_credentials (id, user_id, auth_type, identifier, credential_data, verified, created_at, updated_at) VALUES ({}, {}, 'email', {}, {}, 1, {}, {})",
-        raisfast::db::dialect::ph(1),
-        raisfast::db::dialect::ph(2),
-        raisfast::db::dialect::ph(3),
-        raisfast::db::dialect::ph(4),
-        raisfast::db::dialect::ph(5),
-        raisfast::db::dialect::ph(6)
+        raisfast::db::Driver::ph(1),
+        raisfast::db::Driver::ph(2),
+        raisfast::db::Driver::ph(3),
+        raisfast::db::Driver::ph(4),
+        raisfast::db::Driver::ph(5),
+        raisfast::db::Driver::ph(6)
     );
     sqlx::query(&cred_sql)
         .bind(cred_id)
@@ -230,12 +231,12 @@ async fn admin_can_delete_other_users_token() {
     let cred_now = raisfast::utils::tz::now_utc();
     let cred_sql = format!(
         "INSERT INTO user_credentials (id, user_id, auth_type, identifier, credential_data, verified, created_at, updated_at) VALUES ({}, {}, 'email', {}, {}, 1, {}, {})",
-        raisfast::db::dialect::ph(1),
-        raisfast::db::dialect::ph(2),
-        raisfast::db::dialect::ph(3),
-        raisfast::db::dialect::ph(4),
-        raisfast::db::dialect::ph(5),
-        raisfast::db::dialect::ph(6)
+        raisfast::db::Driver::ph(1),
+        raisfast::db::Driver::ph(2),
+        raisfast::db::Driver::ph(3),
+        raisfast::db::Driver::ph(4),
+        raisfast::db::Driver::ph(5),
+        raisfast::db::Driver::ph(6)
     );
     sqlx::query(&cred_sql)
         .bind(cred_id)
@@ -496,12 +497,12 @@ async fn each_user_sees_only_own_tokens() {
     let cred_now = raisfast::utils::tz::now_utc();
     let cred_sql = format!(
         "INSERT INTO user_credentials (id, user_id, auth_type, identifier, credential_data, verified, created_at, updated_at) VALUES ({}, {}, 'email', {}, {}, 1, {}, {})",
-        raisfast::db::dialect::ph(1),
-        raisfast::db::dialect::ph(2),
-        raisfast::db::dialect::ph(3),
-        raisfast::db::dialect::ph(4),
-        raisfast::db::dialect::ph(5),
-        raisfast::db::dialect::ph(6)
+        raisfast::db::Driver::ph(1),
+        raisfast::db::Driver::ph(2),
+        raisfast::db::Driver::ph(3),
+        raisfast::db::Driver::ph(4),
+        raisfast::db::Driver::ph(5),
+        raisfast::db::Driver::ph(6)
     );
     sqlx::query(&cred_sql)
         .bind(cred_id)

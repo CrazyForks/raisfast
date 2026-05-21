@@ -12,6 +12,7 @@ use crate::aspects::{
     SqlType, TargetMatcher, When,
 };
 use crate::constants::COL_EXPIRES_AT;
+use crate::db::DbDriver;
 use crate::protocols::{Protocol, ProtocolDeclaration};
 
 pub struct ExpirableAspect;
@@ -79,7 +80,7 @@ impl Protocol for ExpirableProtocol {
         ProtocolDeclaration {
             query_filters: vec![(
                 COL_EXPIRES_AT.to_string(),
-                format!("IS NULL OR expires_at > {}", crate::db::dialect::now_fn()),
+                format!("IS NULL OR expires_at > {}", crate::db::Driver::now_fn()),
             )],
             ..Default::default()
         }

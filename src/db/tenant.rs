@@ -28,6 +28,7 @@
 //! q.execute(tp.pool()).await?;
 //! ```
 
+use super::DbDriver;
 use std::collections::HashSet;
 
 use tokio::sync::RwLock;
@@ -68,37 +69,10 @@ pub async fn invalidate_cache() {
 
 async fn check_column_exists(pool: &Pool, table: &str) -> bool {
     assert!(
-        super::dialect::is_safe_identifier(table),
+        super::driver::is_safe_identifier(table),
         "unsafe table name: {table}"
     );
-    #[cfg(feature = "db-sqlite")]
-    {
-        let sql = format!("PRAGMA table_info({table})");
-        let rows: Vec<(i32, String, String, i32, Option<String>, i32)> = sqlx::query_as(&sql)
-            .fetch_all(pool)
-            .await
-            .unwrap_or_default();
-        rows.iter()
-            .any(|(_, name, _, _, _, _)| name == COL_TENANT_ID)
-    }
-    #[cfg(feature = "db-postgres")]
-    {
-        sqlx::query_scalar("SELECT 1 FROM information_schema.columns WHERE table_name = $1 AND column_name = 'tenant_id'")
-            .bind(table)
-            .fetch_optional(pool)
-            .await
-            .unwrap_or(None)
-            .is_some()
-    }
-    #[cfg(feature = "db-mysql")]
-    {
-        sqlx::query_scalar("SELECT 1 FROM information_schema.columns WHERE table_name = ? AND column_name = 'tenant_id'")
-            .bind(table)
-            .fetch_optional(pool)
-            .await
-            .unwrap_or(None)
-            .is_some()
-    }
+    super::Driver::has_column(pool, table, COL_TENANT_ID).await
 }
 
 // ---------------------------------------------------------------------------
@@ -142,7 +116,7 @@ fn inject_where(sql: &str, idx: usize) -> String {
     };
     format!(
         "{sql}{connector}{COL_TENANT_ID} = {}",
-        super::dialect::ph(idx)
+        super::Driver::ph(idx)
     )
 }
 
@@ -165,7 +139,7 @@ fn sql_has_tenant(sql: &str) -> bool {
 /// ```
 pub fn tenant_filter_ph(tenant_id: Option<&str>, idx: usize) -> String {
     match tenant_id {
-        Some(_) => format!(" AND {COL_TENANT_ID} = {}", super::dialect::ph(idx)),
+        Some(_) => format!(" AND {COL_TENANT_ID} = {}", super::Driver::ph(idx)),
         None => String::new(),
     }
 }
@@ -194,14 +168,14 @@ pub fn tenant_filter_aliased(alias: &str, tenant_id: Option<&str>) -> String {
 /// ```
 pub fn insert_sql(table: &str, columns: &[&str], tenant_id: Option<&str>) -> String {
     assert!(
-        super::dialect::is_safe_identifier(table),
+        super::driver::is_safe_identifier(table),
         "unsafe table name: {table}"
     );
     let mut cols: Vec<&str> = columns.to_vec();
     if tenant_id.is_some() {
         cols.push(COL_TENANT_ID);
     }
-    let phs: Vec<String> = (1..=cols.len()).map(super::dialect::ph).collect();
+    let phs: Vec<String> = (1..=cols.len()).map(super::Driver::ph).collect();
     format!(
         "INSERT INTO {table} ({}) VALUES ({})",
         cols.join(", "),
@@ -212,7 +186,7 @@ pub fn insert_sql(table: &str, columns: &[&str], tenant_id: Option<&str>) -> Str
 /// Placeholder-safe version of [`tenant_filter_aliased`].
 pub fn tenant_filter_aliased_ph(alias: &str, tenant_id: Option<&str>, idx: usize) -> String {
     match tenant_id {
-        Some(_) => format!(" AND {alias}.{COL_TENANT_ID} = {}", super::dialect::ph(idx)),
+        Some(_) => format!(" AND {alias}.{COL_TENANT_ID} = {}", super::Driver::ph(idx)),
         None => String::new(),
     }
 }
@@ -280,14 +254,13 @@ impl TenantPool {
         let has = has_tenant_id(&self.pool, table).await;
         let (cols, placeholders) = if has {
             let placeholders: Vec<String> =
-                (1..=user_param_count + 1).map(super::dialect::ph).collect();
+                (1..=user_param_count + 1).map(super::Driver::ph).collect();
             (
                 format!("{user_cols}, {COL_TENANT_ID}"),
                 placeholders.join(", "),
             )
         } else {
-            let placeholders: Vec<String> =
-                (1..=user_param_count).map(super::dialect::ph).collect();
+            let placeholders: Vec<String> = (1..=user_param_count).map(super::Driver::ph).collect();
             (user_cols.to_string(), placeholders.join(", "))
         };
         let sql = format!("INSERT INTO {table} ({cols}) VALUES ({placeholders})");

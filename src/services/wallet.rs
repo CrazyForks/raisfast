@@ -3,8 +3,8 @@ use std::sync::Arc;
 use async_trait::async_trait;
 
 use crate::aspects::engine::AspectEngine;
-use crate::db::dialect::ph;
 use crate::db::pool::DbConnection;
+use crate::db::{DbDriver, Driver};
 use crate::errors::app_error::{AppError, AppResult};
 use crate::event::Event;
 use crate::models::currencies;
@@ -166,7 +166,7 @@ async fn tx_find_wallet_by_id(
     id: SnowflakeId,
 ) -> AppResult<Option<wallet::Wallet>> {
     raisfast_derive::check_schema!("wallets", "id");
-    let sql = format!("SELECT * FROM wallets WHERE id = {}", ph(1));
+    let sql = format!("SELECT * FROM wallets WHERE id = {}", Driver::ph(1));
     sqlx::query_as::<_, wallet::Wallet>(&sql)
         .bind(id)
         .fetch_optional(tx)
@@ -189,8 +189,8 @@ async fn tx_find_or_create(
     );
     let sql = format!(
         "SELECT * FROM wallets WHERE user_id = {} AND currency = {}",
-        ph(1),
-        ph(2)
+        Driver::ph(1),
+        Driver::ph(2)
     );
     if let Some(w) = sqlx::query_as::<_, wallet::Wallet>(&sql)
         .bind(user_id)
@@ -206,11 +206,11 @@ async fn tx_find_or_create(
     );
     let sql = format!(
         "INSERT INTO wallets (id, user_id, currency, created_at, updated_at) VALUES ({}, {}, {}, {}, {})",
-        ph(1),
-        ph(2),
-        ph(3),
-        ph(4),
-        ph(5)
+        Driver::ph(1),
+        Driver::ph(2),
+        Driver::ph(3),
+        Driver::ph(4),
+        Driver::ph(5)
     );
     let insert_result = sqlx::query(&sql)
         .bind(id)
@@ -223,7 +223,7 @@ async fn tx_find_or_create(
 
     match insert_result {
         Ok(_) => {
-            let sql = format!("SELECT * FROM wallets WHERE id = {}", ph(1));
+            let sql = format!("SELECT * FROM wallets WHERE id = {}", Driver::ph(1));
             sqlx::query_as::<_, wallet::Wallet>(&sql)
                 .bind(id)
                 .fetch_one(&mut *tx)
@@ -233,8 +233,8 @@ async fn tx_find_or_create(
         Err(_) => {
             let sql = format!(
                 "SELECT * FROM wallets WHERE user_id = {} AND currency = {}",
-                ph(1),
-                ph(2)
+                Driver::ph(1),
+                Driver::ph(2)
             );
             sqlx::query_as::<_, wallet::Wallet>(&sql)
                 .bind(user_id)
@@ -251,7 +251,10 @@ async fn tx_find_tx_by_id(
     id: SnowflakeId,
 ) -> AppResult<Option<WalletTransaction>> {
     raisfast_derive::check_schema!("wallet_transactions", "id");
-    let sql = format!("SELECT * FROM wallet_transactions WHERE id = {}", ph(1));
+    let sql = format!(
+        "SELECT * FROM wallet_transactions WHERE id = {}",
+        Driver::ph(1)
+    );
     sqlx::query_as::<_, WalletTransaction>(&sql)
         .bind(id)
         .fetch_optional(tx)
@@ -266,7 +269,7 @@ async fn tx_find_tx_by_transaction_no(
     raisfast_derive::check_schema!("wallet_transactions", "transaction_no");
     let sql = format!(
         "SELECT * FROM wallet_transactions WHERE transaction_no = {}",
-        ph(1)
+        Driver::ph(1)
     );
     sqlx::query_as::<_, WalletTransaction>(&sql)
         .bind(transaction_no)
@@ -279,8 +282,8 @@ async fn tx_has_reversal_for(tx: &mut DbConnection, related_tx_id: SnowflakeId) 
     raisfast_derive::check_schema!("wallet_transactions", "related_tx_id", "tx_type");
     let sql = format!(
         "SELECT COUNT(*) as count FROM wallet_transactions WHERE related_tx_id = {} AND tx_type = {}",
-        ph(1),
-        ph(2)
+        Driver::ph(1),
+        Driver::ph(2)
     );
     let (count,): (i64,) = sqlx::query_as(&sql)
         .bind(related_tx_id)
@@ -304,10 +307,10 @@ async fn apply_wallet_delta(
             .ok_or_else(|| AppError::BadRequest("balance_overflow".into()))?;
         let sql = format!(
             "UPDATE wallets SET balance = balance + {}, version = version + 1, updated_at = {} WHERE id = {} AND version = {}",
-            ph(1),
-            ph(2),
-            ph(3),
-            ph(4)
+            Driver::ph(1),
+            Driver::ph(2),
+            Driver::ph(3),
+            Driver::ph(4)
         );
         let affected = sqlx::query(&sql)
             .bind(delta)
@@ -324,11 +327,11 @@ async fn apply_wallet_delta(
         let abs = -delta;
         let sql = format!(
             "UPDATE wallets SET balance = balance - {}, version = version + 1, updated_at = {} WHERE id = {} AND balance >= {} AND version = {}",
-            ph(1),
-            ph(2),
-            ph(3),
-            ph(4),
-            ph(5)
+            Driver::ph(1),
+            Driver::ph(2),
+            Driver::ph(3),
+            Driver::ph(4),
+            Driver::ph(5)
         );
         let affected = sqlx::query(&sql)
             .bind(abs)
@@ -749,21 +752,21 @@ async fn insert_tx(
     );
     let sql = format!(
         "INSERT INTO wallet_transactions (id, wallet_id, user_id, entry_type, amount, balance_after, tx_type, currency, transaction_no, related_tx_id, reference_type, reference_id, counterparty_wallet_id, metadata, created_at) VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {})",
-        ph(1),
-        ph(2),
-        ph(3),
-        ph(4),
-        ph(5),
-        ph(6),
-        ph(7),
-        ph(8),
-        ph(9),
-        ph(10),
-        ph(11),
-        ph(12),
-        ph(13),
-        ph(14),
-        ph(15)
+        Driver::ph(1),
+        Driver::ph(2),
+        Driver::ph(3),
+        Driver::ph(4),
+        Driver::ph(5),
+        Driver::ph(6),
+        Driver::ph(7),
+        Driver::ph(8),
+        Driver::ph(9),
+        Driver::ph(10),
+        Driver::ph(11),
+        Driver::ph(12),
+        Driver::ph(13),
+        Driver::ph(14),
+        Driver::ph(15)
     );
     sqlx::query(&sql)
         .bind(id)
@@ -784,7 +787,10 @@ async fn insert_tx(
         .execute(&mut *tx)
         .await?;
 
-    let sql = format!("SELECT * FROM wallet_transactions WHERE id = {}", ph(1));
+    let sql = format!(
+        "SELECT * FROM wallet_transactions WHERE id = {}",
+        Driver::ph(1)
+    );
     let row = sqlx::query_as::<_, WalletTransaction>(&sql)
         .bind(id)
         .fetch_one(&mut *tx)
@@ -1101,14 +1107,17 @@ mod tests {
         let path = std::env::temp_dir().join(format!("raisfast_wallet_test_{id}.db"));
         let url = format!("sqlite:{}?mode=rwc", path.display());
         let pool = crate::db::Pool::connect(&url).await.unwrap();
-        sqlx::query("PRAGMA journal_mode = WAL")
-            .execute(&pool)
-            .await
-            .unwrap();
-        sqlx::query("PRAGMA foreign_keys = ON")
-            .execute(&pool)
-            .await
-            .unwrap();
+        #[cfg(feature = "db-sqlite")]
+        {
+            sqlx::query("PRAGMA journal_mode = WAL")
+                .execute(&pool)
+                .await
+                .unwrap();
+            sqlx::query("PRAGMA foreign_keys = ON")
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
         sqlx::query(crate::db::schema::SCHEMA_SQL)
             .execute(&pool)
             .await

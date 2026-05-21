@@ -22,6 +22,7 @@ pub mod config;
 pub mod constants;
 pub mod content_type;
 pub mod db;
+pub use db::DbDriver;
 pub mod dto;
 pub mod errors;
 pub mod event;

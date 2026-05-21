@@ -4,7 +4,7 @@ use sqlx::Row;
 
 use crate::constants::COL_ID;
 use crate::db::Pool;
-use crate::db::dialect::ph;
+use crate::db::{DbDriver, Driver};
 use crate::errors::app_error::{AppError, AppResult};
 use crate::utils::tz::Timestamp;
 
@@ -37,7 +37,7 @@ impl JobQueue for DefaultJobQueue {
         sqlx::query(&format!(
             "INSERT INTO jobs ({COL_ID}, job_type, payload, status, max_attempts, run_after, created_at, updated_at)
              VALUES ({}, {}, {}, {}, {}, {}, {}, {})",
-            ph(1), ph(2), ph(3), ph(4), ph(5), ph(6), ph(7), ph(8)
+            Driver::ph(1), Driver::ph(2), Driver::ph(3), Driver::ph(4), Driver::ph(5), Driver::ph(6), Driver::ph(7), Driver::ph(8)
         ))
         .bind(id)
         .bind(job_type)
@@ -58,7 +58,7 @@ impl JobQueue for DefaultJobQueue {
         let now = crate::utils::tz::now_utc();
         let limit_i64 = limit as i64;
 
-        let returning = crate::db::dialect::returning_col(&format!(
+        let returning = crate::db::Driver::returning_col(&format!(
             "{COL_ID}, job_type, payload, attempts, max_attempts, created_at"
         ));
         let sql = format!(
@@ -69,11 +69,11 @@ impl JobQueue for DefaultJobQueue {
                ORDER BY created_at ASC LIMIT {}
              )
              {returning}",
-            ph(1),
-            ph(2),
-            ph(3),
-            ph(4),
-            ph(5)
+            Driver::ph(1),
+            Driver::ph(2),
+            Driver::ph(3),
+            Driver::ph(4),
+            Driver::ph(5)
         );
 
         let rows = sqlx::query(&sql)
@@ -120,9 +120,9 @@ impl JobQueue for DefaultJobQueue {
             .map_err(|e| AppError::Internal(anyhow::anyhow!("invalid id: {e}")))?;
         sqlx::query(&format!(
             "UPDATE jobs SET status = {}, updated_at = {} WHERE {COL_ID} = {}",
-            ph(1),
-            ph(2),
-            ph(3)
+            Driver::ph(1),
+            Driver::ph(2),
+            Driver::ph(3)
         ))
         .bind(JobStatus::Completed)
         .bind(now)
@@ -142,7 +142,7 @@ impl JobQueue for DefaultJobQueue {
         in_transaction!(&self.pool, tx, {
             let row = sqlx::query(&format!(
                 "SELECT attempts, max_attempts FROM jobs WHERE {COL_ID} = {}",
-                ph(1)
+                Driver::ph(1)
             ))
             .bind(id)
             .fetch_optional(&mut *tx)
@@ -158,10 +158,10 @@ impl JobQueue for DefaultJobQueue {
             if attempts >= max_attempts {
                 sqlx::query(&format!(
                     "UPDATE jobs SET status = {}, error = {}, updated_at = {} WHERE {COL_ID} = {}",
-                    ph(1),
-                    ph(2),
-                    ph(3),
-                    ph(4)
+                    Driver::ph(1),
+                    Driver::ph(2),
+                    Driver::ph(3),
+                    Driver::ph(4)
                 ))
                 .bind(JobStatus::Dead)
                 .bind(error)
@@ -179,7 +179,7 @@ impl JobQueue for DefaultJobQueue {
 
             sqlx::query(&format!(
                 "UPDATE jobs SET status = {}, error = {}, run_after = {}, updated_at = {} WHERE {COL_ID} = {}",
-                ph(1), ph(2), ph(3), ph(4), ph(5)
+                Driver::ph(1), Driver::ph(2), Driver::ph(3), Driver::ph(4), Driver::ph(5)
             ))
             .bind(JobStatus::Pending)
             .bind(error)
@@ -203,10 +203,10 @@ impl JobQueue for DefaultJobQueue {
             .map_err(|e| AppError::Internal(anyhow::anyhow!("invalid id: {e}")))?;
         sqlx::query(&format!(
             "UPDATE jobs SET status = {}, error = {}, updated_at = {} WHERE {COL_ID} = {}",
-            ph(1),
-            ph(2),
-            ph(3),
-            ph(4)
+            Driver::ph(1),
+            Driver::ph(2),
+            Driver::ph(3),
+            Driver::ph(4)
         ))
         .bind(JobStatus::Dead)
         .bind(error)
@@ -227,11 +227,11 @@ impl JobQueue for DefaultJobQueue {
                 COALESCE(SUM(CASE WHEN status={} THEN 1 ELSE 0 END), 0) as failed,
                 COALESCE(SUM(CASE WHEN status={} THEN 1 ELSE 0 END), 0) as dead
              FROM jobs",
-            ph(1),
-            ph(2),
-            ph(3),
-            ph(4),
-            ph(5)
+            Driver::ph(1),
+            Driver::ph(2),
+            Driver::ph(3),
+            Driver::ph(4),
+            Driver::ph(5)
         ))
         .bind(JobStatus::Pending)
         .bind(JobStatus::Running)
@@ -262,7 +262,7 @@ impl JobQueue for DefaultJobQueue {
             let rows = sqlx::query(&format!(
                 "SELECT {COL_ID}, job_type, payload, status, attempts, max_attempts, run_after, error, created_at, updated_at
                  FROM jobs WHERE status = {} ORDER BY created_at DESC LIMIT {} OFFSET {}",
-                ph(1), ph(2), ph(3)
+                Driver::ph(1), Driver::ph(2), Driver::ph(3)
             ))
             .bind(s)
             .bind(page_size)
@@ -272,7 +272,7 @@ impl JobQueue for DefaultJobQueue {
 
             let total: i64 = sqlx::query_scalar(&format!(
                 "SELECT COUNT(*) FROM jobs WHERE status = {}",
-                ph(1)
+                Driver::ph(1)
             ))
             .bind(s)
             .fetch_one(&self.pool)
@@ -303,7 +303,7 @@ impl JobQueue for DefaultJobQueue {
             let rows = sqlx::query(&format!(
                 "SELECT {COL_ID}, job_type, payload, status, attempts, max_attempts, run_after, error, created_at, updated_at
                  FROM jobs ORDER BY created_at DESC LIMIT {} OFFSET {}",
-                ph(1), ph(2)
+                Driver::ph(1), Driver::ph(2)
             ))
             .bind(page_size)
             .bind(offset)
@@ -348,10 +348,10 @@ impl JobQueue for DefaultJobQueue {
         let result = sqlx::query(&format!(
             "UPDATE jobs SET status = {}, attempts = 0, error = NULL, run_after = NULL, updated_at = {}
              WHERE {COL_ID} = {} AND status = {}",
-            ph(1),
-            ph(2),
-            ph(3),
-            ph(4)
+            Driver::ph(1),
+            Driver::ph(2),
+            Driver::ph(3),
+            Driver::ph(4)
         ))
         .bind(JobStatus::Pending)
         .bind(now)
@@ -372,10 +372,13 @@ impl JobQueue for DefaultJobQueue {
         let id: i64 = id
             .parse()
             .map_err(|e| AppError::Internal(anyhow::anyhow!("invalid id: {e}")))?;
-        let result = sqlx::query(&format!("DELETE FROM jobs WHERE {COL_ID} = {}", ph(1)))
-            .bind(id)
-            .execute(&self.pool)
-            .await?;
+        let result = sqlx::query(&format!(
+            "DELETE FROM jobs WHERE {COL_ID} = {}",
+            Driver::ph(1)
+        ))
+        .bind(id)
+        .execute(&self.pool)
+        .await?;
 
         if result.rows_affected() == 0 {
             return Err(AppError::not_found("job"));
@@ -387,9 +390,9 @@ impl JobQueue for DefaultJobQueue {
     async fn cleanup(&self) -> AppResult<u64> {
         let sql = format!(
             "DELETE FROM jobs WHERE status IN ({}, {}) AND updated_at < {}",
-            ph(1),
-            ph(2),
-            crate::db::dialect::ago_expr(7)
+            Driver::ph(1),
+            Driver::ph(2),
+            crate::db::Driver::ago_expr(7)
         );
         let result = sqlx::query(&sql)
             .bind(JobStatus::Completed)

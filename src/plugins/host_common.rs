@@ -9,6 +9,7 @@ use crate::constants::PLUGIN_HOST_GLOBAL;
 use std::sync::Arc;
 
 use crate::config::app::AppConfig;
+use crate::db::DbDriver;
 use crate::db::{DbArguments, DbConnection, DbPoolConnection, DbQueryResult, Pool};
 use crate::event::Event;
 use crate::eventbus::EventBus;
@@ -181,7 +182,7 @@ impl HostContext {
     /// ```
     #[must_use]
     pub fn db_ph(&self, idx: usize) -> String {
-        crate::db::dialect::ph(idx)
+        crate::db::Driver::ph(idx)
     }
 
     pub fn log(&self, level: &str, msg: &str) {
@@ -602,7 +603,7 @@ impl HostContext {
         for (k, v) in &data {
             cols.push(k.clone());
             Self::add_param(&mut args, v);
-            vals.push(crate::db::dialect::ph(vals.len() + 1));
+            vals.push(crate::db::Driver::ph(vals.len() + 1));
         }
 
         let sql = format!(
@@ -610,7 +611,6 @@ impl HostContext {
             cols.join(", "),
             vals.join(", ")
         );
-
         let handle = tokio::runtime::Handle::current();
         tokio::task::block_in_place(|| {
             match handle.block_on(async { sqlx::query_with(&sql, args).execute(pool).await }) {
@@ -731,7 +731,7 @@ impl HostContext {
         let mut args = DbArguments::default();
         let mut idx = 1;
         for (k, v) in &data {
-            set_parts.push(format!("{k} = {}", crate::db::dialect::ph(idx)));
+            set_parts.push(format!("{k} = {}", crate::db::Driver::ph(idx)));
             idx += 1;
             Self::add_param(&mut args, v);
         }
@@ -745,7 +745,7 @@ impl HostContext {
         }
 
         if self.is_tenantable_table(table) && !opts.tenant_is_disabled() {
-            let ph = crate::db::dialect::ph(idx);
+            let ph = crate::db::Driver::ph(idx);
             let connector = if where_sql.is_empty() {
                 " WHERE"
             } else {
@@ -798,7 +798,7 @@ impl HostContext {
 
         if self.is_tenantable_table(table) && !opts.tenant_is_disabled() {
             let idx = where_result.params.len() + 1;
-            let ph = crate::db::dialect::ph(idx);
+            let ph = crate::db::Driver::ph(idx);
             let connector = if where_sql.is_empty() {
                 " WHERE"
             } else {
@@ -851,7 +851,7 @@ impl HostContext {
 
         if self.is_tenantable_table(table) && !opts.tenant_is_disabled() {
             let idx = where_result.params.len() + 1;
-            let ph = crate::db::dialect::ph(idx);
+            let ph = crate::db::Driver::ph(idx);
             let connector = if where_sql.is_empty() {
                 " WHERE"
             } else {
@@ -938,15 +938,15 @@ impl HostContext {
                 None => return format!(r#"{{"error":"delta for '{col}' must be an integer"}}"#),
             };
             if let Some(min) = min_value {
-                let min_ph = crate::db::dialect::ph(idx);
+                let min_ph = crate::db::Driver::ph(idx);
                 idx += 1;
-                let delta_ph = crate::db::dialect::ph(idx);
+                let delta_ph = crate::db::Driver::ph(idx);
                 idx += 1;
                 set_parts.push(format!("{col} = MAX({min_ph}, {col} + {delta_ph})"));
                 args.add(min).ok();
                 args.add(delta_i64).ok();
             } else {
-                let ph = crate::db::dialect::ph(idx);
+                let ph = crate::db::Driver::ph(idx);
                 idx += 1;
                 set_parts.push(format!("{col} = {col} + {ph}"));
                 args.add(delta_i64).ok();
@@ -955,7 +955,7 @@ impl HostContext {
 
         if let Some(ref set) = set_data {
             for (k, v) in set {
-                let ph = crate::db::dialect::ph(idx);
+                let ph = crate::db::Driver::ph(idx);
                 idx += 1;
                 set_parts.push(format!("{k} = {ph}"));
                 Self::add_param(&mut args, v);
@@ -976,7 +976,7 @@ impl HostContext {
         }
 
         if self.is_tenantable_table(table) && !opts.tenant_is_disabled() {
-            let ph = crate::db::dialect::ph(idx);
+            let ph = crate::db::Driver::ph(idx);
             let connector = if where_sql.is_empty() {
                 " WHERE"
             } else {
@@ -1033,7 +1033,7 @@ impl HostContext {
 
         if self.is_tenantable_table(table) && !opts.tenant_is_disabled() {
             let idx = where_result.params.len() + 1;
-            let ph = crate::db::dialect::ph(idx);
+            let ph = crate::db::Driver::ph(idx);
             let connector = if where_sql.is_empty() {
                 " WHERE"
             } else {
@@ -1046,17 +1046,20 @@ impl HostContext {
             args.add(tid).ok();
         }
 
-        let sql = format!(
-            "SELECT CAST(COALESCE(SUM({column}), 0) AS TEXT) as total FROM {table}{where_sql}"
-        );
+        let sql = format!("SELECT COALESCE(SUM({column}), 0) as total FROM {table}{where_sql}");
         let handle = tokio::runtime::Handle::current();
         tokio::task::block_in_place(|| {
             match handle.block_on(async {
-                let row: (String,) = sqlx::query_as_with(&sql, args).fetch_one(pool).await?;
-                Ok::<_, sqlx::Error>(row.0)
+                let row = sqlx::query_with(&sql, args).fetch_one(pool).await?;
+                Ok::<_, sqlx::Error>(row)
             }) {
-                Ok(total_str) => {
-                    let total: f64 = total_str.parse().unwrap_or(0.0);
+                Ok(row) => {
+                    use sqlx::Row;
+                    let total: f64 = if let Ok(v) = row.try_get::<i64, _>(0) {
+                        v as f64
+                    } else {
+                        row.try_get::<f64, _>(0).unwrap_or(0.0)
+                    };
                     if total.fract() == 0.0 {
                         format!(r#"{{"sum":{}}}"#, total as i64)
                     } else {
@@ -1127,12 +1130,10 @@ impl HostContext {
 
         let mut select_parts: Vec<String> = group_by.clone();
         if do_count {
-            select_parts.push("CAST(COUNT(*) AS TEXT) as cnt".to_string());
+            select_parts.push("COUNT(*) as cnt".to_string());
         }
         for col in &sum_cols {
-            select_parts.push(format!(
-                "CAST(COALESCE(SUM({col}), 0) AS TEXT) as sum_{col}"
-            ));
+            select_parts.push(format!("COALESCE(SUM({col}), 0) as sum_{col}"));
         }
 
         let mut args = DbArguments::default();
@@ -1146,7 +1147,7 @@ impl HostContext {
 
         let mut idx = where_result.params.len() + 1;
         if self.is_tenantable_table(table) && !opts.tenant_is_disabled() {
-            let ph = crate::db::dialect::ph(idx);
+            let ph = crate::db::Driver::ph(idx);
             idx += 1;
             let connector = if where_sql.is_empty() {
                 " WHERE"
@@ -1170,7 +1171,7 @@ impl HostContext {
             sql.push_str(&format!(" ORDER BY {order_by}"));
         }
         if let Some(lim) = opts.limit {
-            let ph = crate::db::dialect::ph(idx);
+            let ph = crate::db::Driver::ph(idx);
             sql.push_str(&format!(" LIMIT {ph}"));
             args.add(lim as i64).ok();
         }
@@ -1232,7 +1233,7 @@ impl HostContext {
             let mut parts = Vec::new();
             let mut params = Vec::new();
             for (i, (k, _v)) in obj.iter().enumerate() {
-                parts.push(format!("{k} = {}", crate::db::dialect::ph(i + 1)));
+                parts.push(format!("{k} = {}", crate::db::Driver::ph(i + 1)));
             }
             for (_, v) in obj.iter() {
                 params.push(v.clone());
@@ -1266,7 +1267,7 @@ impl HostContext {
         }
         let mut idx = where_result.params.len() + 1;
         if tenantable && !opts.tenant_is_disabled() {
-            let ph = crate::db::dialect::ph(idx);
+            let ph = crate::db::Driver::ph(idx);
             idx += 1;
             let connector = if where_sql.is_empty() {
                 " WHERE"
@@ -1283,13 +1284,13 @@ impl HostContext {
             where_sql.push_str(&format!(" ORDER BY {order_by}"));
         }
         if let Some(lim) = opts.limit {
-            let ph = crate::db::dialect::ph(idx);
+            let ph = crate::db::Driver::ph(idx);
             idx += 1;
             where_sql.push_str(&format!(" LIMIT {ph}"));
             args.add(lim as i64).ok();
         }
         if let Some(off) = opts.offset {
-            let ph = crate::db::dialect::ph(idx);
+            let ph = crate::db::Driver::ph(idx);
             where_sql.push_str(&format!(" OFFSET {ph}"));
             args.add(off as i64).ok();
         }

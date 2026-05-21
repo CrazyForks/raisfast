@@ -8,6 +8,7 @@ use crate::commands::{
     CreatePaymentTransactionCmd, CreateWalletOutboxCmd,
 };
 use crate::config::app::AppConfig;
+use crate::db::DbDriver;
 use crate::dto::payment::*;
 use crate::errors::app_error::{AppError, AppResult};
 use crate::event::Event;
@@ -1128,7 +1129,7 @@ pub async fn refund_payment_order(
 
         let sql = format!(
             "SELECT * FROM payment_refunds WHERE provider_refund_id = {} LIMIT 1",
-            crate::db::dialect::ph(1)
+            crate::db::Driver::ph(1)
         );
         let refund = sqlx::query_as::<_, PaymentRefund>(&sql)
             .bind(&provider_refund_id)

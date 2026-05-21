@@ -7,6 +7,7 @@
 use chrono::Utc;
 
 use crate::commands::CreateMediaCmd;
+use crate::db::DbDriver;
 use crate::errors::app_error::{AppError, AppResult};
 use crate::middleware::auth::AuthUser;
 use crate::models::media;
@@ -233,7 +234,7 @@ pub async fn admin_delete_media(
 ) -> AppResult<()> {
     let sql = format!(
         "SELECT id FROM media WHERE id = {}{}",
-        crate::db::dialect::ph(1),
+        crate::db::Driver::ph(1),
         crate::db::tenant::tenant_filter_ph(auth.tenant_id(), 2)
     );
     let (media_pk,): (i64,) = raisfast_derive::crud_query!(
@@ -277,7 +278,7 @@ pub async fn delete_media(
 
     let sql2 = format!(
         "SELECT id FROM media WHERE id = {}{}",
-        crate::db::dialect::ph(1),
+        crate::db::Driver::ph(1),
         crate::db::tenant::tenant_filter_ph(auth.tenant_id(), 2)
     );
     let (media_pk,): (i64,) = raisfast_derive::crud_query!(

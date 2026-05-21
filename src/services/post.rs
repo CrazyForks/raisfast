@@ -15,6 +15,7 @@ use slug::slugify;
 use crate::aspects::engine::AspectEngine;
 use crate::aspects::slug_aspect;
 use crate::commands::{CreatePostCmd, UpdatePostCmd};
+use crate::db::DbDriver;
 use crate::dto::{CreatePostRequest, PostResponse, UpdatePostRequest};
 use crate::errors::app_error::{AppError, AppResult};
 use crate::event::*;
@@ -33,17 +34,17 @@ pub async fn find_existing_id(
     if tenant_id.is_none() {
         return Ok(Some(*id));
     }
-    if !crate::db::dialect::is_safe_identifier(table) {
+    if !crate::db::driver::is_safe_identifier(table) {
         return Ok(Some(*id));
     }
     let filter = if tenant_id.is_some() {
-        format!(" AND tenant_id = {}", crate::db::dialect::ph(2))
+        format!(" AND tenant_id = {}", crate::db::Driver::ph(2))
     } else {
         String::new()
     };
     let sql = format!(
         "SELECT id FROM {table} WHERE id = {}{filter}",
-        crate::db::dialect::ph(1)
+        crate::db::Driver::ph(1)
     );
     let mut q = sqlx::query_scalar::<_, i64>(&sql).bind(id);
     bind_tenant!(q, tenant_id);

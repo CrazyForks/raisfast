@@ -15,6 +15,7 @@ use axum::middleware::from_fn;
 use axum::routing::{delete, get, post as http_post, put};
 use http_body_util::BodyExt;
 use raisfast::AppState;
+use raisfast::DbDriver;
 use raisfast::config::app::AppConfig;
 use raisfast::handlers::{
     api_token as h_token, auth as h_auth, cart as h_cart, category as h_cat, comment as h_cmt,
@@ -635,12 +636,12 @@ pub(crate) async fn create_admin(pool: &raisfast::db::Pool) -> (i64, String) {
     let cred_now = raisfast::utils::tz::now_utc();
     let cred_sql = format!(
         "INSERT INTO user_credentials (id, user_id, auth_type, identifier, credential_data, verified, created_at, updated_at) VALUES ({}, {}, 'email', {}, {}, 1, {}, {})",
-        raisfast::db::dialect::ph(1),
-        raisfast::db::dialect::ph(2),
-        raisfast::db::dialect::ph(3),
-        raisfast::db::dialect::ph(4),
-        raisfast::db::dialect::ph(5),
-        raisfast::db::dialect::ph(6)
+        raisfast::db::Driver::ph(1),
+        raisfast::db::Driver::ph(2),
+        raisfast::db::Driver::ph(3),
+        raisfast::db::Driver::ph(4),
+        raisfast::db::Driver::ph(5),
+        raisfast::db::Driver::ph(6)
     );
     sqlx::query(&cred_sql)
         .bind(cred_id)
@@ -664,12 +665,12 @@ pub(crate) async fn create_author(pool: &raisfast::db::Pool) -> (i64, String) {
     let cred_now = raisfast::utils::tz::now_utc();
     let cred_sql = format!(
         "INSERT INTO user_credentials (id, user_id, auth_type, identifier, credential_data, verified, created_at, updated_at) VALUES ({}, {}, 'email', {}, {}, 1, {}, {})",
-        raisfast::db::dialect::ph(1),
-        raisfast::db::dialect::ph(2),
-        raisfast::db::dialect::ph(3),
-        raisfast::db::dialect::ph(4),
-        raisfast::db::dialect::ph(5),
-        raisfast::db::dialect::ph(6)
+        raisfast::db::Driver::ph(1),
+        raisfast::db::Driver::ph(2),
+        raisfast::db::Driver::ph(3),
+        raisfast::db::Driver::ph(4),
+        raisfast::db::Driver::ph(5),
+        raisfast::db::Driver::ph(6)
     );
     sqlx::query(&cred_sql)
         .bind(cred_id)

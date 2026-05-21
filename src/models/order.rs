@@ -2,8 +2,8 @@ use serde::{Deserialize, Serialize};
 #[cfg(feature = "export-types")]
 use ts_rs::TS;
 
-use crate::db::dialect::ph;
 use crate::db::tenant::tenant_filter_ph;
+use crate::db::{DbDriver, Driver};
 use crate::errors::app_error::AppResult;
 use crate::types::snowflake_id::SnowflakeId;
 use crate::utils::tz::Timestamp;
@@ -186,19 +186,19 @@ pub async fn update_status(
         validate_timestamp_col(col)?;
         format!(
             "UPDATE orders SET status = {}, {} = {}, updated_at = {} WHERE id = {}{}",
-            ph(1),
+            Driver::ph(1),
             col,
-            crate::db::dialect::now_fn(),
-            crate::db::dialect::now_fn(),
-            ph(2),
+            crate::db::Driver::now_fn(),
+            crate::db::Driver::now_fn(),
+            Driver::ph(2),
             tenant_filter_ph(tenant_id, 3)
         )
     } else {
         format!(
             "UPDATE orders SET status = {}, updated_at = {} WHERE id = {}{}",
-            ph(1),
-            crate::db::dialect::now_fn(),
-            ph(2),
+            Driver::ph(1),
+            crate::db::Driver::now_fn(),
+            Driver::ph(2),
             tenant_filter_ph(tenant_id, 3)
         )
     };
@@ -224,7 +224,7 @@ pub async fn update_shipped(
             "tracking_no" => tracking_no,
             "carrier" => carrier,
         ],
-        raw: ["updated_at" => crate::db::dialect::now_fn()],
+        raw: ["updated_at" => crate::db::Driver::now_fn()],
         where: "id" => id,
         tenant: tenant_id
     )?;
@@ -240,7 +240,7 @@ pub async fn update_admin_remark(
     raisfast_derive::crud_update!(
         pool, "orders",
         bind: ["admin_remark" => admin_remark],
-        raw: ["updated_at" => crate::db::dialect::now_fn()],
+        raw: ["updated_at" => crate::db::Driver::now_fn()],
         where: "id" => id,
         tenant: tenant_id
     )?;
@@ -256,7 +256,7 @@ pub async fn update_delivery_data(
     raisfast_derive::crud_update!(
         pool, "orders",
         bind: ["delivery_data" => delivery_data],
-        raw: ["updated_at" => crate::db::dialect::now_fn()],
+        raw: ["updated_at" => crate::db::Driver::now_fn()],
         where: "id" => id,
         tenant: tenant_id
     )?;
@@ -301,11 +301,11 @@ pub async fn tx_insert(
     let sql = if tenant_id.is_some() {
         format!(
             "SELECT * FROM orders WHERE id = {} AND tenant_id = {}",
-            ph(1),
-            ph(2)
+            Driver::ph(1),
+            Driver::ph(2)
         )
     } else {
-        format!("SELECT * FROM orders WHERE id = {}", ph(1))
+        format!("SELECT * FROM orders WHERE id = {}", Driver::ph(1))
     };
     raisfast_derive::crud_query!(&mut *tx, Order, &sql, [id], fetch_one, tenant: tenant_id)
         .map_err(Into::into)
@@ -323,20 +323,20 @@ pub async fn tx_update_status_cas(
         validate_timestamp_col(col)?;
         format!(
             "UPDATE orders SET status = {}, {} = {}, updated_at = {} WHERE id = {} AND status = {}",
-            ph(1),
+            Driver::ph(1),
             col,
-            crate::db::dialect::now_fn(),
-            crate::db::dialect::now_fn(),
-            ph(2),
-            ph(3)
+            crate::db::Driver::now_fn(),
+            crate::db::Driver::now_fn(),
+            Driver::ph(2),
+            Driver::ph(3)
         )
     } else {
         format!(
             "UPDATE orders SET status = {}, updated_at = {} WHERE id = {} AND status = {}",
-            ph(1),
-            crate::db::dialect::now_fn(),
-            ph(2),
-            ph(3)
+            Driver::ph(1),
+            crate::db::Driver::now_fn(),
+            Driver::ph(2),
+            Driver::ph(3)
         )
     };
     let result = sqlx::query(&sql)
@@ -360,7 +360,7 @@ pub async fn tx_update_shipped(
             "tracking_no" => tracking_no,
             "carrier" => carrier
         ],
-        raw: ["updated_at" => crate::db::dialect::now_fn()],
+        raw: ["updated_at" => crate::db::Driver::now_fn()],
         where: "id" => id,
         and: ["status" => OrderStatus::Paid.as_str()]
     )?;

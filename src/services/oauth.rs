@@ -5,6 +5,7 @@
 //! - Handle callback (code exchange → user info → find/create/bind user → issue JWT)
 //! - Bind/unbind OAuth accounts
 
+use crate::db::DbDriver;
 use crate::types::snowflake_id::SnowflakeId;
 use chrono::Utc;
 #[cfg(feature = "export-types")]
@@ -328,9 +329,9 @@ async fn auto_register_user(
         let now = crate::utils::tz::now_utc();
         let sql = format!(
             "UPDATE users SET avatar = {}, updated_at = {} WHERE id = {}",
-            crate::db::dialect::ph(1),
-            crate::db::dialect::ph(2),
-            crate::db::dialect::ph(3)
+            crate::db::Driver::ph(1),
+            crate::db::Driver::ph(2),
+            crate::db::Driver::ph(3)
         );
         sqlx::query(&sql)
             .bind(avatar)

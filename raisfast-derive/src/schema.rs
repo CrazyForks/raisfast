@@ -12,15 +12,22 @@
 //! - `postgres:` or `postgresql:` → `Postgres`
 //! - `mysql:` → `Mysql`
 //!
-//! # Files parsed
+//! # Adding a new database
 //!
-//! Depending on the dialect, one of:
-//! - `migrations/sqlite/schema.sqlite.sql` + `tenantable.sqlite.sql`
-//! - `migrations/postgres/schema.postgres.sql` + `tenantable.postgres.sql`
-//! - `migrations/mysql/schema.mysql.sql` + `tenantable.mysql.sql`
+//! 1. Add a variant to `Dialect` enum
+//! 2. Add a row to the `DIALECT_TABLE` const
+//! 3. Add the URL prefix detection in `from_env()`
+//! 4. Create `migrations/<name>/schema.<name>.sql`
 
 use std::collections::HashMap;
 use std::path::PathBuf;
+
+/// Per-dialect configuration, indexed by `Dialect` discriminant.
+struct DialectCfg {
+    migration_dir: &'static str,
+    schema_ext: &'static str,
+    ph_prefix: &'static str,
+}
 
 /// Supported database dialects.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -31,6 +38,31 @@ pub enum Dialect {
 }
 
 impl Dialect {
+    const TABLE: &'static [DialectCfg] = &[
+        // Sqlite
+        DialectCfg {
+            migration_dir: "sqlite",
+            schema_ext: ".sqlite.sql",
+            ph_prefix: "?",
+        },
+        // Postgres
+        DialectCfg {
+            migration_dir: "postgres",
+            schema_ext: ".postgres.sql",
+            ph_prefix: "$",
+        },
+        // Mysql
+        DialectCfg {
+            migration_dir: "mysql",
+            schema_ext: ".mysql.sql",
+            ph_prefix: "?",
+        },
+    ];
+
+    fn cfg(self) -> &'static DialectCfg {
+        &Self::TABLE[self as usize]
+    }
+
     /// Detect dialect from `DATABASE_URL` environment variable.
     ///
     /// Falls back to `Sqlite` if the variable is unset or unrecognized.
@@ -46,33 +78,23 @@ impl Dialect {
     }
 
     /// Numbered placeholder for position `idx` (1-based).
-    ///
-    /// - SQLite: `?1`, `?2`, ...
-    /// - PostgreSQL: `$1`, `$2`, ...
-    /// - MySQL: `?1`, `?2`, ... (MySQL can also use `?` but numbered is fine)
     pub fn ph(&self, idx: usize) -> String {
-        match self {
-            Dialect::Sqlite | Dialect::Mysql => format!("?{}", idx),
-            Dialect::Postgres => format!("${}", idx),
-        }
+        let c = self.cfg();
+        format!("{}{}", c.ph_prefix, idx)
     }
 
     /// Unnumbered placeholder token for runtime `sqlx::query()` calls.
-    ///
-    /// - SQLite / MySQL: `?`
-    /// - PostgreSQL: Cannot use unnumbered; caller must use `ph(idx)` instead.
     #[expect(dead_code)]
     pub fn ph_unnumbered(&self) -> &'static str {
-        match self {
-            Dialect::Sqlite | Dialect::Mysql => "?",
-            Dialect::Postgres => "$?", // intentionally wrong — postgres path uses ph()
+        let c = self.cfg();
+        if c.ph_prefix == "$" {
+            "$?" // intentionally wrong — postgres path uses ph()
+        } else {
+            "?"
         }
     }
 
     /// Pagination clause appended to a query.
-    ///
-    /// - SQLite / PostgreSQL: ` LIMIT ? OFFSET ?`
-    /// - MySQL: ` LIMIT ? OFFSET ?`
     #[expect(dead_code)]
     pub fn limit_offset_clause(&self) -> &'static str {
         " LIMIT ? OFFSET ?"
@@ -80,20 +102,12 @@ impl Dialect {
 
     /// Schema migration directory name.
     pub fn migration_dir(&self) -> &'static str {
-        match self {
-            Dialect::Sqlite => "sqlite",
-            Dialect::Postgres => "postgres",
-            Dialect::Mysql => "mysql",
-        }
+        self.cfg().migration_dir
     }
 
     /// Schema file extension (including leading dot).
     pub fn schema_ext(&self) -> &'static str {
-        match self {
-            Dialect::Sqlite => ".sqlite.sql",
-            Dialect::Postgres => ".postgres.sql",
-            Dialect::Mysql => ".mysql.sql",
-        }
+        self.cfg().schema_ext
     }
 }
 
@@ -145,11 +159,6 @@ impl Schema {
     }
 
     /// Generate a SELECT column list with chrono type annotations for timestamp columns.
-    ///
-    /// Returns something like: `id, title, created_at as "created_at: chrono::DateTime<chrono::Utc>"`.
-    /// This format is consumed by `sqlx::query!()` to get proper type inference.
-    ///
-    /// Currently unused (dead_code) — kept for potential future use.
     #[expect(dead_code)]
     pub fn select_columns(&self, table: &str) -> Option<String> {
         let ts = self.tables.get(table)?;
@@ -168,9 +177,6 @@ impl Schema {
     }
 
     /// Return just the column names for a table, joined by `", "`.
-    ///
-    /// This is the primary method used by `crud.rs` to generate explicit `SELECT` column
-    /// lists, replacing `SELECT *` (which `sqlx::query!()` does not support).
     pub fn column_names(&self, table: &str) -> Vec<String> {
         self.tables
             .get(table)
@@ -179,23 +185,14 @@ impl Schema {
     }
 }
 
-/// Check if a column name is a known timestamp column that needs chrono type annotation.
 #[allow(dead_code)]
 fn is_timestamp_col(name: &str) -> bool {
     name == "created_at" || name == "updated_at" || name == "expires_at"
 }
 
-/// Parse `CREATE TABLE` statements from SQL text into a HashMap.
-///
-/// Two-pass approach:
-/// 1. First pass: discover all table names.
-/// 2. Second pass: parse column definitions inside each CREATE TABLE block.
-///
-/// This handles multi-line CREATE TABLE statements with columns listed one per line.
 fn parse_schema(sql: &str) -> HashMap<String, TableSchema> {
     let mut tables = HashMap::new();
 
-    // Pass 1: discover table names
     for line in sql.lines() {
         let trimmed = line.trim();
         if let Some(rest) = trimmed.strip_prefix("CREATE TABLE")
@@ -210,7 +207,6 @@ fn parse_schema(sql: &str) -> HashMap<String, TableSchema> {
         }
     }
 
-    // Pass 2: parse column definitions
     let mut current_table: Option<String> = None;
     let mut in_create = false;
 
@@ -220,7 +216,6 @@ fn parse_schema(sql: &str) -> HashMap<String, TableSchema> {
             continue;
         }
 
-        // Detect start of CREATE TABLE block
         if let Some(rest) = trimmed.strip_prefix("CREATE TABLE") {
             if let Some(name) = extract_table_name(rest) {
                 current_table = Some(name);
@@ -232,14 +227,12 @@ fn parse_schema(sql: &str) -> HashMap<String, TableSchema> {
             continue;
         }
 
-        // Detect end of CREATE TABLE block (closing parenthesis)
         if in_create && trimmed.starts_with(')') {
             in_create = false;
             current_table = None;
             continue;
         }
 
-        // Parse a column line inside a CREATE TABLE block
         if let (Some(tn), true) = (&current_table, in_create)
             && let Some(col) = parse_column_line(trimmed)
             && let Some(t) = tables.get_mut(tn)
@@ -251,9 +244,6 @@ fn parse_schema(sql: &str) -> HashMap<String, TableSchema> {
     tables
 }
 
-/// Extract the table name from the text after `CREATE TABLE`.
-///
-/// Handles `IF NOT EXISTS` prefix. Returns the name lowercased.
 fn extract_table_name(rest: &str) -> Option<String> {
     let rest = rest.trim();
     let rest = rest.strip_prefix("IF NOT EXISTS").unwrap_or(rest).trim();
@@ -266,10 +256,6 @@ fn extract_table_name(rest: &str) -> Option<String> {
     Some(name.to_lowercase())
 }
 
-/// Parse a single column definition line from a CREATE TABLE block.
-///
-/// Skips constraint lines (PRIMARY KEY, UNIQUE, CHECK, FOREIGN KEY).
-/// Extracts column name, SQL type, nullability, and default presence.
 fn parse_column_line(line: &str) -> Option<ColumnSchema> {
     let line = line.trim().trim_end_matches(',');
     if line.is_empty()
