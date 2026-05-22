@@ -52,7 +52,7 @@ pub mod admin_spa;
 #[cfg(feature = "tauri")]
 pub mod tauri;
 
-#[cfg(feature = "proxy")]
+#[cfg(all(feature = "proxy", unix))]
 pub mod proxy;
 
 #[inline]
