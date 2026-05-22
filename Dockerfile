@@ -1,4 +1,4 @@
-FROM rust:1.87-bookworm AS builder
+FROM rust:1-bookworm AS builder
 
 WORKDIR /app
 
@@ -9,13 +9,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY Cargo.toml Cargo.lock ./
 COPY raisfast-derive/ raisfast-derive/
 RUN mkdir src && echo "fn main() {}" > src/main.rs
-RUN cargo build --release --features "db-sqlite plugin-all search-tantivy storage-s3" 2>/dev/null || true
+RUN cargo build --release --features "db-sqlite plugin-all search-tantivy storage-s3" || true
 RUN rm -rf src
 
 COPY src/ src/
-COPY migrations/ migrations/
-COPY extensions/ extensions/
 COPY adminui/ adminui/
+COPY migrations/ migrations/
+COPY tests/ tests/
 RUN touch src/main.rs \
     && cargo build --release --features "db-sqlite plugin-all search-tantivy storage-s3"
 
@@ -33,7 +33,6 @@ WORKDIR /app
 
 COPY --from=builder /app/target/release/raisfast /app/raisfast
 COPY migrations/ migrations/
-COPY extensions/ extensions/
 
 RUN mkdir -p /app/data /app/logs /app/uploads /app/plugins-data \
     && chown -R app:app /app/data /app/logs /app/uploads /app/plugins-data

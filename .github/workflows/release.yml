@@ -15,7 +15,7 @@
 
 name: Release
 permissions:
-  "contents": "write"
+  contents: write
 
 # This task will run whenever you push a git tag that looks like a version
 # like "1.0.0", "v0.1.0-prerelease.1", "my-app/0.1.0", "releases/v1.0.0", etc.
@@ -129,6 +129,11 @@ jobs:
           fi
       - name: Install dist
         run: ${{ matrix.install_dist.run }}
+      - uses: Swatinem/rust-cache@v2
+        if: ${{ !matrix.container }}
+        with:
+          cache-targets: true
+          cache-workspace-crates: true
       # Get the dist-manifest
       - name: Fetch local artifacts
         uses: actions/download-artifact@v7
@@ -217,6 +222,9 @@ jobs:
       - plan
       - build-local-artifacts
       - build-global-artifacts
+    permissions:
+      contents: write
+      id-token: write
     # Only run if we're "publishing", and only if plan, local and global didn't fail (skipped is fine)
     if: ${{ always() && needs.plan.result == 'success' && needs.plan.outputs.publishing == 'true' && (needs.build-global-artifacts.result == 'skipped' || needs.build-global-artifacts.result == 'success') && (needs.build-local-artifacts.result == 'skipped' || needs.build-local-artifacts.result == 'success') }}
     env:
@@ -277,6 +285,18 @@ jobs:
           echo "$ANNOUNCEMENT_BODY" > $RUNNER_TEMP/notes.txt
 
           gh release create "${{ needs.plan.outputs.tag }}" --target "$RELEASE_COMMIT" $PRERELEASE_FLAG --title "$ANNOUNCEMENT_TITLE" --notes-file "$RUNNER_TEMP/notes.txt" artifacts/*
+
+      - name: Sign release artifacts with cosign
+        uses: sigstore/cosign-installer@v3
+      - name: Sign and upload signatures
+        shell: bash
+        run: |
+          cd artifacts
+          for f in raisfast-*.tar.xz raisfast-*.zip; do
+            [ -f "$f" ] || continue
+            cosign sign-blob --yes --bundle "${f}.bundle" "$f"
+          done
+          gh release upload "${{ needs.plan.outputs.tag }}" *.bundle || true
 
   publish-homebrew-formula:
     needs:
