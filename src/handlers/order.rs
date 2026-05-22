@@ -193,10 +193,7 @@ pub async fn create_order(
 ) -> AppResult<ApiResponse<OrderResponse>> {
     let user_id = auth.ensure_snowflake_user_id()?;
     validation::validate(&req)?;
-    let (o, items) = state
-        .order_service
-        .create(&auth, user_id, req)
-        .await?;
+    let (o, items) = state.order_service.create(&auth, user_id, req).await?;
     Ok(ApiResponse::success(to_order_response(o, items)))
 }
 
@@ -213,12 +210,7 @@ pub async fn list_orders(
     params.sanitize();
     let (orders, total) = state
         .order_service
-        .list_user(
-            &auth,
-            user_id,
-            params.page,
-            params.page_size,
-        )
+        .list_user(&auth, user_id, params.page, params.page_size)
         .await?;
     let responses: Vec<_> = orders
         .into_iter()
@@ -257,10 +249,7 @@ pub async fn cancel_order_handler(
 ) -> AppResult<ApiResponse<()>> {
     let user_id = auth.ensure_snowflake_user_id()?;
     let id = crate::types::snowflake_id::parse_id(&id)?;
-    state
-        .order_service
-        .cancel(&auth, id, user_id)
-        .await?;
+    state.order_service.cancel(&auth, id, user_id).await?;
     Ok(ApiResponse::success(()))
 }
 

@@ -62,10 +62,7 @@ pub async fn list_addresses(
     State(state): State<crate::AppState>,
 ) -> AppResult<ApiResponse<Vec<UserAddressResponse>>> {
     let user_id = auth.ensure_snowflake_user_id()?;
-    let addrs = state
-        .user_address_service
-        .list(&auth, user_id)
-        .await?;
+    let addrs = state.user_address_service.list(&auth, user_id).await?;
     let resp: Vec<UserAddressResponse> = addrs.into_iter().map(Into::into).collect();
     Ok(ApiResponse::success(resp))
 }

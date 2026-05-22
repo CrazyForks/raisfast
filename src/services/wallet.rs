@@ -404,8 +404,7 @@ pub async fn transfer(
         let pair_no = format!("{transaction_no}_in");
         let incoming =
             crate::models::wallet_transaction::find_tx_by_transaction_no(pool, &pair_no).await?;
-        let incoming = incoming
-            .ok_or_else(|| AppError::not_found("transaction"))?;
+        let incoming = incoming.ok_or_else(|| AppError::not_found("transaction"))?;
         return Ok((existing, incoming));
     }
 
@@ -784,13 +783,9 @@ impl WalletService for WalletServiceImpl {
         page_size: i64,
         _tenant_id: Option<&str>,
     ) -> AppResult<(Vec<WalletTransaction>, i64)> {
-        let w = crate::models::wallet::find_by_user_and_currency(
-            &self.pool,
-            user_id,
-            currency,
-        )
-        .await?
-        .ok_or_else(|| AppError::not_found("wallet"))?;
+        let w = crate::models::wallet::find_by_user_and_currency(&self.pool, user_id, currency)
+            .await?
+            .ok_or_else(|| AppError::not_found("wallet"))?;
         crate::models::wallet_transaction::find_transactions_by_wallet(
             &self.pool, w.id, page, page_size,
         )
@@ -805,10 +800,7 @@ impl WalletService for WalletServiceImpl {
         _tenant_id: Option<&str>,
     ) -> AppResult<(Vec<WalletTransaction>, i64)> {
         crate::models::wallet_transaction::find_transactions_by_user(
-            &self.pool,
-            user_id,
-            page,
-            page_size,
+            &self.pool, user_id, page, page_size,
         )
         .await
     }

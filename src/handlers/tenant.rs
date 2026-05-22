@@ -174,10 +174,8 @@ pub async fn admin_batch(
             continue;
         };
         match req.action.as_str() {
-            "delete" => {
-                if state.tenant.delete(id).await.is_ok() {
-                    affected += 1;
-                }
+            "delete" if state.tenant.delete(id).await.is_ok() => {
+                affected += 1;
             }
             "suspend" | "activate" => {
                 let status = if req.action == "suspend" {

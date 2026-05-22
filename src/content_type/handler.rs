@@ -750,10 +750,11 @@ pub async fn do_list(
                             .unwrap_or_else(|| format!("{}_id", field.name));
                         let parsed_id =
                             crate::types::snowflake_id::parse_id(v).unwrap_or(SnowflakeId(-1));
-                        let int_id = raisfast_derive::crud_resolve_id!(&state.pool, &rel.target, *parsed_id)
-                            .ok()
-                            .flatten()
-                            .unwrap_or(-1);
+                        let int_id =
+                            raisfast_derive::crud_resolve_id!(&state.pool, &rel.target, *parsed_id)
+                                .ok()
+                                .flatten()
+                                .unwrap_or(-1);
                         filters.insert(fk_col, json!(int_id));
                     }
                     _ => {}
@@ -1208,10 +1209,11 @@ async fn do_admin_list(
                             .unwrap_or_else(|| format!("{}_id", field.name));
                         let parsed_id =
                             crate::types::snowflake_id::parse_id(v).unwrap_or(SnowflakeId(-1));
-                        let int_id = raisfast_derive::crud_resolve_id!(&state.pool, &rel.target, *parsed_id)
-                            .ok()
-                            .flatten()
-                            .unwrap_or(-1);
+                        let int_id =
+                            raisfast_derive::crud_resolve_id!(&state.pool, &rel.target, *parsed_id)
+                                .ok()
+                                .flatten()
+                                .unwrap_or(-1);
                         filters.insert(fk_col, json!(int_id));
                     }
                     _ => {}

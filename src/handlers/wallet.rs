@@ -210,12 +210,7 @@ pub async fn list_all_transactions(
     let user_id = auth.ensure_snowflake_user_id()?;
     let (rows, total) = state
         .wallet_service
-        .list_transactions_by_user(
-            user_id,
-            params.page,
-            params.page_size,
-            auth.tenant_id(),
-        )
+        .list_transactions_by_user(user_id, params.page, params.page_size, auth.tenant_id())
         .await?;
     let items = state.wallet_service.tx_list_to_response(rows).await?;
     Ok(params.paginate(items, total))

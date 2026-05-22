@@ -6,7 +6,10 @@ use axum::Json;
 use axum::extract::{Path, Query, State};
 
 use crate::commands::{CreatePageCmd, UpdatePageCmd};
-use crate::dto::{AdminPageListQuery, BatchRequest, BatchResponse, CreatePageRequest, PageListQuery, PageResponse, ReorderRequest, SitemapEntry, UpdatePageRequest, UpdateStatusRequest};
+use crate::dto::{
+    AdminPageListQuery, BatchRequest, BatchResponse, CreatePageRequest, PageListQuery,
+    PageResponse, ReorderRequest, SitemapEntry, UpdatePageRequest, UpdateStatusRequest,
+};
 use crate::errors::app_error::{AppError, AppResult};
 use crate::errors::response::{ApiResponse, PaginatedData};
 use crate::errors::validation;
@@ -394,10 +397,8 @@ pub async fn admin_batch(
             continue;
         };
         match req.action.as_str() {
-            "delete" => {
-                if state.page_service.delete_page(id, &auth).await.is_ok() {
-                    affected += 1;
-                }
+            "delete" if state.page_service.delete_page(id, &auth).await.is_ok() => {
+                affected += 1;
             }
             "publish" | "unpublish" => {
                 let status = if req.action == "publish" {

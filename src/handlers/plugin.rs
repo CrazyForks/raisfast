@@ -212,15 +212,11 @@ pub async fn admin_batch(
     let mut affected = 0usize;
     for id in &req.ids {
         match req.action.as_str() {
-            "enable" => {
-                if state.plugins.enable_plugin(id).await.is_ok() {
-                    affected += 1;
-                }
+            "enable" if state.plugins.enable_plugin(id).await.is_ok() => {
+                affected += 1;
             }
-            "disable" => {
-                if state.plugins.disable_plugin(id).await.is_ok() {
-                    affected += 1;
-                }
+            "disable" if state.plugins.disable_plugin(id).await.is_ok() => {
+                affected += 1;
             }
             _ => {}
         }

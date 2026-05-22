@@ -291,12 +291,7 @@ pub async fn list_user_orders(
     params.sanitize();
     let (orders, total) = state
         .payment_service
-        .list_user_payment_orders(
-            &auth,
-            user_id,
-            params.page,
-            params.page_size,
-        )
+        .list_user_payment_orders(&auth, user_id, params.page, params.page_size)
         .await?;
     let responses: Vec<PaymentOrderResponse> = orders.into_iter().map(to_order_response).collect();
     Ok(params.paginate(responses, total))

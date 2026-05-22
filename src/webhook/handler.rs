@@ -191,10 +191,8 @@ pub async fn admin_batch(
             Err(_) => continue,
         };
         match req.action.as_str() {
-            "delete" => {
-                if state.webhook.delete(id).await.is_ok() {
-                    affected += 1;
-                }
+            "delete" if state.webhook.delete(id).await.is_ok() => {
+                affected += 1;
             }
             "enable" | "disable" => {
                 let enabled = req.action == "enable";

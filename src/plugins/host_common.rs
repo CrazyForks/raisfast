@@ -537,7 +537,10 @@ impl HostContext {
             return Err(format!("invalid table name: {table}"));
         }
         if !PermissionChecker::is_table_readable(&self.permissions, table) {
-            if PermissionChecker::is_protected_table(table, &self.config.builtins.protected_tables()) {
+            if PermissionChecker::is_protected_table(
+                table,
+                &self.config.builtins.protected_tables(),
+            ) {
                 return Err(format!("table '{table}' is protected"));
             }
             return Err(format!("no read permission for table: {table}"));
@@ -550,7 +553,10 @@ impl HostContext {
             return Err(format!("invalid table name: {table}"));
         }
         if !PermissionChecker::is_table_writable(&self.permissions, table) {
-            if PermissionChecker::is_protected_table(table, &self.config.builtins.protected_tables()) {
+            if PermissionChecker::is_protected_table(
+                table,
+                &self.config.builtins.protected_tables(),
+            ) {
                 return Err(format!("table '{table}' is protected"));
             }
             return Err(format!("no write permission for table: {table}"));
@@ -1109,7 +1115,10 @@ impl HostContext {
         if group_by.is_empty() {
             return r#"{"error":"group_by cannot be empty"}"#.to_string();
         }
-        if !group_by.iter().all(|c| crate::db::driver::is_safe_identifier(c)) {
+        if !group_by
+            .iter()
+            .all(|c| crate::db::driver::is_safe_identifier(c))
+        {
             return r#"{"error":"invalid column name in group_by"}"#.to_string();
         }
 
@@ -1123,7 +1132,10 @@ impl HostContext {
                 .collect(),
             _ => Vec::new(),
         };
-        if !sum_cols.iter().all(|c| crate::db::driver::is_safe_identifier(c)) {
+        if !sum_cols
+            .iter()
+            .all(|c| crate::db::driver::is_safe_identifier(c))
+        {
             return r#"{"error":"invalid column name in sum"}"#.to_string();
         }
 
@@ -1273,7 +1285,10 @@ impl HostContext {
         }
 
         // Unknown format — reject raw SQL strings
-        Err("where_json must be a JSON object or array, raw SQL strings are not allowed".to_string())
+        Err(
+            "where_json must be a JSON object or array, raw SQL strings are not allowed"
+                .to_string(),
+        )
     }
 
     fn build_query_args(
@@ -2305,14 +2320,10 @@ mod tests {
             Some(pool),
         );
 
-        assert!(ctx
-            .db_insert("tags", "{}", "{}")
-            .contains("error"));
+        assert!(ctx.db_insert("tags", "{}", "{}").contains("error"));
         assert!(ctx.db_fetch_one("tags", "{}", "{}").contains("error"));
         assert!(ctx.db_fetch_all("tags", "{}", "{}").contains("error"));
-        assert!(ctx
-            .db_update("tags", "{}", "{}", "{}")
-            .contains("error"));
+        assert!(ctx.db_update("tags", "{}", "{}", "{}").contains("error"));
         assert!(ctx.db_delete("tags", "{}", "{}").contains("error"));
         assert!(ctx.db_count("tags", "{}", "{}").contains("error"));
     }

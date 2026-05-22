@@ -440,15 +440,17 @@ pub async fn rollback_migrations(pool: &Pool, step: Option<u32>) -> anyhow::Resu
 /// Ensure the `_migrations` table has all required columns.
 /// Handles upgrades from older schema versions (adds `batch`, `checksum`, `applied_at`).
 async fn ensure_migrations_table_schema(pool: &Pool) {
-    if let Err(e) = sqlx::query("ALTER TABLE _migrations ADD COLUMN batch INTEGER NOT NULL DEFAULT 0")
-        .execute(pool)
-        .await
+    if let Err(e) =
+        sqlx::query("ALTER TABLE _migrations ADD COLUMN batch INTEGER NOT NULL DEFAULT 0")
+            .execute(pool)
+            .await
     {
         tracing::debug!("migration schema: batch column: {e}");
     }
-    if let Err(e) = sqlx::query("ALTER TABLE _migrations ADD COLUMN checksum TEXT NOT NULL DEFAULT ''")
-        .execute(pool)
-        .await
+    if let Err(e) =
+        sqlx::query("ALTER TABLE _migrations ADD COLUMN checksum TEXT NOT NULL DEFAULT ''")
+            .execute(pool)
+            .await
     {
         tracing::debug!("migration schema: checksum column: {e}");
     }

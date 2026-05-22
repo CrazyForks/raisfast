@@ -6,7 +6,10 @@
 use axum::Json;
 use axum::extract::{Path, Query, State};
 
-use crate::dto::{AdminCommentListQuery, BatchRequest, BatchResponse, CreateCommentRequest, UpdateCommentStatusRequest};
+use crate::dto::{
+    AdminCommentListQuery, BatchRequest, BatchResponse, CreateCommentRequest,
+    UpdateCommentStatusRequest,
+};
 use crate::errors::app_error::{AppError, AppResult};
 use crate::errors::response::{ApiResponse, PaginatedData};
 use crate::errors::validation;
@@ -348,10 +351,8 @@ pub async fn admin_batch(
             continue;
         };
         match req.action.as_str() {
-            "delete" => {
-                if state.comment_service.delete(id, &auth).await.is_ok() {
-                    affected += 1;
-                }
+            "delete" if state.comment_service.delete(id, &auth).await.is_ok() => {
+                affected += 1;
             }
             "approve" | "reject" | "spam" => {
                 let status = match req.action.as_str() {

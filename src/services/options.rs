@@ -124,8 +124,7 @@ impl OptionsService {
 
     /// Set an option value (write to DB + update cache)
     pub async fn set(&self, key: &str, value: Value) -> Result<(), AppError> {
-        let value_str = serde_json::to_string(&value)
-            .map_err(|e| AppError::Internal(e.into()))?;
+        let value_str = serde_json::to_string(&value).map_err(|e| AppError::Internal(e.into()))?;
 
         crate::models::options::upsert_value(&self.pool, key, &value_str, self.tenant_arg())
             .await?;
@@ -157,8 +156,8 @@ impl OptionsService {
         let sorted: Vec<_> = pairs.into_iter().collect();
 
         for (key, value) in &sorted {
-            let value_str = serde_json::to_string(value)
-                .map_err(|e| AppError::Internal(e.into()))?;
+            let value_str =
+                serde_json::to_string(value).map_err(|e| AppError::Internal(e.into()))?;
             crate::models::options::upsert_value(&self.pool, key, &value_str, self.tenant_arg())
                 .await?;
         }

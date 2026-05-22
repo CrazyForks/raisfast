@@ -7,7 +7,9 @@ use axum::Json;
 use axum::extract::{Path, Query, State};
 
 use crate::AppState;
-use crate::dto::{BatchRequest, BatchResponse, CreateCronRequest, LogQueryParams, ToggleBody, UpdateCronRequest};
+use crate::dto::{
+    BatchRequest, BatchResponse, CreateCronRequest, LogQueryParams, ToggleBody, UpdateCronRequest,
+};
 use crate::errors::app_error::{AppError, AppResult};
 use crate::errors::response::ApiResponse;
 use crate::middleware::auth::AuthUser;
@@ -307,20 +309,14 @@ pub async fn admin_batch(
             Err(_) => continue,
         };
         match req.action.as_str() {
-            "delete" => {
-                if delete_schedule(&state.pool, id).await.is_ok() {
-                    affected += 1;
-                }
+            "delete" if delete_schedule(&state.pool, id).await.is_ok() => {
+                affected += 1;
             }
-            "enable" => {
-                if toggle_schedule(&state.pool, id, true).await.is_ok() {
-                    affected += 1;
-                }
+            "enable" if toggle_schedule(&state.pool, id, true).await.is_ok() => {
+                affected += 1;
             }
-            "disable" => {
-                if toggle_schedule(&state.pool, id, false).await.is_ok() {
-                    affected += 1;
-                }
+            "disable" if toggle_schedule(&state.pool, id, false).await.is_ok() => {
+                affected += 1;
             }
             _ => {}
         }

@@ -3,7 +3,10 @@
 use axum::Json;
 use axum::extract::{Path, State};
 
-use crate::dto::{BatchRequest, BatchResponse, CreateReusableRequest, ReusableBlockResponse, UpdateReusableRequest};
+use crate::dto::{
+    BatchRequest, BatchResponse, CreateReusableRequest, ReusableBlockResponse,
+    UpdateReusableRequest,
+};
 use crate::errors::app_error::{AppError, AppResult};
 use crate::errors::response::ApiResponse;
 use crate::errors::validation;

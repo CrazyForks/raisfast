@@ -87,8 +87,11 @@ async fn get_user_by_id() {
         .await
         .unwrap();
     let user_id = user_id_i64.to_string();
-    let (status, body): (StatusCode, Value) =
-        send(&mut app, get_auth(&format!("/api/v1/users/{user_id}"), &token)).await;
+    let (status, body): (StatusCode, Value) = send(
+        &mut app,
+        get_auth(&format!("/api/v1/users/{user_id}"), &token),
+    )
+    .await;
     assert!(status.is_success());
     assert_eq!(body["data"]["username"], "pubuser");
 }
@@ -96,7 +99,8 @@ async fn get_user_by_id() {
 #[tokio::test]
 async fn get_user_not_found() {
     let (mut app, _) = test_app().await;
-    let (token, _) = register_and_login(&mut app, "notfound@test.com", "nfuser", "Password123").await;
+    let (token, _) =
+        register_and_login(&mut app, "notfound@test.com", "nfuser", "Password123").await;
     let fake = "9999999999999";
     let (status, _): (StatusCode, Value) =
         send(&mut app, get_auth(&format!("/api/v1/users/{fake}"), &token)).await;
@@ -192,15 +196,19 @@ async fn admin_can_update_role() {
 #[tokio::test]
 async fn get_user_by_id_returns_public_info() {
     let (mut app, state) = test_app().await;
-    let (token, _) = register_and_login(&mut app, "pubinfo@test.com", "pubinfouser", "Password123").await;
+    let (token, _) =
+        register_and_login(&mut app, "pubinfo@test.com", "pubinfouser", "Password123").await;
     let user_id_i64: i64 =
         sqlx::query_scalar("SELECT id FROM users WHERE username = 'pubinfouser'")
             .fetch_one(&state.pool)
             .await
             .unwrap();
     let user_id = user_id_i64.to_string();
-    let (status, body): (StatusCode, Value) =
-        send(&mut app, get_auth(&format!("/api/v1/users/{user_id}"), &token)).await;
+    let (status, body): (StatusCode, Value) = send(
+        &mut app,
+        get_auth(&format!("/api/v1/users/{user_id}"), &token),
+    )
+    .await;
     assert!(status.is_success());
     assert_eq!(body["data"]["id"], user_id);
     assert_eq!(body["data"]["username"], "pubinfouser");

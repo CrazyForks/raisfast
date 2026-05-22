@@ -205,7 +205,11 @@ pub async fn build_app_state(
         &protocol_names,
         &protocol_registry,
     )?);
-    let ct_tables: Vec<String> = ct_registry.all().iter().map(|ct| ct.table.clone()).collect();
+    let ct_tables: Vec<String> = ct_registry
+        .all()
+        .iter()
+        .map(|ct| ct.table.clone())
+        .collect();
     crate::db::schema::set_protected_tables(live_tables, &ct_tables);
     ct_registry.set_protected_tables(crate::db::schema::get_protected_tables());
 

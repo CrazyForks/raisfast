@@ -7,7 +7,10 @@
 use axum::Json;
 use axum::extract::{Path, Query, State};
 
-use crate::dto::{AdminPostListQuery, BatchRequest, BatchResponse, CreatePostRequest, PostListQuery, PostResponse, UpdatePostRequest};
+use crate::dto::{
+    AdminPostListQuery, BatchRequest, BatchResponse, CreatePostRequest, PostListQuery,
+    PostResponse, UpdatePostRequest,
+};
 use crate::errors::app_error::AppResult;
 use crate::errors::response::{ApiResponse, PaginatedData};
 use crate::errors::validation;

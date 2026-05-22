@@ -52,8 +52,8 @@ pub async fn restore_revision(
     revision_id: SnowflakeId,
 ) -> AppResult<Value> {
     let revision = get_revision(pool, content_type, content_id, revision_id).await?;
-    let mut snapshot: Value = serde_json::from_str(&revision.snapshot)
-        .map_err(|e| AppError::Internal(e.into()))?;
+    let mut snapshot: Value =
+        serde_json::from_str(&revision.snapshot).map_err(|e| AppError::Internal(e.into()))?;
     if let Some(obj) = snapshot.as_object_mut() {
         obj.remove(crate::constants::COL_ID);
         obj.remove("created_at");
@@ -71,10 +71,10 @@ pub async fn diff_revisions(
 ) -> AppResult<DiffResult> {
     let a = get_revision(pool, content_type, content_id, SnowflakeId(rev_id_a)).await?;
     let b = get_revision(pool, content_type, content_id, SnowflakeId(rev_id_b)).await?;
-    let snap_a: Value = serde_json::from_str(&a.snapshot)
-        .map_err(|e| AppError::Internal(e.into()))?;
-    let snap_b: Value = serde_json::from_str(&b.snapshot)
-        .map_err(|e| AppError::Internal(e.into()))?;
+    let snap_a: Value =
+        serde_json::from_str(&a.snapshot).map_err(|e| AppError::Internal(e.into()))?;
+    let snap_b: Value =
+        serde_json::from_str(&b.snapshot).map_err(|e| AppError::Internal(e.into()))?;
     let diff = content_revision::compute_diff(&snap_a, &snap_b);
     Ok(DiffResult {
         revision_a: a,
