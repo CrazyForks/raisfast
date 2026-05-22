@@ -9,6 +9,7 @@ on:
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
+  SQLX_OFFLINE: true
 
 jobs:
   fmt:
@@ -49,6 +50,4 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y pkg-config libssl-dev
       - name: Test
-        env:
-          DATABASE_URL: sqlite:./storage/db/raisfast.db
         run: cargo test --no-default-features --features "db-sqlite plugin-all search-tantivy"
