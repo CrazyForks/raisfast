@@ -62,14 +62,14 @@ enum Commands {
         action: CodegenAction,
     },
     /// Proxy management (multi-tenant reverse proxy)
-    #[cfg(feature = "proxy")]
+    #[cfg(all(feature = "proxy", unix))]
     Proxy {
         #[command(subcommand)]
         action: ProxyAction,
     },
 }
 
-#[cfg(feature = "proxy")]
+#[cfg(all(feature = "proxy", unix))]
 #[derive(Subcommand)]
 pub enum ProxyAction {
     /// Start the proxy server
@@ -445,7 +445,7 @@ pub async fn run(cli: Cli, config: &AppConfig) -> anyhow::Result<()> {
             codegen_cmd::run_model(&tables, force, dry_run)?;
         }
 
-        #[cfg(feature = "proxy")]
+        #[cfg(all(feature = "proxy", unix))]
         Some(Commands::Proxy {
             action: ProxyAction::Start {
                 config: proxy_config,
@@ -454,7 +454,7 @@ pub async fn run(cli: Cli, config: &AppConfig) -> anyhow::Result<()> {
             raisfast::proxy::start(&proxy_config).await?;
         }
 
-        #[cfg(feature = "proxy")]
+        #[cfg(all(feature = "proxy", unix))]
         Some(Commands::Proxy {
             action: ProxyAction::Check {
                 config: proxy_config,
