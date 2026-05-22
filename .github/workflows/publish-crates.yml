@@ -21,6 +21,6 @@ jobs:
       - name: Install Rust
         run: rustup update stable && rustup default stable
       - name: cargo publish raisfast-derive
-        run: cargo publish --no-verify -p raisfast-derive
+        run: cargo publish --no-verify --allow-dirty -p raisfast-derive
       - name: cargo publish raisfast
-        run: cargo publish --no-verify -p raisfast
+        run: cargo publish --no-verify --allow-dirty -p raisfast

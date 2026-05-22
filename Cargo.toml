@@ -10,6 +10,7 @@ default-run = "raisfast"
 repository = "https://github.com/raisfast/raisfast"
 description = "The last backend you'll ever need. Rust-powered headless CMS with built-in blog, ecommerce, wallet, payment and 4 plugin engines."
 homepage = "https://github.com/raisfast/raisfast"
+license = "Apache-2.0"
 
 [features]
 default = ["db-sqlite", "search-tantivy", "plugin-js", "plugin-lua", "plugin-rhai", "openapi", "proxy"]
