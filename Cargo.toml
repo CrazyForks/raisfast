@@ -63,6 +63,9 @@ debug = 1  # 默认是 2（最大），设为 1 或 false 可大幅减小体积
 inherits = "release"
 lto = "thin"
 
+[workspace.metadata.dist]
+allow-dirty = ["ci"]
+
 [dependencies]
 # Web framework
 axum = { version = "0.8", features = ["macros", "multipart", "ws"] }
