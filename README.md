@@ -4,7 +4,7 @@
     <strong>The last backend you'll ever need.</strong>
   </p>
   <p align="center">
-    Rust-powered headless CMS / desktop backend engine. Eliminate 80% of repetitive backend work — focus on your business.<br>
+    Rust-powered High performance headless CMS / desktop backend engine. Eliminate 80% of repetitive backend work — focus on your business.<br>
     Single binary, zero dependencies, zero GC. Built-in blog, ecommerce, wallet, payment & multi-tenant SaaS. JS / Rhai / Lua / WASM plugin engines for infinite extensibility.<br>
     Dynamic language productivity on a Rust performance foundation.
   </p>
@@ -239,12 +239,11 @@ PLUGIN_HOT_RELOAD=true
 
 ## License
 
-raisfast is dual-licensed:
+Licensed under either of
 
-- **Core framework**: [MIT License](LICENSE)
-- **Commercial modules**: [BSL 1.1](LICENSE-COMMERCIAL)
+- [Apache License 2.0](LICENSE)
 
-See [LICENSE](LICENSE) for details.
+at your option.
 
 ---
 

@@ -1,10 +1,10 @@
 <p align="center">
   <h1 align="center">raisfast</h1>
   <p align="center">
-    <strong>你需要的最后一个后端。</strong>
+    <strong>你需要的最后一个后端引擎。</strong>
   </p>
   <p align="center">
-    基于 Rust 的 headless CMS / desktop 后端引擎，消除 80% 的重复后端开发，让你专注业务本身。<br>
+    基于 Rust 的高性能 headless CMS / desktop 后端引擎，消除 80% 的重复后端开发，让你专注业务本身。<br>
     零依赖单二进制文件部署，零运行时 GC。博客、电商、钱包、支付、多租户 SaaS 开箱即用，JS / Rhai / Lua / WASM 四引擎插件无限扩展。<br>
     享受动态语言的开发效率，拥有 Rust 的性能基座。
   </p>
@@ -244,12 +244,7 @@ PLUGIN_HOT_RELOAD=true
 
 ## 许可证
 
-raisfast 采用双重许可：
-
-- **核心框架**：[MIT 许可证](LICENSE)
-- **商业模块**：[BSL 1.1](LICENSE-COMMERCIAL)
-
-详见 [LICENSE](LICENSE)。
+采用 [Apache License 2.0](LICENSE) 许可。
 
 ---
 

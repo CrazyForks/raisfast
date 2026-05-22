@@ -144,11 +144,14 @@ pub async fn find_all_by_post(
 #[derive(Debug, Serialize, Clone)]
 pub struct AdminCommentRow {
     pub id: String,
+    pub post_id: String,
     pub post_title: String,
     pub nickname: Option<String>,
     pub email: Option<String>,
     pub content: String,
     pub status: CommentStatus,
+    pub created_by: Option<String>,
+    pub parent_id: Option<String>,
     pub created_at: Timestamp,
 }
 
@@ -171,10 +174,13 @@ impl From<AdminCommentRowDb> for AdminCommentRow {
     fn from(r: AdminCommentRowDb) -> Self {
         Self {
             id: r.id.to_string(),
+            post_id: r.post_id.to_string(),
             post_title: r.post_title,
+            created_by: r.created_by.map(|v| v.to_string()),
             nickname: r.nickname,
             email: r.email,
             content: r.content,
+            parent_id: r.parent_id.map(|v| v.to_string()),
             status: r.status,
             created_at: r.created_at,
         }
