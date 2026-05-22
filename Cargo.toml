@@ -197,12 +197,12 @@ tempfile = "3"
 
 [[example]]
 name = "export-types"
-path = "src/bin/export-types.rs"
+path = "src/tools/export-types.rs"
 required-features = ["export-types"]
 
 [[example]]
 name = "tauri-app"
-path = "src/bin/tauri-app.rs"
+path = "src/tools/tauri-app.rs"
 required-features = ["tauri"]
 
 [[test]]
