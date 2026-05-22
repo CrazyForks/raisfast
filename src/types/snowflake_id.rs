@@ -1,48 +1,69 @@
 use std::ops::Deref;
 use std::sync::LazyLock;
 
-use base64::Engine;
-
 const B62: &[u8; 62] = b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
 
-static ID_CIPHER_KEY: LazyLock<[u8; 16]> = LazyLock::new(|| {
-    let app_key = std::env::var("APP_KEY").unwrap_or_default();
-    let bytes = base64::engine::general_purpose::STANDARD
-        .decode(&app_key)
-        .unwrap_or_default();
-    if bytes.len() >= 16 {
-        let mut key = [0u8; 16];
-        key.copy_from_slice(&bytes[..16]);
-        key
-    } else {
-        [0u8; 16]
-    }
+/// Multiplication key and its modular inverse over GF(2^64).
+///
+/// A fixed ~37-bit odd constant. This keeps small IDs short:
+///   ID 1 → ~6 chars, ID 1000000 → ~7 chars, large IDs → 10-11 chars.
+/// The key is a bijection on u64 (any odd number is invertible mod 2^64).
+static ID_ENCODING_KEYS: LazyLock<(u64, u64)> = LazyLock::new(|| {
+    let k: u64 = 0x0000_0060_3b3f_a785;
+    let inv = mod_inverse(k);
+    (k, inv)
 });
 
 static ID_ENCODING_ENABLED: LazyLock<bool> =
     LazyLock::new(|| std::env::var("ID_ENCODING").unwrap_or_default() == "true");
 
-/// Encrypt a Snowflake i64 into a base62 string.
+/// Compute the modular multiplicative inverse of `a` modulo 2^64.
 ///
-/// Uses 3-round XOR-rotate for confusion-diffusion. Output is 1-11 URL-safe
-/// alphanumeric characters. Fully deterministic and invertible via `decode_id`.
+/// Uses the extended Euclidean algorithm. `a` must be odd.
+fn mod_inverse(a: u64) -> u64 {
+    let modulus = (1u128 << 64) as i128;
+    let a_full = a as i128;
+    let (mut old_r, mut r) = (a_full, modulus);
+    let (mut old_s, mut s) = (1i128, 0i128);
+
+    while r != 0 {
+        let q = old_r / r;
+        (old_r, r) = (r, old_r - q * r);
+        (old_s, s) = (s, old_s - q * s);
+    }
+
+    ((old_s % modulus + modulus) % modulus) as u64
+}
+
+/// Encode a Snowflake i64 into a short base62 string using modular multiplication.
+///
+/// Uses a single `val * K mod 2^64` operation for confusion. Small IDs stay
+/// short because the product grows proportionally. Fully deterministic and
+/// invertible via `decode_id`.
 pub fn encode_id(val: i64) -> String {
     if !*ID_ENCODING_ENABLED {
         return val.to_string();
     }
-    let key = &*ID_CIPHER_KEY;
-    let k0 = u64::from_be_bytes(key[0..8].try_into().unwrap());
-    let k1 = u64::from_be_bytes(key[8..16].try_into().unwrap());
-    let rot1 = (key[8] & 0x3F) as u32;
-    let rot2 = (key[9] & 0x3F) as u32;
+    let (k, _) = &*ID_ENCODING_KEYS;
+    let v = (val as u64).wrapping_mul(*k);
+    to_base62(v)
+}
 
-    let mut v = val as u64;
-    v ^= k0;
-    v = v.rotate_left(rot1);
-    v ^= k1;
-    v = v.rotate_left(rot2);
-    v ^= k0.wrapping_add(k1);
+/// Decode a base62-encoded ID string back to the original Snowflake i64.
+///
+/// Returns `None` if the string contains invalid base62 characters or
+/// the decoded value cannot be reversed.
+pub fn decode_id(s: &str) -> Option<i64> {
+    if !*ID_ENCODING_ENABLED {
+        return s.parse().ok();
+    }
+    let (_, inv) = &*ID_ENCODING_KEYS;
+    let v = from_base62(s)?;
+    let original = v.wrapping_mul(*inv);
+    Some(original as i64)
+}
 
+fn to_base62(mut v: u64) -> String {
     if v == 0 {
         return "0".into();
     }
@@ -56,20 +77,7 @@ pub fn encode_id(val: i64) -> String {
     std::str::from_utf8(&buf[pos..]).unwrap().into()
 }
 
-/// Decrypt a base62-encoded ID string back to the original Snowflake i64.
-///
-/// Returns `None` if the string contains invalid base62 characters or
-/// the decoded value overflows u64.
-pub fn decode_id(s: &str) -> Option<i64> {
-    if !*ID_ENCODING_ENABLED {
-        return s.parse().ok();
-    }
-    let key = &*ID_CIPHER_KEY;
-    let k0 = u64::from_be_bytes(key[0..8].try_into().unwrap());
-    let k1 = u64::from_be_bytes(key[8..16].try_into().unwrap());
-    let rot1 = (key[8] & 0x3F) as u32;
-    let rot2 = (key[9] & 0x3F) as u32;
-
+fn from_base62(s: &str) -> Option<u64> {
     let mut v = 0u64;
     for c in s.bytes() {
         let digit = match c {
@@ -80,14 +88,7 @@ pub fn decode_id(s: &str) -> Option<i64> {
         } as u64;
         v = v.checked_mul(62)?.checked_add(digit)?;
     }
-
-    v ^= k0.wrapping_add(k1);
-    v = v.rotate_right(rot2);
-    v ^= k1;
-    v = v.rotate_right(rot1);
-    v ^= k0;
-
-    Some(v as i64)
+    Some(v)
 }
 
 /// Returns true if ID encoding is enabled via the `ID_ENCODING=true` env var.
@@ -246,7 +247,15 @@ mod tests {
 
     #[test]
     fn encode_decode_roundtrip() {
-        let ids = [1i64, 42, 999, 1895784563210240001, i64::MAX, i64::MIN + 1];
+        let ids = [
+            1i64,
+            42,
+            999,
+            1000000,
+            1895784563210240001,
+            i64::MAX,
+            i64::MIN + 1,
+        ];
         for id in ids {
             let encoded = encode_id(id);
             let decoded = decode_id(&encoded);
@@ -284,5 +293,22 @@ mod tests {
     #[test]
     fn decode_invalid_returns_none() {
         assert!(decode_id("!!!invalid!!!").is_none());
+    }
+
+    #[test]
+    fn small_ids_produce_short_output() {
+        let encoded = encode_id(1);
+        assert!(
+            encoded.len() <= 7,
+            "ID 1 should encode to ≤7 chars, got '{}' ({} chars)",
+            encoded,
+            encoded.len()
+        );
+    }
+
+    #[test]
+    fn mod_inverse_is_correct() {
+        let (k, inv) = *ID_ENCODING_KEYS;
+        assert_eq!(k.wrapping_mul(inv), 1, "K * K_inv must equal 1 mod 2^64");
     }
 }

@@ -4,7 +4,7 @@ use ts_rs::TS;
 use utoipa::ToSchema;
 use validator::Validate;
 
-use super::validate_optional_uuid;
+use super::validate_optional_id;
 
 #[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Serialize, ToSchema)]
@@ -41,7 +41,7 @@ pub struct CreateCategoryRequest {
     #[validate(length(min = 1, max = 100))]
     pub name: String,
     pub description: Option<String>,
-    #[validate(custom(function = "validate_optional_uuid"))]
+    #[validate(custom(function = "validate_optional_id"))]
     pub parent_id: Option<String>,
     pub sort_order: Option<i64>,
 }
@@ -52,7 +52,7 @@ pub struct UpdateCategoryRequest {
     #[validate(length(min = 1, max = 100))]
     pub name: Option<String>,
     pub description: Option<String>,
-    #[validate(custom(function = "validate_optional_uuid"))]
+    #[validate(custom(function = "validate_optional_id"))]
     pub parent_id: Option<String>,
     pub sort_order: Option<i64>,
 }

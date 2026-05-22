@@ -4,12 +4,12 @@ use ts_rs::TS;
 use utoipa::ToSchema;
 use validator::Validate;
 
-use super::validate_optional_uuid;
+use super::validate_optional_id;
 
 #[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Clone, Serialize, Deserialize, Validate, ToSchema)]
 pub struct CreateProductVariantRequest {
-    #[validate(custom(function = "validate_optional_uuid"))]
+    #[validate(custom(function = "validate_optional_id"))]
     pub product_id: String,
     pub sku: Option<String>,
     #[validate(length(min = 1, max = 200))]

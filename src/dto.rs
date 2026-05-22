@@ -86,8 +86,8 @@ fn validate_comment_status(status: &str) -> Result<(), validator::ValidationErro
     }
 }
 
-fn validate_optional_uuid(id: &str) -> Result<(), validator::ValidationError> {
-    if id.parse::<uuid::Uuid>().is_err() && id.parse::<i64>().is_err() {
+fn validate_optional_id(id: &str) -> Result<(), validator::ValidationError> {
+    if !is_valid_id_str(id) {
         let mut err = validator::ValidationError::new("invalid_id");
         err.message = Some("invalid ID format".into());
         return Err(err);
@@ -95,15 +95,19 @@ fn validate_optional_uuid(id: &str) -> Result<(), validator::ValidationError> {
     Ok(())
 }
 
-fn validate_uuid_vec(ids: &[String]) -> Result<(), validator::ValidationError> {
+fn validate_id_vec(ids: &[String]) -> Result<(), validator::ValidationError> {
     for id in ids {
-        if id.parse::<uuid::Uuid>().is_err() && id.parse::<i64>().is_err() {
+        if !is_valid_id_str(id) {
             let mut err = validator::ValidationError::new("invalid_id");
             err.message = Some("invalid ID format".into());
             return Err(err);
         }
     }
     Ok(())
+}
+
+fn is_valid_id_str(s: &str) -> bool {
+    !s.is_empty() && s.chars().all(|c| c.is_ascii_alphanumeric())
 }
 
 fn validate_currency_code(code: &str) -> Result<(), validator::ValidationError> {
@@ -162,31 +166,22 @@ mod tests {
     }
 
     #[test]
-    fn validate_optional_uuid_valid_uuid() {
-        assert!(validate_optional_uuid("01901234-5678-7000-8000-000000000000").is_ok());
+    fn validate_optional_id_valid() {
+        assert!(validate_optional_id("42").is_ok());
     }
 
     #[test]
-    fn validate_optional_uuid_valid_i64() {
-        assert!(validate_optional_uuid("42").is_ok());
+    fn validate_optional_id_invalid() {
+        assert!(validate_optional_id("!!!invalid!!!").is_err());
     }
 
     #[test]
-    fn validate_optional_uuid_invalid() {
-        assert!(validate_optional_uuid("not-a-uuid").is_err());
+    fn validate_id_vec_valid() {
+        assert!(validate_id_vec(&["1".to_string(), "999".to_string()]).is_ok());
     }
 
     #[test]
-    fn validate_uuid_vec_valid() {
-        assert!(validate_uuid_vec(&[
-            "01901234-5678-7000-8000-000000000000".to_string(),
-            "1".to_string()
-        ])
-        .is_ok());
-    }
-
-    #[test]
-    fn validate_uuid_vec_invalid() {
-        assert!(validate_uuid_vec(&["bad-id".to_string()]).is_err());
+    fn validate_id_vec_invalid() {
+        assert!(validate_id_vec(&["!!!bad!!!".to_string()]).is_err());
     }
 }

@@ -4,7 +4,7 @@ use ts_rs::TS;
 use utoipa::ToSchema;
 use validator::Validate;
 
-use super::validate_optional_uuid;
+use super::validate_optional_id;
 
 #[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Clone, Serialize, Deserialize, Validate, ToSchema)]
@@ -13,7 +13,7 @@ pub struct CreateProductRequest {
     pub title: String,
     pub description: Option<String>,
     pub cover_url: Option<String>,
-    #[validate(custom(function = "validate_optional_uuid"))]
+    #[validate(custom(function = "validate_optional_id"))]
     pub category_id: Option<String>,
     pub product_type: Option<String>,
     pub fulfillment_type: Option<String>,
@@ -45,7 +45,7 @@ pub struct UpdateProductRequest {
     pub title: Option<String>,
     pub description: Option<String>,
     pub cover_url: Option<String>,
-    #[validate(custom(function = "validate_optional_uuid"))]
+    #[validate(custom(function = "validate_optional_id"))]
     pub category_id: Option<String>,
     pub product_type: Option<String>,
     pub fulfillment_type: Option<String>,

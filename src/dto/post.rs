@@ -18,9 +18,9 @@ pub struct CreatePostRequest {
     pub excerpt: Option<String>,
     pub cover_image: Option<String>,
     pub status: Option<PostStatus>,
-    #[validate(custom(function = "super::validate_optional_uuid"))]
+    #[validate(custom(function = "super::validate_optional_id"))]
     pub category_id: Option<String>,
-    #[validate(custom(function = "super::validate_uuid_vec"))]
+    #[validate(custom(function = "super::validate_id_vec"))]
     pub tag_ids: Option<Vec<String>>,
 }
 
@@ -33,9 +33,9 @@ pub struct UpdatePostRequest {
     pub excerpt: Option<String>,
     pub cover_image: Option<String>,
     pub status: Option<PostStatus>,
-    #[validate(custom(function = "super::validate_optional_uuid"))]
+    #[validate(custom(function = "super::validate_optional_id"))]
     pub category_id: Option<String>,
-    #[validate(custom(function = "super::validate_uuid_vec"))]
+    #[validate(custom(function = "super::validate_id_vec"))]
     pub tag_ids: Option<Vec<String>>,
 }
 

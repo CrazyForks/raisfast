@@ -6,14 +6,14 @@ use validator::Validate;
 
 use crate::models::user::UserRole;
 
-use super::validate_uuid_vec;
+use super::validate_id_vec;
 
 #[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Deserialize, Validate, ToSchema)]
 pub struct BatchRequest {
     #[validate(length(min = 1))]
     pub action: String,
-    #[validate(length(min = 1), custom(function = "validate_uuid_vec"))]
+    #[validate(length(min = 1), custom(function = "validate_id_vec"))]
     pub ids: Vec<String>,
 }
 
@@ -22,7 +22,7 @@ pub struct BatchRequest {
 pub struct BatchRequestWithRole {
     #[validate(length(min = 1))]
     pub action: String,
-    #[validate(length(min = 1), custom(function = "validate_uuid_vec"))]
+    #[validate(length(min = 1), custom(function = "validate_id_vec"))]
     pub ids: Vec<String>,
     pub role: Option<UserRole>,
 }
@@ -51,7 +51,7 @@ mod tests {
     fn batch_request_valid() {
         let req = BatchRequest {
             action: "delete".to_string(),
-            ids: vec!["01901234-5678-7000-8000-000000000000".to_string()],
+            ids: vec!["1234567890".to_string()],
         };
         assert!(req.validate().is_ok());
     }
@@ -60,7 +60,7 @@ mod tests {
     fn batch_request_empty_action_fails() {
         let req = BatchRequest {
             action: "".to_string(),
-            ids: vec!["01901234-5678-7000-8000-000000000000".to_string()],
+            ids: vec!["1234567890".to_string()],
         };
         assert!(req.validate().is_err());
     }
@@ -78,7 +78,7 @@ mod tests {
     fn batch_request_with_role_valid() {
         let req = BatchRequestWithRole {
             action: "change_role".to_string(),
-            ids: vec!["01901234-5678-7000-8000-000000000000".to_string()],
+            ids: vec!["1234567890".to_string()],
             role: Some(UserRole::Author),
         };
         assert!(req.validate().is_ok());

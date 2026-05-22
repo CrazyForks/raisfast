@@ -11,7 +11,7 @@ use crate::models::comment::CommentStatus;
 pub struct CreateCommentRequest {
     #[validate(length(min = 1, max = 5000))]
     pub content: String,
-    #[validate(custom(function = "super::validate_optional_uuid"))]
+    #[validate(custom(function = "super::validate_optional_id"))]
     pub parent_id: Option<String>,
     #[validate(length(min = 1, max = 50))]
     pub nickname: Option<String>,
