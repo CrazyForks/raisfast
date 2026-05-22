@@ -4,10 +4,10 @@ use std::collections::HashMap;
 
 use axum::Json;
 use axum::extract::{Path, State};
-use serde::Deserialize;
 use serde_json::Value;
 
 use crate::AppState;
+use crate::dto::{UpdateOptionRequest, UpdateOptionsRequest};
 use crate::errors::app_error::{AppError, AppResult};
 use crate::errors::response::ApiResponse;
 
@@ -126,12 +126,6 @@ pub async fn get_option(
     ))
 }
 
-/// Batch update request body
-#[derive(Debug, Deserialize, utoipa::ToSchema)]
-pub struct UpdateOptionsRequest {
-    pub options: HashMap<String, Value>,
-}
-
 /// PUT /admin/options — Batch update options
 #[utoipa::path(put, path = "/admin/options", tag = "options",
     security(("bearer_auth" = [])),
@@ -144,12 +138,6 @@ pub async fn update_options(
     state.options.set_batch(body.options).await?;
     let groups = state.options.get_grouped().await?;
     Ok(ApiResponse::success(groups))
-}
-
-/// Update single option request body
-#[derive(Debug, Deserialize, utoipa::ToSchema)]
-pub struct UpdateOptionRequest {
-    pub value: Value,
 }
 
 /// PUT /admin/options/:key — Set a single option

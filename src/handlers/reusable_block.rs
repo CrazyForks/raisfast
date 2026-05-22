@@ -2,10 +2,8 @@
 
 use axum::Json;
 use axum::extract::{Path, State};
-use serde::Deserialize;
-use validator::Validate;
 
-use crate::dto::{BatchRequest, BatchResponse, ReusableBlockResponse};
+use crate::dto::{BatchRequest, BatchResponse, CreateReusableRequest, ReusableBlockResponse, UpdateReusableRequest};
 use crate::errors::app_error::{AppError, AppResult};
 use crate::errors::response::ApiResponse;
 use crate::errors::validation;
@@ -78,28 +76,6 @@ pub fn routes(
         "system admin",
         "admin/pages"
     )
-}
-
-#[derive(Debug, Deserialize, Validate, utoipa::ToSchema)]
-pub struct CreateReusableRequest {
-    #[validate(length(min = 1, max = 200))]
-    pub name: String,
-    #[validate(length(min = 1))]
-    pub block_type: String,
-    #[validate(length(min = 1))]
-    pub content: String,
-    pub description: Option<String>,
-}
-
-#[derive(Debug, Deserialize, Validate, utoipa::ToSchema)]
-pub struct UpdateReusableRequest {
-    #[validate(length(min = 1, max = 200))]
-    pub name: Option<String>,
-    #[validate(length(min = 1))]
-    pub block_type: Option<String>,
-    #[validate(length(min = 1))]
-    pub content: Option<String>,
-    pub description: Option<String>,
 }
 
 #[utoipa::path(get, path = "/admin/reusable-blocks", tag = "reusable_blocks",

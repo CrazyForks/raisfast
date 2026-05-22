@@ -23,7 +23,7 @@ pub fn routes(
         let mr = axum::routing::post(upload).layer(RequestBodyLimitLayer::new(max_upload));
         r.route("/media/upload", mr)
     };
-    registry.record("POST", "/api/v1/media/upload", "system public", "media");
+    registry.record("POST", "/api/v1/media/upload", "system authed", "media");
     let r = reg_route!(
         r,
         registry,
@@ -31,7 +31,7 @@ pub fn routes(
         "/media",
         get,
         self::list,
-        "system public",
+        "system authed",
         "media"
     );
     let r = reg_route!(
@@ -41,7 +41,7 @@ pub fn routes(
         "/media/stats",
         get,
         stats,
-        "system public",
+        "system authed",
         "media"
     );
     let r = reg_route!(
@@ -51,7 +51,7 @@ pub fn routes(
         "/media/{id}",
         delete,
         self::delete,
-        "system public",
+        "system authed",
         "media"
     );
     let r = {
@@ -106,6 +106,7 @@ pub async fn upload(
     State(state): State<crate::AppState>,
     mut multipart: Multipart,
 ) -> AppResult<ApiResponse<crate::dto::MediaResponse>> {
+    auth.ensure_authenticated()?;
     let field = multipart
         .next_field()
         .await
@@ -151,7 +152,8 @@ pub async fn list(
     auth: AuthUser,
     State(state): State<crate::AppState>,
     Query(mut params): Query<PaginationParams>,
-) -> AppResult<ApiResponse<PaginatedData<crate::dto::MediaResponse>>> {
+) -> AppResult<ApiResponse<crate::errors::response::PaginatedData<crate::dto::MediaResponse>>> {
+    auth.ensure_authenticated()?;
     params.sanitize();
     let (items, total) =
         media_service::list(&state.pool, &auth, params.page, params.page_size).await?;
@@ -177,6 +179,7 @@ pub async fn delete(
     State(state): State<crate::AppState>,
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<()>> {
+    auth.ensure_authenticated()?;
     media_service::delete_media(state.storage.as_ref(), &state.pool, &id, &auth).await?;
     Ok(ApiResponse::success(()))
 }
@@ -189,6 +192,7 @@ pub async fn stats(
     auth: AuthUser,
     State(state): State<crate::AppState>,
 ) -> AppResult<ApiResponse<crate::dto::MediaStatsResponse>> {
+    auth.ensure_authenticated()?;
     let s = media_service::stats(&state.pool, &auth).await?;
     Ok(ApiResponse::success(crate::dto::stats_to_response(&s)))
 }

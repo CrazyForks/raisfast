@@ -71,24 +71,22 @@ pub trait WalletService: Send + Sync {
         rows: Vec<WalletTransaction>,
     ) -> AppResult<Vec<crate::dto::WalletTransactionResponse>>;
 
-    async fn find_user_int_id(&self, user_id: &str, tenant_id: Option<&str>) -> AppResult<i64>;
-
     async fn list_wallets_by_user(
         &self,
-        user_id: &str,
+        user_id: SnowflakeId,
         tenant_id: Option<&str>,
     ) -> AppResult<Vec<crate::models::wallet::Wallet>>;
 
     async fn get_wallet_by_currency(
         &self,
-        user_id: &str,
+        user_id: SnowflakeId,
         currency: &str,
         tenant_id: Option<&str>,
     ) -> AppResult<crate::models::wallet::Wallet>;
 
     async fn list_transactions_by_wallet(
         &self,
-        user_id: &str,
+        user_id: SnowflakeId,
         currency: &str,
         page: i64,
         page_size: i64,
@@ -97,7 +95,7 @@ pub trait WalletService: Send + Sync {
 
     async fn list_transactions_by_user(
         &self,
-        user_id: &str,
+        user_id: SnowflakeId,
         page: i64,
         page_size: i64,
         tenant_id: Option<&str>,
@@ -759,47 +757,36 @@ impl WalletService for WalletServiceImpl {
         tx_list_to_response(&self.pool, rows).await
     }
 
-    async fn find_user_int_id(&self, user_id: &str, tenant_id: Option<&str>) -> AppResult<i64> {
-        let uid = crate::types::snowflake_id::parse_id(user_id)?;
-        let user = crate::models::user::find_by_id(&self.pool, uid, tenant_id)
-            .await?
-            .ok_or_else(|| AppError::not_found("user"))?;
-        Ok(*user.id)
-    }
-
     async fn list_wallets_by_user(
         &self,
-        user_id: &str,
-        tenant_id: Option<&str>,
+        user_id: SnowflakeId,
+        _tenant_id: Option<&str>,
     ) -> AppResult<Vec<crate::models::wallet::Wallet>> {
-        let user_id = self.find_user_int_id(user_id, tenant_id).await?;
-        crate::models::wallet::find_by_user(&self.pool, SnowflakeId(user_id)).await
+        crate::models::wallet::find_by_user(&self.pool, user_id).await
     }
 
     async fn get_wallet_by_currency(
         &self,
-        user_id: &str,
+        user_id: SnowflakeId,
         currency: &str,
-        tenant_id: Option<&str>,
+        _tenant_id: Option<&str>,
     ) -> AppResult<crate::models::wallet::Wallet> {
-        let user_id = self.find_user_int_id(user_id, tenant_id).await?;
-        crate::models::wallet::find_by_user_and_currency(&self.pool, SnowflakeId(user_id), currency)
+        crate::models::wallet::find_by_user_and_currency(&self.pool, user_id, currency)
             .await?
             .ok_or_else(|| AppError::not_found("wallet"))
     }
 
     async fn list_transactions_by_wallet(
         &self,
-        user_id: &str,
+        user_id: SnowflakeId,
         currency: &str,
         page: i64,
         page_size: i64,
-        tenant_id: Option<&str>,
+        _tenant_id: Option<&str>,
     ) -> AppResult<(Vec<WalletTransaction>, i64)> {
-        let user_id = self.find_user_int_id(user_id, tenant_id).await?;
         let w = crate::models::wallet::find_by_user_and_currency(
             &self.pool,
-            SnowflakeId(user_id),
+            user_id,
             currency,
         )
         .await?
@@ -812,15 +799,14 @@ impl WalletService for WalletServiceImpl {
 
     async fn list_transactions_by_user(
         &self,
-        user_id: &str,
+        user_id: SnowflakeId,
         page: i64,
         page_size: i64,
-        tenant_id: Option<&str>,
+        _tenant_id: Option<&str>,
     ) -> AppResult<(Vec<WalletTransaction>, i64)> {
-        let user_id = self.find_user_int_id(user_id, tenant_id).await?;
         crate::models::wallet_transaction::find_transactions_by_user(
             &self.pool,
-            SnowflakeId(user_id),
+            user_id,
             page,
             page_size,
         )

@@ -1,36 +1,54 @@
+pub mod api_token;
+pub mod audit;
 pub mod batch;
 pub mod cart;
 pub mod category;
 pub mod comment;
+pub mod cron;
 pub mod currencies;
 pub mod ecommerce;
+pub mod health;
 pub mod media;
+pub mod oauth;
+pub mod options;
 pub mod order;
 pub mod page;
 pub mod payment;
 pub mod post;
 pub mod reusable_block;
+pub mod sse;
+pub mod stats;
 pub mod tag;
 pub mod tenant;
 pub mod user;
 pub mod wallet;
+pub mod ws;
 
+pub use api_token::*;
+pub use audit::*;
 pub use batch::*;
 pub use cart::*;
 pub use category::*;
 pub use comment::*;
+pub use cron::*;
 pub use currencies::*;
 pub use ecommerce::*;
+pub use health::*;
 pub use media::*;
+pub use oauth::*;
+pub use options::*;
 pub use order::*;
 pub use page::*;
 pub use payment::*;
 pub use post::*;
 pub use reusable_block::*;
+pub use sse::*;
+pub use stats::*;
 pub use tag::*;
 pub use tenant::*;
 pub use user::*;
 pub use wallet::*;
+pub use ws::*;
 
 fn validate_password(pwd: &str) -> Result<(), validator::ValidationError> {
     let has_letter = pwd.chars().any(|c| c.is_ascii_alphabetic());
@@ -160,13 +178,11 @@ mod tests {
 
     #[test]
     fn validate_uuid_vec_valid() {
-        assert!(
-            validate_uuid_vec(&[
-                "01901234-5678-7000-8000-000000000000".to_string(),
-                "1".to_string()
-            ])
-            .is_ok()
-        );
+        assert!(validate_uuid_vec(&[
+            "01901234-5678-7000-8000-000000000000".to_string(),
+            "1".to_string()
+        ])
+        .is_ok());
     }
 
     #[test]

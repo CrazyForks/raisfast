@@ -9,7 +9,7 @@ use crate::errors::app_error::AppResult;
 use crate::errors::response::ApiResponse;
 use crate::errors::validation;
 use crate::middleware::auth::AuthUser;
-use crate::types::snowflake_id::SnowflakeId;
+
 use crate::utils::pagination::PaginationParams;
 
 pub fn routes(
@@ -25,7 +25,7 @@ pub fn routes(
         "/orders",
         get,
         list_orders,
-        "system public",
+        "system authed",
         "orders"
     );
     let r = reg_route!(
@@ -35,7 +35,7 @@ pub fn routes(
         "/orders",
         create,
         create_order,
-        "system public",
+        "system authed",
         "orders"
     );
     let r = reg_route!(
@@ -45,7 +45,7 @@ pub fn routes(
         "/orders/{id}",
         get,
         get_order,
-        "system public",
+        "system authed",
         "orders"
     );
     let r = reg_route!(
@@ -55,7 +55,7 @@ pub fn routes(
         "/orders/{id}",
         put,
         cancel_order_handler,
-        "system public",
+        "system authed",
         "orders"
     );
     let r = reg_route!(
@@ -65,7 +65,7 @@ pub fn routes(
         "/orders/{id}/confirm",
         post,
         confirm_receipt,
-        "system public",
+        "system authed",
         "orders"
     );
     let r = reg_route!(
@@ -191,14 +191,11 @@ pub async fn create_order(
     State(state): State<crate::AppState>,
     Json(req): Json<CreateOrderRequest>,
 ) -> AppResult<ApiResponse<OrderResponse>> {
-    let _user_id = auth.ensure_authenticated()?;
-    let user_int_id = auth
-        .user_id()
-        .ok_or(crate::errors::app_error::AppError::Unauthorized)?;
+    let user_id = auth.ensure_snowflake_user_id()?;
     validation::validate(&req)?;
     let (o, items) = state
         .order_service
-        .create(&auth, SnowflakeId(user_int_id), req)
+        .create(&auth, user_id, req)
         .await?;
     Ok(ApiResponse::success(to_order_response(o, items)))
 }
@@ -212,16 +209,13 @@ pub async fn list_orders(
     State(state): State<crate::AppState>,
     Query(mut params): Query<PaginationParams>,
 ) -> AppResult<ApiResponse<crate::errors::response::PaginatedData<OrderResponse>>> {
-    let _user_id = auth.ensure_authenticated()?;
-    let user_int_id = auth
-        .user_id()
-        .ok_or(crate::errors::app_error::AppError::Unauthorized)?;
+    let user_id = auth.ensure_snowflake_user_id()?;
     params.sanitize();
     let (orders, total) = state
         .order_service
         .list_user(
             &auth,
-            SnowflakeId(user_int_id),
+            user_id,
             params.page,
             params.page_size,
         )
@@ -261,14 +255,11 @@ pub async fn cancel_order_handler(
     Path(id): Path<String>,
     Json(_req): Json<CancelOrderRequest>,
 ) -> AppResult<ApiResponse<()>> {
-    let _user_id = auth.ensure_authenticated()?;
-    let user_int_id = auth
-        .user_id()
-        .ok_or(crate::errors::app_error::AppError::Unauthorized)?;
+    let user_id = auth.ensure_snowflake_user_id()?;
     let id = crate::types::snowflake_id::parse_id(&id)?;
     state
         .order_service
-        .cancel(&auth, id, SnowflakeId(user_int_id))
+        .cancel(&auth, id, user_id)
         .await?;
     Ok(ApiResponse::success(()))
 }
@@ -283,14 +274,11 @@ pub async fn confirm_receipt(
     State(state): State<crate::AppState>,
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<()>> {
-    let _user_id = auth.ensure_authenticated()?;
-    let user_int_id = auth
-        .user_id()
-        .ok_or(crate::errors::app_error::AppError::Unauthorized)?;
+    let user_id = auth.ensure_snowflake_user_id()?;
     let id = crate::types::snowflake_id::parse_id(&id)?;
     state
         .order_service
-        .confirm_receipt(&auth, id, SnowflakeId(user_int_id))
+        .confirm_receipt(&auth, id, user_id)
         .await?;
     Ok(ApiResponse::success(()))
 }

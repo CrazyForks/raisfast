@@ -11,10 +11,10 @@ use axum::extract::{Query, State};
 use axum::response::sse::Event as SseEvent;
 use axum::response::sse::{KeepAlive, Sse};
 use futures::stream::Stream;
-use serde::Deserialize;
 use tokio_stream::StreamExt;
 use tokio_stream::wrappers::BroadcastStream;
 
+use crate::dto::SubscribeQuery;
 use crate::eventbus::Event;
 
 pub fn routes(
@@ -32,14 +32,6 @@ pub fn routes(
         "system public",
         "sse"
     )
-}
-
-/// SSE subscription query parameters
-#[derive(Debug, Deserialize, Default)]
-pub struct SubscribeQuery {
-    /// Comma-separated event type filter, e.g. `PostCreated,CommentCreated`
-    /// When empty, subscribes to all events
-    pub filter: Option<String>,
 }
 
 /// Extract event type name

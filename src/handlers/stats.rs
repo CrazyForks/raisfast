@@ -6,9 +6,9 @@
 //! - Trend data
 
 use axum::extract::{Path, Query, State};
-use serde::Deserialize;
 
 use crate::AppState;
+use crate::dto::TrendsQuery;
 use crate::errors::app_error::AppResult;
 use crate::errors::response::ApiResponse;
 use crate::services::stats::StatsService;
@@ -49,12 +49,6 @@ pub fn routes(
         "system admin",
         "admin/stats"
     )
-}
-
-#[derive(Debug, Deserialize)]
-pub struct TrendsQuery {
-    pub table: Option<String>,
-    pub days: Option<i64>,
 }
 
 /// Overview statistics

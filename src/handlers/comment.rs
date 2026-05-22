@@ -5,11 +5,8 @@
 
 use axum::Json;
 use axum::extract::{Path, Query, State};
-use serde::Deserialize;
-#[cfg(feature = "export-types")]
-use ts_rs::TS;
 
-use crate::dto::{BatchRequest, BatchResponse, CreateCommentRequest, UpdateCommentStatusRequest};
+use crate::dto::{AdminCommentListQuery, BatchRequest, BatchResponse, CreateCommentRequest, UpdateCommentStatusRequest};
 use crate::errors::app_error::{AppError, AppResult};
 use crate::errors::response::{ApiResponse, PaginatedData};
 use crate::errors::validation;
@@ -53,7 +50,7 @@ pub fn routes(
         "/posts/{slug}/comments/authed",
         post,
         create,
-        "system public",
+        "system authed",
         "comments"
     );
     let r = reg_route!(
@@ -83,7 +80,7 @@ pub fn routes(
         "/comments",
         get,
         list_all,
-        "system public",
+        "system admin",
         "comments"
     );
     let r = reg_route!(
@@ -126,14 +123,6 @@ pub fn routes(
         "system admin",
         "admin/comments"
     )
-}
-
-#[cfg_attr(feature = "export-types", derive(TS))]
-#[derive(Debug, Deserialize)]
-pub struct AdminCommentListQuery {
-    pub page: Option<i64>,
-    pub page_size: Option<i64>,
-    pub status: Option<CommentStatus>,
 }
 
 /// Get the comment list for a specific post (tree structure, paginated)
@@ -191,6 +180,7 @@ pub async fn create(
     Path(slug): Path<String>,
     Json(req): Json<CreateCommentRequest>,
 ) -> AppResult<ApiResponse<crate::models::comment::CommentResponse>> {
+    auth.ensure_authenticated()?;
     validation::validate(&req)?;
 
     let comment = state

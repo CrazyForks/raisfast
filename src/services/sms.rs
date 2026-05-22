@@ -5,7 +5,6 @@ use chrono::Utc;
 use crate::dto::LoginResponse;
 use crate::errors::app_error::{AppError, AppResult};
 use crate::middleware::auth::AuthUser;
-use crate::types::snowflake_id::SnowflakeId;
 
 /// Send an SMS verification code.
 ///
@@ -150,9 +149,9 @@ pub async fn bind_phone(
     phone: &str,
     code: &str,
 ) -> AppResult<()> {
-    let user_id = auth.ensure_authenticated()?;
+    let user_id = auth.ensure_snowflake_user_id()?;
     let tenant_id = auth.tenant_id();
-    let _user = crate::models::user::find_by_id(pool, SnowflakeId(user_id), tenant_id)
+    let _user = crate::models::user::find_by_id(pool, user_id, tenant_id)
         .await?
         .ok_or(AppError::Unauthorized)?;
 

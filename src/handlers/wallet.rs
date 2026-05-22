@@ -7,7 +7,7 @@ use crate::errors::response::ApiResponse;
 use crate::errors::validation;
 use crate::middleware::auth::AuthUser;
 use crate::models::wallet_transaction::{WalletReferenceType, WalletTxType};
-use crate::types::snowflake_id::SnowflakeId;
+use crate::types::snowflake_id::parse_id;
 use crate::utils::pagination::PaginationParams;
 
 pub fn routes(
@@ -23,7 +23,7 @@ pub fn routes(
         "/wallets",
         get,
         list_wallets,
-        "system public",
+        "system authed",
         "wallet"
     );
     let r = reg_route!(
@@ -33,7 +33,7 @@ pub fn routes(
         "/wallets/{currency}",
         get,
         get_wallet,
-        "system public",
+        "system authed",
         "wallet"
     );
     let r = reg_route!(
@@ -43,7 +43,7 @@ pub fn routes(
         "/wallets/transactions",
         get,
         list_all_transactions,
-        "system public",
+        "system authed",
         "wallet"
     );
     let r = reg_route!(
@@ -53,7 +53,7 @@ pub fn routes(
         "/wallets/{currency}/transactions",
         get,
         list_transactions,
-        "system public",
+        "system authed",
         "wallet"
     );
     let r = reg_route!(
@@ -63,7 +63,7 @@ pub fn routes(
         "/admin/wallets",
         get,
         list_all_wallets,
-        "admin wallet",
+        "system admin",
         "admin/wallet"
     );
     let r = reg_route!(
@@ -73,7 +73,7 @@ pub fn routes(
         "/admin/wallets/transactions",
         get,
         list_all_transactions_admin,
-        "admin wallet",
+        "system admin",
         "admin/wallet"
     );
     let r = reg_route!(
@@ -83,7 +83,7 @@ pub fn routes(
         "/admin/wallets/credit",
         post,
         admin_credit,
-        "admin wallet",
+        "system admin",
         "admin/wallet"
     );
     let r = reg_route!(
@@ -93,7 +93,7 @@ pub fn routes(
         "/admin/wallets/debit",
         post,
         admin_debit,
-        "admin wallet",
+        "system admin",
         "admin/wallet"
     );
     let r = reg_route!(
@@ -103,7 +103,7 @@ pub fn routes(
         "/admin/wallets/{user_id}/transactions",
         get,
         list_user_all_transactions,
-        "admin wallet",
+        "system admin",
         "admin/wallet"
     );
     let r = reg_route!(
@@ -113,7 +113,7 @@ pub fn routes(
         "/admin/wallets/{user_id}/{currency}/transactions",
         get,
         list_user_transactions,
-        "admin wallet",
+        "system admin",
         "admin/wallet"
     );
     reg_route!(
@@ -123,7 +123,7 @@ pub fn routes(
         "/admin/wallets/{tx_id}/reversal",
         post,
         admin_reversal,
-        "admin wallet",
+        "system admin",
         "admin/wallet"
     )
 }
@@ -136,11 +136,10 @@ pub async fn list_wallets(
     auth: AuthUser,
     State(state): State<crate::AppState>,
 ) -> Result<ApiResponse<Vec<dto::WalletResponse>>, AppError> {
-    let user_id = auth.ensure_authenticated()?;
-    let user_id_str = user_id.to_string();
+    let user_id = auth.ensure_snowflake_user_id()?;
     let wallets = state
         .wallet_service
-        .list_wallets_by_user(&user_id_str, auth.tenant_id())
+        .list_wallets_by_user(user_id, auth.tenant_id())
         .await?;
     let items: Vec<dto::WalletResponse> = wallets
         .into_iter()
@@ -159,11 +158,10 @@ pub async fn get_wallet(
     State(state): State<crate::AppState>,
     Path(currency): Path<String>,
 ) -> Result<ApiResponse<dto::WalletResponse>, AppError> {
-    let user_id = auth.ensure_authenticated()?;
-    let user_id_str = user_id.to_string();
+    let user_id = auth.ensure_snowflake_user_id()?;
     let w = state
         .wallet_service
-        .get_wallet_by_currency(&user_id_str, &currency, auth.tenant_id())
+        .get_wallet_by_currency(user_id, &currency, auth.tenant_id())
         .await?;
     Ok(ApiResponse::success(dto::WalletResponse::from_wallet(w)?))
 }
@@ -182,12 +180,11 @@ pub async fn list_transactions(
     ApiResponse<crate::errors::response::PaginatedData<dto::WalletTransactionResponse>>,
     AppError,
 > {
-    let user_id = auth.ensure_authenticated()?;
-    let user_id_str = user_id.to_string();
+    let user_id = auth.ensure_snowflake_user_id()?;
     let (rows, total) = state
         .wallet_service
         .list_transactions_by_wallet(
-            &user_id_str,
+            user_id,
             &currency,
             params.page,
             params.page_size,
@@ -210,12 +207,11 @@ pub async fn list_all_transactions(
     ApiResponse<crate::errors::response::PaginatedData<dto::WalletTransactionResponse>>,
     AppError,
 > {
-    let user_id = auth.ensure_authenticated()?;
-    let user_id_str = user_id.to_string();
+    let user_id = auth.ensure_snowflake_user_id()?;
     let (rows, total) = state
         .wallet_service
         .list_transactions_by_user(
-            &user_id_str,
+            user_id,
             params.page,
             params.page_size,
             auth.tenant_id(),
@@ -279,15 +275,12 @@ pub async fn admin_credit(
 ) -> Result<ApiResponse<dto::WalletTransactionResponse>, AppError> {
     auth.ensure_admin()?;
     validation::validate(&req)?;
-    let user_id = state
-        .wallet_service
-        .find_user_int_id(&req.user_id, auth.tenant_id())
-        .await?;
+    let user_id = parse_id(&req.user_id)?;
 
     let tx = state
         .wallet_service
         .credit(
-            SnowflakeId(user_id),
+            user_id,
             &req.currency,
             req.amount,
             WalletTxType::Recharge,
@@ -314,15 +307,12 @@ pub async fn admin_debit(
 ) -> Result<ApiResponse<dto::WalletTransactionResponse>, AppError> {
     auth.ensure_admin()?;
     validation::validate(&req)?;
-    let user_id = state
-        .wallet_service
-        .find_user_int_id(&req.user_id, auth.tenant_id())
-        .await?;
+    let user_id = parse_id(&req.user_id)?;
 
     let tx = state
         .wallet_service
         .debit(
-            SnowflakeId(user_id),
+            user_id,
             &req.currency,
             req.amount,
             WalletTxType::Payment,
@@ -352,10 +342,11 @@ pub async fn list_user_transactions(
     AppError,
 > {
     auth.ensure_admin()?;
+    let user_id = parse_id(&user_id)?;
     let (rows, total) = state
         .wallet_service
         .list_transactions_by_wallet(
-            &user_id,
+            user_id,
             &currency,
             params.page,
             params.page_size,
@@ -382,9 +373,10 @@ pub async fn list_user_all_transactions(
     AppError,
 > {
     auth.ensure_admin()?;
+    let user_id = parse_id(&user_id)?;
     let (rows, total) = state
         .wallet_service
-        .list_transactions_by_user(&user_id, params.page, params.page_size, auth.tenant_id())
+        .list_transactions_by_user(user_id, params.page, params.page_size, auth.tenant_id())
         .await?;
 
     let items = state.wallet_service.tx_list_to_response(rows).await?;

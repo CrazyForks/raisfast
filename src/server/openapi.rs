@@ -205,7 +205,7 @@ use crate::dto;
             dto::CreateCommentRequest,
             dto::UpdateCommentStatusRequest,
             dto::MediaResponse,
-            crate::handlers::api_token::CreateTokenRequest,
+            dto::CreateTokenRequest,
             crate::models::post::TagBrief,
         )
     ),

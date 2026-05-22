@@ -6,10 +6,9 @@ use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
-use serde::Deserialize;
-use validator::Validate;
 
 use crate::AppState;
+use crate::dto::CreateTokenRequest;
 use crate::errors::app_error::AppResult;
 use crate::errors::response::ApiResponse;
 use crate::middleware::auth::AuthUser;
@@ -28,7 +27,7 @@ pub fn routes(
         "/tokens",
         get,
         self::list,
-        "system public",
+        "system authed",
         "tokens"
     );
     let r = reg_route!(
@@ -38,7 +37,7 @@ pub fn routes(
         "/tokens",
         create,
         self::create,
-        "system public",
+        "system authed",
         "tokens"
     );
     reg_route!(
@@ -48,19 +47,9 @@ pub fn routes(
         "/tokens/{id}",
         delete,
         self::delete,
-        "system public",
+        "system authed",
         "tokens"
     )
-}
-
-/// Create API Token request body
-#[derive(Debug, Deserialize, Validate, utoipa::ToSchema)]
-pub struct CreateTokenRequest {
-    #[validate(length(min = 1, max = 100))]
-    pub name: String,
-    #[validate(length(min = 1))]
-    pub scopes: Vec<String>,
-    pub expires_at: Option<String>,
 }
 
 /// Create API Token
@@ -76,6 +65,7 @@ pub async fn create(
     State(state): State<AppState>,
     Json(body): Json<CreateTokenRequest>,
 ) -> AppResult<impl IntoResponse> {
+    auth.ensure_authenticated()?;
     crate::errors::validation::validate(&body)?;
     let result = api_token::create_token(
         &state.pool,
@@ -96,6 +86,7 @@ pub async fn create(
     responses((status = 200, description = "Token list"))
 )]
 pub async fn list(auth: AuthUser, State(state): State<AppState>) -> AppResult<impl IntoResponse> {
+    auth.ensure_authenticated()?;
     let tokens = api_token::list_tokens(&state.pool, &auth).await?;
     Ok(Json(ApiResponse::success(tokens)))
 }
@@ -113,6 +104,7 @@ pub async fn delete(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> AppResult<impl IntoResponse> {
+    auth.ensure_authenticated()?;
     api_token::delete_token(&state.pool, &*state.cache, &id, &auth).await?;
     Ok(Json(ApiResponse::success(
         serde_json::json!({"deleted": true}),

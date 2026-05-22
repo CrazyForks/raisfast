@@ -4,13 +4,9 @@
 
 use axum::Json;
 use axum::extract::{Path, Query, State};
-use serde::{Deserialize, Serialize};
-#[cfg(feature = "export-types")]
-use ts_rs::TS;
-use validator::Validate;
 
 use crate::commands::{CreatePageCmd, UpdatePageCmd};
-use crate::dto::{BatchRequest, BatchResponse, PageResponse};
+use crate::dto::{AdminPageListQuery, BatchRequest, BatchResponse, CreatePageRequest, PageListQuery, PageResponse, ReorderRequest, SitemapEntry, UpdatePageRequest, UpdateStatusRequest};
 use crate::errors::app_error::{AppError, AppResult};
 use crate::errors::response::{ApiResponse, PaginatedData};
 use crate::errors::validation;
@@ -156,85 +152,6 @@ async fn resolve_page_parent_id(
     };
     let parsed_id = crate::types::snowflake_id::parse_id(&raw_id)?;
     raisfast_derive::crud_resolve_id!(pool, "pages", *parsed_id).map_err(Into::into)
-}
-
-// ── DTO ──
-
-#[cfg_attr(feature = "export-types", derive(TS))]
-#[derive(Debug, Deserialize, Validate, utoipa::ToSchema)]
-pub struct CreatePageRequest {
-    #[validate(length(min = 1, max = 200))]
-    pub title: String,
-    pub slug: Option<String>,
-    pub content: Option<String>,
-    pub blocks: Option<String>,
-    pub meta_title: Option<String>,
-    pub meta_description: Option<String>,
-    pub og_image: Option<String>,
-    pub template: Option<String>,
-    pub parent_id: Option<String>,
-    pub sort_order: Option<i64>,
-    pub status: Option<PageStatus>,
-    pub cover_image: Option<String>,
-}
-
-#[cfg_attr(feature = "export-types", derive(TS))]
-#[derive(Debug, Deserialize, Validate, utoipa::ToSchema)]
-pub struct UpdatePageRequest {
-    #[validate(length(min = 1, max = 200))]
-    pub title: Option<String>,
-    pub slug: Option<String>,
-    pub content: Option<String>,
-    pub blocks: Option<String>,
-    pub meta_title: Option<String>,
-    pub meta_description: Option<String>,
-    pub og_image: Option<String>,
-    pub template: Option<String>,
-    pub parent_id: Option<Option<String>>,
-    pub sort_order: Option<i64>,
-    pub status: Option<PageStatus>,
-    pub cover_image: Option<String>,
-}
-
-#[cfg_attr(feature = "export-types", derive(TS))]
-#[derive(Debug, Deserialize)]
-pub struct PageListQuery {
-    pub page: Option<i64>,
-    pub page_size: Option<i64>,
-}
-
-#[cfg_attr(feature = "export-types", derive(TS))]
-#[derive(Debug, Deserialize)]
-pub struct AdminPageListQuery {
-    pub page: Option<i64>,
-    pub page_size: Option<i64>,
-    pub status: Option<PageStatus>,
-}
-
-#[cfg_attr(feature = "export-types", derive(TS))]
-#[derive(Debug, Deserialize, utoipa::ToSchema)]
-pub struct UpdateStatusRequest {
-    pub status: PageStatus,
-}
-
-#[cfg_attr(feature = "export-types", derive(TS))]
-#[derive(Debug, Deserialize, utoipa::ToSchema)]
-pub struct ReorderItem {
-    pub id: String,
-    pub sort_order: i64,
-}
-
-#[cfg_attr(feature = "export-types", derive(TS))]
-#[derive(Debug, Deserialize, utoipa::ToSchema)]
-pub struct ReorderRequest {
-    pub items: Vec<ReorderItem>,
-}
-
-#[cfg_attr(feature = "export-types", derive(TS))]
-#[derive(Debug, Serialize)]
-pub struct SitemapEntry {
-    pub slug: String,
-    pub updated_at: Option<String>,
 }
 
 // ── Public API ──

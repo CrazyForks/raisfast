@@ -385,8 +385,8 @@ pub async fn refresh(
 ///
 /// Deletes all refresh tokens for the user, invalidating sessions across all devices.
 pub async fn logout(pool: &crate::db::Pool, auth: &AuthUser) -> AppResult<()> {
-    let uid = auth.ensure_authenticated()?;
-    let user = crate::models::user::find_by_id(pool, SnowflakeId(uid), auth.tenant_id())
+    let uid = auth.ensure_snowflake_user_id()?;
+    let user = crate::models::user::find_by_id(pool, uid, auth.tenant_id())
         .await?
         .ok_or(AppError::Unauthorized)?;
     crate::models::refresh_token::delete_by_user(pool, user.id).await
@@ -401,9 +401,9 @@ pub async fn change_password(
     auth: &AuthUser,
     req: UpdatePasswordRequest,
 ) -> AppResult<()> {
-    let uid = auth.ensure_authenticated()?;
+    let uid = auth.ensure_snowflake_user_id()?;
     let tenant_id = auth.tenant_id();
-    let _user = crate::models::user::find_by_id(pool, SnowflakeId(uid), tenant_id)
+    let _user = crate::models::user::find_by_id(pool, uid, tenant_id)
         .await?
         .ok_or_else(|| AppError::not_found("user"))?;
 
@@ -440,8 +440,8 @@ pub async fn bind_email_credential(
     email: &str,
     password: &str,
 ) -> AppResult<()> {
-    let uid = auth.ensure_authenticated()?;
-    let user = crate::models::user::find_by_id(pool, SnowflakeId(uid), auth.tenant_id())
+    let uid = auth.ensure_snowflake_user_id()?;
+    let user = crate::models::user::find_by_id(pool, uid, auth.tenant_id())
         .await?
         .ok_or(AppError::Unauthorized)?;
 
@@ -478,8 +478,8 @@ pub async fn delete_credential(
     auth: &AuthUser,
     credential_id: SnowflakeId,
 ) -> AppResult<()> {
-    let uid = auth.ensure_authenticated()?;
-    let user = crate::models::user::find_by_id(pool, SnowflakeId(uid), auth.tenant_id())
+    let uid = auth.ensure_snowflake_user_id()?;
+    let user = crate::models::user::find_by_id(pool, uid, auth.tenant_id())
         .await?
         .ok_or(AppError::Unauthorized)?;
 
@@ -505,8 +505,8 @@ pub async fn list_credentials(
     pool: &crate::db::Pool,
     auth: &AuthUser,
 ) -> AppResult<Vec<crate::models::user_credential::UserCredential>> {
-    let uid = auth.ensure_authenticated()?;
-    let user = crate::models::user::find_by_id(pool, SnowflakeId(uid), auth.tenant_id())
+    let uid = auth.ensure_snowflake_user_id()?;
+    let user = crate::models::user::find_by_id(pool, uid, auth.tenant_id())
         .await?
         .ok_or(AppError::Unauthorized)?;
 

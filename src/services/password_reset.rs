@@ -6,7 +6,6 @@ use crate::aspects::engine::AspectEngine;
 use crate::errors::app_error::{AppError, AppResult};
 use crate::event::Event;
 use crate::middleware::auth::AuthUser;
-use crate::types::snowflake_id::SnowflakeId;
 
 pub async fn forgot_password(
     pool: &crate::db::Pool,
@@ -95,9 +94,9 @@ pub async fn set_password(
     email: &str,
     new_password: &str,
 ) -> AppResult<()> {
-    let user_id = auth.ensure_authenticated()?;
+    let user_id = auth.ensure_snowflake_user_id()?;
     let tenant_id = auth.tenant_id();
-    let user = crate::models::user::find_by_id(pool, SnowflakeId(user_id), tenant_id)
+    let user = crate::models::user::find_by_id(pool, user_id, tenant_id)
         .await?
         .ok_or_else(|| AppError::not_found("user"))?;
 

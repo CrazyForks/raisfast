@@ -36,6 +36,7 @@ use futures::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use tokio_stream::wrappers::BroadcastStream;
 
+use crate::dto::WsQuery;
 use crate::handlers::sse::event_type_name;
 
 pub fn routes(
@@ -53,13 +54,6 @@ pub fn routes(
         "system public",
         "ws"
     )
-}
-
-/// WS connection query parameters
-#[derive(Debug, Deserialize, Default)]
-pub struct WsQuery {
-    /// Comma-separated event type filter, e.g. `PostCreated,CommentCreated`
-    pub filter: Option<String>,
 }
 
 /// Client → Server message

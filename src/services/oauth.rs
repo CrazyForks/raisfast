@@ -197,8 +197,8 @@ pub async fn unbind_oauth(
     auth: &AuthUser,
     provider_name: &str,
 ) -> AppResult<()> {
-    let user_id = auth.ensure_authenticated()?;
-    let user = crate::models::user::find_by_id(pool, SnowflakeId(user_id), None)
+    let user_id = auth.ensure_snowflake_user_id()?;
+    let user = crate::models::user::find_by_id(pool, user_id, None)
         .await?
         .ok_or_else(|| AppError::not_found("user"))?;
 
@@ -230,8 +230,8 @@ pub async fn list_bindings(
     pool: &crate::db::Pool,
     auth: &AuthUser,
 ) -> AppResult<Vec<OAuthBindingInfo>> {
-    let user_id = auth.ensure_authenticated()?;
-    let user = crate::models::user::find_by_id(pool, SnowflakeId(user_id), None)
+    let user_id = auth.ensure_snowflake_user_id()?;
+    let user = crate::models::user::find_by_id(pool, user_id, None)
         .await?
         .ok_or(AppError::Unauthorized)?;
     let accounts = oauth::find_by_user_id(pool, user.id).await?;

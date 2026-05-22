@@ -21,7 +21,7 @@ pub fn routes(
         "/admin/currencies",
         get,
         list_currencies,
-        "admin currencies",
+        "system admin",
         "admin/currencies"
     );
     let r = reg_route!(
@@ -31,7 +31,7 @@ pub fn routes(
         "/admin/currencies",
         create,
         create_currency,
-        "admin currencies",
+        "system admin",
         "admin/currencies"
     );
     let r = reg_route!(
@@ -41,7 +41,7 @@ pub fn routes(
         "/admin/currencies/{code}",
         get,
         get_currency,
-        "admin currencies",
+        "system admin",
         "admin/currencies"
     );
     reg_route!(
@@ -51,7 +51,7 @@ pub fn routes(
         "/admin/currencies/{code}",
         put,
         update_currency,
-        "admin currencies",
+        "system admin",
         "admin/currencies"
     )
 }

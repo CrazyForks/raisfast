@@ -1,7 +1,8 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 #[cfg(feature = "export-types")]
 use ts_rs::TS;
 use utoipa::ToSchema;
+use validator::Validate;
 
 use crate::models::reusable_block::ReusableBlock;
 
@@ -25,4 +26,26 @@ impl ReusableBlockResponse {
             updated_at: b.updated_at.to_rfc3339(),
         }
     }
+}
+
+#[derive(Debug, Deserialize, Validate, ToSchema)]
+pub struct CreateReusableRequest {
+    #[validate(length(min = 1, max = 200))]
+    pub name: String,
+    #[validate(length(min = 1))]
+    pub block_type: String,
+    #[validate(length(min = 1))]
+    pub content: String,
+    pub description: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Validate, ToSchema)]
+pub struct UpdateReusableRequest {
+    #[validate(length(min = 1, max = 200))]
+    pub name: Option<String>,
+    #[validate(length(min = 1))]
+    pub block_type: Option<String>,
+    #[validate(length(min = 1))]
+    pub content: Option<String>,
+    pub description: Option<String>,
 }

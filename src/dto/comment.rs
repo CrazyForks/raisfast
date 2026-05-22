@@ -25,6 +25,14 @@ pub struct UpdateCommentStatusRequest {
     pub status: CommentStatus,
 }
 
+#[cfg_attr(feature = "export-types", derive(TS))]
+#[derive(Debug, Deserialize)]
+pub struct AdminCommentListQuery {
+    pub page: Option<i64>,
+    pub page_size: Option<i64>,
+    pub status: Option<CommentStatus>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

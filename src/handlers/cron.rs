@@ -5,10 +5,9 @@
 
 use axum::Json;
 use axum::extract::{Path, Query, State};
-use serde::Deserialize;
 
 use crate::AppState;
-use crate::dto::{BatchRequest, BatchResponse};
+use crate::dto::{BatchRequest, BatchResponse, CreateCronRequest, LogQueryParams, ToggleBody, UpdateCronRequest};
 use crate::errors::app_error::{AppError, AppResult};
 use crate::errors::response::ApiResponse;
 use crate::middleware::auth::AuthUser;
@@ -115,48 +114,6 @@ pub fn routes(
         "system admin",
         "admin/crons"
     )
-}
-
-/// Create schedule request body
-#[derive(Debug, Deserialize, validator::Validate)]
-pub struct CreateCronRequest {
-    #[validate(length(min = 1, message = "label is required"))]
-    pub label: String,
-    #[validate(length(min = 1, message = "job_type is required"))]
-    pub job_type: String,
-    pub payload: Option<String>,
-    #[validate(length(min = 1, message = "cron_expr is required"))]
-    pub cron_expr: String,
-    #[serde(default = "default_true")]
-    pub enabled: bool,
-}
-
-fn default_true() -> bool {
-    true
-}
-
-/// Update schedule request body
-#[derive(Debug, Deserialize, validator::Validate)]
-pub struct UpdateCronRequest {
-    #[validate(length(min = 1, message = "label is required"))]
-    pub label: Option<String>,
-    pub job_type: Option<String>,
-    pub payload: Option<Option<String>>,
-    #[validate(length(min = 1, message = "cron_expr is required"))]
-    pub cron_expr: Option<String>,
-    pub enabled: Option<bool>,
-}
-
-/// Execution log query parameters
-#[derive(Debug, Deserialize)]
-pub struct LogQueryParams {
-    pub schedule_id: Option<String>,
-    #[serde(default = "default_limit")]
-    pub limit: i64,
-}
-
-fn default_limit() -> i64 {
-    20
 }
 
 /// GET /api/v1/admin/crons — List all schedules (paginated)
@@ -329,11 +286,6 @@ pub async fn cleanup_logs(
     let days = state.config.cron_log_retention_days;
     let count = cleanup_execution_logs(&state.pool, days).await?;
     Ok(ApiResponse::success(count))
-}
-
-#[derive(Debug, Deserialize)]
-pub struct ToggleBody {
-    pub enabled: bool,
 }
 
 #[utoipa::path(post, path = "/admin/crons/batch", tag = "cron",

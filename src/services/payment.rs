@@ -319,7 +319,6 @@ impl PaymentService for PaymentServiceImpl {
         page: i64,
         page_size: i64,
     ) -> AppResult<(Vec<PaymentChannel>, i64)> {
-        auth.ensure_admin()?;
         crate::models::payment_channel::find_all_admin_paginated(
             &self.pool,
             auth.tenant_id(),
@@ -410,7 +409,6 @@ pub async fn create_channel(
     audit: &AuditService,
     req: CreatePaymentChannelRequest,
 ) -> AppResult<PaymentChannel> {
-    auth.ensure_admin()?;
     let encrypted_credentials = encrypt_credential(&req.credentials, config)?;
     let encrypted_webhook_secret = req
         .webhook_secret
@@ -451,7 +449,6 @@ pub async fn update_channel(
     id: SnowflakeId,
     req: UpdatePaymentChannelRequest,
 ) -> AppResult<PaymentChannel> {
-    auth.ensure_admin()?;
     let channel = crate::models::payment_channel::find_by_id(pool, id, auth.tenant_id())
         .await?
         .ok_or_else(|| AppError::not_found("payment_channel"))?;
@@ -518,7 +515,6 @@ pub async fn delete_channel(
     audit: &AuditService,
     id: SnowflakeId,
 ) -> AppResult<()> {
-    auth.ensure_admin()?;
     let channel = crate::models::payment_channel::find_by_id(pool, id, auth.tenant_id())
         .await?
         .ok_or_else(|| AppError::not_found("payment_channel"))?;
@@ -547,7 +543,6 @@ pub async fn get_channel(
     auth: &AuthUser,
     id: SnowflakeId,
 ) -> AppResult<PaymentChannel> {
-    auth.ensure_admin()?;
     crate::models::payment_channel::find_by_id(pool, id, auth.tenant_id())
         .await?
         .ok_or_else(|| AppError::not_found("payment_channel"))
@@ -557,7 +552,6 @@ pub async fn list_channels(
     pool: &crate::db::Pool,
     auth: &AuthUser,
 ) -> AppResult<Vec<PaymentChannel>> {
-    auth.ensure_admin()?;
     crate::models::payment_channel::find_all_active(pool, auth.tenant_id()).await
 }
 
@@ -568,7 +562,7 @@ pub async fn list_available_channels(
     country: Option<&str>,
     language: Option<&str>,
 ) -> AppResult<AvailableChannelsResponse> {
-    let _ = auth.ensure_authenticated()?;
+    auth.ensure_snowflake_user_id()?;
 
     let order_id_parsed = crate::types::snowflake_id::parse_id(order_id)?;
     let order = crate::models::order::find_by_id(pool, order_id_parsed, auth.tenant_id())
@@ -616,7 +610,7 @@ pub async fn create_payment_order(
     client_language: Option<&str>,
     client_user_agent: Option<&str>,
 ) -> AppResult<(PaymentOrder, Option<ProviderResponse>)> {
-    let _ = auth.ensure_authenticated()?;
+    auth.ensure_snowflake_user_id()?;
 
     let order_id_parsed = crate::types::snowflake_id::parse_id(&req.order_id)?;
     let order = crate::models::order::find_by_id(pool, order_id_parsed, auth.tenant_id())
@@ -744,7 +738,7 @@ pub async fn cancel_payment_order(
     id: SnowflakeId,
     user_id: SnowflakeId,
 ) -> AppResult<()> {
-    let _ = auth.ensure_authenticated()?;
+    auth.ensure_snowflake_user_id()?;
     let order = crate::models::payment_order::find_by_id(pool, id, auth.tenant_id())
         .await?
         .ok_or_else(|| AppError::not_found("payment_order"))?;
@@ -810,11 +804,11 @@ pub async fn get_payment_order(
     user_id: SnowflakeId,
     id: SnowflakeId,
 ) -> AppResult<PaymentOrder> {
-    let _ = auth.ensure_authenticated()?;
+    auth.ensure_snowflake_user_id()?;
     let order = crate::models::payment_order::find_by_id(pool, id, auth.tenant_id())
         .await?
         .ok_or_else(|| AppError::not_found("payment_order"))?;
-    if auth.role() != "admin" && order.user_id != user_id {
+    if !auth.is_admin() && order.user_id != user_id {
         return Err(AppError::Forbidden);
     }
     Ok(order)
@@ -827,7 +821,7 @@ pub async fn list_user_payment_orders(
     page: i64,
     page_size: i64,
 ) -> AppResult<(Vec<PaymentOrder>, i64)> {
-    let _ = auth.ensure_authenticated()?;
+    auth.ensure_snowflake_user_id()?;
     crate::models::payment_order::find_by_user_paginated(
         pool,
         user_id,
@@ -1011,7 +1005,6 @@ pub async fn refund_payment_order(
     req: CreateRefundRequest,
 ) -> AppResult<PaymentRefund> {
     raisfast_derive::check_schema!("payment_refunds", "provider_refund_id");
-    auth.ensure_admin()?;
     let payment_order = crate::models::payment_order::find_by_id(pool, id, auth.tenant_id())
         .await?
         .ok_or_else(|| AppError::not_found("payment_order"))?;
@@ -1191,7 +1184,6 @@ pub async fn list_admin_payment_orders(
     page_size: i64,
     status: Option<&str>,
 ) -> AppResult<(Vec<PaymentOrder>, i64)> {
-    auth.ensure_admin()?;
     crate::models::payment_order::find_all_admin_paginated(
         pool,
         auth.tenant_id(),
@@ -1208,7 +1200,6 @@ pub async fn list_admin_transactions(
     page: i64,
     page_size: i64,
 ) -> AppResult<(Vec<PaymentTransaction>, i64)> {
-    auth.ensure_admin()?;
     crate::models::payment_transaction::find_all_admin_paginated(
         pool,
         auth.tenant_id(),
@@ -1224,7 +1215,6 @@ pub async fn list_admin_refunds(
     page: i64,
     page_size: i64,
 ) -> AppResult<(Vec<PaymentRefund>, i64)> {
-    auth.ensure_admin()?;
     crate::models::payment_refund::find_all_admin_paginated(pool, auth.tenant_id(), page, page_size)
         .await
 }

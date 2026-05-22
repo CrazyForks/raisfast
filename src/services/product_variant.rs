@@ -57,8 +57,6 @@ impl ProductVariantService for ProductVariantServiceImpl {
         auth: &AuthUser,
         req: CreateProductVariantRequest,
     ) -> AppResult<ProductVariant> {
-        auth.ensure_admin()?;
-
         let product_id_parsed = crate::types::snowflake_id::parse_id(&req.product_id)?;
         let product =
             crate::models::product::find_by_id(&self.pool, product_id_parsed, auth.tenant_id())
@@ -89,8 +87,6 @@ impl ProductVariantService for ProductVariantServiceImpl {
         id: SnowflakeId,
         req: UpdateProductVariantRequest,
     ) -> AppResult<ProductVariant> {
-        auth.ensure_admin()?;
-
         let existing = crate::models::product_variant::find_by_id(&self.pool, id, auth.tenant_id())
             .await?
             .ok_or_else(|| AppError::not_found("product_variant"))?;
@@ -122,8 +118,6 @@ impl ProductVariantService for ProductVariantServiceImpl {
     }
 
     async fn delete(&self, auth: &AuthUser, id: SnowflakeId) -> AppResult<()> {
-        auth.ensure_admin()?;
-
         let existing = crate::models::product_variant::find_by_id(&self.pool, id, auth.tenant_id())
             .await?
             .ok_or_else(|| AppError::not_found("product_variant"))?;

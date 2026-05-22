@@ -395,6 +395,7 @@ pub async fn bind_phone(
     State(state): State<crate::AppState>,
     Json(req): Json<BindPhoneRequest>,
 ) -> AppResult<ApiResponse<()>> {
+    auth.ensure_authenticated()?;
     validation::validate(&req)?;
     sms::bind_phone(&state.pool, &auth, &req.phone, &req.code).await?;
     Ok(ApiResponse::success(()))
@@ -406,6 +407,7 @@ pub async fn bind_email_credential(
     State(state): State<crate::AppState>,
     Json(req): Json<BindEmailRequest>,
 ) -> AppResult<ApiResponse<()>> {
+    auth.ensure_authenticated()?;
     validation::validate(&req)?;
     auth::bind_email_credential(&state.pool, &auth, &req.email, &req.password).await?;
     Ok(ApiResponse::success(()))
@@ -416,6 +418,7 @@ pub async fn list_credentials(
     auth: AuthUser,
     State(state): State<crate::AppState>,
 ) -> AppResult<ApiResponse<Vec<CredentialResponse>>> {
+    auth.ensure_authenticated()?;
     let creds = auth::list_credentials(&state.pool, &auth).await?;
     let responses: AppResult<Vec<CredentialResponse>> = creds
         .into_iter()
@@ -430,6 +433,7 @@ pub async fn delete_credential(
     State(state): State<crate::AppState>,
     axum::extract::Path(id): axum::extract::Path<i64>,
 ) -> AppResult<ApiResponse<()>> {
+    auth.ensure_authenticated()?;
     auth::delete_credential(&state.pool, &auth, SnowflakeId(id)).await?;
     Ok(ApiResponse::success(()))
 }

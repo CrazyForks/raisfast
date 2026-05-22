@@ -13,8 +13,8 @@ use crate::models::user::{User, UserRole};
 
 /// Get the current user's profile.
 pub async fn get_me(pool: &crate::db::Pool, auth: &AuthUser) -> AppResult<UserResponse> {
-    let uid = auth.ensure_authenticated()?;
-    let user = crate::models::user::find_by_id(pool, SnowflakeId(uid), auth.tenant_id())
+    let uid = auth.ensure_snowflake_user_id()?;
+    let user = crate::models::user::find_by_id(pool, uid, auth.tenant_id())
         .await?
         .ok_or_else(|| AppError::not_found("user"))?;
     UserResponse::from_user(user)
@@ -29,7 +29,7 @@ pub async fn update_me(
     let user = crate::models::user::update_profile(
         pool,
         &UpdateProfileCmd {
-            id: SnowflakeId(auth.user_id().ok_or(AppError::Unauthorized)?),
+            id: auth.ensure_snowflake_user_id()?,
             username: req.username,
             bio: req.bio,
             website: req.website,

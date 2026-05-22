@@ -29,7 +29,7 @@ pub fn routes(
         "/users/me",
         get,
         get_me,
-        "system public",
+        "system authed",
         "users"
     );
     let r = reg_route!(
@@ -39,7 +39,7 @@ pub fn routes(
         "/users/me",
         put,
         update_me,
-        "system public",
+        "system authed",
         "users"
     );
     let r = reg_route!(
@@ -49,7 +49,7 @@ pub fn routes(
         "/users/me/password",
         put,
         change_password,
-        "system public",
+        "system authed",
         "users"
     );
     let r = reg_route!(
@@ -59,7 +59,7 @@ pub fn routes(
         "/users/{id}",
         get,
         get_user,
-        "system public",
+        "system authed",
         "users"
     );
     let r = reg_route!(
@@ -69,8 +69,8 @@ pub fn routes(
         "/users/{id}/role",
         put,
         update_role,
-        "system public",
-        "users"
+        "system admin",
+        "admin/users"
     );
     let r = reg_route!(
         r,
@@ -79,7 +79,7 @@ pub fn routes(
         "/users",
         get,
         list_users,
-        "system public",
+        "system admin",
         "users"
     );
     let r = reg_route!(
@@ -143,6 +143,7 @@ pub async fn get_me(
     auth: AuthUser,
     State(state): State<crate::AppState>,
 ) -> AppResult<ApiResponse<UserResponse>> {
+    auth.ensure_authenticated()?;
     let u = user::get_me(&state.pool, &auth).await?;
     Ok(ApiResponse::success(u))
 }
@@ -159,6 +160,7 @@ pub async fn update_me(
     Json(req): Json<UpdateUserRequest>,
 ) -> AppResult<ApiResponse<UserResponse>> {
     validation::validate(&req)?;
+    auth.ensure_authenticated()?;
     let u = user::update_me(&state.pool, &auth, req).await?;
     Ok(ApiResponse::success(u))
 }
@@ -175,6 +177,7 @@ pub async fn change_password(
     Json(req): Json<UpdatePasswordRequest>,
 ) -> AppResult<ApiResponse<()>> {
     validation::validate(&req)?;
+    auth.ensure_authenticated()?;
     auth::change_password(&state.pool, &auth, req).await?;
     Ok(ApiResponse::success(()))
 }
@@ -190,6 +193,7 @@ pub async fn get_user(
     State(state): State<crate::AppState>,
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<UserResponse>> {
+    auth.ensure_authenticated()?;
     let id = crate::types::snowflake_id::parse_id(&id)?;
     let u = user::get_public_user(&state.pool, id, auth.tenant_id()).await?;
     Ok(ApiResponse::success(u))

@@ -78,6 +78,22 @@ pub struct PostResponse {
     pub category_id: Option<String>,
 }
 
+#[derive(Debug, serde::Deserialize)]
+pub struct PostListQuery {
+    pub page: Option<i64>,
+    pub page_size: Option<i64>,
+    pub category_id: Option<String>,
+    pub tag_id: Option<String>,
+    pub q: Option<String>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+pub struct AdminPostListQuery {
+    pub page: Option<i64>,
+    pub page_size: Option<i64>,
+    pub status: Option<PostStatus>,
+}
+
 impl PostResponse {
     pub fn from_post(p: crate::models::post::Post) -> AppResult<Self> {
         let status = p.status;

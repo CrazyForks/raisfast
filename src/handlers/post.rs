@@ -6,33 +6,13 @@
 
 use axum::Json;
 use axum::extract::{Path, Query, State};
-use serde::Deserialize;
-#[cfg(feature = "export-types")]
-use ts_rs::TS;
 
-use crate::dto::{BatchRequest, BatchResponse, CreatePostRequest, PostResponse, UpdatePostRequest};
+use crate::dto::{AdminPostListQuery, BatchRequest, BatchResponse, CreatePostRequest, PostListQuery, PostResponse, UpdatePostRequest};
 use crate::errors::app_error::AppResult;
 use crate::errors::response::{ApiResponse, PaginatedData};
 use crate::errors::validation;
 use crate::middleware::auth::AuthUser;
-use crate::models::post::PostStatus;
 use crate::utils::pagination::PaginationParams;
-
-#[derive(Debug, Deserialize)]
-pub struct PostListQuery {
-    pub page: Option<i64>,
-    pub page_size: Option<i64>,
-    pub category_id: Option<String>,
-    pub tag_id: Option<String>,
-    pub q: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct AdminPostListQuery {
-    pub page: Option<i64>,
-    pub page_size: Option<i64>,
-    pub status: Option<PostStatus>,
-}
 
 #[allow(clippy::let_and_return)]
 pub fn routes(

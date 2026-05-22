@@ -1,9 +1,9 @@
 //! Audit log API handler
 
 use axum::extract::{Path, Query, State};
-use serde::Deserialize;
 
 use crate::AppState;
+use crate::dto::AuditFilter;
 use crate::errors::app_error::AppResult;
 use crate::errors::response::ApiResponse;
 use crate::middleware::auth::AuthUser;
@@ -71,10 +71,4 @@ pub async fn get(
     auth.ensure_admin()?;
     let entry = state.audit.get(SnowflakeId(id)).await?;
     Ok(ApiResponse::success(entry))
-}
-
-#[derive(Debug, Deserialize)]
-pub struct AuditFilter {
-    pub action: Option<String>,
-    pub actor_id: Option<i64>,
 }

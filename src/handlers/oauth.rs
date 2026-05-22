@@ -4,10 +4,8 @@
 
 use axum::extract::{Path, Query, State};
 use axum::response::{IntoResponse, Redirect};
-use serde::Deserialize;
-#[cfg(feature = "export-types")]
-use ts_rs::TS;
 
+use crate::dto::{CallbackQuery, ProviderInfo};
 use crate::errors::app_error::{AppError, AppResult};
 use crate::errors::response::ApiResponse;
 use crate::middleware::auth::AuthUser;
@@ -56,7 +54,7 @@ pub fn routes(
         "/auth/oauth/bindings",
         get,
         list_bindings,
-        "system public",
+        "system authed",
         "oauth"
     );
     reg_route!(
@@ -66,7 +64,7 @@ pub fn routes(
         "/auth/oauth/{provider}/unbind",
         delete,
         unbind,
-        "system public",
+        "system authed",
         "oauth"
     )
 }
@@ -109,13 +107,6 @@ pub async fn redirect_to_provider(
         oauth::initiate_oauth(&state.pool, state.oauth_registry.as_ref(), &provider, &auth).await?;
 
     Ok(Redirect::temporary(&url))
-}
-
-/// OAuth callback query parameters
-#[derive(Debug, Deserialize)]
-pub struct CallbackQuery {
-    pub code: String,
-    pub state: String,
 }
 
 /// OAuth callback handler
@@ -229,12 +220,4 @@ pub async fn unbind(
 ) -> AppResult<ApiResponse<()>> {
     oauth::unbind_oauth(&state.pool, &auth, &provider).await?;
     Ok(ApiResponse::success(()))
-}
-
-/// Provider info
-#[cfg_attr(feature = "export-types", derive(TS))]
-#[derive(Debug, serde::Serialize)]
-pub struct ProviderInfo {
-    pub name: String,
-    pub configured: bool,
 }

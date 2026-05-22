@@ -119,7 +119,7 @@ pub async fn save_file(
     content_type: &str,
     data: &[u8],
 ) -> AppResult<media::Media> {
-    let user_id = auth.ensure_authenticated()?;
+    let user_id = auth.ensure_snowflake_user_id()?;
     let tenant_id = auth.tenant_id();
     if !ALLOWED_TYPES.contains(&content_type) {
         tracing::warn!(content_type = %content_type, "file type not allowed");
@@ -160,7 +160,7 @@ pub async fn save_file(
         (None, None)
     };
 
-    let user = crate::models::user::find_by_id(pool, SnowflakeId(user_id), tenant_id)
+    let user = crate::models::user::find_by_id(pool, user_id, tenant_id)
         .await?
         .ok_or(AppError::Unauthorized)?;
 
@@ -209,8 +209,8 @@ pub async fn list(
     page: i64,
     page_size: i64,
 ) -> AppResult<(Vec<media::Media>, i64)> {
-    let user_id = auth.ensure_authenticated()?;
-    let user = crate::models::user::find_by_id(pool, SnowflakeId(user_id), auth.tenant_id())
+    let user_id = auth.ensure_snowflake_user_id()?;
+    let user = crate::models::user::find_by_id(pool, user_id, auth.tenant_id())
         .await?
         .ok_or(AppError::Unauthorized)?;
     media::find_all(pool, user.id, page, page_size, auth.tenant_id()).await
@@ -258,8 +258,8 @@ pub async fn delete_media(
     media_id: &str,
     auth: &AuthUser,
 ) -> AppResult<()> {
-    let user_id = auth.ensure_authenticated()?;
-    let user = crate::models::user::find_by_id(pool, SnowflakeId(user_id), auth.tenant_id())
+    let user_id = auth.ensure_snowflake_user_id()?;
+    let user = crate::models::user::find_by_id(pool, user_id, auth.tenant_id())
         .await?
         .ok_or(AppError::Unauthorized)?;
 
@@ -286,8 +286,8 @@ pub async fn delete_media(
 
 /// Get storage statistics
 pub async fn stats(pool: &crate::db::Pool, auth: &AuthUser) -> AppResult<media::MediaStats> {
-    let user_id = auth.ensure_authenticated()?;
-    let user = crate::models::user::find_by_id(pool, SnowflakeId(user_id), auth.tenant_id())
+    let user_id = auth.ensure_snowflake_user_id()?;
+    let user = crate::models::user::find_by_id(pool, user_id, auth.tenant_id())
         .await?
         .ok_or(AppError::Unauthorized)?;
     media::stats(pool, user.id, auth.tenant_id()).await

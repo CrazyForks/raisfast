@@ -92,7 +92,7 @@ pub async fn create_token(
     scopes: Vec<String>,
     expires_at: Option<&str>,
 ) -> AppResult<CreateTokenResult> {
-    let _user_id = auth.ensure_authenticated()?;
+    let _user_id = auth.ensure_snowflake_user_id()?;
     if name.trim().is_empty() {
         return Err(AppError::BadRequest("token name is required".into()));
     }
@@ -111,11 +111,11 @@ pub async fn create_token(
     let prefix = &plain[..8];
     let scopes_json = serde_json::to_string(&scopes).unwrap_or_default();
 
-    let user_id = auth.user_id().ok_or(AppError::Unauthorized)?;
+    let user_id = auth.ensure_snowflake_user_id()?;
 
     let row = api_token::create(
         pool,
-        SnowflakeId(user_id),
+        user_id,
         name.trim(),
         &hash,
         prefix,
@@ -140,8 +140,8 @@ pub async fn list_tokens(
     pool: &crate::db::Pool,
     auth: &AuthUser,
 ) -> AppResult<Vec<api_token::ApiTokenListItem>> {
-    let user_id = auth.ensure_authenticated()?;
-    let user = crate::models::user::find_by_id(pool, SnowflakeId(user_id), None)
+    let user_id = auth.ensure_snowflake_user_id()?;
+    let user = crate::models::user::find_by_id(pool, user_id, None)
         .await?
         .ok_or(AppError::Unauthorized)?;
     api_token::list_by_user(pool, user.id).await
@@ -154,12 +154,12 @@ pub async fn delete_token(
     token_id: &str,
     auth: &AuthUser,
 ) -> AppResult<()> {
-    let user_id = auth.ensure_authenticated()?;
+    let user_id = auth.ensure_snowflake_user_id()?;
     let is_admin = auth.is_admin();
     let token = api_token::find_by_id(pool, parse_id(token_id)?)
         .await?
         .ok_or_else(|| AppError::NotFound("api_token".into()))?;
-    let user = crate::models::user::find_by_id(pool, SnowflakeId(user_id), None)
+    let user = crate::models::user::find_by_id(pool, user_id, None)
         .await?
         .ok_or(AppError::Unauthorized)?;
     if !is_admin && token.user_id != user.id {

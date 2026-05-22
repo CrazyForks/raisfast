@@ -96,6 +96,16 @@ impl AuthUser {
         self.0.user_id.ok_or(AppError::Unauthorized)
     }
 
+    /// Return the authenticated user's ID as a `SnowflakeId`.
+    ///
+    /// Returns `AppError::Unauthorized` if not logged in.
+    pub fn ensure_snowflake_user_id(&self) -> AppResult<crate::types::snowflake_id::SnowflakeId> {
+        self.0
+            .user_id
+            .map(crate::types::snowflake_id::SnowflakeId)
+            .ok_or(AppError::Unauthorized)
+    }
+
     pub fn ensure_admin(&self) -> AppResult<()> {
         if self.is_authenticated() && self.is_admin() {
             Ok(())

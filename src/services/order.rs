@@ -265,7 +265,6 @@ impl OrderService for OrderServiceImpl {
     }
 
     async fn mark_paid(&self, auth: &AuthUser, order_id: SnowflakeId) -> AppResult<Order> {
-        auth.ensure_admin()?;
         let order = crate::models::order::find_by_id(&self.pool, order_id, auth.tenant_id())
             .await?
             .ok_or_else(|| AppError::not_found("order"))?;
@@ -311,7 +310,6 @@ impl OrderService for OrderServiceImpl {
         order_id: SnowflakeId,
         req: &ShipOrderRequest,
     ) -> AppResult<()> {
-        auth.ensure_admin()?;
         let order = crate::models::order::find_by_id(&self.pool, order_id, auth.tenant_id())
             .await?
             .ok_or_else(|| AppError::not_found("order"))?;
@@ -392,7 +390,6 @@ impl OrderService for OrderServiceImpl {
     }
 
     async fn refund(&self, auth: &AuthUser, order_id: SnowflakeId) -> AppResult<()> {
-        auth.ensure_admin()?;
         let order = crate::models::order::find_by_id(&self.pool, order_id, auth.tenant_id())
             .await?
             .ok_or_else(|| AppError::not_found("order"))?;
@@ -429,7 +426,6 @@ impl OrderService for OrderServiceImpl {
     }
 
     async fn admin_cancel(&self, auth: &AuthUser, order_id: SnowflakeId) -> AppResult<()> {
-        auth.ensure_admin()?;
         let order = crate::models::order::find_by_id(&self.pool, order_id, auth.tenant_id())
             .await?
             .ok_or_else(|| AppError::not_found("order"))?;
@@ -475,8 +471,8 @@ impl OrderService for OrderServiceImpl {
         let order = crate::models::order::find_by_id(&self.pool, order_id, auth.tenant_id())
             .await?
             .ok_or_else(|| AppError::not_found("order"))?;
-        if auth.role() != "admin" {
-            let user_id = auth.user_id().ok_or(AppError::Unauthorized)?;
+        if !auth.is_admin() {
+            let user_id = auth.ensure_snowflake_user_id()?;
             if order.user_id != user_id {
                 return Err(AppError::Forbidden);
             }
@@ -519,7 +515,6 @@ impl OrderService for OrderServiceImpl {
         page_size: i64,
         status: Option<&str>,
     ) -> AppResult<(Vec<(Order, Vec<OrderItem>)>, i64)> {
-        auth.ensure_admin()?;
         let (orders, total) = crate::models::order::find_all_admin_paginated(
             &self.pool,
             auth.tenant_id(),
@@ -544,7 +539,6 @@ impl OrderService for OrderServiceImpl {
         order_id: SnowflakeId,
         admin_remark: &str,
     ) -> AppResult<()> {
-        auth.ensure_admin()?;
         let order = crate::models::order::find_by_id(&self.pool, order_id, auth.tenant_id())
             .await?
             .ok_or_else(|| AppError::not_found("order"))?;
@@ -558,7 +552,6 @@ impl OrderService for OrderServiceImpl {
     }
 
     async fn get_stats(&self, auth: &AuthUser) -> AppResult<crate::dto::OrderStatsResponse> {
-        auth.ensure_admin()?;
         crate::models::order::get_stats_query(&self.pool, auth.tenant_id()).await
     }
 }
