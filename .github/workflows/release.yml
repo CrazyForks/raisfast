@@ -139,20 +139,6 @@ jobs:
       - name: Install dependencies
         run: |
           ${{ matrix.packages_install }}
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: 10
-      - name: Build Admin UI
-        run: |
-          cd frontend
-          pnpm install --frozen-lockfile
-          cd admin
-          pnpm build
       - name: Build artifacts
         run: |
           # Actually do builds and make zips and whatnot
