@@ -1,89 +1,55 @@
 <p align="center">
   <h1 align="center">raisfast</h1>
   <p align="center">
-    <strong>Rust-powered Headless CMS · Serverless · Desktop</strong>
+    <strong>The last backend you'll ever need.</strong>
   </p>
   <p align="center">
-    <em>One CMS. Three deployments. Zero compromises.</em>
+    Rust-powered headless CMS / desktop backend engine. Eliminate 80% of repetitive backend work — focus on your business.<br>
+    Single binary, zero dependencies, zero GC. Built-in blog, ecommerce, wallet, payment & multi-tenant SaaS. JS / Rhai / Lua / WASM plugin engines for infinite extensibility.<br>
+    Dynamic language productivity on a Rust performance foundation.
   </p>
 </p>
 
 ---
 
-> **⚠️ Early Alpha — Not ready for production use.**
->
-> This project is under active development. APIs may change without notice.
-> We're open-sourcing early to establish provenance and gather feedback.
-> A stable v1.0 release is targeted for Q3 2026.
+> **Early Alpha — API may change before v1.0.**
+> Targeting stable v1.0 in Q3 2026.
 
 ---
 
-## What is raisfast?
+## Why raisfast?
 
-raisfast is a **high-performance Headless CMS and API engine** built entirely in Rust. It runs in three modes from a single codebase:
+**Single binary, full capability**
+One binary, no Node.js, no Docker, no runtime. Blog, ecommerce, wallet, and payment are native built-in — not plugin assemblies, but the skeleton itself.
 
-| Mode | Use Case | Database | Storage |
-|------|----------|----------|---------|
-| **Desktop** (Tauri) | Personal blogs, local development | SQLite (embedded) | Local filesystem |
-| **Serverless** | Team collaboration, zero-ops | PostgreSQL / MySQL / D1 | S3 / R2 |
-| **Self-hosted** | Enterprise, full control | SQLite / PostgreSQL / MySQL | Local / S3 |
+**Rust performance, zero-GC stability**
+Sub-millisecond reads, zero performance degradation over time. No GC pauses, no memory leaks, no 3 AM OOM alerts.
 
-**No other CMS does all three from one codebase.**
-
-### Why Rust?
-
-| Metric | raisfast (Rust) | Node.js CMS (Strapi/Payload) |
-|--------|-----------------|------------------------------|
-| Cold start | <5ms | ~500ms |
-| Memory usage | <50MB | ~300MB |
-| Binary size | ~15MB | ~200MB (node_modules) |
-| Single-instance RPS | 50K+ | ~2K |
-| Plugin sandbox | ✅ WASM + JS + Lua | JS only |
+**4 plugin engines, inspired by Strapi**
+JS, Rhai, Lua, and WASM — a full spectrum from scripting to compiled. Dynamic language productivity with a Rust performance foundation.
 
 ---
 
-## Features
+## What's Built-In
 
-### Core
-- **REST API** — Full CRUD for posts, pages, categories, tags, comments, media
-- **Admin SPA** — Modern React dashboard (embedded in binary, zero config)
-- **Auth** — JWT (HS256) + refresh tokens + OAuth (GitHub) + SMS login
-- **RBAC** — Role-based access control with fine-grained permissions
-- **Multi-tenant** — Optional `BUILTIN_TENANTABLE` mode for SaaS
-
-### Content Management
-- **Content Type System** — Define custom content types via TOML schemas
-- **AOP Aspects** — Timestampable, soft-deletable, ownable, lockable, publishable, orderable, sluggable, and more
-- **Block Editor** — Page builder with reusable blocks
-- **Media Library** — Upload, thumbnails, dimensions detection
-- **RSS/Atom** — Auto-generated feeds
-- **Sitemap** — Auto-generated sitemap.xml
-
-### Extensibility
-- **Plugin Engine** — Three runtimes: WASM (wasmtime), JavaScript (QuickJS), Lua (mlua)
-- **Hook System** — Lifecycle hooks for posts, comments, media, users, and custom events
-- **Event Bus** — In-process event system for plugin coordination
-- **Custom Cron Jobs** — Plugins can register scheduled tasks
-
-### Infrastructure
-- **Multi-database** — Switch between SQLite / PostgreSQL / MySQL with zero code changes
-- **SQL Dialect Layer** — Automatic placeholder translation (`?` → `$1`), date functions, UPSERT syntax
-- **Job Queue** — Built-in SQLite-backed job queue with retry, dead-letter, and cron scheduling
-- **Webhooks** — Subscribe to events via HTTP webhooks
-- **Audit Log** — Track all admin actions
-- **Rate Limiting** — Configurable per-endpoint rate limits
-- **Swagger UI** — Auto-generated OpenAPI documentation
+| Module | Features |
+|--------|----------|
+| **Blog / CMS** | Posts, pages, categories, tags, comments, media, RSS, sitemap |
+| **Ecommerce** | Cart, orders, product variants, coupons |
+| **Wallet & Payment** | Multi-currency wallet, Alipay / WeChat Pay / Stripe / Dodo / Creem |
+| **OAuth** | GitHub, Google and more social login |
+| **Workflow** | Job queue, cron scheduler, AOP aspects, event bus |
+| **Content Types** | Dynamic schema via TOML, automatic CRUD API |
+| **Auth** | JWT (HS256) + refresh tokens + API tokens + RBAC |
+| **Multi-tenant** | Optional tenant isolation for SaaS |
+| **Admin UI** | Modern React dashboard (embedded in binary) |
+| **Plugin Engine** | JS (QuickJS) / Rhai / Lua (mlua) / WASM (wasmtime) |
+| **Search** | Full-text search (Tantivy) |
+| **Multi-DB** | SQLite / PostgreSQL / MySQL — zero code changes |
 
 ---
 
 ## Quick Start
-
-### Prerequisites
-
-- Rust 1.85+ (edition 2024)
-- SQLite 3.x (default), or PostgreSQL / MySQL
-
-### Build & Run
 
 ```bash
 # Clone
@@ -101,7 +67,7 @@ cargo run --features "db-sqlite plugin-all search-tantivy"
 ### First run
 
 On first startup, raisfast automatically:
-1. Creates all database tables (`schema.sqlite.sql`)
+1. Creates all database tables
 2. Seeds default roles, permissions, and site options
 3. Starts serving API + Admin UI
 
@@ -130,9 +96,8 @@ src/
 ├── handlers/            # Route handlers (thin: extract → service → respond)
 ├── services/            # Business logic layer
 ├── models/              # Data structures + SQL queries
-├── repositories/        # Repository pattern (trait + Sqlx impl)
 ├── middleware/           # Auth, rate limiting, CORS, metrics
-├── plugins/             # Plugin engine (WASM/JS/Lua)
+├── plugins/             # Plugin engine (WASM/JS/Rhai/Lua)
 ├── content_type/        # Dynamic content type system
 ├── worker/              # Job queue + cron scheduler
 ├── db/                  # Connection pool, dialect, schema
@@ -149,11 +114,11 @@ src/
 ### Layering
 
 ```
-Handler → Service → Repository → Model (SQL)
-                  ↘ External: Storage / Cache / Search / EventBus
+Handler → Service → Model (SQL)
+                ↘ External: Storage / Cache / Search / EventBus
 ```
 
-Handlers contain **no business logic**. Services orchestrate repositories and external services. Models contain only data structures and SQL queries.
+Handlers contain **no business logic**. Services orchestrate models and external services. Models contain only data structures and SQL queries.
 
 ---
 
@@ -172,18 +137,9 @@ cargo build --features "db-postgres"
 cargo build --features "db-mysql"
 ```
 
-The SQL dialect layer (`src/db/dialect.rs`) handles:
-- Placeholder translation: `?` → `$1, $2, ...` (PostgreSQL)
-- Time functions: `datetime('now')` → `NOW()`
-- Date arithmetic: `datetime('now', '-N days')` → `NOW() - INTERVAL 'N days'`
-- UPSERT: `ON CONFLICT ... DO UPDATE` → `ON DUPLICATE KEY UPDATE` (MySQL)
-- RETURNING: `RETURNING *` → disabled for MySQL
-
 ---
 
 ## Plugin System
-
-Plugins can be written in three languages:
 
 ```bash
 plugins/
@@ -191,6 +147,7 @@ plugins/
 │   ├── plugin.toml      # Manifest
 │   ├── main.js          # JavaScript (QuickJS)
 │   ├── main.lua         # Lua (mlua)
+│   ├── main.rhai        # Rhai
 │   └── main.wasm        # WASM (wasmtime)
 ```
 
@@ -212,7 +169,7 @@ hooks = ["post_created", "comment_created"]
 
 ## Configuration
 
-All configuration via environment variables:
+All configuration via environment variables or `.env`:
 
 ```bash
 # Database
@@ -232,7 +189,7 @@ STORAGE_DRIVER=local         # local | s3
 UPLOAD_DIR=./uploads
 
 # Multi-tenant
-BUILTIN_TENANTABLE=false     # Enable tenant_id on all tables
+BUILTIN_TENANTABLE=false
 
 # Search
 SEARCH_DRIVER=tantivy        # tantivy | noop
@@ -253,7 +210,7 @@ PLUGIN_HOT_RELOAD=true
 | Database | SQLx 0.8 (SQLite / PostgreSQL / MySQL) |
 | Auth | JWT (HS256) + Argon2 |
 | Search | Tantivy |
-| Plugin Runtime | wasmtime / rquickjs / mlua |
+| Plugin Runtime | wasmtime / rquickjs / mlua / rhai |
 | Admin UI | React 19 + Vite + shadcn/ui |
 | Desktop | Tauri |
 | Embedded Assets | rust-embed |
@@ -266,17 +223,17 @@ PLUGIN_HOT_RELOAD=true
 |-----------|--------|
 | Core API | ✅ Working |
 | Admin UI | ✅ Working |
-| Auth (JWT + OAuth) | ✅ Working |
+| Auth (JWT + OAuth + API Token) | ✅ Working |
 | Multi-database | ✅ Working |
-| Plugin engine (JS/Lua) | ✅ Working |
-| Plugin engine (WASM) | ✅ Working |
+| Plugin engine (JS/Rhai/Lua/WASM) | ✅ Working |
 | Content Type system | ✅ Working |
-| Tauri desktop | ✅ Working |
+| Ecommerce (cart/order/payment) | ✅ Working |
+| Wallet | ✅ Working |
 | Job queue + Cron | ✅ Working |
+| Tauri desktop | ✅ Working |
+| AOP aspects | ✅ Working |
 | Serverless adapter | 🔧 In design |
-| Redis cache | 🔧 Planned |
 | Plugin marketplace | 📋 Planned |
-| SDK (JS/Python) | 📋 Planned |
 
 ---
 
@@ -285,7 +242,7 @@ PLUGIN_HOT_RELOAD=true
 raisfast is dual-licensed:
 
 - **Core framework**: [MIT License](LICENSE)
-- **Commercial modules** (SaaS hosting, plugin marketplace, enterprise features): [BSL 1.1](LICENSE-COMMERCIAL)
+- **Commercial modules**: [BSL 1.1](LICENSE-COMMERCIAL)
 
 See [LICENSE](LICENSE) for details.
 
@@ -294,8 +251,6 @@ See [LICENSE](LICENSE) for details.
 ## Contributing
 
 We welcome contributions! Please read [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
-
-Note: This project is in early alpha. The API surface may change significantly before v1.0.
 
 ---
 

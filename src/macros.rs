@@ -98,6 +98,7 @@ macro_rules! reg_route {
 #[macro_export]
 macro_rules! in_transaction {
     ($pool:expr, $tx:ident, $body:block) => {{
+        let __write_guard = $crate::db::connection::acquire_write().await;
         #[allow(unused_mut)]
         let mut $tx = $pool.begin().await.map_err(|e| {
             $crate::errors::app_error::AppError::Internal(anyhow::anyhow!("begin tx: {e}"))

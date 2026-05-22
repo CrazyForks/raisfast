@@ -13,9 +13,25 @@
 //! Rollback is available via `raisfast db rollback`.
 
 use crate::db::DbDriver;
+use std::sync::OnceLock;
 use std::time::Duration;
+use tokio::sync::Mutex;
 
 use crate::db::pool::Pool;
+
+static WRITE_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+/// Acquire the global write serialization lock.
+///
+/// SQLite allows concurrent reads but serializes writes. Under high concurrency,
+/// multiple connections competing for the write lock cause `SQLITE_BUSY` retries
+/// with `busy_timeout`, leading to tail latency spikes (up to seconds).
+///
+/// By serializing writes at the Rust level (async-aware, zero CPU waste),
+/// we eliminate lock contention inside SQLite entirely.
+pub async fn acquire_write() -> tokio::sync::MutexGuard<'static, ()> {
+    WRITE_LOCK.get_or_init(|| Mutex::new(())).lock().await
+}
 
 const ACQUIRE_TIMEOUT: Duration = Duration::from_secs(5);
 const IDLE_TIMEOUT: Duration = Duration::from_secs(600);
@@ -66,7 +82,7 @@ async fn try_connect(database_url: &str, pool_size: u32) -> Result<Pool, sqlx::E
                     sqlx::query("PRAGMA foreign_keys = ON")
                         .execute(&mut *conn)
                         .await?;
-                    sqlx::query("PRAGMA busy_timeout = 5000")
+                    sqlx::query("PRAGMA busy_timeout = 100")
                         .execute(&mut *conn)
                         .await?;
                     sqlx::query("PRAGMA synchronous = NORMAL")
@@ -527,11 +543,6 @@ fn db_label() -> &'static str {
 
 /// Compute SHA-256 hex digest of the input string.
 fn sha256_hex(input: &str) -> String {
-    use std::fmt::Write;
     let hash = <sha2::Sha256 as sha2::Digest>::digest(input.as_bytes());
-    let mut hex = String::with_capacity(hash.len() * 2);
-    for byte in hash {
-        write!(hex, "{byte:02x}").unwrap();
-    }
-    hex
+    hash.iter().map(|byte| format!("{byte:02x}")).collect()
 }

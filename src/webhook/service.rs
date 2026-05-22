@@ -105,7 +105,7 @@ impl WebhookService {
         use hmac::{Hmac, Mac};
         type HmacSha256 = Hmac<sha2::Sha256>;
         let mut mac = HmacSha256::new_from_slice(secret.as_bytes())
-            .expect("HMAC accepts keys of any size");
+            .expect("HMAC-SHA256 accepts keys of any size per RFC 2104");
         mac.update(body);
         hex::encode(mac.finalize().into_bytes())
     }

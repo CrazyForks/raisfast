@@ -377,6 +377,7 @@ impl ContentRepository {
         tenant_id: Option<&str>,
         _save_ctx: &SaveContext,
     ) -> Result<Value, AppError> {
+        let _guard = crate::db::connection::acquire_write().await;
         let mut tx = self.pool.begin().await?;
 
         super::validation::validate_create_tx(&self.pool, ct, &data).await?;
@@ -625,6 +626,7 @@ impl ContentRepository {
             tracing::warn!("failed to create revision for {}: {e}", ct.singular);
         }
 
+        let _guard = crate::db::connection::acquire_write().await;
         let mut tx = self.pool.begin().await?;
 
         super::validation::validate_update_tx(&self.pool, ct, id, &data).await?;
@@ -963,6 +965,7 @@ impl ContentRepository {
         }
 
         if has_cleanup {
+            let _guard = crate::db::connection::acquire_write().await;
             let mut tx = self.pool.begin().await?;
 
             let source_int_id: Option<i64> = {

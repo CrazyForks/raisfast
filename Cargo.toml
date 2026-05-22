@@ -7,9 +7,9 @@ name = "raisfast"
 version = "0.1.0"
 edition = "2024"
 default-run = "raisfast"
-repository = "https://github.com/snkzhong/raisfast"
-description = "A high-performance Headless CMS and API engine built with Rust + Axum + SQLite"
-homepage = "https://github.com/snkzhong/raisfast"
+repository = "https://github.com/raisfast/raisfast"
+description = "The last backend you'll ever need. Rust-powered headless CMS with built-in blog, ecommerce, wallet, payment and 4 plugin engines."
+homepage = "https://github.com/raisfast/raisfast"
 
 [features]
 default = ["db-sqlite", "search-tantivy", "plugin-js", "plugin-lua", "plugin-rhai", "openapi", "proxy"]

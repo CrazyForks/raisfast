@@ -109,7 +109,7 @@ pub async fn handle_callback(
     if let Some(account) = existing {
         let user = crate::models::user::find_by_id(pool, account.user_id, None)
             .await?
-            .ok_or_else(|| AppError::Internal(anyhow::anyhow!("OAuth bound user not found")))?;
+            .ok_or_else(|| AppError::not_found("user"))?;
 
         let login_resp = create_login_response_for_user(
             &user,
@@ -154,7 +154,7 @@ pub async fn handle_callback(
         if let Some(cred) = cred {
             let user = crate::models::user::find_by_id(pool, cred.user_id, None)
                 .await?
-                .ok_or_else(|| AppError::Internal(anyhow::anyhow!("user not found")))?;
+                .ok_or_else(|| AppError::not_found("user"))?;
             do_bind_oauth(pool, user.id, provider_name, &token_resp, &user_info).await?;
 
             let login_resp = create_login_response_for_user(
@@ -341,7 +341,7 @@ async fn auto_register_user(
 
     let user = crate::models::user::find_by_id(pool, user.id, None)
         .await?
-        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("failed to fetch created user")))?;
+        .ok_or_else(|| AppError::not_found("user"))?;
 
     aspect_engine.emit(Event::UserRegistered(user.clone()));
 

@@ -85,7 +85,7 @@ pub async fn verify_sms_and_auth(
     let user = match cred {
         Some(c) => crate::models::user::find_by_id(pool, c.user_id, None)
             .await?
-            .ok_or_else(|| AppError::Internal(anyhow::anyhow!("user not found")))?,
+            .ok_or_else(|| AppError::not_found("user"))?,
         None => {
             let username = format!(
                 "user_{}",

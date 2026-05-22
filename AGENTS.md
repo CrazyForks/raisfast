@@ -2,51 +2,74 @@
 
 ## Project
 
-Blog system built with Rust + Axum + SQLite. Early stage — scaffold only, no implementation yet.
+raisfast — a Rust-powered headless CMS/BaaS with built-in blog, ecommerce, wallet, payment, OAuth, and workflow.
 
 - **Crate name:** `raisfast`
 - **Rust edition:** 2024
-- **Product & architecture spec:** `docs/guide.md`
+- **Architecture:** Handler → Service → Model three-layer
+- **Plugin engines:** JS (QuickJS) / Rhai / Lua (mlua) / WASM (wasmtime)
+- **Databases:** SQLite / PostgreSQL / MySQL (feature-gated)
 
 ## Commands
 
 ```bash
-cargo build                          # compile
-cargo test                           # run tests
-cargo fmt --check                    # format check
-cargo clippy -- -D warnings          # lint (zero warnings required)
+# Compile (SQLite + JS + Rhai)
+SQLX_OFFLINE=false DATABASE_URL="sqlite:./storage/db/raisfast.db?mode=rwc" \
+  cargo clippy --tests --no-default-features \
+  --features "db-sqlite,plugin-js,plugin-rhai" -- -D warnings
+
+# Test
+SQLX_OFFLINE=false DATABASE_URL="sqlite:./storage/db/raisfast.db?mode=rwc" \
+  cargo test --no-default-features \
+  --features "db-sqlite,plugin-js,plugin-rhai"
+
+# Format check
+cargo fmt --check
 ```
 
-Planned (once sqlx is wired):
-```bash
-cargo sqlx migrate run               # run DB migrations
-cargo sqlx prepare                   # update sqlx-data.json for offline compile
+## Architecture
+
+```
+Handler → Service → Model (SQL)
+                ↘ External: Storage / Cache / Search / EventBus
 ```
 
-## Architecture (target)
-
-As described in `docs/guide.md`:
-
-- **src/main.rs** — server entrypoint
 - **src/handlers/** — axum route handlers (thin: extract params, call service, return response)
+  - Handler layer is the **only** auth entry point (`ensure_*` calls)
 - **src/services/** — business logic layer
-- **src/models/** — data structures and DB queries (sqlx)
+  - Service layer does **Policy only** (resource ownership checks), never calls `ensure_*`
+- **src/models/** — data structures and DB queries (sqlx + CRUD macros)
+  - Model provides `tx_*` variants for transaction participation
 - **src/middleware/** — JWT auth, rate limiting
 - **src/errors/** — unified `AppError` (thiserror) implementing `IntoResponse`
 - **src/config/** — env/config loading
-- **migrations/** — sqlx SQL migration files
+- **src/db/** — connection pool, SQL dialect, schema, write lock
+- **src/plugins/** — 4-engine plugin system (JS/Rhai/Lua/WASM)
+- **src/content_type/** — dynamic content type system
+- **src/worker/** — job queue + cron scheduler (infrastructure, not model layer)
 
 ## Key Constraints
 
-- **`unsafe` is banned.** Use `#![deny(unsafe_code)]` at crate root.
+- **`unsafe` is banned.** `#![deny(unsafe_code)]` at crate root.
 - **No `unwrap()` / `expect()`** in non-test code. Use `?` or explicit error handling.
-- **Error handling pattern:** `thiserror` for `AppError` enum at handler boundaries; `anyhow` for internal service error propagation.
-- **Database:** SQLite (via sqlx with compile-time query checking). All timestamps stored as TEXT in ISO 8601.
-- **Primary keys:** UUID v7 (time-sortable).
+- **Error handling:** `thiserror` for `AppError` at handler boundaries; `anyhow` for internal service propagation.
+- **Database:** SQLite via sqlx. All timestamps as TEXT in ISO 8601.
+- **Primary keys:** Snowflake ID (ferroid) with multiplicative inverse cipher + base62 encoding.
 - **Auth:** JWT (HS256) with short-lived access tokens + DB-stored refresh tokens.
+- **Write lock:** All transactions go through `acquire_write()` (tokio Mutex) to serialize SQLite writes and eliminate `SQLITE_BUSY` tail latency.
+
+## CRUD Macro System
+
+All DB operations use the Where DSL macro system (`raisfast-derive`):
+
+- `crud_insert!`, `crud_update!`, `crud_delete!` — write operations
+- `crud_find!`, `crud_find_one!`, `crud_find_all!` — read operations
+- `crud_find_page!`, `crud_join_paged!` — pagination with JOINs
+- `crud_resolve_id!`, `crud_resolve_ids!` — ID resolution
+- `in_transaction!` — transaction wrapper (auto-acquires write lock)
 
 ## Style
 
-- `cargo fmt` and `cargo clippy` are authoritative — no custom rustfmt/clippy config.
+- `cargo fmt` and `cargo clippy` are authoritative.
 - Public items require `///` doc comments.
-- Handler → Service → Model layering enforced; handlers must not contain business logic.
+- Handler → Service → Model layering enforced.

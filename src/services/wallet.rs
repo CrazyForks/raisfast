@@ -230,7 +230,7 @@ async fn reverse_single_tx(
 
     let updated = tx_find_wallet_by_id(tx, w.id)
         .await?
-        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("wallet not found")))?;
+        .ok_or_else(|| AppError::not_found("wallet"))?;
 
     let entry_type = if original.entry_type == WalletEntryType::Credit {
         WalletEntryType::Debit
@@ -294,7 +294,7 @@ pub async fn credit_wallet(
 
         let updated = tx_find_wallet_by_id(&mut tx, w.id)
             .await?
-            .ok_or_else(|| AppError::Internal(anyhow::anyhow!("wallet not found after update")))?;
+            .ok_or_else(|| AppError::not_found("wallet"))?;
 
         insert_tx(
             &mut tx,
@@ -354,7 +354,7 @@ pub async fn debit_wallet(
 
         let updated = tx_find_wallet_by_id(&mut tx, w.id)
             .await?
-            .ok_or_else(|| AppError::Internal(anyhow::anyhow!("wallet not found after update")))?;
+            .ok_or_else(|| AppError::not_found("wallet"))?;
 
         insert_tx(
             &mut tx,
@@ -405,7 +405,7 @@ pub async fn transfer(
         let incoming =
             crate::models::wallet_transaction::find_tx_by_transaction_no(pool, &pair_no).await?;
         let incoming = incoming
-            .ok_or_else(|| AppError::Internal(anyhow::anyhow!("transfer pair incomplete")))?;
+            .ok_or_else(|| AppError::not_found("transaction"))?;
         return Ok((existing, incoming));
     }
 
@@ -451,10 +451,10 @@ pub async fn transfer(
 
         let updated_from = tx_find_wallet_by_id(&mut tx, from_wallet.id)
             .await?
-            .ok_or_else(|| AppError::Internal(anyhow::anyhow!("wallet not found")))?;
+            .ok_or_else(|| AppError::not_found("wallet"))?;
         let updated_to = tx_find_wallet_by_id(&mut tx, to_wallet.id)
             .await?
-            .ok_or_else(|| AppError::Internal(anyhow::anyhow!("wallet not found")))?;
+            .ok_or_else(|| AppError::not_found("wallet"))?;
 
         let out_tx = insert_tx(
             &mut tx,
@@ -538,14 +538,14 @@ pub async fn reverse_transaction(
                     .transaction_no
                     .strip_suffix("_in")
                     .ok_or_else(|| {
-                        AppError::Internal(anyhow::anyhow!("invalid transfer_in transaction_no"))
+                        AppError::BadRequest("invalid_transfer_in_transaction_no".into())
                     })?
                     .to_string()
             };
 
             let pair = tx_find_tx_by_transaction_no(&mut tx, &pair_no)
                 .await?
-                .ok_or_else(|| AppError::Internal(anyhow::anyhow!("transfer pair not found")))?;
+                .ok_or_else(|| AppError::not_found("transaction"))?;
 
             if tx_has_reversal_for(&mut tx, pair.id).await? {
                 return Err(AppError::BadRequest(

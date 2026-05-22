@@ -98,13 +98,11 @@ pub async fn create(
     cmd: &crate::commands::CreatePostCmd,
     tenant_id: Option<&str>,
 ) -> AppResult<Post> {
+    let _guard = crate::db::connection::acquire_write().await;
     let mut tx = pool.begin().await?;
     let post = create_tx(&mut tx, cmd, tenant_id).await?;
-    let post_id = post.id;
     tx.commit().await?;
-    find_by_id(pool, SnowflakeId(*post_id), tenant_id)
-        .await?
-        .ok_or_else(|| AppError::not_found("post"))
+    Ok(post)
 }
 
 pub async fn create_tx(
@@ -163,6 +161,7 @@ pub async fn update(
     cmd: &crate::commands::UpdatePostCmd,
     tenant_id: Option<&str>,
 ) -> AppResult<Post> {
+    let _guard = crate::db::connection::acquire_write().await;
     let mut tx = pool.begin().await?;
     let post = update_tx(&mut tx, cmd, tenant_id).await?;
     tx.commit().await?;
@@ -280,6 +279,7 @@ pub async fn sync_tags(
     post_id: SnowflakeId,
     tag_ids: &[i64],
 ) -> AppResult<()> {
+    let _guard = crate::db::connection::acquire_write().await;
     let mut tx = pool.begin().await?;
     sync_tags_tx(&mut tx, post_id, tag_ids).await?;
     tx.commit().await?;
@@ -323,6 +323,29 @@ pub async fn get_post_tags(
         method: fetch_all
     )?;
 
+    Ok(rows
+        .into_iter()
+        .map(|r| TagBrief {
+            id: r.id.to_string(),
+            name: r.name,
+            slug: r.slug,
+        })
+        .collect())
+}
+
+pub async fn get_tags_by_ids(
+    pool: &crate::db::Pool,
+    tag_ids: &[i64],
+    tenant_id: Option<&str>,
+) -> AppResult<Vec<TagBrief>> {
+    if tag_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let rows: Vec<TagRow> = raisfast_derive::crud_find_all!(
+        pool, "tags", TagRow,
+        where: ("id", IN, tag_ids),
+        tenant: tenant_id
+    )?;
     Ok(rows
         .into_iter()
         .map(|r| TagBrief {

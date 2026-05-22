@@ -148,12 +148,30 @@ impl PostService for PostServiceImpl {
             crate::aspects::excerpt_aspect::extract_excerpt(&req.content, 200)
         });
 
+        let created_by = auth.user_id().ok_or(AppError::Unauthorized)?;
+        let author_name =
+            crate::models::post::get_author_name(&self.pool, created_by, auth.tenant_id())
+                .await
+                .inspect_err(|e| tracing::warn!("failed to fetch author name: {e}"))
+                .ok()
+                .flatten();
+
         let category_id = if let Some(ref raw_id) = req.category_id {
             let parsed = crate::types::snowflake_id::parse_id(raw_id)?;
             raisfast_derive::crud_resolve_id!(&self.pool, "categories", *parsed, tenant: auth.tenant_id())?
         } else {
             None
         };
+        let category_name = if let Some(cat_id) = category_id {
+            crate::models::post::get_category_name(&self.pool, SnowflakeId(cat_id), auth.tenant_id())
+                .await
+                .inspect_err(|e| tracing::warn!("failed to fetch category name: {e}"))
+                .ok()
+                .flatten()
+        } else {
+            None
+        };
+
         let tag_ids = match req.tag_ids {
             Some(ref ids) => {
                 let mut resolved = Vec::new();
@@ -169,6 +187,14 @@ impl PostService for PostServiceImpl {
             }
             None => None,
         };
+        let tags = if let Some(ref ids) = tag_ids {
+            crate::models::post::get_tags_by_ids(&self.pool, ids, auth.tenant_id())
+                .await
+                .inspect_err(|e| tracing::warn!("failed to fetch tags: {e}"))
+                .unwrap_or_default()
+        } else {
+            Vec::new()
+        };
 
         let cmd = CreatePostCmd {
             title: req.title,
@@ -177,34 +203,12 @@ impl PostService for PostServiceImpl {
             excerpt: Some(excerpt),
             cover_image: req.cover_image,
             status,
-            created_by: auth.user_id().ok_or(AppError::Unauthorized)?,
+            created_by,
             updated_by: auth.user_id(),
             category_id,
             tag_ids,
         };
         let p = create_post_with_tags(&self.pool, cmd, auth.tenant_id()).await?;
-
-        let author_name =
-            crate::models::post::get_author_name(&self.pool, *p.created_by, auth.tenant_id())
-                .await
-                .inspect_err(|e| tracing::warn!("failed to fetch author name: {e}"))
-                .ok()
-                .flatten();
-
-        let category_name = if let Some(cat_id) = p.category_id {
-            crate::models::post::get_category_name(&self.pool, cat_id, auth.tenant_id())
-                .await
-                .inspect_err(|e| tracing::warn!("failed to fetch category name: {e}"))
-                .ok()
-                .flatten()
-        } else {
-            None
-        };
-
-        let tags = crate::models::post::get_post_tags(&self.pool, p.id, auth.tenant_id())
-            .await
-            .inspect_err(|e| tracing::warn!("failed to fetch post tags: {e}"))
-            .unwrap_or_default();
 
         let resp = build_response_from_post(&p, author_name, category_name, tags).await?;
         tracing::Span::current().record("slug", &resp.slug);
@@ -827,6 +831,7 @@ async fn create_post_with_tags(
     tenant_id: Option<&str>,
 ) -> AppResult<crate::models::post::Post> {
     if let Some(ref tag_ids) = cmd.tag_ids {
+        let _guard = crate::db::connection::acquire_write().await;
         let mut tx = pool.begin().await?;
         let p = crate::models::post::create_tx(&mut tx, &cmd, tenant_id).await?;
         crate::models::post::sync_tags_tx(&mut tx, p.id, tag_ids).await?;
@@ -843,13 +848,14 @@ async fn update_post_with_tags(
     tenant_id: Option<&str>,
 ) -> AppResult<crate::models::post::Post> {
     if let Some(ref tag_ids) = cmd.tag_ids {
+        let _guard = crate::db::connection::acquire_write().await;
         let mut tx = pool.begin().await?;
         crate::models::post::update_tx(&mut tx, &cmd, tenant_id).await?;
         crate::models::post::sync_tags_tx(&mut tx, cmd.id, tag_ids).await?;
         tx.commit().await?;
         crate::models::post::find_by_id(pool, cmd.id, tenant_id)
             .await?
-            .ok_or_else(|| AppError::Internal(anyhow::anyhow!("failed to fetch updated post")))
+            .ok_or_else(|| AppError::not_found("post"))
     } else {
         crate::models::post::update(pool, &cmd, tenant_id).await
     }

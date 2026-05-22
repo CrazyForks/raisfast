@@ -88,14 +88,14 @@ impl StatsService {
                     .bind(&tid)
                     .fetch_all(&self.pool)
                     .await
-                    .map_err(|e| AppError::Internal(anyhow::anyhow!("{e}")))?;
+                    .map_err(|e| AppError::Internal(e.into()))?;
                 rows
             } else {
                 let sql = format!("SELECT status, COUNT(*) as cnt FROM {table} GROUP BY status");
                 let rows: Vec<(String, i64)> = sqlx::query_as::<_, (String, i64)>(&sql)
                     .fetch_all(&self.pool)
                     .await
-                    .map_err(|e| AppError::Internal(anyhow::anyhow!("{e}")))?;
+                    .map_err(|e| AppError::Internal(e.into()))?;
                 rows
             };
 
@@ -158,7 +158,7 @@ impl StatsService {
         let rows = q
             .fetch_all(&self.pool)
             .await
-            .map_err(|e| AppError::Internal(anyhow::anyhow!("{e}")))?;
+            .map_err(|e| AppError::Internal(e.into()))?;
 
         let data: Vec<Value> = rows
             .into_iter()
@@ -213,13 +213,13 @@ impl StatsService {
                 .bind(&tid)
                 .fetch_all(&self.pool)
                 .await
-                .map_err(|e| AppError::Internal(anyhow::anyhow!("{e}")))?
+                .map_err(|e| AppError::Internal(e.into()))?
         } else {
             let sql = format!("SELECT status, COUNT(*) as cnt FROM {table} GROUP BY status");
             sqlx::query_as::<_, (String, i64)>(&sql)
                 .fetch_all(&self.pool)
                 .await
-                .map_err(|e| AppError::Internal(anyhow::anyhow!("{e}")))?
+                .map_err(|e| AppError::Internal(e.into()))?
         };
 
         let mut map = serde_json::Map::new();
@@ -255,7 +255,7 @@ impl StatsService {
             fetch_all,
             tenant: tenant_id
         )
-        .map_err(|e| AppError::Internal(anyhow::anyhow!("{e}")))?;
+        .map_err(|e| AppError::Internal(e.into()))?;
 
         for (title, slug, at) in posts {
             activities.push(json!({
@@ -279,7 +279,7 @@ impl StatsService {
             fetch_all,
             tenant: tenant_id
         )
-        .map_err(|e| AppError::Internal(anyhow::anyhow!("{e}")))?;
+        .map_err(|e| AppError::Internal(e.into()))?;
 
         for (content, at) in comments {
             activities.push(json!({
@@ -315,7 +315,7 @@ async fn count_table(
     }
     q.fetch_one(pool)
         .await
-        .map_err(|e| AppError::Internal(anyhow::anyhow!("{e}")))
+        .map_err(|e| AppError::Internal(e.into()))
 }
 
 /// Check if a table has a specific column
