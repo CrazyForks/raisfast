@@ -232,13 +232,12 @@ fn map_type(data_type: &DataType, nullable: bool, col_name: &str) -> String {
         }
         DataType::Boolean => "bool",
         DataType::Real | DataType::Float(_) | DataType::Double(_) => "f64",
-        DataType::Text | DataType::Varchar(_) | DataType::Char(_) | DataType::String(_) => {
-            if col_name == "created_at" || col_name == "updated_at" {
-                "Timestamp"
-            } else {
-                "String"
-            }
+        DataType::Text | DataType::Varchar(_) | DataType::Char(_) | DataType::String(_)
+            if (col_name == "created_at" || col_name == "updated_at") =>
+        {
+            "Timestamp"
         }
+        DataType::Text | DataType::Varchar(_) | DataType::Char(_) | DataType::String(_) => "String",
         DataType::Blob(_) => "Vec<u8>",
         _ => "String",
     };

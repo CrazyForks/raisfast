@@ -301,19 +301,21 @@ pub async fn admin_batch_users(
     let mut affected = 0usize;
     for uid in &req.ids {
         match req.action.as_str() {
-            "delete" if state
-                .user_service
-                .delete_user(uid, auth.tenant_id())
-                .await
-                .is_ok() =>
+            "delete"
+                if state
+                    .user_service
+                    .delete_user(uid, auth.tenant_id())
+                    .await
+                    .is_ok() =>
             {
                 affected += 1;
             }
-            "disable" | "enable" if state
-                .user_service
-                .update_role(uid, UserRole::Reader, auth.tenant_id())
-                .await
-                .is_ok() =>
+            "disable" | "enable"
+                if state
+                    .user_service
+                    .update_role(uid, UserRole::Reader, auth.tenant_id())
+                    .await
+                    .is_ok() =>
             {
                 affected += 1;
             }
