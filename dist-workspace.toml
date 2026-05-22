@@ -17,3 +17,4 @@ targets = [
 ]
 merge-tasks = true
 precise-builds = true
+allow-dirty = ["ci"]
