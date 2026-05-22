@@ -1,10 +1,10 @@
 [workspace]
 members = ["cargo:."]
 
-# Config for 'dist'
 [dist]
 cargo-dist-version = "0.31.0"
 ci = "github"
+packages = ["raisfast"]
 installers = ["shell", "powershell", "homebrew"]
 targets = [
   "x86_64-apple-darwin",
