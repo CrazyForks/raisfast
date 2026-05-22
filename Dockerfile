@@ -7,6 +7,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 COPY Cargo.toml Cargo.lock ./
+COPY raisfast-derive/ raisfast-derive/
 RUN mkdir src && echo "fn main() {}" > src/main.rs
 RUN cargo build --release --features "db-sqlite plugin-all search-tantivy storage-s3" 2>/dev/null || true
 RUN rm -rf src
@@ -14,6 +15,7 @@ RUN rm -rf src
 COPY src/ src/
 COPY migrations/ migrations/
 COPY extensions/ extensions/
+COPY adminui/ adminui/
 RUN touch src/main.rs \
     && cargo build --release --features "db-sqlite plugin-all search-tantivy storage-s3"
 
