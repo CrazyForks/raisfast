@@ -2,6 +2,9 @@
 name = "raisfast-derive"
 version = "0.1.0"
 edition = "2024"
+description = "Procedural macros for raisfast — CRUD, Where DSL, and schema generation"
+license = "Apache-2.0"
+repository = "https://github.com/raisfast/raisfast"
 
 [lib]
 proc-macro = true
