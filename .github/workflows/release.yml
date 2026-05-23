@@ -272,8 +272,13 @@ jobs:
           merge-multiple: true
       - name: Cleanup
         run: |
-          # Remove the granular manifests
           rm -f artifacts/*-dist-manifest.json
+      - name: Generate changelog
+        id: changelog
+        uses: orhun/git-cliff-action@v4
+        with:
+          config: cliff.toml
+          args: --tag ${{ needs.plan.outputs.tag }} --strip header
       - name: Create GitHub Release
         env:
           PRERELEASE_FLAG: "${{ fromJson(steps.host.outputs.manifest).announcement_is_prerelease && '--prerelease' || '' }}"
@@ -281,8 +286,11 @@ jobs:
           ANNOUNCEMENT_BODY: "${{ fromJson(steps.host.outputs.manifest).announcement_github_body }}"
           RELEASE_COMMIT: "${{ github.sha }}"
         run: |
-          # Write and read notes from a file to avoid quoting breaking things
-          echo "$ANNOUNCEMENT_BODY" > $RUNNER_TEMP/notes.txt
+          cat "$GITHUB_WORKSPACE/CHANGELOG.md" > $RUNNER_TEMP/notes.txt
+          echo "" >> $RUNNER_TEMP/notes.txt
+          echo "---" >> $RUNNER_TEMP/notes.txt
+          echo "" >> $RUNNER_TEMP/notes.txt
+          echo "$ANNOUNCEMENT_BODY" >> $RUNNER_TEMP/notes.txt
 
           gh release create "${{ needs.plan.outputs.tag }}" --target "$RELEASE_COMMIT" $PRERELEASE_FLAG --title "$ANNOUNCEMENT_TITLE" --notes-file "$RUNNER_TEMP/notes.txt" artifacts/*
 
@@ -297,6 +305,15 @@ jobs:
             cosign sign-blob --yes --bundle "${f}.bundle" "$f"
           done
           gh release upload "${{ needs.plan.outputs.tag }}" *.bundle || true
+
+      - name: Generate SBOM with syft
+        uses: anchore/sbom-action@v0
+        with:
+          image: dir:./artifacts
+          format: spdx-json
+          output-file: artifacts/sbom.spdx.json
+      - name: Upload SBOM to release
+        run: gh release upload "${{ needs.plan.outputs.tag }}" artifacts/sbom.spdx.json || true
 
   publish-homebrew-formula:
     needs:

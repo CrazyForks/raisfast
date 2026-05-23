@@ -58,6 +58,12 @@ cmd_release() {
   fi
 
   bump_version "$ver"
+
+  if command -v git-cliff &>/dev/null; then
+    git-cliff --tag "$tag" -o CHANGELOG.md
+    echo "Changelog generated"
+  fi
+
   git add -A
   git commit -m "release: v$ver"
   git tag "$tag"
