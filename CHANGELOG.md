@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.21] - 2026-05-23
+
+- Optimize the process
+
 ## [0.2.20] - 2026-05-23
 
 - Optimize the process
