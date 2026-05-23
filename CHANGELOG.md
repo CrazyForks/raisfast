@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.20] - 2026-05-23
+
+- Optimize the process
+
+- Update readme
+
 ## [0.2.19] - 2026-05-23
 
 - Improve ci workflow

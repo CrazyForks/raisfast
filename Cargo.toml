@@ -4,7 +4,7 @@ resolver = "3"
 
 [package]
 name = "raisfast"
-version = "0.2.19"
+version = "0.2.20"
 edition = "2024"
 default-run = "raisfast"
 repository = "https://github.com/raisfast/raisfast"
