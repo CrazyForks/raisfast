@@ -53,7 +53,7 @@ JS, Rhai, Lua, and WASM — a full spectrum from scripting to compiled. Dynamic 
 
 ```bash
 # Clone
-git clone https://github.com/snkzhong/raisfast.git
+git clone https://github.com/RaisFast/raisfast.git
 cd raisfast
 
 # Build and run (SQLite, default)

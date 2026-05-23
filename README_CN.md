@@ -56,7 +56,7 @@ JS、Rhai、Lua、WASM 四层扩展，覆盖从脚本到编译型的完整光谱
 
 ```bash
 # 克隆
-git clone https://github.com/snkzhong/raisfast.git
+git clone https://github.com/RaisFast/raisfast.git
 cd raisfast
 
 # 编译运行（SQLite，默认）
