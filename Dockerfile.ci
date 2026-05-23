@@ -1,6 +1,6 @@
 FROM debian:bookworm-slim
 
-ARG BINARY_PATH=dist/raisfast
+ARG BINARY_PATH=dist/binary
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \

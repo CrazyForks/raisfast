@@ -51,7 +51,9 @@ jobs:
           gh release download "${{ steps.tag.outputs.tag }}" \
             --pattern "raisfast-x86_64-unknown-linux-musl.tar.xz" \
             --dir dist
-          cd dist && tar xf raisfast-x86_64-unknown-linux-musl.tar.xz
+          tar -xf dist/raisfast-x86_64-unknown-linux-musl.tar.xz -C dist/
+          ls -la dist/
+          mv dist/raisfast dist/binary
 
       - name: Log in to GHCR
         uses: docker/login-action@v3
