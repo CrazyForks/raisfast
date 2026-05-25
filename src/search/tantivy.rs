@@ -1,13 +1,15 @@
 //! Full-text search engine implementation based on Tantivy 0.26
 
-use std::path::Path;
+use std::sync::{Arc, Mutex};
 
-use crate::errors::app_error::{AppError, AppResult};
 use tantivy::collector::Count;
 use tantivy::doc;
 use tantivy::schema::{IndexRecordOption, SchemaBuilder, TextFieldIndexing, TextOptions, Value};
+use tantivy::TantivyDocument;
 
 use super::{SearchEngine, SearchResult, SearchablePost};
+
+use crate::errors::app_error::{AppError, AppResult};
 
 struct FieldSet {
     post_id: tantivy::schema::Field,
@@ -18,6 +20,7 @@ struct FieldSet {
 pub struct TantivyEngine {
     index: tantivy::Index,
     fields: FieldSet,
+    writer: Arc<Mutex<tantivy::IndexWriter<TantivyDocument>>>,
 }
 
 impl TantivyEngine {
@@ -27,7 +30,7 @@ impl TantivyEngine {
         let title = schema.get_field("title").unwrap();
         let content = schema.get_field("content").unwrap();
 
-        let path = Path::new(index_dir);
+        let path = std::path::Path::new(index_dir);
         let index = if path.exists() && path.read_dir().is_ok_and(|mut d| d.next().is_some()) {
             tantivy::Index::open_in_dir(path)
                 .map_err(|e| AppError::Internal(anyhow::anyhow!("open index: {e}")))?
@@ -39,6 +42,9 @@ impl TantivyEngine {
         };
 
         Self::register_tokenizers(&index);
+        let writer = index
+            .writer::<TantivyDocument>(15_000_000)
+            .map_err(|e| AppError::Internal(anyhow::anyhow!("writer: {e}")))?;
         Ok(Self {
             index,
             fields: FieldSet {
@@ -46,6 +52,7 @@ impl TantivyEngine {
                 title,
                 content,
             },
+            writer: Arc::new(Mutex::new(writer)),
         })
     }
 
@@ -57,6 +64,9 @@ impl TantivyEngine {
 
         let index = tantivy::Index::create_in_ram(schema);
         Self::register_tokenizers(&index);
+        let writer = index
+            .writer::<TantivyDocument>(15_000_000)
+            .map_err(|e| AppError::Internal(anyhow::anyhow!("writer: {e}")))?;
         Ok(Self {
             index,
             fields: FieldSet {
@@ -64,6 +74,7 @@ impl TantivyEngine {
                 title,
                 content,
             },
+            writer: Arc::new(Mutex::new(writer)),
         })
     }
 
@@ -108,26 +119,22 @@ impl SearchEngine for TantivyEngine {
     }
 
     async fn index_post(&self, post: &SearchablePost) -> AppResult<()> {
-        let index = self.index.clone();
+        let writer = self.writer.clone();
         let f_post_id = self.fields.post_id;
         let f_title = self.fields.title;
         let f_content = self.fields.content;
         let post = post.clone();
 
         tokio::task::spawn_blocking(move || -> AppResult<()> {
-            let mut writer = index
-                .writer::<tantivy::TantivyDocument>(15_000_000)
-                .map_err(|e| AppError::Internal(anyhow::anyhow!("writer: {e}")))?;
-            writer.delete_term(tantivy::Term::from_field_text(f_post_id, &post.id));
-            writer
-                .add_document(doc!(
-                    f_post_id => post.id.as_str(),
-                    f_title => post.title.as_str(),
-                    f_content => post.content.as_str(),
-                ))
-                .map_err(|e| AppError::Internal(anyhow::anyhow!("add: {e}")))?;
-            writer
-                .commit()
+            let mut w = writer.lock().map_err(|e| AppError::Internal(anyhow::anyhow!("lock: {e}")))?;
+            w.delete_term(tantivy::Term::from_field_text(f_post_id, &post.id));
+            w.add_document(doc!(
+                f_post_id => post.id.as_str(),
+                f_title => post.title.as_str(),
+                f_content => post.content.as_str(),
+            ))
+            .map_err(|e| AppError::Internal(anyhow::anyhow!("add: {e}")))?;
+            w.commit()
                 .map_err(|e| AppError::Internal(anyhow::anyhow!("commit: {e}")))?;
             Ok(())
         })
@@ -136,28 +143,24 @@ impl SearchEngine for TantivyEngine {
     }
 
     async fn index_posts(&self, posts: &[SearchablePost]) -> AppResult<()> {
-        let index = self.index.clone();
+        let writer = self.writer.clone();
         let f_post_id = self.fields.post_id;
         let f_title = self.fields.title;
         let f_content = self.fields.content;
         let posts: Vec<SearchablePost> = posts.to_vec();
 
         tokio::task::spawn_blocking(move || -> AppResult<()> {
-            let mut writer = index
-                .writer::<tantivy::TantivyDocument>(15_000_000)
-                .map_err(|e| AppError::Internal(anyhow::anyhow!("writer: {e}")))?;
+            let mut w = writer.lock().map_err(|e| AppError::Internal(anyhow::anyhow!("lock: {e}")))?;
             for post in &posts {
-                writer.delete_term(tantivy::Term::from_field_text(f_post_id, post.id.as_str()));
-                writer
-                    .add_document(doc!(
-                        f_post_id => post.id.as_str(),
-                        f_title => post.title.as_str(),
-                        f_content => post.content.as_str(),
-                    ))
-                    .map_err(|e| AppError::Internal(anyhow::anyhow!("add: {e}")))?;
+                w.delete_term(tantivy::Term::from_field_text(f_post_id, post.id.as_str()));
+                w.add_document(doc!(
+                    f_post_id => post.id.as_str(),
+                    f_title => post.title.as_str(),
+                    f_content => post.content.as_str(),
+                ))
+                .map_err(|e| AppError::Internal(anyhow::anyhow!("add: {e}")))?;
             }
-            writer
-                .commit()
+            w.commit()
                 .map_err(|e| AppError::Internal(anyhow::anyhow!("commit: {e}")))?;
             Ok(())
         })
@@ -166,17 +169,14 @@ impl SearchEngine for TantivyEngine {
     }
 
     async fn delete_post(&self, post_id: &str) -> AppResult<()> {
-        let index = self.index.clone();
+        let writer = self.writer.clone();
         let f_post_id = self.fields.post_id;
         let post_id = post_id.to_string();
 
         tokio::task::spawn_blocking(move || -> AppResult<()> {
-            let mut writer = index
-                .writer::<tantivy::TantivyDocument>(15_000_000)
-                .map_err(|e| AppError::Internal(anyhow::anyhow!("writer: {e}")))?;
-            writer.delete_term(tantivy::Term::from_field_text(f_post_id, &post_id));
-            writer
-                .commit()
+            let mut w = writer.lock().map_err(|e| AppError::Internal(anyhow::anyhow!("lock: {e}")))?;
+            w.delete_term(tantivy::Term::from_field_text(f_post_id, &post_id));
+            w.commit()
                 .map_err(|e| AppError::Internal(anyhow::anyhow!("commit: {e}")))?;
             Ok(())
         })
@@ -185,30 +185,25 @@ impl SearchEngine for TantivyEngine {
     }
 
     async fn rebuild_all(&self, posts: &[SearchablePost]) -> AppResult<()> {
-        let index = self.index.clone();
+        let writer = self.writer.clone();
         let f_post_id = self.fields.post_id;
         let f_title = self.fields.title;
         let f_content = self.fields.content;
         let posts: Vec<SearchablePost> = posts.to_vec();
 
         tokio::task::spawn_blocking(move || -> AppResult<()> {
-            let mut writer = index
-                .writer::<tantivy::TantivyDocument>(15_000_000)
-                .map_err(|e| AppError::Internal(anyhow::anyhow!("writer: {e}")))?;
-            writer
-                .delete_all_documents()
+            let mut w = writer.lock().map_err(|e| AppError::Internal(anyhow::anyhow!("lock: {e}")))?;
+            w.delete_all_documents()
                 .map_err(|e| AppError::Internal(anyhow::anyhow!("delete all: {e}")))?;
             for post in &posts {
-                writer
-                    .add_document(doc!(
-                        f_post_id => post.id.as_str(),
-                        f_title => post.title.as_str(),
-                        f_content => post.content.as_str(),
-                    ))
-                    .map_err(|e| AppError::Internal(anyhow::anyhow!("add: {e}")))?;
+                w.add_document(doc!(
+                    f_post_id => post.id.as_str(),
+                    f_title => post.title.as_str(),
+                    f_content => post.content.as_str(),
+                ))
+                .map_err(|e| AppError::Internal(anyhow::anyhow!("add: {e}")))?;
             }
-            writer
-                .commit()
+            w.commit()
                 .map_err(|e| AppError::Internal(anyhow::anyhow!("commit: {e}")))?;
             Ok(())
         })

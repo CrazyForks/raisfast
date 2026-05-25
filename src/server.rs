@@ -389,8 +389,8 @@ async fn build_app(
 
     #[cfg(feature = "openapi")]
     let app = app
-        .route("/api/docs", get(openapi::redirect_to_swagger))
-        .route("/api/docs/", get(openapi::redirect_to_swagger));
+        .route("/api/docs", get(openapi::serve_scalar_ui))
+        .route("/api/docs/", get(openapi::serve_scalar_ui));
 
     Ok(app)
 }
@@ -860,14 +860,16 @@ async fn spawn_workers(
         queue,
         Arc::new(registry),
         Duration::from_millis(config.worker_poll_interval_ms),
+        config.worker_batch_size,
     )
     .with_plugin_dispatcher(Arc::new(PluginCronDispatcher::new(plugins)));
     runner.spawn(config.worker_concurrency);
 
     tracing::info!(
-        "worker system started: concurrency={}, poll={}ms",
+        "worker system started: concurrency={}, poll={}ms, batch={}",
         config.worker_concurrency,
         config.worker_poll_interval_ms,
+        config.worker_batch_size,
     );
 }
 

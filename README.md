@@ -1,12 +1,11 @@
 <p align="center">
-  <h1 align="center">raisfast</h1>
+  <h1 align="center">RaisFast</h1>
   <p align="center">
-    <strong>The last backend you'll ever need.</strong>
+    <strong>The fastest CMS, easiest to deploy.</strong>
   </p>
   <p align="center">
-    Rust-powered High performance headless CMS / desktop backend engine. Eliminate 80% of repetitive backend work — focus on your business.<br>
-    Single binary, zero dependencies, zero GC. Built-in blog, ecommerce, wallet, payment & multi-tenant SaaS. JS / Rhai / Lua / WASM plugin engines for infinite extensibility.<br>
-    Dynamic language productivity on a Rust performance foundation.
+    Rust-powered High performance headless CMS with built-in blog, ecommerce, wallet, payment & multi-tenant SaaS. JS / Rhai / Lua / WASM plugin engines for infinite extensibility.<br>
+    Single binary, zero dependencies, zero GC. Download and run.
   </p>
 </p>
 

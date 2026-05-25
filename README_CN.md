@@ -1,12 +1,11 @@
 <p align="center">
-  <h1 align="center">raisfast</h1>
+  <h1 align="center">RaisFast</h1>
   <p align="center">
-    <strong>你需要的最后一个后端引擎。</strong>
+    <strong>最快的 CMS，最简单的部署。</strong>
   </p>
   <p align="center">
-    基于 Rust 的高性能 headless CMS / desktop 后端引擎，消除 80% 的重复后端开发，让你专注业务本身。<br>
-    零依赖单二进制文件部署，零运行时 GC。博客、电商、钱包、支付、多租户 SaaS 开箱即用，JS / Rhai / Lua / WASM 四引擎插件无限扩展。<br>
-    享受动态语言的开发效率，拥有 Rust 的性能基座。
+    基于 Rust 的高性能 headless CMS，内置博客、电商、钱包、支付、多租户 SaaS。JS / Rhai / Lua / WASM 四引擎插件无限扩展。<br>
+    单二进制文件，零依赖，零 GC。下载即运行。
   </p>
 </p>
 

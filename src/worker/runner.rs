@@ -5,7 +5,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use super::{JobHandlerRegistry, JobQueue, PluginCronDispatcher};
+use super::{Job, JobHandlerRegistry, JobQueue, PluginCronDispatcher};
 
 /// Worker executor
 pub struct WorkerRunner {
@@ -13,6 +13,7 @@ pub struct WorkerRunner {
     handlers: Arc<JobHandlerRegistry>,
     plugin_dispatcher: Option<Arc<PluginCronDispatcher>>,
     poll_interval: Duration,
+    batch_size: usize,
 }
 
 impl WorkerRunner {
@@ -23,12 +24,14 @@ impl WorkerRunner {
         queue: Arc<dyn JobQueue>,
         handlers: Arc<JobHandlerRegistry>,
         poll_interval: Duration,
+        batch_size: usize,
     ) -> Self {
         Self {
             queue,
             handlers,
             plugin_dispatcher: None,
             poll_interval,
+            batch_size,
         }
     }
 
@@ -57,17 +60,61 @@ impl WorkerRunner {
         loop {
             interval.tick().await;
 
-            match self.queue.dequeue(5).await {
+            match self.queue.dequeue(self.batch_size).await {
                 Ok(jobs) => {
-                    for job in &jobs {
-                        if let Err(e) = self.execute(job).await {
-                            tracing::error!("worker-{worker_id} job {} error: {e}", job.id);
-                        }
-                    }
+                    self.execute_batch(&jobs, worker_id).await;
                 }
                 Err(e) => {
                     tracing::error!("worker-{worker_id} dequeue error: {e}");
                     tokio::time::sleep(Duration::from_secs(5)).await;
+                }
+            }
+        }
+    }
+
+    async fn execute_batch(&self, jobs: &[super::QueuedJob], worker_id: usize) {
+        let mut search_ids: Vec<i64> = Vec::new();
+        let mut search_job_ids: Vec<String> = Vec::new();
+
+        for job in jobs {
+            if let Job::RebuildSearchIndex { post_ids } = &job.job {
+                search_ids.extend_from_slice(post_ids);
+                search_job_ids.push(job.id.clone());
+            } else {
+                if let Err(e) = self.execute(job).await {
+                    tracing::error!("worker-{worker_id} job {} error: {e}", job.id);
+                }
+            }
+        }
+
+        if !search_ids.is_empty() {
+            search_ids.sort_unstable();
+            search_ids.dedup();
+
+            let merged_job = Job::RebuildSearchIndex {
+                post_ids: search_ids,
+            };
+            let job_type = merged_job.job_type();
+
+            let result = if self.handlers.has_handler(job_type) {
+                self.handlers.handle(&merged_job).await
+            } else {
+                tracing::warn!("no handler for coalesced search index job");
+                Ok(())
+            };
+
+            if let Err(e) = result {
+                tracing::error!("worker-{worker_id} coalesced search index error: {e}");
+                for id in &search_job_ids {
+                    if let Err(e) = self.queue.fail(id, &format!("{e}")).await {
+                        tracing::error!("worker-{worker_id} failed to fail coalesced job {id}: {e}");
+                    }
+                }
+            } else {
+                for id in &search_job_ids {
+                    if let Err(e) = self.queue.complete(id).await {
+                        tracing::error!("worker-{worker_id} failed to complete coalesced job {id}: {e}");
+                    }
                 }
             }
         }
@@ -114,6 +161,7 @@ impl WorkerRunner {
             handlers: self.handlers.clone(),
             plugin_dispatcher: self.plugin_dispatcher.clone(),
             poll_interval: self.poll_interval,
+            batch_size: self.batch_size,
         }
     }
 }
@@ -145,13 +193,14 @@ mod tests {
         let mut registry = JobHandlerRegistry::new();
         registry.register("generate_sitemap", Box::new(LogJobHandler));
         registry.register("send_welcome_email", Box::new(FailHandler));
+        registry.register("rebuild_search_index", Box::new(LogJobHandler));
         (queue, Arc::new(registry))
     }
 
     #[tokio::test]
     async fn execute_completes_on_handler_success() {
         let (queue, registry) = setup().await;
-        let runner = WorkerRunner::new(queue.clone(), registry, Duration::from_millis(100));
+        let runner = WorkerRunner::new(queue.clone(), registry, Duration::from_millis(100), 5);
 
         queue
             .enqueue(NewJob::from(Job::GenerateSitemap))
@@ -172,7 +221,7 @@ mod tests {
     #[tokio::test]
     async fn execute_fails_and_retries() {
         let (queue, registry) = setup().await;
-        let runner = WorkerRunner::new(queue.clone(), registry, Duration::from_millis(100));
+        let runner = WorkerRunner::new(queue.clone(), registry, Duration::from_millis(100), 5);
 
         queue
             .enqueue(NewJob {
@@ -200,7 +249,7 @@ mod tests {
     #[tokio::test]
     async fn execute_marks_dead_at_max_attempts() {
         let (queue, registry) = setup().await;
-        let runner = WorkerRunner::new(queue.clone(), registry, Duration::from_millis(100));
+        let runner = WorkerRunner::new(queue.clone(), registry, Duration::from_millis(100), 5);
 
         queue
             .enqueue(NewJob {
@@ -230,7 +279,7 @@ mod tests {
     #[tokio::test]
     async fn dequeue_empty_no_error() {
         let (queue, registry) = setup().await;
-        let _runner = WorkerRunner::new(queue.clone(), registry, Duration::from_millis(100));
+        let _runner = WorkerRunner::new(queue.clone(), registry, Duration::from_millis(100), 5);
 
         let jobs = queue.dequeue(10).await.unwrap();
         assert!(jobs.is_empty());
@@ -242,7 +291,7 @@ mod tests {
     #[tokio::test]
     async fn spawn_processes_pending_jobs() {
         let (queue, registry) = setup().await;
-        let runner = WorkerRunner::new(queue.clone(), registry, Duration::from_millis(50));
+        let runner = WorkerRunner::new(queue.clone(), registry, Duration::from_millis(50), 5);
 
         queue
             .enqueue(NewJob::from(Job::GenerateSitemap))
@@ -260,7 +309,7 @@ mod tests {
     #[tokio::test]
     async fn unhandled_job_without_plugin_marks_dead() {
         let (queue, registry) = setup().await;
-        let runner = WorkerRunner::new(queue.clone(), registry, Duration::from_millis(100));
+        let runner = WorkerRunner::new(queue.clone(), registry, Duration::from_millis(100), 5);
 
         queue
             .enqueue(NewJob::from(Job::Custom {
@@ -279,5 +328,74 @@ mod tests {
         let stats = queue.stats().await.unwrap();
         assert_eq!(stats.dead, 1);
         assert_eq!(stats.completed, 0);
+    }
+
+    #[tokio::test]
+    async fn coalesces_multiple_search_index_jobs() {
+        let (queue, registry) = setup().await;
+        let runner = WorkerRunner::new(queue.clone(), registry, Duration::from_millis(100), 20);
+
+        queue
+            .enqueue(NewJob::from(Job::RebuildSearchIndex {
+                post_ids: vec![1, 2],
+            }))
+            .await
+            .unwrap();
+        queue
+            .enqueue(NewJob::from(Job::RebuildSearchIndex {
+                post_ids: vec![2, 3],
+            }))
+            .await
+            .unwrap();
+        queue
+            .enqueue(NewJob::from(Job::RebuildSearchIndex {
+                post_ids: vec![4],
+            }))
+            .await
+            .unwrap();
+
+        let jobs = queue.dequeue(20).await.unwrap();
+        assert_eq!(jobs.len(), 3);
+
+        runner.execute_batch(&jobs, 0).await;
+
+        let stats = queue.stats().await.unwrap();
+        assert_eq!(stats.completed, 3);
+        assert_eq!(stats.pending, 0);
+        assert_eq!(stats.running, 0);
+        assert_eq!(stats.dead, 0);
+    }
+
+    #[tokio::test]
+    async fn coalesces_search_index_with_mixed_jobs() {
+        let (queue, registry) = setup().await;
+        let runner = WorkerRunner::new(queue.clone(), registry, Duration::from_millis(100), 20);
+
+        queue
+            .enqueue(NewJob::from(Job::GenerateSitemap))
+            .await
+            .unwrap();
+        queue
+            .enqueue(NewJob::from(Job::RebuildSearchIndex {
+                post_ids: vec![10],
+            }))
+            .await
+            .unwrap();
+        queue
+            .enqueue(NewJob::from(Job::RebuildSearchIndex {
+                post_ids: vec![20],
+            }))
+            .await
+            .unwrap();
+
+        let jobs = queue.dequeue(20).await.unwrap();
+        assert_eq!(jobs.len(), 3);
+
+        runner.execute_batch(&jobs, 0).await;
+
+        let stats = queue.stats().await.unwrap();
+        assert_eq!(stats.completed, 3);
+        assert_eq!(stats.pending, 0);
+        assert_eq!(stats.dead, 0);
     }
 }

@@ -118,6 +118,8 @@ pub struct AppConfig {
     pub worker_concurrency: usize,
     #[serde(default = "default_worker_poll_interval_ms")]
     pub worker_poll_interval_ms: u64,
+    #[serde(default = "default_worker_batch_size")]
+    pub worker_batch_size: usize,
     #[serde(default = "default_worker_max_attempts")]
     pub worker_default_max_attempts: u32,
     #[serde(default = "default_worker_cron_tick_ms")]
@@ -612,6 +614,10 @@ fn default_worker_poll_interval_ms() -> u64 {
     500
 }
 
+fn default_worker_batch_size() -> usize {
+    20
+}
+
 fn default_worker_max_attempts() -> u32 {
     3
 }
@@ -868,6 +874,10 @@ impl AppConfig {
                 .ok()
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(default_worker_poll_interval_ms()),
+            worker_batch_size: env::var("WORKER_BATCH_SIZE")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(default_worker_batch_size()),
             worker_default_max_attempts: env::var("WORKER_DEFAULT_MAX_ATTEMPTS")
                 .ok()
                 .and_then(|v| v.parse().ok())
@@ -1062,6 +1072,7 @@ impl AppConfig {
             worker_enabled: false,
             worker_concurrency: default_worker_concurrency(),
             worker_poll_interval_ms: default_worker_poll_interval_ms(),
+            worker_batch_size: default_worker_batch_size(),
             worker_default_max_attempts: default_worker_max_attempts(),
             worker_cron_tick_ms: default_worker_cron_tick_ms(),
             cron_seed_enabled: false,

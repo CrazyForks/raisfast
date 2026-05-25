@@ -255,6 +255,23 @@ impl utoipa::Modify for SecurityAddon {
                 ),
             );
         }
+
+        let server = utoipa::openapi::ServerBuilder::new()
+            .url("/")
+            .description(Some("Current host"))
+            .build();
+        openapi.servers = Some(vec![server]);
+
+        let prefix = crate::constants::API_PREFIX;
+        let paths = std::mem::take(&mut openapi.paths.paths);
+        for (path, item) in paths {
+            let full_path = if path.starts_with(prefix) {
+                path
+            } else {
+                format!("{prefix}{path}")
+            };
+            openapi.paths.paths.insert(full_path, item);
+        }
     }
 }
 
@@ -265,9 +282,79 @@ pub async fn serve_openapi_json() -> Response {
     (StatusCode::OK, [("Content-Type", "application/json")], json).into_response()
 }
 
-/// Redirect to the online Swagger UI (only compiled when `openapi` feature is enabled)
+/// Serve Scalar API documentation UI (only compiled when `openapi` feature is enabled)
 #[cfg(feature = "openapi")]
-pub async fn redirect_to_swagger() -> Redirect {
-    let spec_url = "http://localhost:9898/api/docs/openapi.json";
-    Redirect::temporary(&format!("https://petstore.swagger.io/?url={spec_url}"))
+pub async fn serve_scalar_ui() -> impl IntoResponse {
+    let html = r#"<!DOCTYPE html>
+<html>
+<head>
+    <title>RaisFast API Docs</title>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style>
+        body { margin: 0; }
+        #login-bar {
+            display: flex; align-items: center; gap: 8px;
+            padding: 8px 16px; background: #1a1a2e; color: #eee;
+            font-family: system-ui, sans-serif; font-size: 14px;
+            position: sticky; top: 0; z-index: 9999;
+        }
+        #login-bar input {
+            padding: 6px 10px; border: 1px solid #444; border-radius: 4px;
+            background: #222; color: #eee; font-size: 13px;
+        }
+        #login-bar button {
+            padding: 6px 16px; border: none; border-radius: 4px;
+            background: #6366f1; color: #fff; cursor: pointer; font-size: 13px;
+        }
+        #login-bar button:hover { background: #4f46e5; }
+        #login-bar .status { margin-left: 8px; font-size: 12px; }
+        #login-bar .ok { color: #4ade80; }
+        #login-bar .err { color: #f87171; }
+    </style>
+</head>
+<body>
+    <div id="login-bar">
+        <span>Quick Login:</span>
+        <input id="email" type="email" placeholder="Email" value="admin@raisfast.dev" style="width:180px" />
+        <input id="password" type="password" placeholder="Password" value="admin123" style="width:140px" />
+        <button onclick="doLogin()">Login</button>
+        <span id="status" class="status"></span>
+    </div>
+    <div id="scalar-container"></div>
+    <script>
+    async function doLogin() {
+        const s = document.getElementById('status');
+        s.textContent = 'Logging in...'; s.className = 'status';
+        try {
+            const email = document.getElementById('email').value;
+            const password = document.getElementById('password').value;
+            const res = await fetch('/api/v1/auth/login', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ email, password })
+            });
+            if (!res.ok) throw new Error(await res.text());
+            const data = await res.json();
+            const token = data.access_token || data.data?.access_token;
+            if (!token) throw new Error('No token in response');
+            localStorage.setItem('raisfast_token', token);
+            s.textContent = 'Token saved'; s.className = 'status ok';
+            applyToken(token);
+        } catch (e) {
+            s.textContent = 'Failed: ' + e.message; s.className = 'status err';
+        }
+    }
+    function applyToken(token) {
+        const evt = new CustomEvent('scalar-update-auth', {
+            detail: { authKey: 'bearer_auth', token: 'Bearer ' + token }
+        });
+        window.dispatchEvent(evt);
+    }
+    </script>
+    <script id="api-reference" data-url="/api/docs/openapi.json"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@scalar/api-reference"></script>
+</body>
+</html>"#;
+    ([("Content-Type", "text/html; charset=utf-8")], html).into_response()
 }

@@ -39,13 +39,22 @@ impl JobHandler for RebuildSearchIndexHandler {
         }
 
         tracing::info!(
-            "[search_index] indexing {} post(s): {:?}",
+            "[search_index] indexing {} post(s) ({} unique)",
             post_ids.len(),
-            post_ids
+            {
+                let mut sorted = post_ids.clone();
+                sorted.sort_unstable();
+                sorted.dedup();
+                sorted.len()
+            }
         );
 
+        let mut seen = std::collections::HashSet::new();
         let mut posts = Vec::with_capacity(post_ids.len());
         for id in post_ids {
+            if !seen.insert(*id) {
+                continue;
+            }
             match crate::models::post::find_by_id(&self.pool, SnowflakeId(*id), None).await {
                 Ok(Some(post)) => posts.push(SearchablePost {
                     id: post.id.to_string(),
