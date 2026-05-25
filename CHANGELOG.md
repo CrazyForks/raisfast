@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.24] - 2026-05-25
+
+- Optimize the process
+
+- Optimize the process
+
+- Optimize the process
+
+- Worker batch size, docs: update readme
+
+- -m
+
 ## [0.2.23] - 2026-05-23
 
 - Optimize the process
