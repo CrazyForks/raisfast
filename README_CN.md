@@ -4,7 +4,7 @@
     <strong>最快的 CMS，最简单的部署。</strong>
   </p>
   <p align="center">
-    基于 Rust 的高性能 headless CMS，内置博客、电商、钱包、支付、多租户 SaaS。JS / Rhai / Lua / WASM 四引擎插件无限扩展。<br>
+    基于 Rust 的高性能 BaaS 与 headless CMS，内置博客、电商、钱包、支付、多租户 SaaS。JS / Rhai / Lua / WASM 四引擎插件无限扩展。<br>
     单二进制文件，零依赖，零 GC。下载即运行。
   </p>
 </p>

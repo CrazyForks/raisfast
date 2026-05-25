@@ -16,7 +16,11 @@ use raisfast::config::app::AppConfig;
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
-#[command(name = "raisfast", version, about = "Blog system built with Axum")]
+#[command(
+    name = "raisfast",
+    version,
+    about = "Rust-powered high-performance BaaS and headless CMS"
+)]
 pub struct Cli {
     #[command(subcommand)]
     command: Option<Commands>,

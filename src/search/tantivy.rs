@@ -2,10 +2,10 @@
 
 use std::sync::{Arc, Mutex};
 
+use tantivy::TantivyDocument;
 use tantivy::collector::Count;
 use tantivy::doc;
 use tantivy::schema::{IndexRecordOption, SchemaBuilder, TextFieldIndexing, TextOptions, Value};
-use tantivy::TantivyDocument;
 
 use super::{SearchEngine, SearchResult, SearchablePost};
 
@@ -126,7 +126,9 @@ impl SearchEngine for TantivyEngine {
         let post = post.clone();
 
         tokio::task::spawn_blocking(move || -> AppResult<()> {
-            let mut w = writer.lock().map_err(|e| AppError::Internal(anyhow::anyhow!("lock: {e}")))?;
+            let mut w = writer
+                .lock()
+                .map_err(|e| AppError::Internal(anyhow::anyhow!("lock: {e}")))?;
             w.delete_term(tantivy::Term::from_field_text(f_post_id, &post.id));
             w.add_document(doc!(
                 f_post_id => post.id.as_str(),
@@ -150,7 +152,9 @@ impl SearchEngine for TantivyEngine {
         let posts: Vec<SearchablePost> = posts.to_vec();
 
         tokio::task::spawn_blocking(move || -> AppResult<()> {
-            let mut w = writer.lock().map_err(|e| AppError::Internal(anyhow::anyhow!("lock: {e}")))?;
+            let mut w = writer
+                .lock()
+                .map_err(|e| AppError::Internal(anyhow::anyhow!("lock: {e}")))?;
             for post in &posts {
                 w.delete_term(tantivy::Term::from_field_text(f_post_id, post.id.as_str()));
                 w.add_document(doc!(
@@ -174,7 +178,9 @@ impl SearchEngine for TantivyEngine {
         let post_id = post_id.to_string();
 
         tokio::task::spawn_blocking(move || -> AppResult<()> {
-            let mut w = writer.lock().map_err(|e| AppError::Internal(anyhow::anyhow!("lock: {e}")))?;
+            let mut w = writer
+                .lock()
+                .map_err(|e| AppError::Internal(anyhow::anyhow!("lock: {e}")))?;
             w.delete_term(tantivy::Term::from_field_text(f_post_id, &post_id));
             w.commit()
                 .map_err(|e| AppError::Internal(anyhow::anyhow!("commit: {e}")))?;
@@ -192,7 +198,9 @@ impl SearchEngine for TantivyEngine {
         let posts: Vec<SearchablePost> = posts.to_vec();
 
         tokio::task::spawn_blocking(move || -> AppResult<()> {
-            let mut w = writer.lock().map_err(|e| AppError::Internal(anyhow::anyhow!("lock: {e}")))?;
+            let mut w = writer
+                .lock()
+                .map_err(|e| AppError::Internal(anyhow::anyhow!("lock: {e}")))?;
             w.delete_all_documents()
                 .map_err(|e| AppError::Internal(anyhow::anyhow!("delete all: {e}")))?;
             for post in &posts {

@@ -21,7 +21,7 @@ merge-tasks = true
 # Build only the required packages, and individually
 precise-builds = true
 # Path that installers should place binaries in
-install-path = "CARGO_HOME"
+install-path = ["~/.local/bin", "$HOME/AppData/Local/raisfast"]
 # Whether to install an updater program
 install-updater = false
 allow-dirty = ["ci"]

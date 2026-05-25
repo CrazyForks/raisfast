@@ -26,6 +26,7 @@ use axum::middleware::{from_fn, from_fn_with_state};
 use axum::response::IntoResponse;
 use axum::routing::get;
 use tokio::net::TcpListener;
+use tower_http::compression::CompressionLayer;
 use tower_http::cors::{Any, CorsLayer};
 use tower_http::limit::RequestBodyLimitLayer;
 use tower_http::services::ServeDir;
@@ -343,6 +344,10 @@ async fn build_app(
             "/admin",
             axum::Router::new().fallback(admin_spa::serve_admin),
         )
+        .nest(
+            "/assets",
+            axum::Router::new().fallback(admin_spa::serve_admin_asset),
+        )
         .fallback(handle_plugin_route)
         .layer(Extension(limiters))
         .layer(from_fn(powered_by_middleware))
@@ -383,6 +388,7 @@ async fn build_app(
             state.clone(),
             crate::middleware::aop_http::aop_http_layer,
         ))
+        .layer(CompressionLayer::new())
         .with_state(state);
 
     let app = app.route("/api/docs/openapi.json", get(openapi::serve_openapi_json));

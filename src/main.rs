@@ -1,4 +1,4 @@
-//! Blog system entry point.
+//! RaisFast: Rust-powered high-performance BaaS and headless CMS.
 //!
 //! Default behavior: starts the HTTP server. Use subcommands to switch to other operations.
 //!

@@ -4,7 +4,7 @@
     <strong>The fastest CMS, easiest to deploy.</strong>
   </p>
   <p align="center">
-    Rust-powered High performance headless CMS with built-in blog, ecommerce, wallet, payment & multi-tenant SaaS. JS / Rhai / Lua / WASM plugin engines for infinite extensibility.<br>
+    Rust-powered high-performance BaaS and headless CMS with built-in blog, ecommerce, wallet, payment & multi-tenant SaaS. JS / Rhai / Lua / WASM plugin engines for infinite extensibility.<br>
     Single binary, zero dependencies, zero GC. Download and run.
   </p>
 </p>

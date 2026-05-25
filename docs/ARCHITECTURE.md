@@ -33,7 +33,7 @@
 
 ## Overview
 
-raisfast is a Rust-powered headless CMS and backend-as-a-service engine. It compiles to a single binary with zero runtime dependencies, providing blog, ecommerce, wallet, payment, and multi-tenant SaaS capabilities out of the box.
+raisfast is a Rust-powered high-performance BaaS and headless CMS. It compiles to a single binary with zero runtime dependencies, providing blog, ecommerce, wallet, payment, and multi-tenant SaaS capabilities out of the box.
 
 ```
                     ┌──────────────────────────────────┐

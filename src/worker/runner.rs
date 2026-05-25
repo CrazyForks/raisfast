@@ -107,13 +107,17 @@ impl WorkerRunner {
                 tracing::error!("worker-{worker_id} coalesced search index error: {e}");
                 for id in &search_job_ids {
                     if let Err(e) = self.queue.fail(id, &format!("{e}")).await {
-                        tracing::error!("worker-{worker_id} failed to fail coalesced job {id}: {e}");
+                        tracing::error!(
+                            "worker-{worker_id} failed to fail coalesced job {id}: {e}"
+                        );
                     }
                 }
             } else {
                 for id in &search_job_ids {
                     if let Err(e) = self.queue.complete(id).await {
-                        tracing::error!("worker-{worker_id} failed to complete coalesced job {id}: {e}");
+                        tracing::error!(
+                            "worker-{worker_id} failed to complete coalesced job {id}: {e}"
+                        );
                     }
                 }
             }
@@ -348,9 +352,7 @@ mod tests {
             .await
             .unwrap();
         queue
-            .enqueue(NewJob::from(Job::RebuildSearchIndex {
-                post_ids: vec![4],
-            }))
+            .enqueue(NewJob::from(Job::RebuildSearchIndex { post_ids: vec![4] }))
             .await
             .unwrap();
 
@@ -376,15 +378,11 @@ mod tests {
             .await
             .unwrap();
         queue
-            .enqueue(NewJob::from(Job::RebuildSearchIndex {
-                post_ids: vec![10],
-            }))
+            .enqueue(NewJob::from(Job::RebuildSearchIndex { post_ids: vec![10] }))
             .await
             .unwrap();
         queue
-            .enqueue(NewJob::from(Job::RebuildSearchIndex {
-                post_ids: vec![20],
-            }))
+            .enqueue(NewJob::from(Job::RebuildSearchIndex { post_ids: vec![20] }))
             .await
             .unwrap();
 

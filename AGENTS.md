@@ -2,7 +2,7 @@
 
 ## Project
 
-raisfast — Rust-powered headless CMS / desktop backend engine. Single binary, zero dependencies, zero GC. Built-in blog, ecommerce, wallet, payment & multi-tenant SaaS. JS / Rhai / Lua / WASM plugin engines for infinite extensibility.
+raisfast — Rust-powered high-performance BaaS and headless CMS. Single binary, zero dependencies, zero GC. Built-in blog, ecommerce, wallet, payment & multi-tenant SaaS. JS / Rhai / Lua / WASM plugin engines for infinite extensibility.
 
 - **Crate name:** `raisfast`
 - **Rust edition:** 2024

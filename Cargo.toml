@@ -8,7 +8,7 @@ version = "0.2.23"
 edition = "2024"
 default-run = "raisfast"
 repository = "https://github.com/raisfast/raisfast"
-description = "The fastest CMS, easiest to deploy. Rust-powered headless CMS with built-in blog, ecommerce, wallet, payment and 4 plugin engines."
+description = "The fastest CMS, easiest to deploy. Rust-powered high-performance BaaS and headless CMS with built-in blog, ecommerce, wallet, payment and 4 plugin engines."
 homepage = "https://github.com/raisfast/raisfast"
 license = "Apache-2.0"
 
@@ -73,7 +73,7 @@ tokio = { version = "1", features = ["full"] }
 tokio-stream = { version = "0.1", features = ["sync"] }
 futures = "0.3"
 tower = "0.5"
-tower-http = { version = "0.6", features = ["cors", "trace", "limit", "fs"] }
+tower-http = { version = "0.6", features = ["cors", "trace", "limit", "fs", "compression-gzip"] }
 rust-embed = { version = "8", features = ["mime-guess", "include-exclude"] }
 mime_guess = "2"
 

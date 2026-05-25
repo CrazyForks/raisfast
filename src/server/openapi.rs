@@ -5,8 +5,6 @@
 //! and `/api/docs` redirects to the online Swagger UI.
 
 use axum::http::StatusCode;
-#[cfg(feature = "openapi")]
-use axum::response::Redirect;
 use axum::response::{IntoResponse, Response};
 use utoipa::OpenApi;
 

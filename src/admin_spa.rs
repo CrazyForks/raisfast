@@ -38,3 +38,21 @@ pub async fn serve_admin(uri: Uri) -> Response {
         None => StatusCode::NOT_FOUND.into_response(),
     }
 }
+
+pub async fn serve_admin_asset(uri: Uri) -> Response {
+    let path = uri.path().trim_start_matches('/');
+
+    let asset_path = if path.starts_with("assets/") {
+        path.to_string()
+    } else {
+        format!("assets/{path}")
+    };
+
+    match AdminAssets::get(&asset_path) {
+        Some(content) => {
+            let mime = content.metadata.mimetype();
+            (StatusCode::OK, [(header::CONTENT_TYPE, mime)], content.data).into_response()
+        }
+        None => StatusCode::NOT_FOUND.into_response(),
+    }
+}
