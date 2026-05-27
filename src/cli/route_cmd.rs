@@ -18,6 +18,7 @@ fn collect_routes(config: &AppConfig) -> Vec<RouteInfo> {
         let _ = raisfast::handlers::category::routes(&mut registry, config);
         let _ = raisfast::handlers::tag::routes(&mut registry, config);
         let _ = raisfast::handlers::post::routes(&mut registry, config);
+        let _ = raisfast::handlers::post::admin_routes(&mut registry, config);
         let _ = raisfast::handlers::comment::routes(&mut registry, config);
     }
 

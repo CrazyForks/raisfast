@@ -235,7 +235,7 @@ impl StatsService {
         tenant_id: Option<&str>,
         limit: i64,
     ) -> Result<Vec<Value>, AppError> {
-        raisfast_derive::check_schema!("posts", "title", "slug", "created_at");
+        raisfast_derive::check_schema!("posts", "id", "title", "slug", "created_at");
         raisfast_derive::check_schema!("comments", "content", "created_at");
         let mut activities = Vec::new();
 
@@ -243,13 +243,13 @@ impl StatsService {
         let limit_clause = format!("LIMIT {limit}");
 
         let post_sql = format!(
-            "SELECT p.title, p.slug, p.created_at FROM posts p WHERE 1=1{tf_aliased} \
+            "SELECT p.id, p.title, p.slug, p.created_at FROM posts p WHERE 1=1{tf_aliased} \
              ORDER BY p.created_at DESC {limit_clause}"
         );
 
-        let posts: Vec<(Option<String>, String, String)> = raisfast_derive::crud_query!(
+        let posts: Vec<(i64, Option<String>, String, String)> = raisfast_derive::crud_query!(
             &self.pool,
-            (Option<String>, String, String),
+            (i64, Option<String>, String, String),
             &post_sql,
             [],
             fetch_all,
@@ -257,9 +257,11 @@ impl StatsService {
         )
         .map_err(|e| AppError::Internal(e.into()))?;
 
-        for (title, slug, at) in posts {
+        for (raw_id, title, slug, at) in posts {
+            let encoded_id = crate::types::snowflake_id::encode_id(raw_id);
             activities.push(json!({
                 "type": "post.created",
+                "id": encoded_id,
                 "title": title.unwrap_or_default(),
                 "slug": slug,
                 "at": at,

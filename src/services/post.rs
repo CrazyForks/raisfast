@@ -38,6 +38,7 @@ pub trait PostService: Send + Sync {
     async fn delete(&self, auth: &AuthUser, slug: &str) -> AppResult<()>;
     async fn get(&self, auth: &AuthUser, slug: &str) -> AppResult<PostResponse>;
     async fn get_any_status(&self, auth: &AuthUser, slug: &str) -> AppResult<PostResponse>;
+    async fn admin_get_by_id(&self, auth: &AuthUser, id: SnowflakeId) -> AppResult<PostResponse>;
     async fn list(
         &self,
         auth: &AuthUser,
@@ -57,10 +58,10 @@ pub trait PostService: Send + Sync {
     async fn admin_update(
         &self,
         auth: &AuthUser,
-        id: &str,
+        id: SnowflakeId,
         req: UpdatePostRequest,
     ) -> AppResult<PostResponse>;
-    async fn admin_delete(&self, auth: &AuthUser, id: &str) -> AppResult<()>;
+    async fn admin_delete(&self, auth: &AuthUser, id: SnowflakeId) -> AppResult<()>;
     async fn batch(&self, auth: &AuthUser, action: &str, ids: &[String]) -> AppResult<usize>;
     async fn list_recent_published(
         &self,
@@ -274,6 +275,15 @@ impl PostService for PostServiceImpl {
         joined_row_to_response(row, tags).await
     }
 
+    async fn admin_get_by_id(&self, auth: &AuthUser, id: SnowflakeId) -> AppResult<PostResponse> {
+        let row = crate::models::post::find_joined_by_id(&self.pool, id, auth.tenant_id())
+            .await?;
+        let tags = crate::models::post::get_post_tags(&self.pool, row.id, auth.tenant_id())
+            .await
+            .unwrap_or_default();
+        joined_row_to_response(row, tags).await
+    }
+
     #[allow(clippy::too_many_arguments)]
     async fn list(
         &self,
@@ -310,43 +320,35 @@ impl PostService for PostServiceImpl {
     async fn admin_update(
         &self,
         auth: &AuthUser,
-        id: &str,
+        id: SnowflakeId,
         req: UpdatePostRequest,
     ) -> AppResult<PostResponse> {
-        let parsed_id = crate::types::snowflake_id::parse_id(id)?;
-        let int_id = raisfast_derive::crud_resolve_id!(&self.pool, "posts", *parsed_id, tenant: auth.tenant_id())?
-            .ok_or_else(|| AppError::not_found("post"))?;
-
         let existing =
-            crate::models::post::find_by_id(&self.pool, SnowflakeId(int_id), auth.tenant_id())
+            crate::models::post::find_by_id(&self.pool, id, auth.tenant_id())
                 .await?
                 .ok_or_else(|| AppError::not_found("post"))?;
 
         let (req, d) = self.before_update(auth, &existing, req).await?;
         let resp = self
-            .update_inner(SnowflakeId(int_id), existing.clone(), req, d, auth)
+            .update_inner(id, existing.clone(), req, d, auth)
             .await?;
         let updated =
-            crate::models::post::find_by_id(&self.pool, SnowflakeId(int_id), auth.tenant_id())
+            crate::models::post::find_by_id(&self.pool, id, auth.tenant_id())
                 .await?
                 .unwrap_or(existing);
         self.after_updated(&updated);
         Ok(resp)
     }
 
-    async fn admin_delete(&self, auth: &AuthUser, id: &str) -> AppResult<()> {
-        let parsed_id = crate::types::snowflake_id::parse_id(id)?;
-        let int_id = raisfast_derive::crud_resolve_id!(&self.pool, "posts", *parsed_id, tenant: auth.tenant_id())?
-            .ok_or_else(|| AppError::not_found("post"))?;
-
+    async fn admin_delete(&self, auth: &AuthUser, id: SnowflakeId) -> AppResult<()> {
         let existing =
-            crate::models::post::find_by_id(&self.pool, SnowflakeId(int_id), auth.tenant_id())
+            crate::models::post::find_by_id(&self.pool, id, auth.tenant_id())
                 .await?
                 .ok_or_else(|| AppError::not_found("post"))?;
 
         self.before_delete(auth, &existing).await?;
 
-        crate::models::post::delete(&self.pool, SnowflakeId(int_id), auth.tenant_id()).await?;
+        crate::models::post::delete(&self.pool, id, auth.tenant_id()).await?;
         self.after_deleted(&existing);
         Ok(())
     }

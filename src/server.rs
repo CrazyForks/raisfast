@@ -124,6 +124,7 @@ async fn build_app(
             .merge(category::routes(&mut registry, config))
             .merge(tag::routes(&mut registry, config))
             .merge(post::routes(&mut registry, config))
+            .merge(post::admin_routes(&mut registry, config))
             .merge(comment::routes(&mut registry, config));
     }
 

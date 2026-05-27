@@ -108,7 +108,7 @@ pub fn admin_routes(
         r,
         registry,
         restful,
-        "/admin/posts/{slug}",
+        "/admin/posts/{id}",
         get,
         self::admin_get,
         "system admin",
@@ -303,7 +303,8 @@ pub async fn admin_update(
 ) -> AppResult<ApiResponse<PostResponse>> {
     auth.ensure_admin()?;
     validation::validate(&req)?;
-    let post = state.post_service.admin_update(&auth, &id, req).await?;
+    let id = crate::types::snowflake_id::parse_id(&id)?;
+    let post = state.post_service.admin_update(&auth, id, req).await?;
     Ok(ApiResponse::success(post))
 }
 
@@ -314,23 +315,25 @@ pub async fn admin_delete(
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<()>> {
     auth.ensure_admin()?;
-    state.post_service.admin_delete(&auth, &id).await?;
+    let id = crate::types::snowflake_id::parse_id(&id)?;
+    state.post_service.admin_delete(&auth, id).await?;
     Ok(ApiResponse::success(()))
 }
 
-/// Admin: get post detail by slug (all statuses included)
+/// Admin: get post detail by id (all statuses included)
 ///
-/// - **Method/Path:** `GET /api/v1/admin/posts/{slug}`
+/// - **Method/Path:** `GET /api/v1/admin/posts/{id}`
 /// - **Auth:** Requires author or above permission (`AuthorUser`)
-/// - **Description:** Fetches post detail of any status by slug, without incrementing view count.
+/// - **Description:** Fetches post detail of any status by id, without incrementing view count.
 /// - **Returns:** `ApiResponse<PostResponse>`
 pub async fn admin_get(
     auth: AuthUser,
     State(state): State<crate::AppState>,
-    Path(slug): Path<String>,
+    Path(id): Path<String>,
 ) -> AppResult<ApiResponse<PostResponse>> {
-    auth.ensure_author()?;
-    let post = state.post_service.get_any_status(&auth, &slug).await?;
+    auth.ensure_admin()?;
+    let id = crate::types::snowflake_id::parse_id(&id)?;
+    let post = state.post_service.admin_get_by_id(&auth, id).await?;
     Ok(ApiResponse::success(post))
 }
 
@@ -345,7 +348,7 @@ pub async fn admin_list(
     State(state): State<crate::AppState>,
     Query(query): Query<AdminPostListQuery>,
 ) -> AppResult<ApiResponse<PaginatedData<PostResponse>>> {
-    auth.ensure_author()?;
+    auth.ensure_admin()?;
     let pagination = PaginationParams::from_options(query.page, query.page_size);
 
     let (posts, total) = state
