@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.25] - 2026-05-27
+
+- Posts admin api
+
+- Compile parameter optimization
+
 ## [0.2.24] - 2026-05-25
 
 - Optimize the process
