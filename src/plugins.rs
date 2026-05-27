@@ -372,11 +372,11 @@ impl PluginManager {
 
         let plugin_dir = Path::new(plugin_dir);
         if !plugin_dir.exists() {
+            let _ = std::fs::create_dir_all(plugin_dir);
             tracing::info!(
-                "plugin directory does not exist, skipping: {}",
+                "created plugin directory: {}",
                 plugin_dir.display()
             );
-            return;
         }
 
         let entries = match std::fs::read_dir(plugin_dir) {

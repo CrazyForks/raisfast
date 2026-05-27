@@ -45,7 +45,7 @@ payment-dodo = []
 payment-all = ["payment-alipay", "payment-creem", "payment-dodo", "payment-stripe", "payment-wechat"]
 
 # ── OpenAPI / Swagger UI ────────────────────────────────────────────
-openapi = ["utoipa-swagger-ui"]
+openapi = []
 
 # ── TypeScript type generation ────────────────────────────────────
 export-types = ["ts-rs"]
@@ -57,9 +57,14 @@ proxy = ["dep:hyper", "dep:hyper-util", "dep:http-body-util", "dep:tokio-util"]
 tauri = ["dep:tauri"]
 
 [profile.dev]
-debug = 1  # 默认是 2（最大），设为 1 或 false 可大幅减小体积
+debug = 1
 
-# The profile that 'dist' will build with
+[profile.release]
+lto = "fat"
+strip = true
+opt-level = "z"
+codegen-units = 1
+
 [profile.dist]
 inherits = "release"
 lto = "thin"
@@ -183,7 +188,6 @@ tokio-util = { version = "0.7", features = ["rt"], optional = true }
 
 # OpenAPI
 utoipa = { version = "5", features = ["axum_extras", "chrono", "uuid"] }
-utoipa-swagger-ui = { version = "9", features = ["axum"], optional = true }
 
 # TypeScript type generation
 ts-rs = { version = "12", optional = true, features = ["chrono-impl"] }

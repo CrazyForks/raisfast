@@ -75,6 +75,9 @@ impl ContentTypeRegistry {
         protocol_registry: &crate::protocols::ProtocolRegistry,
     ) -> Result<Self, AppError> {
         let registry = Self::new();
+        if !dir.exists() {
+            let _ = std::fs::create_dir_all(dir);
+        }
         let entries = std::fs::read_dir(dir).map_err(|e| {
             AppError::Internal(anyhow::anyhow!(
                 "cannot read content_types dir {dir:?}: {e}"

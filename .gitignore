@@ -16,3 +16,5 @@ storage/*
 
 frontend/
 dev-docs/
+
+fly.toml

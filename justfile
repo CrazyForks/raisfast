@@ -14,7 +14,7 @@ plugin_type := "all"
 default:
     @just --list
 
-features := "db-" + db + " plugin-" + plugin_type + " search-tantivy"
+features := "db-" + db + " plugin-js plugin-rhai search-tantivy"
 
 # ── 编译 ──────────────────────────────────────────────────────────
 
@@ -113,58 +113,23 @@ mysql-check:
 # CI: fmt → lint → test（确保所有检查通过）
 ci: fmt-check lint test
 
-# ── 插件 ──────────────────────────────────────────────────────────
+# ── 部署 ──────────────────────────────────────────────────────────
 
-# 编译所有示例 WASM 插件并复制到 plugins/ 目录
-plugins-build:
-    @echo "Building seo-optimizer..."
-    cd plugins-examples/seo-optimizer && cargo build --target wasm32-unknown-unknown --release
-    @echo "Building content-filter..."
-    cd plugins-examples/content-filter && cargo build --target wasm32-unknown-unknown --release
-    @mkdir -p plugins/seo-optimizer plugins/content-filter
-    cp plugins-examples/seo-optimizer/target/wasm32-unknown-unknown/release/seo_optimizer.wasm plugins/seo-optimizer/
-    cp plugins-examples/seo-optimizer/plugin.toml plugins/seo-optimizer/
-    cp plugins-examples/content-filter/target/wasm32-unknown-unknown/release/content_filter.wasm plugins/content-filter/
-    cp plugins-examples/content-filter/plugin.toml plugins/content-filter/
-    @echo "Done. WASM plugins ready in plugins/"
+fly_target := "x86_64-unknown-linux-musl"
+fly_image := "raisfast-fly"
 
-# 复制 JS 插件到 plugins/ 目录
-plugins-js-build:
-    @echo "Copying JS plugins..."
-    @mkdir -p plugins/welcome-email
-    @cp plugins-examples-js/welcome-email/plugin.toml plugins/welcome-email/
-    @cp plugins-examples-js/welcome-email/index.js plugins/welcome-email/
-    @mkdir -p plugins/seo-optimizer-js
-    @cp plugins-examples-js/seo-optimizer-js/plugin.toml plugins/seo-optimizer-js/
-    @cp plugins-examples-js/seo-optimizer-js/index.js plugins/seo-optimizer-js/
-    @echo "Done. JS plugins ready in plugins/"
+# 安装 cross（Rust 交叉编译工具）
+install-cross:
+    cargo install cross --git https://github.com/cross-rs/cross
 
-# 编译 TypeScript JS 插件（需要 esbuild）
-plugins-ts-build:
-    @echo "Compiling TypeScript plugins..."
-    @npx esbuild plugins-examples-js/seo-optimizer-js/src/index.ts \
-        --outfile=plugins-examples-js/seo-optimizer-js/index.js \
-        --bundle --format=iife --target=es2021
-    @echo "Done."
+# 交叉编译 Linux 二进制并部署到 fly.io
+build-cross:
+    @echo "Cross-compiling for Linux via cross..."
+    cross build --release --features "{{features}}" --target {{fly_target}}
 
-# 扫描 plugins-examples-lua/ 下所有含 plugin.toml 的子目录，复制到 plugins/
-# 扫描 plugins-examples-lua/ 下含 plugin.toml 的子目录，复制到 plugins/
-plugins-lua-build:
-    #!/usr/bin/env bash
-    echo "Scanning plugins-examples-lua/..."
-    count=0
-    for dir in plugins-examples-lua/*/; do
-        if [ -f "${dir}plugin.toml" ]; then
-            name=$(basename "$dir")
-            echo "  $name"
-            mkdir -p "plugins/$name"
-            cp -r "$dir"* "plugins/$name/"
-            count=$((count + 1))
-        else
-            echo "  Skipping $(basename "$dir"): missing plugin.toml"
-        fi
-    done
-    echo "Done. $count Lua plugin(s) copied to plugins/"
-
-# 编译/复制所有插件（WASM + JS + Lua）
-plugins-all: plugins-build plugins-js-build plugins-lua-build
+# 使用已编译的二进制直接部署到 fly.io（跳过编译）
+deploy-fly:
+    @echo "Building Docker image..."
+    docker build --platform linux/amd64 -t {{fly_image}} -f deploy/fly/Dockerfile .
+    @echo "Deploying to fly.io..."
+    fly deploy --local-only -c deploy/fly/fly.toml --image {{fly_image}}

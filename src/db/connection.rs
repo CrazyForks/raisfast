@@ -68,6 +68,13 @@ async fn try_connect(database_url: &str, pool_size: u32) -> Result<Pool, sqlx::E
     #[cfg(feature = "db-sqlite")]
     {
         use sqlx::pool::PoolOptions;
+        if let Some(parent) = database_url
+            .strip_prefix("sqlite:")
+            .and_then(|p| p.split('?').next())
+            .and_then(|p| std::path::Path::new(p).parent().map(|d| d.to_path_buf()))
+        {
+            let _ = std::fs::create_dir_all(&parent);
+        }
         let pool = PoolOptions::<sqlx::Sqlite>::new()
             .max_connections(pool_size)
             .min_connections(1)
