@@ -48,6 +48,7 @@ pub use permissions::PermissionChecker;
 export_types!(
     PluginHealth,
     PluginMetrics,
+    PluginEvent,
     PluginInfoResponse,
     Permissions,
 );
