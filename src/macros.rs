@@ -296,3 +296,21 @@ macro_rules! test_pool {
         pool
     }};
 }
+
+#[cfg(feature = "export-types")]
+#[macro_export]
+macro_rules! export_types {
+    ($($ty:ty),* $(,)?) => {
+        $(
+            inventory::submit! {
+                $crate::export_type::ExportType::new::<$ty>()
+            }
+        )*
+    };
+}
+
+#[cfg(not(feature = "export-types"))]
+#[macro_export]
+macro_rules! export_types {
+    ($($ty:ty),* $(,)?) => {};
+}

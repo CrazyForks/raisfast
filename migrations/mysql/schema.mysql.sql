@@ -437,6 +437,25 @@ CREATE TABLE IF NOT EXISTS categories (
 
 CREATE INDEX idx_categories_tenant ON categories(tenant_id);
 
+-- 商品分类
+CREATE TABLE IF NOT EXISTS product_categories (
+    id BIGINT PRIMARY KEY,
+    tenant_id VARCHAR(36) NOT NULL DEFAULT 'default',
+    name VARCHAR(255) UNIQUE NOT NULL,
+    slug VARCHAR(255) UNIQUE NOT NULL,
+    description TEXT,
+    cover_image VARCHAR(500),
+    parent_id BIGINT,
+    sort_order INT NOT NULL DEFAULT 0,
+    created_by BIGINT,
+    updated_by BIGINT,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    FOREIGN KEY (parent_id) REFERENCES product_categories(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE INDEX idx_product_categories_tenant ON product_categories(tenant_id);
+
 -- 标签
 CREATE TABLE IF NOT EXISTS tags (
     id BIGINT PRIMARY KEY,
@@ -706,7 +725,7 @@ CREATE TABLE IF NOT EXISTS products (
     sale_price BIGINT,
     has_variants BOOLEAN NOT NULL DEFAULT FALSE,
     updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-    FOREIGN KEY (category_id) REFERENCES categories(id)
+    FOREIGN KEY (category_id) REFERENCES product_categories(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE INDEX idx_products_status ON products(status);

@@ -39,6 +39,7 @@ pub mod payment_transaction;
 pub mod plugin_storage;
 pub mod post;
 pub mod product;
+pub mod product_category;
 pub mod product_variant;
 pub mod rbac;
 pub mod refresh_token;
@@ -52,3 +53,44 @@ pub mod user_credential;
 pub mod wallet;
 pub mod wallet_outbox;
 pub mod wallet_transaction;
+
+#[cfg(feature = "export-types")]
+export_types!(
+    user::UserRole,
+    user::UserStatus,
+    user::RegisteredVia,
+    user_credential::AuthType,
+    post::PostStatus,
+    post::CommentOpenStatus,
+    comment::CommentStatus,
+    comment::AdminCommentRow,
+    page::PageStatus,
+    page::Page,
+    page::PageBlock,
+    page::GalleryImage,
+    page::TestimonialItem,
+    page::FaqItem,
+    page::StatItem,
+    page::TimelineItem,
+    page::TeamMember,
+    page::SocialLink,
+    page::PricingPlan,
+    page::FormFieldDef,
+    page::ColumnDef,
+    category::Category,
+    tag::Tag,
+    post::TagBrief,
+    rbac::Role,
+    rbac::Permission,
+    tenant::Tenant,
+    api_token::ApiTokenListItem,
+    content_revision::ContentRevision,
+    content_revision::RevisionSummary,
+    reusable_block::ReusableBlock,
+    wallet::WalletStatus,
+    wallet_transaction::WalletEntryType,
+    wallet_transaction::WalletTxType,
+    wallet_transaction::WalletReferenceType,
+    options::OptionType,
+    comment::CommentResponse,
+);

@@ -282,6 +282,11 @@ pub async fn global_rate_limit(
         return next.run(req).await;
     }
 
+    let path = req.uri().path();
+    if path.starts_with("/api/v1/setup") {
+        return next.run(req).await;
+    }
+
     let ip = extract_client_ip(&req);
 
     if !limiters.global.check(&ip).await {

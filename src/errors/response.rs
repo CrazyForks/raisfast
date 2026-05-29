@@ -12,8 +12,8 @@
 //! - [`ApiResponse`]: Generic response wrapper supporting success and error responses
 //! - [`PaginatedData`]: Pagination data envelope for list endpoints
 
-use axum::Json;
 use axum::response::{IntoResponse, Response};
+use axum::Json;
 use serde::Serialize;
 
 /// Unified API response structure

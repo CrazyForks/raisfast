@@ -30,6 +30,21 @@ pub mod rule_engine;
 pub mod schema;
 pub mod validation;
 
+#[cfg(feature = "export-types")]
+export_types!(
+    schema::ContentKind,
+    schema::ContentTypeSchema,
+    schema::FieldSchema,
+    schema::FieldType,
+    schema::RelationType,
+    schema::RelationConfig,
+    schema::MediaConfig,
+    schema::IndexDef,
+    schema::ApiAccess,
+    schema::ApiEndpointConfig,
+    schema::ApiConfig,
+);
+
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;

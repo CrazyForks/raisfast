@@ -14,6 +14,9 @@
 #[macro_use]
 mod macros;
 
+#[cfg(feature = "export-types")]
+pub mod export_type;
+
 pub mod app;
 pub mod aspects;
 pub mod cache;
@@ -106,6 +109,7 @@ pub struct AppState {
     pub post_service: Arc<dyn crate::services::post::PostService>,
     pub page_service: Arc<dyn crate::services::page::PageService>,
     pub category_service: Arc<dyn crate::services::category::CategoryService>,
+    pub product_category_service: Arc<dyn crate::services::product_category::ProductCategoryService>,
     pub tag_service: Arc<dyn crate::services::tag::TagService>,
     pub comment_service: Arc<dyn crate::services::comment::CommentService>,
     pub user_service: Arc<dyn crate::services::user::UserService>,
@@ -254,6 +258,12 @@ pub async fn build_app_state(
             aspect_engine.clone(),
             Arc::new(pool.clone()),
         ));
+    let product_category_service: Arc<
+        dyn crate::services::product_category::ProductCategoryService,
+    > = Arc::new(crate::services::product_category::ProductCategoryServiceImpl::new(
+        aspect_engine.clone(),
+        Arc::new(pool.clone()),
+    ));
     let page_service: Arc<dyn crate::services::page::PageService> = Arc::new(
         crate::services::page::PageServiceImpl::new(aspect_engine.clone(), Arc::new(pool.clone())),
     );
@@ -302,6 +312,7 @@ pub async fn build_app_state(
         post_service,
         page_service,
         category_service,
+        product_category_service,
         tag_service,
         comment_service,
         user_service,

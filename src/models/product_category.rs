@@ -1,0 +1,296 @@
+use serde::{Deserialize, Serialize};
+
+#[cfg(feature = "export-types")]
+use ts_rs::TS;
+
+use crate::errors::app_error::{AppError, AppResult};
+use crate::types::snowflake_id::SnowflakeId;
+use crate::utils::tz::Timestamp;
+
+#[cfg_attr(feature = "export-types", derive(TS))]
+#[derive(Debug, Serialize, Deserialize, Clone, sqlx::FromRow)]
+pub struct ProductCategory {
+    pub id: SnowflakeId,
+    pub tenant_id: Option<String>,
+    pub name: String,
+    pub slug: String,
+    pub description: Option<String>,
+    pub cover_image: Option<String>,
+    pub parent_id: Option<SnowflakeId>,
+    pub sort_order: i64,
+    pub created_by: Option<SnowflakeId>,
+    pub updated_by: Option<SnowflakeId>,
+    pub created_at: Timestamp,
+    pub updated_at: Timestamp,
+}
+
+pub async fn find_all(
+    pool: &crate::db::Pool,
+    tenant_id: Option<&str>,
+) -> AppResult<Vec<ProductCategory>> {
+    raisfast_derive::crud_list!(
+        pool,
+        "product_categories",
+        ProductCategory,
+        order_by: "sort_order, name",
+        tenant: tenant_id
+    )
+    .map_err(Into::into)
+}
+
+pub async fn find_paginated(
+    pool: &crate::db::Pool,
+    tenant_id: Option<&str>,
+    page: i64,
+    page_size: i64,
+) -> AppResult<(Vec<ProductCategory>, i64)> {
+    let result = raisfast_derive::crud_query_paged!(
+        pool,
+        ProductCategory,
+        table: "product_categories",
+        order_by: "sort_order, name",
+        tenant: tenant_id,
+        page: page,
+        page_size: page_size
+    );
+    Ok(result)
+}
+
+pub async fn find_by_id(
+    pool: &crate::db::Pool,
+    id: SnowflakeId,
+    tenant_id: Option<&str>,
+) -> AppResult<ProductCategory> {
+    raisfast_derive::crud_find_one!(
+        pool,
+        "product_categories",
+        ProductCategory,
+        where: ("id", id),
+        tenant: tenant_id
+    )
+    .map_err(Into::into)
+}
+
+pub async fn create(
+    pool: &crate::db::Pool,
+    cmd: &crate::commands::CreateProductCategoryCmd,
+    tenant_id: Option<&str>,
+    created_by: Option<i64>,
+) -> AppResult<ProductCategory> {
+    let (id, now) = (
+        crate::utils::id::new_snowflake_id(),
+        crate::utils::tz::now_utc(),
+    );
+
+    raisfast_derive::crud_insert!(
+        pool,
+        "product_categories",
+        [
+            "id" => id,
+            "name" => &cmd.name,
+            "slug" => &cmd.slug,
+            "description" => &cmd.description,
+            "parent_id" => cmd.parent_id,
+            "sort_order" => cmd.sort_order,
+            "created_by" => created_by,
+            "updated_by" => created_by,
+            "created_at" => now,
+            "updated_at" => now
+        ],
+        tenant: tenant_id
+    )?;
+
+    find_by_id(pool, id, tenant_id)
+        .await
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("failed to fetch created product category: {e}")))
+}
+
+pub async fn update(
+    pool: &crate::db::Pool,
+    cmd: &crate::commands::UpdateProductCategoryCmd,
+    tenant_id: Option<&str>,
+    updated_by: Option<i64>,
+) -> AppResult<ProductCategory> {
+    let cat_id = cmd.id;
+    let existing = find_by_id(pool, cat_id, tenant_id).await?;
+
+    let name = cmd.name.as_deref().unwrap_or(&existing.name);
+    let slug = cmd.slug.as_deref().unwrap_or(&existing.slug);
+    let desc = cmd
+        .description
+        .as_deref()
+        .map(std::string::ToString::to_string)
+        .or(existing.description);
+    let parent = cmd.parent_id.or(existing.parent_id.map(|v| *v));
+    let sort = cmd.sort_order.unwrap_or(existing.sort_order);
+
+    let now = crate::utils::tz::now_utc();
+    raisfast_derive::crud_update!(
+        pool,
+        "product_categories",
+        bind: [
+            "name" => name,
+            "slug" => slug,
+            "description" => desc,
+            "parent_id" => parent,
+            "sort_order" => sort,
+            "updated_by" => updated_by,
+            "updated_at" => &now
+        ],
+        where: ("id", cat_id),
+        tenant: tenant_id
+    )?;
+
+    find_by_id(pool, cat_id, tenant_id).await
+}
+
+pub async fn delete(
+    pool: &crate::db::Pool,
+    id: SnowflakeId,
+    tenant_id: Option<&str>,
+) -> AppResult<()> {
+    let result = raisfast_derive::crud_delete!(
+        pool,
+        "product_categories",
+        where: ("id", id),
+        tenant: tenant_id
+    )?;
+    AppError::expect_affected(&result, "product_category")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::commands::product_category::{CreateProductCategoryCmd, UpdateProductCategoryCmd};
+
+    async fn setup_pool() -> crate::db::Pool {
+        crate::test_pool!()
+    }
+
+    fn make_cmd(name: &str) -> CreateProductCategoryCmd {
+        CreateProductCategoryCmd {
+            name: name.to_string(),
+            slug: name.to_lowercase(),
+            description: None,
+            parent_id: None,
+            sort_order: 0,
+        }
+    }
+
+    #[tokio::test]
+    async fn create_and_find_by_id() {
+        let pool = setup_pool().await;
+        let cat = create(&pool, &make_cmd("Electronics"), None, None)
+            .await
+            .unwrap();
+        let found = find_by_id(&pool, cat.id, None).await.unwrap();
+        assert_eq!(found.id, cat.id);
+        assert_eq!(found.name, "Electronics");
+        assert_eq!(found.slug, "electronics");
+    }
+
+    #[tokio::test]
+    async fn find_all_returns_all() {
+        let pool = setup_pool().await;
+        create(&pool, &make_cmd("Phones"), None, None)
+            .await
+            .unwrap();
+        create(&pool, &make_cmd("Laptops"), None, None)
+            .await
+            .unwrap();
+        create(&pool, &make_cmd("Tablets"), None, None)
+            .await
+            .unwrap();
+        let all = find_all(&pool, None).await.unwrap();
+        assert_eq!(all.len(), 3);
+    }
+
+    #[tokio::test]
+    async fn find_paginated() {
+        let pool = setup_pool().await;
+        for name in ["A", "B", "C", "D", "E"] {
+            create(
+                &pool,
+                &CreateProductCategoryCmd {
+                    name: name.to_string(),
+                    slug: name.to_lowercase(),
+                    description: None,
+                    parent_id: None,
+                    sort_order: 0,
+                },
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        }
+        let (items, total) = super::find_paginated(&pool, None, 1, 3)
+            .await
+            .unwrap();
+        assert_eq!(total, 5);
+        assert_eq!(items.len(), 3);
+    }
+
+    #[tokio::test]
+    async fn update_changes_name() {
+        let pool = setup_pool().await;
+        let cat = create(&pool, &make_cmd("Old"), None, None).await.unwrap();
+        let updated = update(
+            &pool,
+            &UpdateProductCategoryCmd {
+                id: cat.id,
+                name: Some("New".to_string()),
+                slug: None,
+                description: Some("updated desc".to_string()),
+                parent_id: None,
+                sort_order: Some(10),
+            },
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        assert_eq!(updated.name, "New");
+        assert_eq!(updated.description.unwrap(), "updated desc");
+        assert_eq!(updated.sort_order, 10);
+    }
+
+    #[tokio::test]
+    async fn delete_removes_category() {
+        let pool = setup_pool().await;
+        let cat = create(&pool, &make_cmd("Gone"), None, None).await.unwrap();
+        delete(&pool, cat.id, None).await.unwrap();
+        let result = find_by_id(&pool, cat.id, None).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn find_by_id_not_found() {
+        let pool = setup_pool().await;
+        let result = find_by_id(&pool, SnowflakeId(99999), None).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn create_with_parent() {
+        let pool = setup_pool().await;
+        let parent = create(&pool, &make_cmd("Parent"), None, None)
+            .await
+            .unwrap();
+        let child = create(
+            &pool,
+            &CreateProductCategoryCmd {
+                name: "Child".to_string(),
+                slug: "child".to_string(),
+                description: None,
+                parent_id: Some(*parent.id),
+                sort_order: 0,
+            },
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        assert_eq!(child.parent_id.unwrap(), parent.id);
+    }
+}

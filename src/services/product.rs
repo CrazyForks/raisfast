@@ -57,10 +57,11 @@ impl ProductService for ProductServiceImpl {
         let currency = req.currency.as_deref().unwrap_or("CNY");
         let generated_slug = slug_aspect::generate_slug(&req.title);
         let slug = req.slug.as_deref().or(Some(generated_slug.as_str()));
+        let category_id = resolve_category_id(&self.pool, auth, req.category_id.as_deref()).await?;
         let p = crate::models::product::insert(
             &self.pool,
             &CreateProductCmd {
-                category_id: None,
+                category_id,
                 title: req.title,
                 description: req.description,
                 cover_url: req.cover_url,
@@ -83,10 +84,10 @@ impl ProductService for ProductServiceImpl {
                 virtual_sales: req.virtual_sales.unwrap_or(0),
                 meta_title: req.meta_title,
                 meta_description: req.meta_description,
-                stock: 0,
-                cost_price: None,
-                sale_price: None,
-                has_variants: false,
+                stock: req.stock.unwrap_or(0),
+                cost_price: req.cost_price,
+                sale_price: req.sale_price,
+                has_variants: req.has_variants.unwrap_or(false),
             },
             auth.tenant_id(),
         )
@@ -125,6 +126,18 @@ impl ProductService for ProductServiceImpl {
         let min_purchase = req.min_purchase.unwrap_or(existing.min_purchase);
         let total_sales = existing.total_sales;
         let virtual_sales = req.virtual_sales.unwrap_or(existing.virtual_sales);
+        let stock = req.stock.unwrap_or(existing.stock);
+        let cost_price = req.cost_price.or(existing.cost_price);
+        let sale_price = req.sale_price.or(existing.sale_price);
+        let has_variants = req.has_variants.unwrap_or(existing.has_variants);
+
+        let category_id = match req.category_id.as_deref() {
+            Some(raw) if !raw.is_empty() => {
+                resolve_category_id(&self.pool, auth, Some(raw)).await?
+            }
+            Some(_) => None,
+            None => existing.category_id.map(|c| *c),
+        };
 
         let existing_published_at_str = existing
             .published_at
@@ -144,7 +157,7 @@ impl ProductService for ProductServiceImpl {
             &self.pool,
             &UpdateProductCmd {
                 id: existing.id,
-                category_id: None,
+                category_id,
                 title: title.to_string(),
                 description: req.description.or(existing.description),
                 cover_url: req.cover_url.or(existing.cover_url),
@@ -169,10 +182,10 @@ impl ProductService for ProductServiceImpl {
                 virtual_sales,
                 meta_title: req.meta_title.or(existing.meta_title),
                 meta_description: req.meta_description.or(existing.meta_description),
-                stock: 0,
-                cost_price: None,
-                sale_price: None,
-                has_variants: false,
+                stock,
+                cost_price,
+                sale_price,
+                has_variants,
                 published_at: published_at.map(|s| s.to_string()),
                 version: req.version,
             },
@@ -235,6 +248,22 @@ impl ProductService for ProductServiceImpl {
     }
 }
 
+async fn resolve_category_id(
+    pool: &crate::db::Pool,
+    auth: &AuthUser,
+    raw_id: Option<&str>,
+) -> AppResult<Option<i64>> {
+    match raw_id {
+        Some(raw) if !raw.is_empty() => {
+            let cid = crate::types::snowflake_id::parse_id(raw)?;
+            let cat = crate::models::product_category::find_by_id(pool, cid, auth.tenant_id())
+                .await?;
+            Ok(Some(*cat.id))
+        }
+        _ => Ok(None),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -290,6 +319,10 @@ mod tests {
                     virtual_sales: None,
                     meta_title: None,
                     meta_description: None,
+                    stock: None,
+                    cost_price: None,
+                    sale_price: None,
+                    has_variants: None,
                 },
             )
             .await
@@ -331,6 +364,10 @@ mod tests {
                     virtual_sales: None,
                     meta_title: None,
                     meta_description: None,
+                    stock: None,
+                    cost_price: None,
+                    sale_price: None,
+                    has_variants: None,
                 },
             )
             .await
@@ -379,6 +416,10 @@ mod tests {
                     virtual_sales: None,
                     meta_title: None,
                     meta_description: None,
+                    stock: None,
+                    cost_price: None,
+                    sale_price: None,
+                    has_variants: None,
                 },
             )
             .await
@@ -427,6 +468,10 @@ mod tests {
                     virtual_sales: None,
                     meta_title: None,
                     meta_description: None,
+                    stock: None,
+                    cost_price: None,
+                    sale_price: None,
+                    has_variants: None,
                 },
             )
             .await
@@ -461,6 +506,10 @@ mod tests {
                     virtual_sales: None,
                     meta_title: None,
                     meta_description: None,
+                    stock: None,
+                    cost_price: None,
+                    sale_price: None,
+                    has_variants: None,
                 },
             )
             .await
@@ -507,6 +556,10 @@ mod tests {
                     virtual_sales: None,
                     meta_title: None,
                     meta_description: None,
+                    stock: None,
+                    cost_price: None,
+                    sale_price: None,
+                    has_variants: None,
                 },
             )
             .await
@@ -541,6 +594,10 @@ mod tests {
                     virtual_sales: None,
                     meta_title: None,
                     meta_description: None,
+                    stock: None,
+                    cost_price: None,
+                    sale_price: None,
+                    has_variants: None,
                 },
             )
             .await
@@ -583,6 +640,10 @@ mod tests {
                     virtual_sales: None,
                     meta_title: None,
                     meta_description: None,
+                    stock: None,
+                    cost_price: None,
+                    sale_price: None,
+                    has_variants: None,
                 },
             )
             .await
@@ -622,6 +683,10 @@ mod tests {
                     virtual_sales: None,
                     meta_title: None,
                     meta_description: None,
+                    stock: None,
+                    cost_price: None,
+                    sale_price: None,
+                    has_variants: None,
                 },
             )
             .await
@@ -671,6 +736,10 @@ mod tests {
                         virtual_sales: None,
                         meta_title: None,
                         meta_description: None,
+                        stock: None,
+                        cost_price: None,
+                        sale_price: None,
+                        has_variants: None,
                     },
                 )
                 .await
@@ -718,6 +787,10 @@ mod tests {
                     virtual_sales: None,
                     meta_title: None,
                     meta_description: None,
+                    stock: None,
+                    cost_price: None,
+                    sale_price: None,
+                    has_variants: None,
                 },
             )
             .await
@@ -753,6 +826,10 @@ mod tests {
                 virtual_sales: None,
                 meta_title: None,
                 meta_description: None,
+                stock: None,
+                cost_price: None,
+                sale_price: None,
+                has_variants: None,
             },
         )
         .await

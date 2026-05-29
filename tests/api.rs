@@ -21,7 +21,7 @@ use raisfast::handlers::{
     api_token as h_token, auth as h_auth, cart as h_cart, category as h_cat, comment as h_cmt,
     cron as h_cron, health as h_health, media as h_media, options as h_options, order as h_order,
     page as h_page, payment as h_payment, plugin as h_plugin, post as h_post, product as h_product,
-    product_variant as h_product_variant, rbac as h_rbac, reusable_block as h_block, rss as h_rss,
+    product_category as h_product_category, product_variant as h_product_variant, rbac as h_rbac, reusable_block as h_block, rss as h_rss,
     sse as h_sse, stats as h_stats, tag as h_tag, tenant as h_tenant, user as h_user,
     user_address as h_user_address, wallet as h_wallet,
 };
@@ -119,6 +119,12 @@ async fn build_test_app(pool: raisfast::db::Pool) -> (axum::Router, AppState) {
             Arc::new(raisfast::aspects::engine::AspectEngine::new()),
             Arc::new(pool.clone()),
         )),
+        product_category_service: Arc::new(
+            raisfast::services::product_category::ProductCategoryServiceImpl::new(
+                Arc::new(raisfast::aspects::engine::AspectEngine::new()),
+                Arc::new(pool.clone()),
+            ),
+        ),
         product_service: Arc::new(raisfast::services::product::ProductServiceImpl::new(
             Arc::new(raisfast::aspects::engine::AspectEngine::new()),
             Arc::new(pool.clone()),
@@ -359,6 +365,28 @@ async fn build_test_app(pool: raisfast::db::Pool) -> (axum::Router, AppState) {
         .route(
             "/admin/products/{id}",
             put(h_product::admin_update).delete(h_product::admin_delete),
+        )
+        .route(
+            "/product-categories",
+            get(h_product_category::list).post(h_product_category::create),
+        )
+        .route(
+            "/product-categories/{id}",
+            get(h_product_category::get)
+                .put(h_product_category::update)
+                .delete(h_product_category::delete),
+        )
+        .route(
+            "/admin/product-categories",
+            get(h_product_category::admin_list).post(h_product_category::admin_create),
+        )
+        .route(
+            "/admin/product-categories/{id}",
+            put(h_product_category::admin_update).delete(h_product_category::admin_delete),
+        )
+        .route(
+            "/admin/product-categories/batch",
+            http_post(h_product_category::admin_batch),
         )
         .route(
             "/orders",
@@ -730,6 +758,8 @@ mod plugin;
 mod post;
 #[path = "api/product.rs"]
 mod product;
+#[path = "api/product_category.rs"]
+mod product_category;
 #[path = "api/product_variant.rs"]
 mod product_variant;
 #[path = "api/rbac.rs"]

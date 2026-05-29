@@ -12,8 +12,8 @@ use crate::config::app::AppConfig;
 use crate::constants::DEFAULT_TENANT;
 use crate::handlers::payment as h_payment;
 use crate::handlers::{
-    api_token, auth, category, comment, cron, health, media, options, page, plugin, post, rbac,
-    reusable_block, rss, sse, stats, tag, tenant, user, wallet, ws,
+    api_token, auth, category, comment, cron, health, media, options, page, plugin, post,
+    product_category, rbac, reusable_block, rss, setup, sse, stats, tag, tenant, user, wallet, ws,
 };
 use crate::middleware::locale::locale_middleware;
 use crate::middleware::metrics;
@@ -114,6 +114,7 @@ async fn build_app(
     let mut api_v1 = axum::Router::new();
 
     api_v1 = api_v1
+        .merge(setup::routes(&mut registry, config))
         .merge(auth::routes(&mut registry, config))
         .merge(crate::handlers::oauth::routes(&mut registry, config))
         .merge(api_token::routes(&mut registry, config))
@@ -122,6 +123,7 @@ async fn build_app(
     if config.builtins.blog {
         api_v1 = api_v1
             .merge(category::routes(&mut registry, config))
+            .merge(product_category::routes(&mut registry, config))
             .merge(tag::routes(&mut registry, config))
             .merge(post::routes(&mut registry, config))
             .merge(post::admin_routes(&mut registry, config))
@@ -390,6 +392,10 @@ async fn build_app(
             crate::middleware::aop_http::aop_http_layer,
         ))
         .layer(CompressionLayer::new())
+        .layer(from_fn_with_state(
+            state.clone(),
+            crate::middleware::tenant::subdomain_tenant_resolver,
+        ))
         .with_state(state);
 
     let app = app.route("/api/docs/openapi.json", get(openapi::serve_openapi_json));

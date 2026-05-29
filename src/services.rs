@@ -24,6 +24,7 @@ pub mod password_reset;
 pub mod payment;
 pub mod post;
 pub mod product;
+pub mod product_category;
 pub mod product_variant;
 pub mod rbac;
 pub mod reusable_block;
@@ -34,3 +35,11 @@ pub mod tenant;
 pub mod user;
 pub mod user_address;
 pub mod wallet;
+
+#[cfg(feature = "export-types")]
+export_types!(
+    options::OptionGroup,
+    options::OptionEntry,
+    api_token::CreateTokenResult,
+    oauth::OAuthBindingInfo,
+);

@@ -174,6 +174,7 @@ pub struct AppConfig {
     pub builtins: BuiltinsConfig,
     #[serde(default)]
     pub builtin_tenantable: bool,
+    pub base_domain: Option<String>,
     #[serde(default = "default_email_provider")]
     pub email_provider: String,
     pub email_smtp_host: Option<String>,
@@ -956,6 +957,7 @@ impl AppConfig {
                 .ok()
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(false),
+            base_domain: env::var("BASE_DOMAIN").ok().filter(|v| !v.is_empty()),
             email_provider: env::var("EMAIL_PROVIDER")
                 .ok()
                 .filter(|v| !v.is_empty())
@@ -1107,6 +1109,7 @@ impl AppConfig {
             require_email_verification: false,
             builtins: BuiltinsConfig::default(),
             builtin_tenantable: true,
+            base_domain: Some("app.com".to_string()),
             email_provider: default_email_provider(),
             email_smtp_host: None,
             email_smtp_port: default_email_smtp_port(),

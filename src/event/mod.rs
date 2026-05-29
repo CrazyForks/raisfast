@@ -23,6 +23,7 @@ use crate::models::password_reset::PasswordResetToken;
 use crate::models::payment_order::PaymentOrder;
 use crate::models::post::Post;
 use crate::models::product::Product;
+use crate::models::product_category::ProductCategory;
 use crate::models::tag::Tag;
 use crate::models::user::User;
 use crate::models::wallet_transaction::WalletTransaction;
@@ -94,6 +95,14 @@ pub enum Event {
     ProductUpdated(Product),
     #[event(table = "products")]
     ProductDeleted(Product),
+
+    // ── Product Category lifecycle ──
+    #[event(table = "product_categories")]
+    ProductCategoryCreated(ProductCategory),
+    #[event(table = "product_categories")]
+    ProductCategoryUpdated(ProductCategory),
+    #[event(table = "product_categories")]
+    ProductCategoryDeleted(ProductCategory),
 
     // ── Order lifecycle ──
     #[event(table = "orders")]

@@ -204,3 +204,84 @@ async fn admin_list_products() {
     let items = body["data"]["items"].as_array().unwrap();
     assert!(items.len() >= 2);
 }
+
+#[tokio::test]
+async fn admin_create_product_with_category() {
+    let (mut app, _, tok) = setup_admin().await;
+    let (_, cat_body) = send(
+        &mut app,
+        post_json_auth(
+            "/api/v1/admin/product-categories",
+            json!({"name": "Electronics"}),
+            &tok,
+        ),
+    )
+    .await;
+    let cat_id = cat_body["data"]["id"].as_str().unwrap();
+
+    let (status, body) = send(
+        &mut app,
+        post_json_auth(
+            "/api/v1/admin/products",
+            json!({"title": "Phone", "price": 4999, "currency": "CNY", "category_id": cat_id}),
+            &tok,
+        ),
+    )
+    .await;
+    assert!(status.is_success(), "create with category: {status} {body:?}");
+    assert_eq!(body["data"]["title"], "Phone");
+    assert_eq!(body["data"]["category_id"], cat_id);
+}
+
+#[tokio::test]
+async fn admin_update_product_category() {
+    let (mut app, _, tok) = setup_admin().await;
+    let (_, cat_body) = send(
+        &mut app,
+        post_json_auth(
+            "/api/v1/admin/product-categories",
+            json!({"name": "Tablets"}),
+            &tok,
+        ),
+    )
+    .await;
+    let cat_id = cat_body["data"]["id"].as_str().unwrap();
+
+    let (_, create_body) = send(
+        &mut app,
+        post_json_auth(
+            "/api/v1/admin/products",
+            json!({"title": "iPad", "price": 3000}),
+            &tok,
+        ),
+    )
+    .await;
+    let id = create_body["data"]["id"].as_str().unwrap();
+
+    let (status, body) = send(
+        &mut app,
+        put_json_auth(
+            &format!("/api/v1/admin/products/{id}"),
+            json!({"title": "iPad Pro", "price": 6000, "version": 1, "category_id": cat_id}),
+            &tok,
+        ),
+    )
+    .await;
+    assert!(status.is_success(), "update category: {status} {body:?}");
+    assert_eq!(body["data"]["category_id"], cat_id);
+}
+
+#[tokio::test]
+async fn admin_create_product_with_invalid_category() {
+    let (mut app, _, tok) = setup_admin().await;
+    let (status, _) = send(
+        &mut app,
+        post_json_auth(
+            "/api/v1/admin/products",
+            json!({"title": "Ghost", "price": 100, "category_id": "99999"}),
+            &tok,
+        ),
+    )
+    .await;
+    assert!(!status.is_success());
+}

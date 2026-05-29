@@ -15,7 +15,10 @@ pub mod order;
 pub mod page;
 pub mod payment;
 pub mod post;
+pub mod product;
+pub mod product_category;
 pub mod reusable_block;
+pub mod setup;
 pub mod sse;
 pub mod stats;
 pub mod tag;
@@ -41,7 +44,10 @@ pub use order::*;
 pub use page::*;
 pub use payment::*;
 pub use post::*;
+pub use product::*;
+pub use product_category::*;
 pub use reusable_block::*;
+pub use setup::*;
 pub use sse::*;
 pub use stats::*;
 pub use tag::*;
@@ -49,6 +55,60 @@ pub use tenant::*;
 pub use user::*;
 pub use wallet::*;
 pub use ws::*;
+
+#[cfg(feature = "export-types")]
+export_types!(
+    batch::BatchRequest,
+    batch::BatchRequestWithRole,
+    batch::BatchResponse,
+    category::CreateCategoryRequest,
+    category::UpdateCategoryRequest,
+    comment::CreateCommentRequest,
+    comment::UpdateCommentStatusRequest,
+    currencies::CurrencyResponse,
+    currencies::CreateCurrencyRequest,
+    currencies::UpdateCurrencyRequest,
+    ecommerce::CreateUserAddressRequest,
+    ecommerce::UpdateUserAddressRequest,
+    ecommerce::UserAddressResponse,
+    media::MediaResponse,
+    media::MediaStatsResponse,
+    media::MediaTypeInfoResponse,
+    oauth::ProviderInfo,
+    page::CreatePageRequest,
+    page::UpdatePageRequest,
+    page::PageListQuery,
+    post::CreatePostRequest,
+    post::UpdatePostRequest,
+    post::PostResponse,
+    product_category::CreateProductCategoryRequest,
+    product_category::UpdateProductCategoryRequest,
+    tag::CreateTagRequest,
+    tag::UpdateTagRequest,
+    user::CredentialResponse,
+    user::AuthConfigResponse,
+    user::UserResponse,
+    user::LoginResponse,
+    user::RegisterRequest,
+    user::LoginRequest,
+    user::RefreshRequest,
+    user::UpdateUserRequest,
+    user::UpdatePasswordRequest,
+    user::UpdateRoleRequest,
+    user::ForgotPasswordRequest,
+    user::ResetPasswordRequest,
+    user::SetPasswordRequest,
+    user::SendSmsCodeRequest,
+    user::VerifySmsRequest,
+    user::BindPhoneRequest,
+    user::BindEmailRequest,
+    user::VerifyEmailRequest,
+    user::ResendVerificationRequest,
+    wallet::WalletResponse,
+    wallet::WalletTransactionResponse,
+    wallet::AdminWalletOperationRequest,
+    wallet::ReversalRequest,
+);
 
 fn validate_password(pwd: &str) -> Result<(), validator::ValidationError> {
     let has_letter = pwd.chars().any(|c| c.is_ascii_alphabetic());

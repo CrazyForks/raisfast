@@ -52,6 +52,14 @@ pub use scheduler::{
     update_schedule,
 };
 
+#[cfg(feature = "export-types")]
+export_types!(
+    JobStatus,
+    CronExecStatus,
+    CronSchedule,
+    CronExecutionLog,
+);
+
 /// Job types and parameters
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", content = "payload", rename_all = "snake_case")]

@@ -424,6 +424,24 @@ CREATE TABLE IF NOT EXISTS categories (
 
 CREATE INDEX IF NOT EXISTS idx_categories_tenant ON categories(tenant_id);
 
+-- 商品分类
+CREATE TABLE IF NOT EXISTS product_categories (
+    id INTEGER PRIMARY KEY,
+    tenant_id TEXT NOT NULL DEFAULT 'default',
+    name TEXT UNIQUE NOT NULL,
+    slug TEXT UNIQUE NOT NULL,
+    description TEXT,
+    cover_image TEXT,
+    parent_id INTEGER REFERENCES product_categories(id),
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    created_by INTEGER,
+    updated_by INTEGER,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_product_categories_tenant ON product_categories(tenant_id);
+
 -- 标签
 CREATE TABLE IF NOT EXISTS tags (
     id INTEGER PRIMARY KEY,
@@ -695,7 +713,7 @@ INSERT OR IGNORE INTO options (tenant_id, option_key, value, type, group_name, l
 CREATE TABLE IF NOT EXISTS products (
     id INTEGER PRIMARY KEY,
     tenant_id TEXT NOT NULL DEFAULT 'default',
-    category_id INTEGER REFERENCES categories(id),
+    category_id INTEGER REFERENCES product_categories(id),
     title TEXT NOT NULL,
     description TEXT,
     cover_url TEXT,

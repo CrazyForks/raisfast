@@ -421,6 +421,24 @@ CREATE TABLE IF NOT EXISTS categories (
 
 CREATE INDEX IF NOT EXISTS idx_categories_tenant ON categories(tenant_id);
 
+-- 商品分类
+CREATE TABLE IF NOT EXISTS product_categories (
+    id BIGINT PRIMARY KEY,
+    tenant_id TEXT NOT NULL DEFAULT 'default',
+    name VARCHAR(255) UNIQUE NOT NULL,
+    slug VARCHAR(255) UNIQUE NOT NULL,
+    description TEXT,
+    cover_image VARCHAR(500),
+    parent_id BIGINT REFERENCES product_categories(id),
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    created_by BIGINT,
+    updated_by BIGINT,
+    created_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_product_categories_tenant ON product_categories(tenant_id);
+
 -- 标签
 CREATE TABLE IF NOT EXISTS tags (
     id BIGINT PRIMARY KEY,
@@ -644,7 +662,7 @@ CREATE INDEX IF NOT EXISTS idx_wf_step_logs_instance ON workflow_step_logs(insta
 CREATE TABLE IF NOT EXISTS products (
     id BIGINT PRIMARY KEY,
     tenant_id TEXT NOT NULL DEFAULT 'default',
-    category_id BIGINT REFERENCES categories(id),
+    category_id BIGINT REFERENCES product_categories(id),
     title TEXT NOT NULL,
     description TEXT,
     cover_url VARCHAR(500),

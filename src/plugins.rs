@@ -44,6 +44,14 @@ pub mod vfs;
 pub use manifest::{CronEntry, HookConfig, Permissions, PluginManifest, RouteDef};
 pub use permissions::PermissionChecker;
 
+#[cfg(feature = "export-types")]
+export_types!(
+    PluginHealth,
+    PluginMetrics,
+    PluginInfoResponse,
+    Permissions,
+);
+
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;

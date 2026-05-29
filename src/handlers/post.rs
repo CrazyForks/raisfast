@@ -6,6 +6,7 @@
 
 use axum::Json;
 use axum::extract::{Path, Query, State};
+use axum::response::IntoResponse;
 
 use crate::dto::{
     AdminPostListQuery, BatchRequest, BatchResponse, CreatePostRequest, PostListQuery,
@@ -16,6 +17,26 @@ use crate::errors::response::{ApiResponse, PaginatedData};
 use crate::errors::validation;
 use crate::middleware::auth::AuthUser;
 use crate::utils::pagination::PaginationParams;
+
+fn post_list_cache_key(page: i64, page_size: i64, cat_id: Option<i64>, tg_id: Option<i64>, q: Option<&str>) -> String {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+    let mut h = DefaultHasher::new();
+    page.hash(&mut h);
+    page_size.hash(&mut h);
+    cat_id.hash(&mut h);
+    tg_id.hash(&mut h);
+    q.hash(&mut h);
+    format!("posts:list:{:x}", h.finish())
+}
+
+fn post_detail_cache_key(slug: &str) -> String {
+    format!("posts:detail:{slug}")
+}
+
+fn invalidate_post_cache(state: &crate::AppState) {
+    state.cms_cache.retain(|k, _| !k.starts_with("posts:"));
+}
 
 #[allow(clippy::let_and_return)]
 pub fn routes(
@@ -161,7 +182,7 @@ pub async fn list(
     auth: AuthUser,
     State(state): State<crate::AppState>,
     Query(query): Query<PostListQuery>,
-) -> AppResult<ApiResponse<PaginatedData<PostResponse>>> {
+) -> AppResult<axum::response::Response> {
     let pagination = PaginationParams::from_options(query.page, query.page_size);
 
     let cat_id = if let Some(ref cid) = query.category_id {
@@ -177,6 +198,20 @@ pub async fn list(
         None
     };
 
+    let cache_key = post_list_cache_key(
+        pagination.page,
+        pagination.page_size,
+        cat_id,
+        tg_id,
+        query.q.as_deref(),
+    );
+    let cache_ttl = std::time::Duration::from_secs(state.config.rule_engine.cms_cache_ttl_secs);
+    if let Some(entry) = state.cms_cache.get(&cache_key)
+        && entry.value().1.elapsed() < cache_ttl
+    {
+        return Ok(axum::Json(entry.value().0.clone()).into_response());
+    }
+
     let (posts, total) = state
         .post_service
         .list(
@@ -189,7 +224,15 @@ pub async fn list(
         )
         .await?;
 
-    Ok(pagination.paginate(posts, total))
+    let result = pagination.paginate(posts, total);
+    let resp = ApiResponse::success(result);
+    if let Ok(val) = serde_json::to_value(&resp) {
+        state
+            .cms_cache
+            .insert(cache_key, (val, std::time::Instant::now()));
+    }
+
+    Ok(resp.into_response())
 }
 
 /// Get post detail (by slug)
@@ -206,9 +249,24 @@ pub async fn get(
     auth: AuthUser,
     State(state): State<crate::AppState>,
     Path(slug): Path<String>,
-) -> AppResult<ApiResponse<PostResponse>> {
+) -> AppResult<axum::response::Response> {
+    let cache_key = post_detail_cache_key(&slug);
+    let cache_ttl = std::time::Duration::from_secs(state.config.rule_engine.cms_cache_ttl_secs);
+    if let Some(entry) = state.cms_cache.get(&cache_key)
+        && entry.value().1.elapsed() < cache_ttl
+    {
+        return Ok(axum::Json(entry.value().0.clone()).into_response());
+    }
+
     let post = state.post_service.get(&auth, &slug).await?;
-    Ok(ApiResponse::success(post))
+
+    if let Ok(val) = serde_json::to_value(&post) {
+        state
+            .cms_cache
+            .insert(cache_key, (val, std::time::Instant::now()));
+    }
+
+    Ok(ApiResponse::success(post).into_response())
 }
 
 /// Create a new post
@@ -231,6 +289,7 @@ pub async fn create(
     auth.ensure_author()?;
     validation::validate(&req)?;
     let post = state.post_service.create(&auth, req).await?;
+    invalidate_post_cache(&state);
     Ok(ApiResponse::success(post))
 }
 
@@ -256,6 +315,7 @@ pub async fn update(
     auth.ensure_author()?;
     validation::validate(&req)?;
     let post = state.post_service.update(&auth, &slug, req).await?;
+    invalidate_post_cache(&state);
     Ok(ApiResponse::success(post))
 }
 
@@ -277,6 +337,7 @@ pub async fn delete(
 ) -> AppResult<ApiResponse<()>> {
     auth.ensure_author()?;
     state.post_service.delete(&auth, &slug).await?;
+    invalidate_post_cache(&state);
     Ok(ApiResponse::success(()))
 }
 
@@ -291,6 +352,7 @@ pub async fn admin_create(
     auth.ensure_admin()?;
     validation::validate(&req)?;
     let post = state.post_service.create(&auth, req).await?;
+    invalidate_post_cache(&state);
     Ok(ApiResponse::success(post))
 }
 
@@ -305,6 +367,7 @@ pub async fn admin_update(
     validation::validate(&req)?;
     let id = crate::types::snowflake_id::parse_id(&id)?;
     let post = state.post_service.admin_update(&auth, id, req).await?;
+    invalidate_post_cache(&state);
     Ok(ApiResponse::success(post))
 }
 
@@ -317,6 +380,7 @@ pub async fn admin_delete(
     auth.ensure_admin()?;
     let id = crate::types::snowflake_id::parse_id(&id)?;
     state.post_service.admin_delete(&auth, id).await?;
+    invalidate_post_cache(&state);
     Ok(ApiResponse::success(()))
 }
 
@@ -371,6 +435,7 @@ pub async fn admin_batch(
         .post_service
         .batch(&auth, &req.action, &req.ids)
         .await?;
+    invalidate_post_cache(&state);
     Ok(ApiResponse::success(BatchResponse::new(
         &req.action,
         affected,
