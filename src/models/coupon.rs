@@ -273,10 +273,7 @@ mod tests {
         let c = super::insert(&pool, &seed_cmd("SAVE10", 10), None)
             .await
             .unwrap();
-        let found = super::find_by_id(&pool, c.id, None)
-            .await
-            .unwrap()
-            .unwrap();
+        let found = super::find_by_id(&pool, c.id, None).await.unwrap().unwrap();
         assert_eq!(found.code, "SAVE10");
         assert_eq!(found.value, 10);
         assert_eq!(found.coupon_type, CouponType::Percent);
@@ -286,10 +283,12 @@ mod tests {
     #[tokio::test]
     async fn find_by_id_not_found() {
         let pool = setup_pool().await;
-        assert!(super::find_by_id(&pool, SnowflakeId(99999), None)
-            .await
-            .unwrap()
-            .is_none());
+        assert!(
+            super::find_by_id(&pool, SnowflakeId(99999), None)
+                .await
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[tokio::test]
@@ -308,10 +307,12 @@ mod tests {
     #[tokio::test]
     async fn find_by_code_not_found() {
         let pool = setup_pool().await;
-        assert!(super::find_by_code(&pool, "NOPE", None)
-            .await
-            .unwrap()
-            .is_none());
+        assert!(
+            super::find_by_code(&pool, "NOPE", None)
+                .await
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[tokio::test]
@@ -375,10 +376,7 @@ mod tests {
         .await
         .unwrap();
         assert!(ok);
-        let found = super::find_by_id(&pool, c.id, None)
-            .await
-            .unwrap()
-            .unwrap();
+        let found = super::find_by_id(&pool, c.id, None).await.unwrap().unwrap();
         assert_eq!(found.title, "Updated Title");
         assert_eq!(found.value, 20);
     }
@@ -406,10 +404,7 @@ mod tests {
         )
         .await
         .unwrap();
-        let found = super::find_by_id(&pool, c.id, None)
-            .await
-            .unwrap()
-            .unwrap();
+        let found = super::find_by_id(&pool, c.id, None).await.unwrap().unwrap();
         assert_eq!(found.status, CouponStatus::Inactive);
     }
 
@@ -421,10 +416,7 @@ mod tests {
             .unwrap();
         assert_eq!(c.used_count, 0);
         super::increment_used(&pool, c.id, None).await.unwrap();
-        let found = super::find_by_id(&pool, c.id, None)
-            .await
-            .unwrap()
-            .unwrap();
+        let found = super::find_by_id(&pool, c.id, None).await.unwrap().unwrap();
         assert_eq!(found.used_count, 1);
     }
 
@@ -435,10 +427,12 @@ mod tests {
             .await
             .unwrap();
         super::delete_by_id(&pool, c.id, None).await.unwrap();
-        assert!(super::find_by_id(&pool, c.id, None)
-            .await
-            .unwrap()
-            .is_none());
+        assert!(
+            super::find_by_id(&pool, c.id, None)
+                .await
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[tokio::test]
@@ -447,7 +441,10 @@ mod tests {
         let err = super::delete_by_id(&pool, SnowflakeId(99999), None)
             .await
             .unwrap_err();
-        assert!(matches!(err, crate::errors::app_error::AppError::NotFound(_)));
+        assert!(matches!(
+            err,
+            crate::errors::app_error::AppError::NotFound(_)
+        ));
     }
 
     #[tokio::test]

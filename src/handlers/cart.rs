@@ -121,7 +121,14 @@ pub async fn add_to_cart(
     validation::validate(&req)?;
     state
         .cart_service
-        .add_item(&auth, user_id, req.product_id, req.quantity, req.variant_id, req.attributes)
+        .add_item(
+            &auth,
+            user_id,
+            req.product_id,
+            req.quantity,
+            req.variant_id,
+            req.attributes,
+        )
         .await?;
     Ok(ApiResponse::success(()))
 }

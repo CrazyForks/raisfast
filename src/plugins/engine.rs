@@ -512,10 +512,10 @@ mod tests {
             "plugins/content-filter/content_filter.wasm",
         ];
         for path in &candidates {
-            if let Ok(bytes) = std::fs::read(path) {
-                if wasmtime::component::Component::from_binary(engine, &bytes).is_ok() {
-                    return Some(bytes);
-                }
+            if let Ok(bytes) = std::fs::read(path)
+                && wasmtime::component::Component::from_binary(engine, &bytes).is_ok()
+            {
+                return Some(bytes);
             }
         }
         tracing::warn!(

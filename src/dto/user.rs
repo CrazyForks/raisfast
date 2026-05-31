@@ -218,13 +218,16 @@ impl UserResponse {
         Self::build(user, None, None)
     }
 
-    pub async fn from_user_with_contacts(
-        pool: &crate::db::Pool,
-        user: User,
-    ) -> AppResult<Self> {
+    pub async fn from_user_with_contacts(pool: &crate::db::Pool, user: User) -> AppResult<Self> {
         let creds = crate::models::user_credential::find_by_user_id(pool, user.id).await?;
-        let email = creds.iter().find(|c| c.auth_type == crate::models::user_credential::AuthType::Email).map(|c| c.identifier.clone());
-        let phone = creds.iter().find(|c| c.auth_type == crate::models::user_credential::AuthType::Phone).map(|c| c.identifier.clone());
+        let email = creds
+            .iter()
+            .find(|c| c.auth_type == crate::models::user_credential::AuthType::Email)
+            .map(|c| c.identifier.clone());
+        let phone = creds
+            .iter()
+            .find(|c| c.auth_type == crate::models::user_credential::AuthType::Phone)
+            .map(|c| c.identifier.clone());
         Self::build(user, email, phone)
     }
 

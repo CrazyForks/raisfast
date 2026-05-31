@@ -156,8 +156,10 @@ impl OrderService for OrderServiceImpl {
         }
 
         let mut order_items_data: Vec<(i64, i64, crate::models::product::Product)> = Vec::new();
-        let mut variant_map: std::collections::HashMap<i64, crate::models::product_variant::ProductVariant> =
-            std::collections::HashMap::new();
+        let mut variant_map: std::collections::HashMap<
+            i64,
+            crate::models::product_variant::ProductVariant,
+        > = std::collections::HashMap::new();
         let mut subtotal: i64 = 0;
 
         for item in &req.items {
@@ -321,21 +323,13 @@ impl OrderService for OrderServiceImpl {
 
             let mut items = Vec::new();
             for (idx, (quantity, _line_total, product)) in order_items_data.iter().enumerate() {
-                let variant_opt = req.items[idx]
-                    .variant_id
-                    .as_deref()
-                    .and_then(|vid| {
-                        let id = crate::types::snowflake_id::parse_id(vid).ok()?;
-                        variant_map.get(&(*id))
-                    });
+                let variant_opt = req.items[idx].variant_id.as_deref().and_then(|vid| {
+                    let id = crate::types::snowflake_id::parse_id(vid).ok()?;
+                    variant_map.get(&(*id))
+                });
 
                 let (variant_id, sku, unit_price, attributes) = match variant_opt {
-                    Some(v) => (
-                        Some(*v.id),
-                        v.sku.clone(),
-                        v.price,
-                        v.attributes.clone(),
-                    ),
+                    Some(v) => (Some(*v.id), v.sku.clone(), v.price, v.attributes.clone()),
                     None => (None, None, product.price, product.attributes.clone()),
                 };
 
@@ -361,7 +355,11 @@ impl OrderService for OrderServiceImpl {
             crate::models::order_item::tx_insert_batch(&mut tx, items, auth.tenant_id()).await?;
 
             for (idx, (quantity, _, product)) in order_items_data.iter().enumerate() {
-                match req.items[idx].variant_id.as_deref().map(crate::types::snowflake_id::parse_id) {
+                match req.items[idx]
+                    .variant_id
+                    .as_deref()
+                    .map(crate::types::snowflake_id::parse_id)
+                {
                     Some(Ok(vid)) => {
                         crate::models::product_variant::tx_deduct_stock(
                             &mut tx,
@@ -1612,7 +1610,10 @@ mod tests {
         assert_eq!(get_product_stock(&pool, prod.id).await, 2);
     }
 
-    async fn seed_address(pool: &crate::db::Pool, user_id: i64) -> crate::models::user_address::UserAddress {
+    async fn seed_address(
+        pool: &crate::db::Pool,
+        user_id: i64,
+    ) -> crate::models::user_address::UserAddress {
         crate::models::user_address::insert(
             pool,
             &crate::commands::CreateUserAddressCmd {

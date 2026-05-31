@@ -119,7 +119,7 @@ mod tests {
 
     #[tokio::test]
     async fn http_get_invalid_url() {
-        let result = http_get("http://[::1]:1/impossible").await;
+        let result = http_get("http://192.0.2.1:1/impossible").await;
         assert!(result.is_err());
     }
 }

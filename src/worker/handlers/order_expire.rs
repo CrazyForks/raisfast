@@ -179,10 +179,7 @@ mod tests {
         qty: i64,
         created_at_offset_minutes: i64,
     ) -> crate::types::snowflake_id::SnowflakeId {
-        let order_no = format!(
-            "ORD-{}",
-            uuid::Uuid::now_v7().to_string().replace('-', "")
-        );
+        let order_no = format!("ORD-{}", uuid::Uuid::now_v7().to_string().replace('-', ""));
         let order = crate::models::order::insert(
             pool,
             &crate::commands::CreateOrderCmd {
@@ -379,10 +376,7 @@ mod tests {
         let pool = setup_pool().await;
         let uid = seed_user(&pool).await;
 
-        let order_no = format!(
-            "ORD-{}",
-            uuid::Uuid::now_v7().to_string().replace('-', "")
-        );
+        let order_no = format!("ORD-{}", uuid::Uuid::now_v7().to_string().replace('-', ""));
         let order = crate::models::order::insert(
             &pool,
             &crate::commands::CreateOrderCmd {

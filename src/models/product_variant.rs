@@ -192,13 +192,7 @@ pub async fn tx_deduct_stock(
     quantity: i64,
     tenant_id: Option<&str>,
 ) -> AppResult<()> {
-    raisfast_derive::check_schema!(
-        "product_variants",
-        "stock",
-        "updated_at",
-        "id",
-        "tenant_id"
-    );
+    raisfast_derive::check_schema!("product_variants", "stock", "updated_at", "id", "tenant_id");
     let sql = if tenant_id.is_some() {
         format!(
             "UPDATE product_variants SET stock = stock - {}, updated_at = {} WHERE id = {} AND stock >= {} AND tenant_id = {} AND is_active = 1",
@@ -237,13 +231,7 @@ pub async fn tx_replenish_stock(
     quantity: i64,
     tenant_id: Option<&str>,
 ) -> AppResult<()> {
-    raisfast_derive::check_schema!(
-        "product_variants",
-        "stock",
-        "updated_at",
-        "id",
-        "tenant_id"
-    );
+    raisfast_derive::check_schema!("product_variants", "stock", "updated_at", "id", "tenant_id");
     let sql = if tenant_id.is_some() {
         format!(
             "UPDATE product_variants SET stock = stock + {}, updated_at = {} WHERE id = {} AND tenant_id = {}",
@@ -260,9 +248,7 @@ pub async fn tx_replenish_stock(
             crate::db::Driver::ph(2)
         )
     };
-    let mut q = sqlx::query(&sql)
-        .bind(quantity)
-        .bind(variant_id);
+    let mut q = sqlx::query(&sql).bind(quantity).bind(variant_id);
     if let Some(tid) = tenant_id {
         q = q.bind(tid);
     }

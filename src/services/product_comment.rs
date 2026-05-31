@@ -288,7 +288,9 @@ mod tests {
         crate::test_pool!()
     }
 
-    fn make_service(pool: crate::db::Pool) -> crate::services::product_comment::ProductCommentServiceImpl {
+    fn make_service(
+        pool: crate::db::Pool,
+    ) -> crate::services::product_comment::ProductCommentServiceImpl {
         crate::services::product_comment::ProductCommentServiceImpl::new(Arc::new(pool))
     }
 
@@ -366,10 +368,7 @@ mod tests {
         user_id: i64,
         product_id: SnowflakeId,
     ) -> SnowflakeId {
-        let order_no = format!(
-            "ORD-{}",
-            uuid::Uuid::now_v7().to_string().replace('-', "")
-        );
+        let order_no = format!("ORD-{}", uuid::Uuid::now_v7().to_string().replace('-', ""));
         let order = crate::models::order::insert(
             pool,
             &crate::commands::CreateOrderCmd {
@@ -422,9 +421,15 @@ mod tests {
         crate::models::order::update_shipped(pool, order.id, Some("TRK"), Some("UPS"), None)
             .await
             .unwrap();
-        crate::models::order::update_status(pool, order.id, "completed", Some("completed_at"), None)
-            .await
-            .unwrap();
+        crate::models::order::update_status(
+            pool,
+            order.id,
+            "completed",
+            Some("completed_at"),
+            None,
+        )
+        .await
+        .unwrap();
 
         order.id
     }
@@ -466,10 +471,7 @@ mod tests {
         let uid = seed_user(&pool).await;
         let pid = seed_product(&pool).await;
 
-        let order_no = format!(
-            "ORD-{}",
-            uuid::Uuid::now_v7().to_string().replace('-', "")
-        );
+        let order_no = format!("ORD-{}", uuid::Uuid::now_v7().to_string().replace('-', ""));
         let order = crate::models::order::insert(
             &pool,
             &crate::commands::CreateOrderCmd {
@@ -510,9 +512,7 @@ mod tests {
             )
             .await
             .unwrap_err();
-        assert!(
-            matches!(err, AppError::BadRequest(ref s) if s == "only_completed_can_review")
-        );
+        assert!(matches!(err, AppError::BadRequest(ref s) if s == "only_completed_can_review"));
     }
 
     #[tokio::test]

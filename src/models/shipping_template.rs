@@ -181,10 +181,7 @@ mod tests {
         let t = super::insert(&pool, &seed_cmd("Standard"), None)
             .await
             .unwrap();
-        let found = super::find_by_id(&pool, t.id, None)
-            .await
-            .unwrap()
-            .unwrap();
+        let found = super::find_by_id(&pool, t.id, None).await.unwrap().unwrap();
         assert_eq!(found.name, "Standard");
         assert_eq!(found.template_type, ShippingTemplateType::Weight);
         assert_eq!(found.first_unit, 1000);
@@ -195,10 +192,12 @@ mod tests {
     #[tokio::test]
     async fn test_find_by_id_not_found() {
         let pool = setup_pool().await;
-        assert!(super::find_by_id(&pool, SnowflakeId(99999), None)
-            .await
-            .unwrap()
-            .is_none());
+        assert!(
+            super::find_by_id(&pool, SnowflakeId(99999), None)
+                .await
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[tokio::test]
@@ -241,9 +240,7 @@ mod tests {
     #[tokio::test]
     async fn test_update_changes_name() {
         let pool = setup_pool().await;
-        let t = super::insert(&pool, &seed_cmd("Old"), None)
-            .await
-            .unwrap();
+        let t = super::insert(&pool, &seed_cmd("Old"), None).await.unwrap();
         let ok = super::update(
             &pool,
             &crate::commands::UpdateShippingTemplateCmd {
@@ -263,10 +260,7 @@ mod tests {
         .await
         .unwrap();
         assert!(ok);
-        let found = super::find_by_id(&pool, t.id, None)
-            .await
-            .unwrap()
-            .unwrap();
+        let found = super::find_by_id(&pool, t.id, None).await.unwrap().unwrap();
         assert_eq!(found.name, "New");
         assert_eq!(found.first_price, 800);
     }
@@ -274,9 +268,7 @@ mod tests {
     #[tokio::test]
     async fn test_update_status_to_inactive() {
         let pool = setup_pool().await;
-        let t = super::insert(&pool, &seed_cmd("Stat"), None)
-            .await
-            .unwrap();
+        let t = super::insert(&pool, &seed_cmd("Stat"), None).await.unwrap();
         super::update(
             &pool,
             &crate::commands::UpdateShippingTemplateCmd {
@@ -295,24 +287,21 @@ mod tests {
         )
         .await
         .unwrap();
-        let found = super::find_by_id(&pool, t.id, None)
-            .await
-            .unwrap()
-            .unwrap();
+        let found = super::find_by_id(&pool, t.id, None).await.unwrap().unwrap();
         assert_eq!(found.status, ShippingTemplateStatus::Inactive);
     }
 
     #[tokio::test]
     async fn test_delete_removes_template() {
         let pool = setup_pool().await;
-        let t = super::insert(&pool, &seed_cmd("Del"), None)
-            .await
-            .unwrap();
+        let t = super::insert(&pool, &seed_cmd("Del"), None).await.unwrap();
         super::delete_by_id(&pool, t.id, None).await.unwrap();
-        assert!(super::find_by_id(&pool, t.id, None)
-            .await
-            .unwrap()
-            .is_none());
+        assert!(
+            super::find_by_id(&pool, t.id, None)
+                .await
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[tokio::test]

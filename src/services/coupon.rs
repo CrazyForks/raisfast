@@ -504,9 +504,7 @@ mod tests {
             .validate_coupon(Some(c.id), None, SnowflakeId(1), 1000, None)
             .await
             .unwrap_err();
-        assert!(
-            matches!(err, AppError::BadRequest(ref s) if s == "coupon_min_order_not_met")
-        );
+        assert!(matches!(err, AppError::BadRequest(ref s) if s == "coupon_min_order_not_met"));
     }
 
     #[tokio::test]

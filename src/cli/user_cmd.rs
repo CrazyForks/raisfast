@@ -103,7 +103,10 @@ pub async fn list(config: &AppConfig) -> anyhow::Result<()> {
 
     let users = raisfast::models::user::find_all(&pool, 1, 100, None).await?;
 
-    println!("{:<20} {:<25} {:<10} {:<10}", "ID", "USERNAME", "ROLE", "STATUS");
+    println!(
+        "{:<20} {:<25} {:<10} {:<10}",
+        "ID", "USERNAME", "ROLE", "STATUS"
+    );
     println!("{}", "-".repeat(70));
     for u in &users.0 {
         println!(
@@ -119,11 +122,7 @@ pub async fn list(config: &AppConfig) -> anyhow::Result<()> {
     Ok(())
 }
 
-pub async fn passwd(
-    config: &AppConfig,
-    username: &str,
-    password: &str,
-) -> anyhow::Result<()> {
+pub async fn passwd(config: &AppConfig, username: &str, password: &str) -> anyhow::Result<()> {
     let pool = init_pool(&config.database_url, 1).await?;
 
     let user = raisfast::models::user::find_by_username(&pool, username)

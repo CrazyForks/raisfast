@@ -469,12 +469,13 @@ pub async fn run(cli: Cli, config: &AppConfig) -> anyhow::Result<()> {
         }
 
         Some(Commands::User {
-            action: UserAction::Create {
-                email,
-                username,
-                password,
-                role,
-            },
+            action:
+                UserAction::Create {
+                    email,
+                    username,
+                    password,
+                    role,
+                },
         }) => {
             user_cmd::create(config, &email, &username, &password, &role).await?;
         }
