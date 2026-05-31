@@ -1001,3 +1001,70 @@ CREATE TABLE IF NOT EXISTS wallet_outbox (
 CREATE INDEX IF NOT EXISTS idx_wallet_outbox_status ON wallet_outbox(status);
 CREATE INDEX IF NOT EXISTS idx_wallet_outbox_transaction_no ON wallet_outbox(transaction_no);
 CREATE INDEX IF NOT EXISTS idx_wallet_outbox_tenant ON wallet_outbox(tenant_id);
+
+-- Product Comments (reviews/ratings)
+CREATE TABLE IF NOT EXISTS product_comments (
+    id INTEGER PRIMARY KEY,
+    tenant_id TEXT NOT NULL DEFAULT 'default',
+    product_id INTEGER NOT NULL REFERENCES products(id),
+    order_id INTEGER NOT NULL REFERENCES orders(id),
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    rating INTEGER NOT NULL DEFAULT 5,
+    title TEXT,
+    content TEXT NOT NULL,
+    images TEXT,
+    status TEXT NOT NULL DEFAULT 'approved',
+    admin_reply TEXT,
+    admin_replied_at TEXT,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_product_comments_unique ON product_comments(product_id, order_id, user_id);
+CREATE INDEX IF NOT EXISTS idx_product_comments_product ON product_comments(product_id);
+CREATE INDEX IF NOT EXISTS idx_product_comments_user ON product_comments(user_id);
+CREATE INDEX IF NOT EXISTS idx_product_comments_status ON product_comments(status);
+CREATE INDEX IF NOT EXISTS idx_product_comments_tenant ON product_comments(tenant_id);
+
+-- Coupons
+CREATE TABLE IF NOT EXISTS coupons (
+    id INTEGER PRIMARY KEY,
+    tenant_id TEXT NOT NULL DEFAULT 'default',
+    code TEXT NOT NULL UNIQUE,
+    title TEXT NOT NULL,
+    coupon_type TEXT NOT NULL DEFAULT 'percent',
+    value INTEGER NOT NULL,
+    min_order INTEGER NOT NULL DEFAULT 0,
+    max_uses INTEGER NOT NULL DEFAULT 0,
+    used_count INTEGER NOT NULL DEFAULT 0,
+    max_uses_per_user INTEGER NOT NULL DEFAULT 1,
+    starts_at TEXT,
+    expires_at TEXT,
+    status TEXT NOT NULL DEFAULT 'active',
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_coupons_code ON coupons(code);
+CREATE INDEX IF NOT EXISTS idx_coupons_status ON coupons(status);
+CREATE INDEX IF NOT EXISTS idx_coupons_tenant ON coupons(tenant_id);
+
+-- Shipping Templates
+CREATE TABLE IF NOT EXISTS shipping_templates (
+    id INTEGER PRIMARY KEY,
+    tenant_id TEXT NOT NULL DEFAULT 'default',
+    name TEXT NOT NULL,
+    type TEXT NOT NULL DEFAULT 'weight',
+    first_unit INTEGER NOT NULL DEFAULT 1,
+    first_price INTEGER NOT NULL DEFAULT 0,
+    additional_unit INTEGER NOT NULL DEFAULT 1,
+    additional_price INTEGER NOT NULL DEFAULT 0,
+    free_shipping_amount INTEGER NOT NULL DEFAULT 0,
+    regions TEXT NOT NULL DEFAULT '[]',
+    status TEXT NOT NULL DEFAULT 'active',
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_shipping_templates_tenant ON shipping_templates(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_shipping_templates_status ON shipping_templates(status);

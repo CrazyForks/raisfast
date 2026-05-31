@@ -76,6 +76,9 @@ pub trait OrderService: Send + Sync {
 pub struct OrderServiceImpl {
     aspect_engine: Arc<AspectEngine>,
     pool: Arc<crate::db::Pool>,
+    coupon_service: Option<Arc<dyn crate::services::coupon::CouponService>>,
+    shipping_template_service:
+        Option<Arc<dyn crate::services::shipping_template::ShippingTemplateService>>,
 }
 
 impl OrderServiceImpl {
@@ -83,7 +86,25 @@ impl OrderServiceImpl {
         Self {
             aspect_engine,
             pool,
+            coupon_service: None,
+            shipping_template_service: None,
         }
+    }
+
+    pub fn with_coupon_service(
+        mut self,
+        svc: Arc<dyn crate::services::coupon::CouponService>,
+    ) -> Self {
+        self.coupon_service = Some(svc);
+        self
+    }
+
+    pub fn with_shipping_template_service(
+        mut self,
+        svc: Arc<dyn crate::services::shipping_template::ShippingTemplateService>,
+    ) -> Self {
+        self.shipping_template_service = Some(svc);
+        self
     }
 
     async fn before_create(
@@ -164,7 +185,88 @@ impl OrderService for OrderServiceImpl {
         let order_no = format!("ORD-{}", uuid::Uuid::now_v7().to_string().replace('-', ""));
 
         let currency = req.currency.as_deref().unwrap_or("CNY");
-        let total_amount = subtotal;
+
+        let (discount_amount, coupon_id) = if let Some(ref coupon_svc) = self.coupon_service {
+            let c_id = req
+                .coupon_id
+                .as_deref()
+                .map(crate::types::snowflake_id::parse_id)
+                .transpose()?;
+            let c_code = req.coupon_code.as_deref();
+            match (c_id, c_code) {
+                (Some(_), _) | (_, Some(_)) => {
+                    let coupon = coupon_svc
+                        .validate_coupon(c_id, c_code, user_id, subtotal, auth.tenant_id())
+                        .await?;
+                    let discount = coupon_svc.calculate_discount(&coupon, subtotal);
+                    (discount, Some(*coupon.id))
+                }
+                _ => (0, None),
+            }
+        } else {
+            (0, None)
+        };
+
+        let shipping_address_id = req
+            .shipping_address_id
+            .as_deref()
+            .map(crate::types::snowflake_id::parse_id)
+            .transpose()?;
+        let billing_address_id = req
+            .billing_address_id
+            .as_deref()
+            .map(crate::types::snowflake_id::parse_id)
+            .transpose()?;
+
+        let shipping_addr = if let Some(addr_id) = shipping_address_id {
+            let addr =
+                crate::models::user_address::find_by_id(&self.pool, addr_id, auth.tenant_id())
+                    .await?
+                    .ok_or_else(|| AppError::not_found("shipping_address"))?;
+            if addr.user_id != user_id {
+                return Err(AppError::Forbidden);
+            }
+            Some(addr)
+        } else {
+            None
+        };
+
+        let shipping_amount = if let Some(ref ship_svc) = self.shipping_template_service {
+            let product_weights: Vec<(SnowflakeId, i64, i64)> = order_items_data
+                .iter()
+                .map(|(quantity, _, product)| (product.id, product.weight.unwrap_or(0), *quantity))
+                .collect();
+            let region = shipping_addr.as_ref().map(|a| a.province.clone());
+            match ship_svc
+                .calculate_shipping(&product_weights, region.as_deref(), auth.tenant_id())
+                .await
+            {
+                Ok(result) => result.shipping_amount,
+                Err(_) => 0,
+            }
+        } else {
+            0
+        };
+
+        let total_amount = subtotal - discount_amount + shipping_amount;
+
+        let shipping_address_text = req.shipping_address.clone().or_else(|| {
+            shipping_addr.as_ref().map(|a| {
+                format!(
+                    "{} {} {} {} {}",
+                    a.recipient_name, a.phone, a.province, a.city, a.address_line1
+                )
+            })
+        });
+
+        let buyer_name = req
+            .buyer_name
+            .clone()
+            .or_else(|| shipping_addr.as_ref().map(|a| a.recipient_name.clone()));
+        let buyer_phone = req
+            .buyer_phone
+            .clone()
+            .or_else(|| shipping_addr.as_ref().map(|a| a.phone.clone()));
 
         let order = crate::in_transaction!(&self.pool, tx, {
             let order = crate::models::order::tx_insert(
@@ -173,23 +275,32 @@ impl OrderService for OrderServiceImpl {
                     user_id,
                     order_no,
                     subtotal,
-                    discount_amount: 0,
-                    shipping_amount: 0,
+                    discount_amount,
+                    shipping_amount,
                     total_amount,
                     currency: currency.into(),
-                    buyer_name: req.buyer_name.clone(),
-                    buyer_phone: req.buyer_phone.clone(),
+                    buyer_name,
+                    buyer_phone,
                     buyer_email: req.buyer_email.clone(),
-                    shipping_address: req.shipping_address.clone(),
+                    shipping_address: shipping_address_text,
                     remark: req.remark.clone(),
                     tax_amount: 0,
-                    coupon_id: None,
-                    shipping_address_id: None,
-                    billing_address_id: None,
+                    coupon_id,
+                    shipping_address_id: shipping_address_id.map(|id| *id),
+                    billing_address_id: billing_address_id.map(|id| *id),
                 },
                 auth.tenant_id(),
             )
             .await?;
+
+            if let Some(cid) = coupon_id {
+                crate::models::coupon::tx_increment_used(
+                    &mut tx,
+                    SnowflakeId(cid),
+                    auth.tenant_id(),
+                )
+                .await?;
+            }
 
             let mut items = Vec::new();
             for (quantity, line_total, product) in &order_items_data {
@@ -209,6 +320,16 @@ impl OrderService for OrderServiceImpl {
                 });
             }
             crate::models::order_item::tx_insert_batch(&mut tx, items, auth.tenant_id()).await?;
+
+            for (quantity, _, product) in &order_items_data {
+                crate::models::product::tx_deduct_stock(
+                    &mut tx,
+                    product.id,
+                    *quantity,
+                    auth.tenant_id(),
+                )
+                .await?;
+            }
 
             Ok(order)
         })?;
@@ -254,6 +375,25 @@ impl OrderService for OrderServiceImpl {
                 if rows == 0 {
                     return Err(AppError::BadRequest("concurrent_status_change".into()));
                 }
+
+                let order_items = crate::models::order_item::find_by_order_id(
+                    &self.pool,
+                    order.id,
+                    auth.tenant_id(),
+                )
+                .await?;
+                for item in &order_items {
+                    if let Some(pid) = item.product_id {
+                        crate::models::product::tx_replenish_stock(
+                            &mut tx,
+                            pid,
+                            item.quantity,
+                            auth.tenant_id(),
+                        )
+                        .await?;
+                    }
+                }
+
                 Ok(())
             })
         }
@@ -441,11 +581,12 @@ impl OrderService for OrderServiceImpl {
             .await?;
 
         let expected = order.status;
+        let order_id = order.id;
         let result: Result<(), AppError> = async {
             crate::in_transaction!(&self.pool, tx, {
                 let rows = crate::models::order::tx_update_status_cas(
                     &mut tx,
-                    order.id,
+                    order_id,
                     OrderStatus::Cancelled,
                     Some("cancelled_at"),
                     expected,
@@ -454,6 +595,25 @@ impl OrderService for OrderServiceImpl {
                 if rows == 0 {
                     return Err(AppError::BadRequest("concurrent_status_change".into()));
                 }
+
+                let order_items = crate::models::order_item::find_by_order_id(
+                    &self.pool,
+                    order_id,
+                    auth.tenant_id(),
+                )
+                .await?;
+                for item in &order_items {
+                    if let Some(pid) = item.product_id {
+                        crate::models::product::tx_replenish_stock(
+                            &mut tx,
+                            pid,
+                            item.quantity,
+                            auth.tenant_id(),
+                        )
+                        .await?;
+                    }
+                }
+
                 Ok(())
             })
         }
@@ -632,7 +792,7 @@ mod tests {
                 virtual_sales: 0,
                 meta_title: None,
                 meta_description: None,
-                stock: 0,
+                stock: 100,
                 cost_price: None,
                 sale_price: None,
                 has_variants: false,
@@ -663,7 +823,11 @@ mod tests {
             buyer_phone: None,
             buyer_email: None,
             shipping_address: None,
+            shipping_address_id: None,
+            billing_address_id: None,
             remark: None,
+            coupon_id: None,
+            coupon_code: None,
         }
     }
 
@@ -744,7 +908,11 @@ mod tests {
                     buyer_phone: None,
                     buyer_email: None,
                     shipping_address: None,
+                    shipping_address_id: None,
+                    billing_address_id: None,
                     remark: None,
+                    coupon_id: None,
+                    coupon_code: None,
                 },
             )
             .await
@@ -775,7 +943,11 @@ mod tests {
                     buyer_phone: None,
                     buyer_email: None,
                     shipping_address: None,
+                    shipping_address_id: None,
+                    billing_address_id: None,
                     remark: None,
+                    coupon_id: None,
+                    coupon_code: None,
                 },
             )
             .await
@@ -804,7 +976,11 @@ mod tests {
                     buyer_phone: None,
                     buyer_email: None,
                     shipping_address: None,
+                    shipping_address_id: None,
+                    billing_address_id: None,
                     remark: None,
+                    coupon_id: None,
+                    coupon_code: None,
                 },
             )
             .await
@@ -1273,5 +1449,269 @@ mod tests {
         assert!(final_order.completed_at.is_some());
         assert_eq!(final_order.tracking_no.unwrap(), "TRK123");
         assert_eq!(final_order.carrier.unwrap(), "DHL");
+    }
+
+    async fn get_product_stock(pool: &crate::db::Pool, id: SnowflakeId) -> i64 {
+        let (s,): (i64,) = sqlx::query_as("SELECT stock FROM products WHERE id = ?")
+            .bind(id)
+            .fetch_one(pool)
+            .await
+            .unwrap();
+        s
+    }
+
+    #[tokio::test]
+    async fn create_order_deducts_stock() {
+        let pool = setup_pool().await;
+        let svc = make_service(pool.clone());
+        let a = auth(None);
+        let uid = seed_user(&pool).await;
+        let prod = seed_active_product(&pool, "Widget", 1000).await;
+
+        assert_eq!(get_product_stock(&pool, prod.id).await, 100);
+
+        svc.create(
+            &a,
+            SnowflakeId(uid),
+            make_create_req(&prod.id.to_string(), 3),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(get_product_stock(&pool, prod.id).await, 97);
+    }
+
+    #[tokio::test]
+    async fn cancel_order_replenishes_stock() {
+        let pool = setup_pool().await;
+        let svc = make_service(pool.clone());
+        let a = auth(None);
+        let uid = seed_user(&pool).await;
+        let prod = seed_active_product(&pool, "Widget", 1000).await;
+
+        svc.create(
+            &a,
+            SnowflakeId(uid),
+            make_create_req(&prod.id.to_string(), 5),
+        )
+        .await
+        .unwrap();
+        assert_eq!(get_product_stock(&pool, prod.id).await, 95);
+
+        let (order, _) = svc
+            .create(
+                &a,
+                SnowflakeId(uid),
+                make_create_req(&prod.id.to_string(), 3),
+            )
+            .await
+            .unwrap();
+        assert_eq!(get_product_stock(&pool, prod.id).await, 92);
+
+        svc.cancel(&a, order.id, SnowflakeId(uid)).await.unwrap();
+        assert_eq!(get_product_stock(&pool, prod.id).await, 95);
+    }
+
+    #[tokio::test]
+    async fn create_order_insufficient_stock() {
+        let pool = setup_pool().await;
+        let svc = make_service(pool.clone());
+        let a = auth(None);
+        let uid = seed_user(&pool).await;
+        let prod = seed_active_product(&pool, "Widget", 1000).await;
+
+        sqlx::query("UPDATE products SET stock = ? WHERE id = ?")
+            .bind(2i64)
+            .bind(prod.id)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let err = svc
+            .create(
+                &a,
+                SnowflakeId(uid),
+                make_create_req(&prod.id.to_string(), 5),
+            )
+            .await
+            .unwrap_err();
+        assert!(matches!(err, AppError::BadRequest(ref s) if s == "insufficient_stock"));
+        assert_eq!(get_product_stock(&pool, prod.id).await, 2);
+    }
+
+    async fn seed_address(pool: &crate::db::Pool, user_id: i64) -> crate::models::user_address::UserAddress {
+        crate::models::user_address::insert(
+            pool,
+            &crate::commands::CreateUserAddressCmd {
+                user_id: SnowflakeId(user_id),
+                label: "Home".to_string(),
+                recipient_name: "Zhang San".to_string(),
+                phone: "13800138000".to_string(),
+                country: "CN".to_string(),
+                province: "Guangdong".to_string(),
+                city: "Shenzhen".to_string(),
+                district: "Nanshan".to_string(),
+                address_line1: "123 Tech Park".to_string(),
+                address_line2: None,
+                postal_code: Some("518000".to_string()),
+                is_default: true,
+                address_type: "shipping".to_string(),
+            },
+            None,
+        )
+        .await
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn create_order_with_shipping_address_id() {
+        let pool = setup_pool().await;
+        let svc = make_service(pool.clone());
+        let a = auth(None);
+        let uid = seed_user(&pool).await;
+        let prod = seed_active_product(&pool, "Widget", 1000).await;
+        let addr = seed_address(&pool, uid).await;
+
+        let (order, _) = svc
+            .create(
+                &a,
+                SnowflakeId(uid),
+                CreateOrderRequest {
+                    items: vec![CreateOrderItemRequest {
+                        product_id: prod.id.to_string(),
+                        quantity: 1,
+                    }],
+                    currency: None,
+                    buyer_name: None,
+                    buyer_phone: None,
+                    buyer_email: None,
+                    shipping_address: None,
+                    shipping_address_id: Some(addr.id.to_string()),
+                    billing_address_id: None,
+                    remark: None,
+                    coupon_id: None,
+                    coupon_code: None,
+                },
+            )
+            .await
+            .unwrap();
+
+        let shipping = order.shipping_address.unwrap();
+        assert!(shipping.contains("Zhang San"));
+        assert!(shipping.contains("13800138000"));
+        assert!(shipping.contains("Guangdong"));
+        assert!(shipping.contains("Shenzhen"));
+        assert!(shipping.contains("123 Tech Park"));
+        assert_eq!(order.buyer_name.unwrap(), "Zhang San");
+        assert_eq!(order.buyer_phone.unwrap(), "13800138000");
+    }
+
+    #[tokio::test]
+    async fn create_order_with_wrong_user_address_forbidden() {
+        let pool = setup_pool().await;
+        let svc = make_service(pool.clone());
+        let a = auth(None);
+        let uid1 = seed_user(&pool).await;
+        let uid2 = seed_user(&pool).await;
+        let prod = seed_active_product(&pool, "Widget", 1000).await;
+        let addr = seed_address(&pool, uid1).await;
+
+        let err = svc
+            .create(
+                &a,
+                SnowflakeId(uid2),
+                CreateOrderRequest {
+                    items: vec![CreateOrderItemRequest {
+                        product_id: prod.id.to_string(),
+                        quantity: 1,
+                    }],
+                    currency: None,
+                    buyer_name: None,
+                    buyer_phone: None,
+                    buyer_email: None,
+                    shipping_address: None,
+                    shipping_address_id: Some(addr.id.to_string()),
+                    billing_address_id: None,
+                    remark: None,
+                    coupon_id: None,
+                    coupon_code: None,
+                },
+            )
+            .await
+            .unwrap_err();
+
+        assert!(matches!(err, AppError::Forbidden));
+    }
+
+    #[tokio::test]
+    async fn create_order_with_nonexistent_address_not_found() {
+        let pool = setup_pool().await;
+        let svc = make_service(pool.clone());
+        let a = auth(None);
+        let uid = seed_user(&pool).await;
+        let prod = seed_active_product(&pool, "Widget", 1000).await;
+
+        let err = svc
+            .create(
+                &a,
+                SnowflakeId(uid),
+                CreateOrderRequest {
+                    items: vec![CreateOrderItemRequest {
+                        product_id: prod.id.to_string(),
+                        quantity: 1,
+                    }],
+                    currency: None,
+                    buyer_name: None,
+                    buyer_phone: None,
+                    buyer_email: None,
+                    shipping_address: None,
+                    shipping_address_id: Some(SnowflakeId(99999).to_string()),
+                    billing_address_id: None,
+                    remark: None,
+                    coupon_id: None,
+                    coupon_code: None,
+                },
+            )
+            .await
+            .unwrap_err();
+
+        assert!(matches!(err, AppError::NotFound(_)));
+    }
+
+    #[tokio::test]
+    async fn create_order_address_text_used_when_no_id() {
+        let pool = setup_pool().await;
+        let svc = make_service(pool.clone());
+        let a = auth(None);
+        let uid = seed_user(&pool).await;
+        let prod = seed_active_product(&pool, "Widget", 1000).await;
+
+        let (order, _) = svc
+            .create(
+                &a,
+                SnowflakeId(uid),
+                CreateOrderRequest {
+                    items: vec![CreateOrderItemRequest {
+                        product_id: prod.id.to_string(),
+                        quantity: 1,
+                    }],
+                    currency: None,
+                    buyer_name: Some("Test".to_string()),
+                    buyer_phone: Some("123".to_string()),
+                    buyer_email: None,
+                    shipping_address: Some("456 Manual Road".to_string()),
+                    shipping_address_id: None,
+                    billing_address_id: None,
+                    remark: None,
+                    coupon_id: None,
+                    coupon_code: None,
+                },
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(order.shipping_address.unwrap(), "456 Manual Road");
+        assert_eq!(order.buyer_name.unwrap(), "Test");
+        assert_eq!(order.buyer_phone.unwrap(), "123");
     }
 }

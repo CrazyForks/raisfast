@@ -951,6 +951,30 @@ CREATE INDEX IF NOT EXISTS idx_wallet_outbox_status ON wallet_outbox(status);
 CREATE INDEX IF NOT EXISTS idx_wallet_outbox_transaction_no ON wallet_outbox(transaction_no);
 CREATE INDEX IF NOT EXISTS idx_wallet_outbox_tenant ON wallet_outbox(tenant_id);
 
+-- Product Comments (reviews/ratings)
+CREATE TABLE IF NOT EXISTS product_comments (
+    id BIGINT PRIMARY KEY,
+    tenant_id VARCHAR(64) NOT NULL DEFAULT 'default',
+    product_id BIGINT NOT NULL REFERENCES products(id),
+    order_id BIGINT NOT NULL REFERENCES orders(id),
+    user_id BIGINT NOT NULL REFERENCES users(id),
+    rating INT NOT NULL DEFAULT 5,
+    title VARCHAR(255),
+    content TEXT NOT NULL,
+    images TEXT,
+    status VARCHAR(32) NOT NULL DEFAULT 'approved',
+    admin_reply TEXT,
+    admin_replied_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_product_comments_unique ON product_comments(product_id, order_id, user_id);
+CREATE INDEX IF NOT EXISTS idx_product_comments_product ON product_comments(product_id);
+CREATE INDEX IF NOT EXISTS idx_product_comments_user ON product_comments(user_id);
+CREATE INDEX IF NOT EXISTS idx_product_comments_status ON product_comments(status);
+CREATE INDEX IF NOT EXISTS idx_product_comments_tenant ON product_comments(tenant_id);
+
 -- ============================================================
 -- 预置数据
 -- ============================================================
@@ -1004,3 +1028,46 @@ INSERT INTO options (tenant_id, option_key, value, type, group_name, label, desc
     ('default', 'theme', '"default"', 'select', 'appearance', '当前主题', NULL, '{"values":["default","corporate","minimal","warm"]}', TRUE, TRUE, 30, NOW()),
     ('default', 'maintenance_mode', 'false', 'boolean', 'appearance', '维护模式', '开启后前台显示维护页面', NULL, TRUE, TRUE, 31, NOW())
 ON CONFLICT (option_key) DO NOTHING;
+
+-- Coupons
+CREATE TABLE IF NOT EXISTS coupons (
+    id BIGINT PRIMARY KEY,
+    tenant_id VARCHAR(64) NOT NULL DEFAULT 'default',
+    code VARCHAR(64) NOT NULL UNIQUE,
+    title VARCHAR(255) NOT NULL,
+    coupon_type VARCHAR(32) NOT NULL DEFAULT 'percent',
+    value BIGINT NOT NULL,
+    min_order BIGINT NOT NULL DEFAULT 0,
+    max_uses INT NOT NULL DEFAULT 0,
+    used_count INT NOT NULL DEFAULT 0,
+    max_uses_per_user INT NOT NULL DEFAULT 1,
+    starts_at TIMESTAMPTZ,
+    expires_at TIMESTAMPTZ,
+    status VARCHAR(32) NOT NULL DEFAULT 'active',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_coupons_code ON coupons(code);
+CREATE INDEX IF NOT EXISTS idx_coupons_status ON coupons(status);
+CREATE INDEX IF NOT EXISTS idx_coupons_tenant ON coupons(tenant_id);
+
+-- Shipping Templates
+CREATE TABLE IF NOT EXISTS shipping_templates (
+    id BIGINT PRIMARY KEY,
+    tenant_id TEXT NOT NULL DEFAULT 'default',
+    name TEXT NOT NULL,
+    type TEXT NOT NULL DEFAULT 'weight',
+    first_unit INTEGER NOT NULL DEFAULT 1,
+    first_price INTEGER NOT NULL DEFAULT 0,
+    additional_unit INTEGER NOT NULL DEFAULT 1,
+    additional_price INTEGER NOT NULL DEFAULT 0,
+    free_shipping_amount INTEGER NOT NULL DEFAULT 0,
+    regions TEXT NOT NULL DEFAULT '[]',
+    status TEXT NOT NULL DEFAULT 'active',
+    created_at TEXT NOT NULL DEFAULT (NOW()),
+    updated_at TEXT NOT NULL DEFAULT (NOW())
+);
+
+CREATE INDEX IF NOT EXISTS idx_shipping_templates_tenant ON shipping_templates(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_shipping_templates_status ON shipping_templates(status);

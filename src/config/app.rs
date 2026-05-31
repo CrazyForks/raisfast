@@ -130,6 +130,8 @@ pub struct AppConfig {
     pub cron_schedules: Vec<CronScheduleConfig>,
     #[serde(default = "default_cron_log_retention_days")]
     pub cron_log_retention_days: i64,
+    #[serde(default = "default_order_expire_minutes")]
+    pub order_expire_minutes: i64,
     #[serde(default = "default_search_engine")]
     pub search_engine: String,
     #[serde(default = "default_search_index_dir")]
@@ -475,6 +477,10 @@ fn default_cron_log_retention_days() -> i64 {
     30
 }
 
+fn default_order_expire_minutes() -> i64 {
+    30
+}
+
 fn default_storage_root_dir() -> String {
     "./storage".into()
 }
@@ -527,6 +533,13 @@ pub fn default_cron_schedules() -> Vec<CronScheduleConfig> {
         CronScheduleConfig {
             label: "Expire Payment Orders".into(),
             job_type: "expire_payment_orders".into(),
+            payload: None,
+            cron_expr: "0 */5 * * * *".into(),
+            enabled: true,
+        },
+        CronScheduleConfig {
+            label: "Expire Orders".into(),
+            job_type: "expire_orders".into(),
             payload: None,
             cron_expr: "0 */5 * * * *".into(),
             enabled: true,
@@ -899,6 +912,10 @@ impl AppConfig {
                 .ok()
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(default_cron_log_retention_days()),
+            order_expire_minutes: env::var("ORDER_EXPIRE_MINUTES")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(default_order_expire_minutes()),
             search_engine: env::var("SEARCH_ENGINE").unwrap_or_else(|_| default_search_engine()),
             search_index_dir: env::var("SEARCH_INDEX_DIR")
                 .unwrap_or_else(|_| storage_subdir(&storage_root_dir, "search_index")),
@@ -1080,6 +1097,7 @@ impl AppConfig {
             cron_seed_enabled: false,
             cron_schedules: vec![],
             cron_log_retention_days: default_cron_log_retention_days(),
+            order_expire_minutes: default_order_expire_minutes(),
             search_engine: default_search_engine(),
             search_index_dir: "./test-storage/search_index".into(),
             content_type_dir: default_content_type_dir(),

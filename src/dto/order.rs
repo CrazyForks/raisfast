@@ -14,7 +14,11 @@ pub struct CreateOrderRequest {
     pub buyer_phone: Option<String>,
     pub buyer_email: Option<String>,
     pub shipping_address: Option<String>,
+    pub shipping_address_id: Option<String>,
+    pub billing_address_id: Option<String>,
     pub remark: Option<String>,
+    pub coupon_id: Option<String>,
+    pub coupon_code: Option<String>,
 }
 
 #[cfg_attr(feature = "export-types", derive(TS))]

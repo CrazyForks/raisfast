@@ -53,12 +53,7 @@ pub use scheduler::{
 };
 
 #[cfg(feature = "export-types")]
-export_types!(
-    JobStatus,
-    CronExecStatus,
-    CronSchedule,
-    CronExecutionLog,
-);
+export_types!(JobStatus, CronExecStatus, CronSchedule, CronExecutionLog,);
 
 /// Job types and parameters
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -104,6 +99,7 @@ pub enum Job {
         verify_token: String,
     },
     ExpirePaymentOrders,
+    ExpireOrders,
     RetryPaymentCallback {
         payment_order_id: SnowflakeId,
     },
@@ -134,6 +130,7 @@ impl Job {
             Job::SendSmsCode { .. } => "send_sms_code",
             Job::SendEmailVerification { .. } => "send_email_verification",
             Job::ExpirePaymentOrders => "expire_payment_orders",
+            Job::ExpireOrders => "expire_orders",
             Job::RetryPaymentCallback { .. } => "retry_payment_callback",
             Job::ReconcilePayments => "reconcile_payments",
             Job::ProcessWalletOutbox => "process_wallet_outbox",

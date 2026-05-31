@@ -91,10 +91,7 @@ async fn admin_delete_product_category() {
 
     let (status, _) = send(
         &mut app,
-        delete_auth(
-            &format!("/api/v1/admin/product-categories/{id}"),
-            &tok,
-        ),
+        delete_auth(&format!("/api/v1/admin/product-categories/{id}"), &tok),
     )
     .await;
     assert!(status.is_success(), "delete: {status}");
@@ -145,7 +142,11 @@ async fn public_list_product_categories() {
     )
     .await;
 
-    let (status, body) = send(&mut app, get_req("/api/v1/product-categories?page=1&page_size=10")).await;
+    let (status, body) = send(
+        &mut app,
+        get_req("/api/v1/product-categories?page=1&page_size=10"),
+    )
+    .await;
     assert!(status.is_success());
     let items = body["data"]["items"].as_array().unwrap();
     assert!(!items.is_empty());

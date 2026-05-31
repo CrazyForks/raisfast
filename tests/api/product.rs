@@ -228,7 +228,10 @@ async fn admin_create_product_with_category() {
         ),
     )
     .await;
-    assert!(status.is_success(), "create with category: {status} {body:?}");
+    assert!(
+        status.is_success(),
+        "create with category: {status} {body:?}"
+    );
     assert_eq!(body["data"]["title"], "Phone");
     assert_eq!(body["data"]["category_id"], cat_id);
 }

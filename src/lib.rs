@@ -109,7 +109,8 @@ pub struct AppState {
     pub post_service: Arc<dyn crate::services::post::PostService>,
     pub page_service: Arc<dyn crate::services::page::PageService>,
     pub category_service: Arc<dyn crate::services::category::CategoryService>,
-    pub product_category_service: Arc<dyn crate::services::product_category::ProductCategoryService>,
+    pub product_category_service:
+        Arc<dyn crate::services::product_category::ProductCategoryService>,
     pub tag_service: Arc<dyn crate::services::tag::TagService>,
     pub comment_service: Arc<dyn crate::services::comment::CommentService>,
     pub user_service: Arc<dyn crate::services::user::UserService>,
@@ -118,6 +119,10 @@ pub struct AppState {
     pub order_service: Arc<dyn crate::services::order::OrderService>,
     pub cart_service: Arc<dyn crate::services::cart::CartService>,
     pub product_variant_service: Arc<dyn crate::services::product_variant::ProductVariantService>,
+    pub product_comment_service: Arc<dyn crate::services::product_comment::ProductCommentService>,
+    pub coupon_service: Arc<dyn crate::services::coupon::CouponService>,
+    pub shipping_template_service:
+        Arc<dyn crate::services::shipping_template::ShippingTemplateService>,
     pub user_address_service: Arc<dyn crate::services::user_address::UserAddressService>,
     pub payment_service: Arc<dyn crate::services::payment::PaymentService>,
     pub search: Arc<dyn SearchEngine>,
@@ -182,6 +187,25 @@ pub async fn build_app_state(
                 pool.clone(),
             )),
         );
+
+    let product_comment_service: Arc<dyn crate::services::product_comment::ProductCommentService> =
+        Arc::new(
+            crate::services::product_comment::ProductCommentServiceImpl::new(Arc::new(
+                pool.clone(),
+            )),
+        );
+
+    let coupon_service: Arc<dyn crate::services::coupon::CouponService> = Arc::new(
+        crate::services::coupon::CouponServiceImpl::new(Arc::new(pool.clone())),
+    );
+
+    let shipping_template_service: Arc<
+        dyn crate::services::shipping_template::ShippingTemplateService,
+    > = Arc::new(
+        crate::services::shipping_template::ShippingTemplateServiceImpl::new(Arc::new(
+            pool.clone(),
+        )),
+    );
 
     let user_address_service: Arc<dyn crate::services::user_address::UserAddressService> = Arc::new(
         crate::services::user_address::UserAddressServiceImpl::new(Arc::new(pool.clone())),
@@ -260,10 +284,12 @@ pub async fn build_app_state(
         ));
     let product_category_service: Arc<
         dyn crate::services::product_category::ProductCategoryService,
-    > = Arc::new(crate::services::product_category::ProductCategoryServiceImpl::new(
-        aspect_engine.clone(),
-        Arc::new(pool.clone()),
-    ));
+    > = Arc::new(
+        crate::services::product_category::ProductCategoryServiceImpl::new(
+            aspect_engine.clone(),
+            Arc::new(pool.clone()),
+        ),
+    );
     let page_service: Arc<dyn crate::services::page::PageService> = Arc::new(
         crate::services::page::PageServiceImpl::new(aspect_engine.clone(), Arc::new(pool.clone())),
     );
@@ -321,6 +347,9 @@ pub async fn build_app_state(
         order_service,
         cart_service,
         product_variant_service,
+        product_comment_service,
+        coupon_service,
+        shipping_template_service,
         user_address_service,
         payment_service,
         search,

@@ -4,6 +4,7 @@ pub mod batch;
 pub mod cart;
 pub mod category;
 pub mod comment;
+pub mod coupon;
 pub mod cron;
 pub mod currencies;
 pub mod ecommerce;
@@ -17,8 +18,10 @@ pub mod payment;
 pub mod post;
 pub mod product;
 pub mod product_category;
+pub mod product_comment;
 pub mod reusable_block;
 pub mod setup;
+pub mod shipping_template;
 pub mod sse;
 pub mod stats;
 pub mod tag;
@@ -33,6 +36,7 @@ pub use batch::*;
 pub use cart::*;
 pub use category::*;
 pub use comment::*;
+pub use coupon::*;
 pub use cron::*;
 pub use currencies::*;
 pub use ecommerce::*;
@@ -46,8 +50,10 @@ pub use payment::*;
 pub use post::*;
 pub use product::*;
 pub use product_category::*;
+pub use product_comment::*;
 pub use reusable_block::*;
 pub use setup::*;
+pub use shipping_template::*;
 pub use sse::*;
 pub use stats::*;
 pub use tag::*;
@@ -66,6 +72,9 @@ export_types!(
     comment::CreateCommentRequest,
     comment::UpdateCommentStatusRequest,
     comment::AdminCommentListQuery,
+    coupon::CreateCouponRequest,
+    coupon::UpdateCouponRequest,
+    coupon::CouponResponse,
     currencies::CurrencyResponse,
     currencies::CreateCurrencyRequest,
     currencies::UpdateCurrencyRequest,
@@ -89,6 +98,12 @@ export_types!(
     post::PostResponse,
     product_category::CreateProductCategoryRequest,
     product_category::UpdateProductCategoryRequest,
+    product_comment::CreateProductCommentRequest,
+    product_comment::UpdateProductCommentRequest,
+    product_comment::ProductCommentResponse,
+    product_comment::AdminReplyRequest,
+    product_comment::UpdateProductCommentStatusRequest,
+    product_comment::AdminProductCommentListQuery,
     tag::CreateTagRequest,
     tag::UpdateTagRequest,
     user::CredentialResponse,

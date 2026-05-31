@@ -9,7 +9,7 @@ async fn setup_with_product() -> (axum::Router, AppState, String, String) {
         &mut app.clone(),
         post_json_auth(
             "/api/v1/admin/products",
-            json!({"title": "Test Product", "price": 9900, "currency": "CNY"}),
+            json!({"title": "Test Product", "price": 9900, "currency": "CNY", "stock": 100}),
             &tok,
         ),
     )

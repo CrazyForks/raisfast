@@ -276,8 +276,7 @@ impl PostService for PostServiceImpl {
     }
 
     async fn admin_get_by_id(&self, auth: &AuthUser, id: SnowflakeId) -> AppResult<PostResponse> {
-        let row = crate::models::post::find_joined_by_id(&self.pool, id, auth.tenant_id())
-            .await?;
+        let row = crate::models::post::find_joined_by_id(&self.pool, id, auth.tenant_id()).await?;
         let tags = crate::models::post::get_post_tags(&self.pool, row.id, auth.tenant_id())
             .await
             .unwrap_or_default();
@@ -323,28 +322,25 @@ impl PostService for PostServiceImpl {
         id: SnowflakeId,
         req: UpdatePostRequest,
     ) -> AppResult<PostResponse> {
-        let existing =
-            crate::models::post::find_by_id(&self.pool, id, auth.tenant_id())
-                .await?
-                .ok_or_else(|| AppError::not_found("post"))?;
+        let existing = crate::models::post::find_by_id(&self.pool, id, auth.tenant_id())
+            .await?
+            .ok_or_else(|| AppError::not_found("post"))?;
 
         let (req, d) = self.before_update(auth, &existing, req).await?;
         let resp = self
             .update_inner(id, existing.clone(), req, d, auth)
             .await?;
-        let updated =
-            crate::models::post::find_by_id(&self.pool, id, auth.tenant_id())
-                .await?
-                .unwrap_or(existing);
+        let updated = crate::models::post::find_by_id(&self.pool, id, auth.tenant_id())
+            .await?
+            .unwrap_or(existing);
         self.after_updated(&updated);
         Ok(resp)
     }
 
     async fn admin_delete(&self, auth: &AuthUser, id: SnowflakeId) -> AppResult<()> {
-        let existing =
-            crate::models::post::find_by_id(&self.pool, id, auth.tenant_id())
-                .await?
-                .ok_or_else(|| AppError::not_found("post"))?;
+        let existing = crate::models::post::find_by_id(&self.pool, id, auth.tenant_id())
+            .await?
+            .ok_or_else(|| AppError::not_found("post"))?;
 
         self.before_delete(auth, &existing).await?;
 

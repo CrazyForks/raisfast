@@ -14,7 +14,11 @@ use crate::types::snowflake_id::SnowflakeId;
 
 #[async_trait]
 pub trait ProductCategoryService: Send + Sync {
-    async fn create(&self, auth: &AuthUser, req: CreateProductCategoryRequest) -> AppResult<ProductCategory>;
+    async fn create(
+        &self,
+        auth: &AuthUser,
+        req: CreateProductCategoryRequest,
+    ) -> AppResult<ProductCategory>;
     async fn update(
         &self,
         auth: &AuthUser,
@@ -41,7 +45,11 @@ pub struct ProductCategoryServiceImpl {
 
 #[async_trait]
 impl ProductCategoryService for ProductCategoryServiceImpl {
-    async fn create(&self, auth: &AuthUser, req: CreateProductCategoryRequest) -> AppResult<ProductCategory> {
+    async fn create(
+        &self,
+        auth: &AuthUser,
+        req: CreateProductCategoryRequest,
+    ) -> AppResult<ProductCategory> {
         let (req, _d) = self.before_create(auth, req).await?;
         let slug = slug_aspect::generate_slug(&req.name);
         let parent_id = resolve_parent_id(&self.pool, auth, req.parent_id.as_deref()).await?;
@@ -53,7 +61,10 @@ impl ProductCategoryService for ProductCategoryServiceImpl {
             sort_order: req.sort_order.unwrap_or(0),
         };
         let cat = crate::models::product_category::create(
-            &self.pool, &cmd, auth.tenant_id(), auth.user_id(),
+            &self.pool,
+            &cmd,
+            auth.tenant_id(),
+            auth.user_id(),
         )
         .await?;
         self.after_created(&cat);
@@ -84,7 +95,10 @@ impl ProductCategoryService for ProductCategoryServiceImpl {
             sort_order: req.sort_order,
         };
         let updated = crate::models::product_category::update(
-            &self.pool, &cmd, auth.tenant_id(), auth.user_id(),
+            &self.pool,
+            &cmd,
+            auth.tenant_id(),
+            auth.user_id(),
         )
         .await?;
         self.after_updated(&updated);
@@ -114,8 +128,13 @@ impl ProductCategoryService for ProductCategoryServiceImpl {
         page: i64,
         page_size: i64,
     ) -> AppResult<(Vec<ProductCategory>, i64)> {
-        crate::models::product_category::find_paginated(&self.pool, auth.tenant_id(), page, page_size)
-            .await
+        crate::models::product_category::find_paginated(
+            &self.pool,
+            auth.tenant_id(),
+            page,
+            page_size,
+        )
+        .await
     }
 }
 
@@ -131,7 +150,8 @@ async fn resolve_parent_id(
             } else {
                 let pid = crate::types::snowflake_id::parse_id(raw)?;
                 let parent =
-                    crate::models::product_category::find_by_id(pool, pid, auth.tenant_id()).await?;
+                    crate::models::product_category::find_by_id(pool, pid, auth.tenant_id())
+                        .await?;
                 Ok(Some(*parent.id))
             }
         }

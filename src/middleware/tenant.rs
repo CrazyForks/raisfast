@@ -42,6 +42,7 @@ pub async fn subdomain_tenant_resolver(
 }
 
 fn extract_subdomain(host: &str, base_domain: &str) -> Option<String> {
+    let host = host.split(':').next().unwrap_or(host);
     if !host.ends_with(base_domain) {
         return None;
     }

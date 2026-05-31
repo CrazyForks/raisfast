@@ -37,4 +37,4 @@ mod private {
 }
 
 #[cfg(feature = "export-types")]
-pub use private::{collect_all, ExportType};
+pub use private::{ExportType, collect_all};

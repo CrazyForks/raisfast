@@ -834,12 +834,12 @@ mod tests {
         seed_defaults(&pool, &[]).await.unwrap();
 
         let list = list_schedules(&pool).await.unwrap();
-        assert_eq!(list.len(), 6);
+        assert_eq!(list.len(), 7);
 
         // Second call does not insert duplicates
         seed_defaults(&pool, &[]).await.unwrap();
         let list2 = list_schedules(&pool).await.unwrap();
-        assert_eq!(list2.len(), 6);
+        assert_eq!(list2.len(), 7);
     }
 
     #[tokio::test]

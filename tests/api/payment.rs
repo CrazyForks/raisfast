@@ -269,7 +269,7 @@ async fn list_available_channels_returns_channels() {
             &mut app,
             post_json_auth(
                 "/api/v1/admin/products",
-                json!({"title": "Pay Product", "price": 9900, "currency": "CNY"}),
+                json!({"title": "Pay Product", "price": 9900, "currency": "CNY", "stock": 100}),
                 &tok,
             ),
         )
@@ -328,7 +328,7 @@ async fn list_available_channels_no_match() {
         &mut app,
         post_json_auth(
             "/api/v1/admin/products",
-            json!({"title": "JPY Product", "price": 1000, "currency": "JPY"}),
+            json!({"title": "JPY Product", "price": 1000, "currency": "JPY", "stock": 100}),
             &tok,
         ),
     )
@@ -391,7 +391,7 @@ async fn create_payment_order_auto_route() {
         &mut app,
         post_json_auth(
             "/api/v1/admin/products",
-            json!({"title": "Auto Product", "price": 9900, "currency": "CNY"}),
+            json!({"title": "Auto Product", "price": 9900, "currency": "CNY", "stock": 100}),
             &tok,
         ),
     )
@@ -521,7 +521,7 @@ async fn create_payment_order_no_channel_no_match() {
         &mut app,
         post_json_auth(
             "/api/v1/admin/products",
-            json!({"title": "JPY Product", "price": 5000, "currency": "JPY"}),
+            json!({"title": "JPY Product", "price": 5000, "currency": "JPY", "stock": 100}),
             &tok,
         ),
     )

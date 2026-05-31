@@ -104,6 +104,14 @@ pub enum Event {
     #[event(table = "product_categories")]
     ProductCategoryDeleted(ProductCategory),
 
+    // ── Product Comment lifecycle ──
+    #[event(table = "product_comments")]
+    ProductCommentCreated(crate::models::product_comment::ProductComment),
+    #[event(table = "product_comments")]
+    ProductCommentUpdated(crate::models::product_comment::ProductComment),
+    #[event(table = "product_comments")]
+    ProductCommentDeleted(crate::models::product_comment::ProductComment),
+
     // ── Order lifecycle ──
     #[event(table = "orders")]
     OrderCreated(Order),

@@ -7,6 +7,7 @@ pub mod cache;
 pub mod db_backup;
 pub mod email;
 pub mod email_verification;
+pub mod order_expire;
 pub mod payment_expire;
 pub mod payment_reconcile;
 pub mod payment_retry;
@@ -98,6 +99,13 @@ pub fn register_all(
     registry.register(
         "expire_payment_orders",
         Box::new(payment_expire::ExpirePaymentOrdersHandler::new(
+            pool.clone(),
+            config.clone(),
+        )),
+    );
+    registry.register(
+        "expire_orders",
+        Box::new(order_expire::ExpireOrdersHandler::new(
             pool.clone(),
             config.clone(),
         )),

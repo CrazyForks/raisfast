@@ -29,7 +29,12 @@ pub fn routes(
         .route("/setup/init", axum::routing::post(setup_init));
 
     registry.record("GET", "/api/v1/setup/status", "system public", "setup");
-    registry.record("POST", "/api/v1/setup/database/test", "system public", "setup");
+    registry.record(
+        "POST",
+        "/api/v1/setup/database/test",
+        "system public",
+        "setup",
+    );
     registry.record("POST", "/api/v1/setup/database", "system public", "setup");
     registry.record("POST", "/api/v1/setup/init", "system public", "setup");
 
@@ -37,11 +42,10 @@ pub fn routes(
 }
 
 async fn ensure_no_admin(pool: &crate::db::Pool) -> AppResult<()> {
-    let count: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM users WHERE role = 'admin'")
-            .fetch_one(pool)
-            .await
-            .map_err(|_| AppError::BadRequest("database_not_connected".into()))?;
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM users WHERE role = 'admin'")
+        .fetch_one(pool)
+        .await
+        .map_err(|_| AppError::BadRequest("database_not_connected".into()))?;
     if count > 0 {
         return Err(AppError::Forbidden);
     }
@@ -51,10 +55,7 @@ async fn ensure_no_admin(pool: &crate::db::Pool) -> AppResult<()> {
 pub async fn setup_status(
     State(state): State<crate::AppState>,
 ) -> AppResult<ApiResponse<SetupStatusResponse>> {
-    let db_connected = sqlx::query("SELECT 1")
-        .execute(&state.pool)
-        .await
-        .is_ok();
+    let db_connected = sqlx::query("SELECT 1").execute(&state.pool).await.is_ok();
 
     let db_type = detect_db_type(&state.config.database_url);
     let url_masked = mask_db_url(&state.config.database_url);
@@ -63,14 +64,17 @@ pub async fn setup_status(
     let storage_writable = is_storage_writable(&storage_path);
 
     let ct_path = state.config.content_type_dir.clone();
-    let plugin_path = state.config.plugin_dir.clone().unwrap_or_else(|| "./extensions/plugins".into());
+    let plugin_path = state
+        .config
+        .plugin_dir
+        .clone()
+        .unwrap_or_else(|| "./extensions/plugins".into());
     let ext_writable = is_dir_writable(&ct_path) && is_dir_writable(&plugin_path);
 
-    let admin_count: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM users WHERE role = 'admin'")
-            .fetch_one(&state.pool)
-            .await
-            .unwrap_or(0);
+    let admin_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM users WHERE role = 'admin'")
+        .fetch_one(&state.pool)
+        .await
+        .unwrap_or(0);
 
     Ok(ApiResponse::success(SetupStatusResponse {
         database: crate::dto::DatabaseStatusInfo {
@@ -98,9 +102,7 @@ pub async fn test_database(
     ensure_no_admin(&state.pool).await?;
 
     let db_type = detect_db_type(&state.config.database_url);
-    let url = req
-        .build_url(&db_type)
-        .map_err(AppError::BadRequest)?;
+    let url = req.build_url(&db_type).map_err(AppError::BadRequest)?;
     let url_masked = mask_db_url(&url);
 
     match test_db_connection(&url).await {
@@ -140,9 +142,7 @@ pub async fn setup_database(
     ensure_no_admin(&state.pool).await?;
 
     let db_type = detect_db_type(&state.config.database_url);
-    let url = req
-        .build_url(&db_type)
-        .map_err(AppError::BadRequest)?;
+    let url = req.build_url(&db_type).map_err(AppError::BadRequest)?;
 
     test_db_connection(&url).await?;
 
@@ -156,8 +156,7 @@ pub async fn setup_database(
 
     tokio::spawn(async {
         tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-        let exe = std::env::current_exe()
-            .unwrap_or_else(|_| std::path::PathBuf::from("raisfast"));
+        let exe = std::env::current_exe().unwrap_or_else(|_| std::path::PathBuf::from("raisfast"));
         let args: Vec<String> = std::env::args().skip(1).collect();
         tracing::info!("spawning new server process and exiting...");
         let _ = std::process::Command::new(&exe).args(&args).spawn();
@@ -193,13 +192,8 @@ pub async fn setup_init(
 
     let uid = parse_user_id(&user.id)?;
 
-    crate::models::user::update_role(
-        &state.pool,
-        uid,
-        crate::models::user::UserRole::Admin,
-        None,
-    )
-    .await?;
+    crate::models::user::update_role(&state.pool, uid, crate::models::user::UserRole::Admin, None)
+        .await?;
 
     let access_token = crate::services::auth::generate_access_token_internal(
         uid,
@@ -330,10 +324,7 @@ mod tests {
     #[test]
     fn detect_db_type_postgres() {
         assert_eq!(detect_db_type("postgres://user:pass@host/db"), "postgres");
-        assert_eq!(
-            detect_db_type("postgresql://user:pass@host/db"),
-            "postgres"
-        );
+        assert_eq!(detect_db_type("postgresql://user:pass@host/db"), "postgres");
     }
 
     #[test]
@@ -400,7 +391,10 @@ mod tests {
             database: Some("./data/test.db".into()),
             url: None,
         };
-        assert_eq!(req.build_url("sqlite").unwrap(), "sqlite:./data/test.db?mode=rwc");
+        assert_eq!(
+            req.build_url("sqlite").unwrap(),
+            "sqlite:./data/test.db?mode=rwc"
+        );
     }
 
     #[test]

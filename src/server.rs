@@ -139,7 +139,16 @@ async fn build_app(
                 &mut registry,
                 config,
             ))
+            .merge(crate::handlers::product_comment::routes(
+                &mut registry,
+                config,
+            ))
             .merge(crate::handlers::user_address::routes(&mut registry, config))
+            .merge(crate::handlers::coupon::routes(&mut registry, config))
+            .merge(crate::handlers::shipping_template::routes(
+                &mut registry,
+                config,
+            ))
             .merge(crate::handlers::currencies::routes(&mut registry, config));
     }
 

@@ -232,6 +232,95 @@ pub async fn delete_by_id(
     Ok(result.rows_affected() > 0)
 }
 
+pub async fn tx_deduct_stock(
+    tx: &mut crate::db::pool::DbConnection,
+    product_id: SnowflakeId,
+    quantity: i64,
+    tenant_id: Option<&str>,
+) -> AppResult<()> {
+    raisfast_derive::check_schema!(
+        "products",
+        "stock",
+        "version",
+        "updated_at",
+        "id",
+        "tenant_id"
+    );
+    let sql = if tenant_id.is_some() {
+        format!(
+            "UPDATE products SET stock = stock - {}, version = version + 1, updated_at = {} WHERE id = {} AND stock >= {} AND tenant_id = {}",
+            crate::db::Driver::ph(1),
+            crate::db::Driver::now_fn(),
+            crate::db::Driver::ph(2),
+            crate::db::Driver::ph(3),
+            crate::db::Driver::ph(4)
+        )
+    } else {
+        format!(
+            "UPDATE products SET stock = stock - {}, version = version + 1, updated_at = {} WHERE id = {} AND stock >= {}",
+            crate::db::Driver::ph(1),
+            crate::db::Driver::now_fn(),
+            crate::db::Driver::ph(2),
+            crate::db::Driver::ph(3)
+        )
+    };
+    let mut q = sqlx::query(&sql)
+        .bind(quantity)
+        .bind(product_id)
+        .bind(quantity);
+    if let Some(tid) = tenant_id {
+        q = q.bind(tid);
+    }
+    let result = q.execute(&mut *tx).await?;
+    if result.rows_affected() == 0 {
+        return Err(AppError::BadRequest("insufficient_stock".into()));
+    }
+    Ok(())
+}
+
+pub async fn tx_replenish_stock(
+    tx: &mut crate::db::pool::DbConnection,
+    product_id: SnowflakeId,
+    quantity: i64,
+    tenant_id: Option<&str>,
+) -> AppResult<()> {
+    raisfast_derive::check_schema!(
+        "products",
+        "stock",
+        "version",
+        "updated_at",
+        "id",
+        "tenant_id"
+    );
+    let sql = if tenant_id.is_some() {
+        format!(
+            "UPDATE products SET stock = stock + {}, version = version + 1, updated_at = {} WHERE id = {} AND tenant_id = {}",
+            crate::db::Driver::ph(1),
+            crate::db::Driver::now_fn(),
+            crate::db::Driver::ph(2),
+            crate::db::Driver::ph(3)
+        )
+    } else {
+        format!(
+            "UPDATE products SET stock = stock + {}, version = version + 1, updated_at = {} WHERE id = {}",
+            crate::db::Driver::ph(1),
+            crate::db::Driver::now_fn(),
+            crate::db::Driver::ph(2)
+        )
+    };
+    let mut q = sqlx::query(&sql).bind(quantity).bind(product_id);
+    if let Some(tid) = tenant_id {
+        q = q.bind(tid);
+    }
+    let result = q.execute(&mut *tx).await?;
+    if result.rows_affected() == 0 {
+        return Err(AppError::Internal(anyhow::anyhow!(
+            "product not found for stock replenishment"
+        )));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -567,5 +656,129 @@ mod tests {
             .unwrap();
         assert_eq!(total, 0);
         assert!(items.is_empty());
+    }
+
+    async fn seed_product_with_stock(pool: &crate::db::Pool, stock: i64) -> Product {
+        insert(
+            pool,
+            &CreateProductCmd {
+                category_id: None,
+                title: "StockTest".to_string(),
+                description: None,
+                cover_url: None,
+                product_type: "custom".to_string(),
+                fulfillment_type: "digital".to_string(),
+                delivery_hook: None,
+                weight: None,
+                price: 1000,
+                currency: "CNY".to_string(),
+                attributes: None,
+                sort_order: 0,
+                slug: None,
+                content: None,
+                image_ids: None,
+                original_price: None,
+                specs: None,
+                unit: "piece".to_string(),
+                min_purchase: 1,
+                max_purchase: None,
+                virtual_sales: 0,
+                meta_title: None,
+                meta_description: None,
+                stock,
+                cost_price: None,
+                sale_price: None,
+                has_variants: false,
+            },
+            None,
+        )
+        .await
+        .unwrap()
+    }
+
+    async fn get_stock(pool: &crate::db::Pool, id: SnowflakeId) -> i64 {
+        let (s,): (i64,) = sqlx::query_as(&format!(
+            "SELECT stock FROM products WHERE id = {}",
+            crate::db::Driver::ph(1)
+        ))
+        .bind(id)
+        .fetch_one(pool)
+        .await
+        .unwrap();
+        s
+    }
+
+    async fn deduct(
+        pool: &crate::db::Pool,
+        pid: SnowflakeId,
+        qty: i64,
+    ) -> crate::errors::app_error::AppResult<()> {
+        crate::in_transaction!(pool, tx, {
+            super::tx_deduct_stock(&mut tx, pid, qty, None).await
+        })
+    }
+
+    async fn replenish(
+        pool: &crate::db::Pool,
+        pid: SnowflakeId,
+        qty: i64,
+    ) -> crate::errors::app_error::AppResult<()> {
+        crate::in_transaction!(pool, tx, {
+            super::tx_replenish_stock(&mut tx, pid, qty, None).await
+        })
+    }
+
+    #[tokio::test]
+    async fn tx_deduct_stock_success() {
+        let pool = setup_pool().await;
+        let p = seed_product_with_stock(&pool, 10).await;
+        deduct(&pool, p.id, 3).await.unwrap();
+        assert_eq!(get_stock(&pool, p.id).await, 7);
+    }
+
+    #[tokio::test]
+    async fn tx_deduct_stock_exact() {
+        let pool = setup_pool().await;
+        let p = seed_product_with_stock(&pool, 5).await;
+        deduct(&pool, p.id, 5).await.unwrap();
+        assert_eq!(get_stock(&pool, p.id).await, 0);
+    }
+
+    #[tokio::test]
+    async fn tx_deduct_stock_insufficient() {
+        let pool = setup_pool().await;
+        let p = seed_product_with_stock(&pool, 3).await;
+        let err = deduct(&pool, p.id, 5).await.unwrap_err();
+        assert!(
+            matches!(err, crate::errors::app_error::AppError::BadRequest(ref s) if s == "insufficient_stock")
+        );
+        assert_eq!(get_stock(&pool, p.id).await, 3);
+    }
+
+    #[tokio::test]
+    async fn tx_deduct_stock_not_found() {
+        let pool = setup_pool().await;
+        let err = deduct(&pool, SnowflakeId(99999), 1).await.unwrap_err();
+        assert!(
+            matches!(err, crate::errors::app_error::AppError::BadRequest(ref s) if s == "insufficient_stock")
+        );
+    }
+
+    #[tokio::test]
+    async fn tx_replenish_stock_success() {
+        let pool = setup_pool().await;
+        let p = seed_product_with_stock(&pool, 5).await;
+        replenish(&pool, p.id, 3).await.unwrap();
+        assert_eq!(get_stock(&pool, p.id).await, 8);
+    }
+
+    #[tokio::test]
+    async fn tx_replenish_stock_not_found() {
+        let pool = setup_pool().await;
+        let err = replenish(&pool, SnowflakeId(99999), 1).await.unwrap_err();
+        assert!(matches!(
+            err,
+            crate::errors::app_error::AppError::Internal(_)
+        ));
     }
 }

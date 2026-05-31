@@ -1001,6 +1001,29 @@ CREATE TABLE IF NOT EXISTS wallet_outbox (
 -- 预置数据
 -- ============================================================
 
+-- Product Comments (reviews/ratings)
+CREATE TABLE IF NOT EXISTS product_comments (
+    id BIGINT PRIMARY KEY,
+    tenant_id VARCHAR(64) NOT NULL DEFAULT 'default',
+    product_id BIGINT NOT NULL,
+    order_id BIGINT NOT NULL,
+    user_id BIGINT NOT NULL,
+    rating INT NOT NULL DEFAULT 5,
+    title VARCHAR(255),
+    content TEXT NOT NULL,
+    images TEXT,
+    status VARCHAR(32) NOT NULL DEFAULT 'approved',
+    admin_reply TEXT,
+    admin_replied_at DATETIME,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE INDEX idx_product_comments_unique (product_id, order_id, user_id),
+    INDEX idx_product_comments_product (product_id),
+    INDEX idx_product_comments_user (user_id),
+    INDEX idx_product_comments_status (status),
+    INDEX idx_product_comments_tenant (tenant_id)
+);
+
 -- 系统角色
 INSERT IGNORE INTO roles (tenant_id, name, description, is_system, created_at, updated_at) VALUES
     ('default', 'admin', '超级管理员', TRUE, NOW(), NOW()),
@@ -1044,3 +1067,45 @@ INSERT IGNORE INTO options (tenant_id, `option_key`, value, `type`, group_name, 
     ('default', 'default_role', '"reader"', 'select', 'discussion', '新用户默认角色', NULL, '{"values":["reader","author"]}', FALSE, TRUE, 22, NOW()),
     ('default', 'theme', '"default"', 'select', 'appearance', '当前主题', NULL, '{"values":["default","corporate","minimal","warm"]}', TRUE, TRUE, 30, NOW()),
     ('default', 'maintenance_mode', 'false', 'boolean', 'appearance', '维护模式', '开启后前台显示维护页面', NULL, TRUE, TRUE, 31, NOW());
+
+-- Coupons
+CREATE TABLE IF NOT EXISTS coupons (
+    id BIGINT PRIMARY KEY,
+    tenant_id VARCHAR(64) NOT NULL DEFAULT 'default',
+    code VARCHAR(64) NOT NULL UNIQUE,
+    title VARCHAR(255) NOT NULL,
+    coupon_type VARCHAR(32) NOT NULL DEFAULT 'percent',
+    value BIGINT NOT NULL,
+    min_order BIGINT NOT NULL DEFAULT 0,
+    max_uses INT NOT NULL DEFAULT 0,
+    used_count INT NOT NULL DEFAULT 0,
+    max_uses_per_user INT NOT NULL DEFAULT 1,
+    starts_at DATETIME,
+    expires_at DATETIME,
+    status VARCHAR(32) NOT NULL DEFAULT 'active',
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_coupons_code (code),
+    INDEX idx_coupons_status (status),
+    INDEX idx_coupons_tenant (tenant_id)
+);
+
+-- Shipping Templates
+CREATE TABLE IF NOT EXISTS shipping_templates (
+    id INTEGER PRIMARY KEY,
+    tenant_id TEXT NOT NULL DEFAULT 'default',
+    name TEXT NOT NULL,
+    type TEXT NOT NULL DEFAULT 'weight',
+    first_unit INTEGER NOT NULL DEFAULT 1,
+    first_price INTEGER NOT NULL DEFAULT 0,
+    additional_unit INTEGER NOT NULL DEFAULT 1,
+    additional_price INTEGER NOT NULL DEFAULT 0,
+    free_shipping_amount INTEGER NOT NULL DEFAULT 0,
+    regions TEXT NOT NULL DEFAULT '[]',
+    status TEXT NOT NULL DEFAULT 'active',
+    created_at TEXT NOT NULL DEFAULT (NOW()),
+    updated_at TEXT NOT NULL DEFAULT (NOW())
+);
+
+CREATE INDEX idx_shipping_templates_tenant ON shipping_templates(tenant_id);
+CREATE INDEX idx_shipping_templates_status ON shipping_templates(status);

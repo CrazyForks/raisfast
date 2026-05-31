@@ -100,9 +100,11 @@ pub async fn create(
         tenant: tenant_id
     )?;
 
-    find_by_id(pool, id, tenant_id)
-        .await
-        .map_err(|e| AppError::Internal(anyhow::anyhow!("failed to fetch created product category: {e}")))
+    find_by_id(pool, id, tenant_id).await.map_err(|e| {
+        AppError::Internal(anyhow::anyhow!(
+            "failed to fetch created product category: {e}"
+        ))
+    })
 }
 
 pub async fn update(
@@ -224,9 +226,7 @@ mod tests {
             .await
             .unwrap();
         }
-        let (items, total) = super::find_paginated(&pool, None, 1, 3)
-            .await
-            .unwrap();
+        let (items, total) = super::find_paginated(&pool, None, 1, 3).await.unwrap();
         assert_eq!(total, 5);
         assert_eq!(items.len(), 3);
     }

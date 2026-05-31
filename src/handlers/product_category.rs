@@ -18,43 +18,103 @@ pub fn routes(
     let restful = config.api_restful;
     let r = axum::Router::new();
     let r = reg_route!(
-        r, registry, restful, "/product-categories", get, self::list, "system public",
+        r,
+        registry,
+        restful,
+        "/product-categories",
+        get,
+        self::list,
+        "system public",
         "product-categories"
     );
     let r = reg_route!(
-        r, registry, restful, "/product-categories", create, self::create, "system public",
+        r,
+        registry,
+        restful,
+        "/product-categories",
+        create,
+        self::create,
+        "system public",
         "product-categories"
     );
     let r = reg_route!(
-        r, registry, restful, "/product-categories/{id}", get, self::get, "system public",
+        r,
+        registry,
+        restful,
+        "/product-categories/{id}",
+        get,
+        self::get,
+        "system public",
         "product-categories"
     );
     let r = reg_route!(
-        r, registry, restful, "/product-categories/{id}", put, update, "system public",
+        r,
+        registry,
+        restful,
+        "/product-categories/{id}",
+        put,
+        update,
+        "system public",
         "product-categories"
     );
     let r = reg_route!(
-        r, registry, restful, "/product-categories/{id}", delete, self::delete, "system public",
+        r,
+        registry,
+        restful,
+        "/product-categories/{id}",
+        delete,
+        self::delete,
+        "system public",
         "product-categories"
     );
     let r = reg_route!(
-        r, registry, restful, "/admin/product-categories", get, admin_list, "system admin",
+        r,
+        registry,
+        restful,
+        "/admin/product-categories",
+        get,
+        admin_list,
+        "system admin",
         "admin/product-categories"
     );
     let r = reg_route!(
-        r, registry, restful, "/admin/product-categories", create, admin_create, "system admin",
+        r,
+        registry,
+        restful,
+        "/admin/product-categories",
+        create,
+        admin_create,
+        "system admin",
         "admin/product-categories"
     );
     let r = reg_route!(
-        r, registry, restful, "/admin/product-categories/{id}", put, admin_update, "system admin",
+        r,
+        registry,
+        restful,
+        "/admin/product-categories/{id}",
+        put,
+        admin_update,
+        "system admin",
         "admin/product-categories"
     );
     let r = reg_route!(
-        r, registry, restful, "/admin/product-categories/{id}", delete, admin_delete, "system admin",
+        r,
+        registry,
+        restful,
+        "/admin/product-categories/{id}",
+        delete,
+        admin_delete,
+        "system admin",
         "admin/product-categories"
     );
     reg_route!(
-        r, registry, restful, "/admin/product-categories/batch", post, admin_batch, "system admin",
+        r,
+        registry,
+        restful,
+        "/admin/product-categories/batch",
+        post,
+        admin_batch,
+        "system admin",
         "admin/product-categories"
     )
 }
@@ -83,7 +143,9 @@ pub async fn get(
 ) -> AppResult<ApiResponse<ProductCategoryResponse>> {
     let id = crate::types::snowflake_id::parse_id(&id)?;
     let cat = state.product_category_service.get(id, &auth).await?;
-    Ok(ApiResponse::success(ProductCategoryResponse::from_category(cat)))
+    Ok(ApiResponse::success(
+        ProductCategoryResponse::from_category(cat),
+    ))
 }
 
 pub async fn create(
@@ -94,7 +156,9 @@ pub async fn create(
     auth.ensure_author()?;
     validation::validate(&req)?;
     let cat = state.product_category_service.create(&auth, req).await?;
-    Ok(ApiResponse::success(ProductCategoryResponse::from_category(cat)))
+    Ok(ApiResponse::success(
+        ProductCategoryResponse::from_category(cat),
+    ))
 }
 
 pub async fn update(
@@ -106,8 +170,13 @@ pub async fn update(
     auth.ensure_author()?;
     validation::validate(&req)?;
     let id = crate::types::snowflake_id::parse_id(&id)?;
-    let cat = state.product_category_service.update(&auth, id, req).await?;
-    Ok(ApiResponse::success(ProductCategoryResponse::from_category(cat)))
+    let cat = state
+        .product_category_service
+        .update(&auth, id, req)
+        .await?;
+    Ok(ApiResponse::success(
+        ProductCategoryResponse::from_category(cat),
+    ))
 }
 
 pub async fn delete(
@@ -147,7 +216,9 @@ pub async fn admin_create(
     auth.ensure_admin()?;
     validation::validate(&req)?;
     let cat = state.product_category_service.create(&auth, req).await?;
-    Ok(ApiResponse::success(ProductCategoryResponse::from_category(cat)))
+    Ok(ApiResponse::success(
+        ProductCategoryResponse::from_category(cat),
+    ))
 }
 
 pub async fn admin_update(
@@ -159,8 +230,13 @@ pub async fn admin_update(
     auth.ensure_admin()?;
     validation::validate(&req)?;
     let id = crate::types::snowflake_id::parse_id(&id)?;
-    let cat = state.product_category_service.update(&auth, id, req).await?;
-    Ok(ApiResponse::success(ProductCategoryResponse::from_category(cat)))
+    let cat = state
+        .product_category_service
+        .update(&auth, id, req)
+        .await?;
+    Ok(ApiResponse::success(
+        ProductCategoryResponse::from_category(cat),
+    ))
 }
 
 pub async fn admin_delete(
@@ -185,11 +261,18 @@ pub async fn admin_batch(
     if req.action == "delete" {
         for raw_id in &req.ids {
             if let Ok(id) = crate::types::snowflake_id::parse_id(raw_id)
-                && state.product_category_service.delete(id, &auth).await.is_ok()
+                && state
+                    .product_category_service
+                    .delete(id, &auth)
+                    .await
+                    .is_ok()
             {
                 affected += 1;
             }
         }
     }
-    Ok(ApiResponse::success(BatchResponse::new(&req.action, affected)))
+    Ok(ApiResponse::success(BatchResponse::new(
+        &req.action,
+        affected,
+    )))
 }

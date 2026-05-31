@@ -18,7 +18,14 @@ use crate::errors::validation;
 use crate::middleware::auth::AuthUser;
 use crate::utils::pagination::PaginationParams;
 
-fn post_list_cache_key(page: i64, page_size: i64, cat_id: Option<i64>, tg_id: Option<i64>, q: Option<&str>) -> String {
+fn post_list_cache_key(
+    page: i64,
+    page_size: i64,
+    cat_id: Option<i64>,
+    tg_id: Option<i64>,
+    q: Option<&str>,
+    tenant_id: Option<&str>,
+) -> String {
     use std::collections::hash_map::DefaultHasher;
     use std::hash::{Hash, Hasher};
     let mut h = DefaultHasher::new();
@@ -27,11 +34,8 @@ fn post_list_cache_key(page: i64, page_size: i64, cat_id: Option<i64>, tg_id: Op
     cat_id.hash(&mut h);
     tg_id.hash(&mut h);
     q.hash(&mut h);
+    tenant_id.hash(&mut h);
     format!("posts:list:{:x}", h.finish())
-}
-
-fn post_detail_cache_key(slug: &str) -> String {
-    format!("posts:detail:{slug}")
 }
 
 fn invalidate_post_cache(state: &crate::AppState) {
@@ -204,6 +208,7 @@ pub async fn list(
         cat_id,
         tg_id,
         query.q.as_deref(),
+        auth.tenant_id(),
     );
     let cache_ttl = std::time::Duration::from_secs(state.config.rule_engine.cms_cache_ttl_secs);
     if let Some(entry) = state.cms_cache.get(&cache_key)
@@ -224,8 +229,7 @@ pub async fn list(
         )
         .await?;
 
-    let result = pagination.paginate(posts, total);
-    let resp = ApiResponse::success(result);
+    let resp = pagination.paginate(posts, total);
     if let Ok(val) = serde_json::to_value(&resp) {
         state
             .cms_cache
@@ -250,22 +254,7 @@ pub async fn get(
     State(state): State<crate::AppState>,
     Path(slug): Path<String>,
 ) -> AppResult<axum::response::Response> {
-    let cache_key = post_detail_cache_key(&slug);
-    let cache_ttl = std::time::Duration::from_secs(state.config.rule_engine.cms_cache_ttl_secs);
-    if let Some(entry) = state.cms_cache.get(&cache_key)
-        && entry.value().1.elapsed() < cache_ttl
-    {
-        return Ok(axum::Json(entry.value().0.clone()).into_response());
-    }
-
     let post = state.post_service.get(&auth, &slug).await?;
-
-    if let Ok(val) = serde_json::to_value(&post) {
-        state
-            .cms_cache
-            .insert(cache_key, (val, std::time::Instant::now()));
-    }
-
     Ok(ApiResponse::success(post).into_response())
 }
 

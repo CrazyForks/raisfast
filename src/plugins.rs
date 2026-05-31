@@ -382,10 +382,7 @@ impl PluginManager {
         let plugin_dir = Path::new(plugin_dir);
         if !plugin_dir.exists() {
             let _ = std::fs::create_dir_all(plugin_dir);
-            tracing::info!(
-                "created plugin directory: {}",
-                plugin_dir.display()
-            );
+            tracing::info!("created plugin directory: {}", plugin_dir.display());
         }
 
         let entries = match std::fs::read_dir(plugin_dir) {

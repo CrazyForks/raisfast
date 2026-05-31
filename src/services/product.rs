@@ -256,8 +256,8 @@ async fn resolve_category_id(
     match raw_id {
         Some(raw) if !raw.is_empty() => {
             let cid = crate::types::snowflake_id::parse_id(raw)?;
-            let cat = crate::models::product_category::find_by_id(pool, cid, auth.tenant_id())
-                .await?;
+            let cat =
+                crate::models::product_category::find_by_id(pool, cid, auth.tenant_id()).await?;
             Ok(Some(*cat.id))
         }
         _ => Ok(None),

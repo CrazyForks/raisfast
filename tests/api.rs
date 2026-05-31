@@ -21,9 +21,9 @@ use raisfast::handlers::{
     api_token as h_token, auth as h_auth, cart as h_cart, category as h_cat, comment as h_cmt,
     cron as h_cron, health as h_health, media as h_media, options as h_options, order as h_order,
     page as h_page, payment as h_payment, plugin as h_plugin, post as h_post, product as h_product,
-    product_category as h_product_category, product_variant as h_product_variant, rbac as h_rbac, reusable_block as h_block, rss as h_rss,
-    sse as h_sse, stats as h_stats, tag as h_tag, tenant as h_tenant, user as h_user,
-    user_address as h_user_address, wallet as h_wallet,
+    product_category as h_product_category, product_variant as h_product_variant, rbac as h_rbac,
+    reusable_block as h_block, rss as h_rss, sse as h_sse, stats as h_stats, tag as h_tag,
+    tenant as h_tenant, user as h_user, user_address as h_user_address, wallet as h_wallet,
 };
 use raisfast::middleware::locale::locale_middleware;
 use raisfast::middleware::rate_limit::{
@@ -138,6 +138,19 @@ async fn build_test_app(pool: raisfast::db::Pool) -> (axum::Router, AppState) {
         ))),
         product_variant_service: Arc::new(
             raisfast::services::product_variant::ProductVariantServiceImpl::new(Arc::new(
+                pool.clone(),
+            )),
+        ),
+        product_comment_service: Arc::new(
+            raisfast::services::product_comment::ProductCommentServiceImpl::new(Arc::new(
+                pool.clone(),
+            )),
+        ),
+        coupon_service: Arc::new(raisfast::services::coupon::CouponServiceImpl::new(
+            Arc::new(pool.clone()),
+        )),
+        shipping_template_service: Arc::new(
+            raisfast::services::shipping_template::ShippingTemplateServiceImpl::new(Arc::new(
                 pool.clone(),
             )),
         ),

@@ -23,6 +23,7 @@ pub mod cart_item;
 pub mod category;
 pub mod comment;
 pub mod content_revision;
+pub mod coupon;
 pub mod currencies;
 pub mod email_verification;
 pub mod media;
@@ -40,10 +41,12 @@ pub mod plugin_storage;
 pub mod post;
 pub mod product;
 pub mod product_category;
+pub mod product_comment;
 pub mod product_variant;
 pub mod rbac;
 pub mod refresh_token;
 pub mod reusable_block;
+pub mod shipping_template;
 pub mod sms_code;
 pub mod tag;
 pub mod tenant;
@@ -95,4 +98,9 @@ export_types!(
     wallet_transaction::WalletReferenceType,
     options::OptionType,
     comment::CommentResponse,
+    product_comment::ProductCommentStatus,
+    product_comment::ProductCommentStats,
+    product_comment::RatingBucket,
+    coupon::CouponType,
+    coupon::CouponStatus,
 );
