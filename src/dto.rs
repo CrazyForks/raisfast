@@ -7,7 +7,6 @@ pub mod comment;
 pub mod coupon;
 pub mod cron;
 pub mod currencies;
-pub mod ecommerce;
 pub mod health;
 pub mod media;
 pub mod oauth;
@@ -19,6 +18,7 @@ pub mod post;
 pub mod product;
 pub mod product_category;
 pub mod product_comment;
+pub mod product_variant;
 pub mod reusable_block;
 pub mod setup;
 pub mod shipping_template;
@@ -27,6 +27,7 @@ pub mod stats;
 pub mod tag;
 pub mod tenant;
 pub mod user;
+pub mod user_address;
 pub mod wallet;
 pub mod ws;
 
@@ -39,7 +40,6 @@ pub use comment::*;
 pub use coupon::*;
 pub use cron::*;
 pub use currencies::*;
-pub use ecommerce::*;
 pub use health::*;
 pub use media::*;
 pub use oauth::*;
@@ -51,6 +51,7 @@ pub use post::*;
 pub use product::*;
 pub use product_category::*;
 pub use product_comment::*;
+pub use product_variant::*;
 pub use reusable_block::*;
 pub use setup::*;
 pub use shipping_template::*;
@@ -59,6 +60,7 @@ pub use stats::*;
 pub use tag::*;
 pub use tenant::*;
 pub use user::*;
+pub use user_address::*;
 pub use wallet::*;
 pub use ws::*;
 
@@ -78,9 +80,9 @@ export_types!(
     currencies::CurrencyResponse,
     currencies::CreateCurrencyRequest,
     currencies::UpdateCurrencyRequest,
-    ecommerce::CreateUserAddressRequest,
-    ecommerce::UpdateUserAddressRequest,
-    ecommerce::UserAddressResponse,
+    user_address::CreateUserAddressRequest,
+    user_address::UpdateUserAddressRequest,
+    user_address::UserAddressResponse,
     media::MediaResponse,
     media::MediaStatsResponse,
     media::MediaTypeInfoResponse,
@@ -104,6 +106,12 @@ export_types!(
     product_comment::AdminReplyRequest,
     product_comment::UpdateProductCommentStatusRequest,
     product_comment::AdminProductCommentListQuery,
+    product_variant::CreateProductVariantRequest,
+    product_variant::UpdateProductVariantRequest,
+    product_variant::ProductVariantResponse,
+    shipping_template::CreateShippingTemplateRequest,
+    shipping_template::UpdateShippingTemplateRequest,
+    shipping_template::ShippingTemplateResponse,
     tag::CreateTagRequest,
     tag::UpdateTagRequest,
     user::CredentialResponse,

@@ -1,4 +1,4 @@
-use crate::dto::ecommerce::{
+use crate::dto::product_variant::{
     CreateProductVariantRequest, ProductVariantResponse, UpdateProductVariantRequest,
 };
 use crate::errors::app_error::AppResult;

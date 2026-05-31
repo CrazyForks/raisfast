@@ -765,6 +765,8 @@ CREATE TABLE IF NOT EXISTS product_variants (
     original_price INTEGER,
     stock INTEGER NOT NULL DEFAULT 0,
     attributes TEXT,
+    image_url TEXT,
+    weight INTEGER,
     sort_order INTEGER NOT NULL DEFAULT 0,
     is_active INTEGER NOT NULL DEFAULT 1,
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),

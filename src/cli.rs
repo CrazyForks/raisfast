@@ -10,6 +10,7 @@ mod doctor_cmd;
 mod plugin_cmd;
 mod route_cmd;
 mod server_cmd;
+mod user_cmd;
 
 use raisfast::config::app::AppConfig;
 
@@ -60,6 +61,11 @@ enum Commands {
     },
     /// System diagnostics
     Doctor,
+    /// User account management
+    User {
+        #[command(subcommand)]
+        action: UserAction,
+    },
     /// Code generation
     Codegen {
         #[command(subcommand)]
@@ -130,17 +136,52 @@ pub enum DbAction {
         #[arg(short, long)]
         output: Option<String>,
     },
-    /// Seed initial data (admin user, default content types)
-    Seed {
-        /// Admin email (default: admin@raisfast.dev)
-        #[arg(long, default_value = "admin@raisfast.dev")]
+}
+
+#[derive(Subcommand)]
+pub enum UserAction {
+    /// Create a new user account
+    Create {
+        /// Email address
+        #[arg(long)]
         email: String,
-        /// Admin username (default: admin)
-        #[arg(long, default_value = "admin")]
+        /// Username
+        #[arg(long)]
         username: String,
-        /// Admin password (default: admin123)
-        #[arg(long, default_value = "admin123")]
+        /// Password
+        #[arg(long)]
         password: String,
+        /// Role: admin, editor, author, reader (default: reader)
+        #[arg(short, long, default_value = "reader")]
+        role: String,
+    },
+    /// List all user accounts
+    List,
+    /// Change a user's password
+    Passwd {
+        /// Username
+        username: String,
+        /// New password
+        #[arg(short, long)]
+        password: String,
+    },
+    /// Delete a user account
+    Delete {
+        /// Username
+        username: String,
+        /// Force deletion (required for admin users)
+        #[arg(long)]
+        force: bool,
+    },
+    /// Disable (suspend) a user account
+    Disable {
+        /// Username
+        username: String,
+    },
+    /// Enable (reactivate) a user account
+    Enable {
+        /// Username
+        username: String,
     },
 }
 
@@ -203,9 +244,9 @@ fn lerp(a: u8, b: u8, t: f32) -> u8 {
 }
 
 fn gradient_rgb(t: f32) -> (u8, u8, u8) {
-    let t = t.clamp(0.0, 1.0);
-    let (r1, g1, b1) = (245, 158, 11);
-    let (r2, g2, b2) = (6, 182, 212);
+    let t = t.clamp(0.0, 1.0).sqrt();
+    let (r1, g1, b1) = (37, 99, 235);
+    let (r2, g2, b2) = (204, 43, 28);
     (lerp(r1, r2, t), lerp(g1, g2, t), lerp(b1, b2, t))
 }
 
@@ -389,17 +430,6 @@ pub async fn run(cli: Cli, config: &AppConfig) -> anyhow::Result<()> {
             db_cmd::backup(config, &out, config.backup_retention).await?;
         }
 
-        Some(Commands::Db {
-            action:
-                DbAction::Seed {
-                    email,
-                    username,
-                    password,
-                },
-        }) => {
-            db_cmd::seed(config, &email, &username, &password).await?;
-        }
-
         Some(Commands::Ct {
             action: CtAction::New { name },
         }) => {
@@ -436,6 +466,47 @@ pub async fn run(cli: Cli, config: &AppConfig) -> anyhow::Result<()> {
 
         Some(Commands::Doctor) => {
             doctor_cmd::run(config).await;
+        }
+
+        Some(Commands::User {
+            action: UserAction::Create {
+                email,
+                username,
+                password,
+                role,
+            },
+        }) => {
+            user_cmd::create(config, &email, &username, &password, &role).await?;
+        }
+
+        Some(Commands::User {
+            action: UserAction::List,
+        }) => {
+            user_cmd::list(config).await?;
+        }
+
+        Some(Commands::User {
+            action: UserAction::Passwd { username, password },
+        }) => {
+            user_cmd::passwd(config, &username, &password).await?;
+        }
+
+        Some(Commands::User {
+            action: UserAction::Delete { username, force },
+        }) => {
+            user_cmd::delete(config, &username, force).await?;
+        }
+
+        Some(Commands::User {
+            action: UserAction::Disable { username },
+        }) => {
+            user_cmd::disable(config, &username).await?;
+        }
+
+        Some(Commands::User {
+            action: UserAction::Enable { username },
+        }) => {
+            user_cmd::enable(config, &username).await?;
         }
 
         Some(Commands::Codegen {

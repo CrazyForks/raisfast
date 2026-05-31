@@ -82,7 +82,15 @@ impl ExpireOrdersHandler {
             )
             .await?;
             for item in &items {
-                if let Some(pid) = item.product_id {
+                if let Some(vid) = item.variant_id {
+                    crate::models::product_variant::tx_replenish_stock(
+                        &mut tx,
+                        vid,
+                        item.quantity,
+                        order.tenant_id.as_deref(),
+                    )
+                    .await?;
+                } else if let Some(pid) = item.product_id {
                     crate::models::product::tx_replenish_stock(
                         &mut tx,
                         pid,

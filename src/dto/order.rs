@@ -27,6 +27,7 @@ pub struct CreateOrderItemRequest {
     pub product_id: String,
     #[validate(range(min = 1))]
     pub quantity: i64,
+    pub variant_id: Option<String>,
 }
 
 #[cfg_attr(feature = "export-types", derive(TS))]

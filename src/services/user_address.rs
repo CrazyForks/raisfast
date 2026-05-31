@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 
-use crate::dto::ecommerce::{CreateUserAddressRequest, UpdateUserAddressRequest};
+use crate::dto::user_address::{CreateUserAddressRequest, UpdateUserAddressRequest};
 use crate::errors::app_error::{AppError, AppResult};
 use crate::middleware::auth::AuthUser;
 use crate::models::user_address::UserAddress;

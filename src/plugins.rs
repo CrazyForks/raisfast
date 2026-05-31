@@ -849,6 +849,8 @@ impl PluginManager {
                 }
                 #[cfg(feature = "plugin-wasm")]
                 LoadedPluginInstance::Wasm(_) => {}
+                #[allow(unreachable_patterns)]
+                _ => {}
             }
             tracing::info!("unloaded plugin: {id}");
             drop(plugins);
@@ -1112,6 +1114,8 @@ impl PluginManager {
                     .call_filter(pid, func_name, &current)
                     .await
                     .map_err(|e| anyhow::anyhow!("{e}")),
+                #[allow(unreachable_patterns)]
+                _ => Err(anyhow::anyhow!("no plugin engine enabled")),
             };
 
             let elapsed = start.elapsed().as_micros() as u64;
@@ -1191,7 +1195,7 @@ impl PluginManager {
             };
 
             let start = std::time::Instant::now();
-            let result = match &plugin.instance {
+            let result: anyhow::Result<()> = match &plugin.instance {
                 #[cfg(feature = "plugin-wasm")]
                 LoadedPluginInstance::Wasm(wasm) => {
                     let mut instance = wasm.acquire().await;
@@ -1226,6 +1230,8 @@ impl PluginManager {
                     .call_action(pid, func_name, data)
                     .await
                     .map_err(|e| anyhow::anyhow!("{e}")),
+                #[allow(unreachable_patterns)]
+                _ => Err(anyhow::anyhow!("no plugin engine enabled")),
             };
 
             let elapsed = start.elapsed().as_micros() as u64;
@@ -1307,6 +1313,8 @@ impl PluginManager {
                     .call_string_filter(pid, func_name, content)
                     .await
                     .map_err(|e| anyhow::anyhow!("{e}")),
+                #[allow(unreachable_patterns)]
+                _ => Err(anyhow::anyhow!("no plugin engine enabled")),
             };
 
             let elapsed = start.elapsed().as_micros() as u64;
@@ -1692,6 +1700,8 @@ impl PluginManager {
                 .call_filter::<serde_json::Value>(pid, handler, input)
                 .await
                 .map_err(|e| anyhow::anyhow!("{e}"))?,
+            #[allow(unreachable_patterns)]
+            _ => None,
         };
 
         match result {

@@ -19,6 +19,8 @@ pub struct ProductVariant {
     pub original_price: Option<i64>,
     pub stock: i64,
     pub attributes: Option<String>,
+    pub image_url: Option<String>,
+    pub weight: Option<i64>,
     pub sort_order: i64,
     pub is_active: bool,
     pub created_at: Timestamp,
@@ -106,6 +108,8 @@ pub async fn insert(
             "original_price" => cmd.original_price,
             "stock" => cmd.stock,
             "attributes" => &cmd.attributes,
+            "image_url" => &cmd.image_url,
+            "weight" => cmd.weight,
             "sort_order" => cmd.sort_order,
             "is_active" => cmd.is_active,
             "created_at" => &now,
@@ -133,6 +137,8 @@ pub async fn update(
             "original_price" => cmd.original_price,
             "stock" => cmd.stock,
             "attributes" => &cmd.attributes,
+            "image_url" => &cmd.image_url,
+            "weight" => cmd.weight,
             "sort_order" => cmd.sort_order,
             "is_active" => cmd.is_active,
         ],
@@ -178,6 +184,90 @@ pub async fn count_by_product(
         tenant: tenant_id
     )?;
     Ok(count)
+}
+
+pub async fn tx_deduct_stock(
+    tx: &mut crate::db::pool::DbConnection,
+    variant_id: SnowflakeId,
+    quantity: i64,
+    tenant_id: Option<&str>,
+) -> AppResult<()> {
+    raisfast_derive::check_schema!(
+        "product_variants",
+        "stock",
+        "updated_at",
+        "id",
+        "tenant_id"
+    );
+    let sql = if tenant_id.is_some() {
+        format!(
+            "UPDATE product_variants SET stock = stock - {}, updated_at = {} WHERE id = {} AND stock >= {} AND tenant_id = {} AND is_active = 1",
+            crate::db::Driver::ph(1),
+            crate::db::Driver::now_fn(),
+            crate::db::Driver::ph(2),
+            crate::db::Driver::ph(3),
+            crate::db::Driver::ph(4)
+        )
+    } else {
+        format!(
+            "UPDATE product_variants SET stock = stock - {}, updated_at = {} WHERE id = {} AND stock >= {} AND is_active = 1",
+            crate::db::Driver::ph(1),
+            crate::db::Driver::now_fn(),
+            crate::db::Driver::ph(2),
+            crate::db::Driver::ph(3)
+        )
+    };
+    let mut q = sqlx::query(&sql)
+        .bind(quantity)
+        .bind(variant_id)
+        .bind(quantity);
+    if let Some(tid) = tenant_id {
+        q = q.bind(tid);
+    }
+    let result = q.execute(&mut *tx).await?;
+    if result.rows_affected() == 0 {
+        return Err(AppError::BadRequest("insufficient_stock".into()));
+    }
+    Ok(())
+}
+
+pub async fn tx_replenish_stock(
+    tx: &mut crate::db::pool::DbConnection,
+    variant_id: SnowflakeId,
+    quantity: i64,
+    tenant_id: Option<&str>,
+) -> AppResult<()> {
+    raisfast_derive::check_schema!(
+        "product_variants",
+        "stock",
+        "updated_at",
+        "id",
+        "tenant_id"
+    );
+    let sql = if tenant_id.is_some() {
+        format!(
+            "UPDATE product_variants SET stock = stock + {}, updated_at = {} WHERE id = {} AND tenant_id = {}",
+            crate::db::Driver::ph(1),
+            crate::db::Driver::now_fn(),
+            crate::db::Driver::ph(2),
+            crate::db::Driver::ph(3)
+        )
+    } else {
+        format!(
+            "UPDATE product_variants SET stock = stock + {}, updated_at = {} WHERE id = {}",
+            crate::db::Driver::ph(1),
+            crate::db::Driver::now_fn(),
+            crate::db::Driver::ph(2)
+        )
+    };
+    let mut q = sqlx::query(&sql)
+        .bind(quantity)
+        .bind(variant_id);
+    if let Some(tid) = tenant_id {
+        q = q.bind(tid);
+    }
+    q.execute(&mut *tx).await?;
+    Ok(())
 }
 
 #[cfg(test)]
@@ -248,6 +338,8 @@ mod tests {
                 original_price: None,
                 stock: 50,
                 attributes: Some(r#"{"color":"red"}"#.to_string()),
+                image_url: None,
+                weight: None,
                 sort_order: 0,
                 is_active: true,
             },
@@ -312,6 +404,8 @@ mod tests {
                 original_price: None,
                 stock: 10,
                 attributes: None,
+                image_url: None,
+                weight: None,
                 sort_order: 0,
                 is_active: true,
             },
@@ -329,6 +423,8 @@ mod tests {
                 original_price: None,
                 stock: 10,
                 attributes: None,
+                image_url: None,
+                weight: None,
                 sort_order: 1,
                 is_active: false,
             },
@@ -360,6 +456,8 @@ mod tests {
                 original_price: Some(2500),
                 stock: 99,
                 attributes: None,
+                image_url: None,
+                weight: None,
                 sort_order: 1,
                 is_active: true,
             },
@@ -390,6 +488,8 @@ mod tests {
                 original_price: None,
                 stock: 0,
                 attributes: None,
+                image_url: None,
+                weight: None,
                 sort_order: 0,
                 is_active: true,
             },
@@ -476,6 +576,8 @@ mod tests {
                 original_price: None,
                 stock: 10,
                 attributes: None,
+                image_url: None,
+                weight: None,
                 sort_order: 0,
                 is_active: true,
             },

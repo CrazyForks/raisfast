@@ -10,6 +10,7 @@ pub struct AddToCartRequest {
     pub product_id: String,
     #[validate(range(min = 1))]
     pub quantity: i64,
+    pub variant_id: Option<String>,
     pub attributes: Option<String>,
 }
 

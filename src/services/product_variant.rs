@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 
-use crate::dto::ecommerce::{CreateProductVariantRequest, UpdateProductVariantRequest};
+use crate::dto::product_variant::{CreateProductVariantRequest, UpdateProductVariantRequest};
 use crate::errors::app_error::{AppError, AppResult};
 use crate::middleware::auth::AuthUser;
 use crate::models::product_variant::ProductVariant;
@@ -73,6 +73,8 @@ impl ProductVariantService for ProductVariantServiceImpl {
                 original_price: req.original_price,
                 stock: req.stock.unwrap_or(0),
                 attributes: req.attributes,
+                image_url: req.image_url,
+                weight: req.weight,
                 sort_order: req.sort_order.unwrap_or(0),
                 is_active: req.is_active.unwrap_or(true),
             },
@@ -101,6 +103,8 @@ impl ProductVariantService for ProductVariantServiceImpl {
                 original_price: req.original_price.or(existing.original_price),
                 stock: req.stock.unwrap_or(existing.stock),
                 attributes: req.attributes.or(existing.attributes),
+                image_url: req.image_url.or(existing.image_url),
+                weight: req.weight.or(existing.weight),
                 sort_order: req.sort_order.unwrap_or(existing.sort_order),
                 is_active: req.is_active.unwrap_or(existing.is_active),
             },

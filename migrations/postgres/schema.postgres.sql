@@ -714,6 +714,8 @@ CREATE TABLE IF NOT EXISTS product_variants (
     original_price BIGINT,
     stock INTEGER NOT NULL DEFAULT 0,
     attributes JSONB,
+    image_url TEXT,
+    weight INTEGER,
     sort_order INTEGER NOT NULL DEFAULT 0,
     is_active BOOLEAN NOT NULL DEFAULT TRUE,
     created_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW(),

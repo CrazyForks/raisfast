@@ -18,6 +18,7 @@ pub trait CartService: Send + Sync {
         user_id: SnowflakeId,
         product_id: String,
         quantity: i64,
+        variant_id: Option<String>,
         attributes: Option<String>,
     ) -> AppResult<()>;
 
@@ -68,6 +69,7 @@ impl CartService for CartServiceImpl {
         user_id: SnowflakeId,
         product_id: String,
         quantity: i64,
+        variant_id: Option<String>,
         attributes: Option<String>,
     ) -> AppResult<()> {
         let product_id = crate::types::snowflake_id::parse_id(&product_id)?;
@@ -79,6 +81,11 @@ impl CartService for CartServiceImpl {
             return Err(AppError::BadRequest("product_not_active".into()));
         }
 
+        let resolved_variant_id: Option<i64> = match variant_id.as_deref() {
+            Some(vid) => Some(*crate::types::snowflake_id::parse_id(vid)?),
+            None => None,
+        };
+
         if quantity > 10000 {
             return Err(AppError::BadRequest("quantity_exceeds_limit".into()));
         }
@@ -87,7 +94,7 @@ impl CartService for CartServiceImpl {
             &self.pool,
             user_id,
             product.id,
-            None,
+            resolved_variant_id,
             auth.tenant_id(),
         )
         .await?;
@@ -115,7 +122,7 @@ impl CartService for CartServiceImpl {
                 &self.pool,
                 user_id,
                 product.id,
-                None,
+                resolved_variant_id,
                 quantity,
                 attributes.as_deref(),
                 auth.tenant_id(),

@@ -1,4 +1,4 @@
-use crate::dto::ecommerce::{
+use crate::dto::user_address::{
     CreateUserAddressRequest, UpdateUserAddressRequest, UserAddressResponse,
 };
 use crate::errors::app_error::AppResult;

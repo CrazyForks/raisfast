@@ -156,6 +156,8 @@ impl OrderService for OrderServiceImpl {
         }
 
         let mut order_items_data: Vec<(i64, i64, crate::models::product::Product)> = Vec::new();
+        let mut variant_map: std::collections::HashMap<i64, crate::models::product_variant::ProductVariant> =
+            std::collections::HashMap::new();
         let mut subtotal: i64 = 0;
 
         for item in &req.items {
@@ -170,6 +172,21 @@ impl OrderService for OrderServiceImpl {
 
             if product.status != ProductStatus::Active {
                 return Err(AppError::BadRequest("product_not_active".into()));
+            }
+
+            if let Some(ref vid_str) = item.variant_id {
+                let vid = crate::types::snowflake_id::parse_id(vid_str)?;
+                let variant =
+                    crate::models::product_variant::find_by_id(&self.pool, vid, auth.tenant_id())
+                        .await?
+                        .ok_or_else(|| AppError::not_found("product_variant"))?;
+                if variant.product_id != product.id {
+                    return Err(AppError::BadRequest("variant_not_belong_to_product".into()));
+                }
+                if !variant.is_active {
+                    return Err(AppError::BadRequest("variant_not_active".into()));
+                }
+                variant_map.insert(*vid, variant);
             }
 
             let line_total = product
@@ -303,32 +320,67 @@ impl OrderService for OrderServiceImpl {
             }
 
             let mut items = Vec::new();
-            for (quantity, line_total, product) in &order_items_data {
+            for (idx, (quantity, _line_total, product)) in order_items_data.iter().enumerate() {
+                let variant_opt = req.items[idx]
+                    .variant_id
+                    .as_deref()
+                    .and_then(|vid| {
+                        let id = crate::types::snowflake_id::parse_id(vid).ok()?;
+                        variant_map.get(&(*id))
+                    });
+
+                let (variant_id, sku, unit_price, attributes) = match variant_opt {
+                    Some(v) => (
+                        Some(*v.id),
+                        v.sku.clone(),
+                        v.price,
+                        v.attributes.clone(),
+                    ),
+                    None => (None, None, product.price, product.attributes.clone()),
+                };
+
+                let actual_line_total = unit_price
+                    .checked_mul(*quantity)
+                    .ok_or_else(|| AppError::BadRequest("line_total_overflow".into()))?;
+
                 items.push(crate::commands::CreateOrderItemCmd {
                     order_id: order.id,
                     product_id: Some(*product.id),
-                    variant_id: None,
+                    variant_id,
                     title: product.title.clone(),
                     description: product.description.clone(),
-                    sku: None,
-                    unit_price: product.price,
+                    sku,
+                    unit_price,
                     quantity: *quantity,
-                    subtotal: *line_total,
+                    subtotal: actual_line_total,
                     tax_amount: 0,
                     cover_url: product.cover_url.clone(),
-                    attributes: product.attributes.clone(),
+                    attributes,
                 });
             }
             crate::models::order_item::tx_insert_batch(&mut tx, items, auth.tenant_id()).await?;
 
-            for (quantity, _, product) in &order_items_data {
-                crate::models::product::tx_deduct_stock(
-                    &mut tx,
-                    product.id,
-                    *quantity,
-                    auth.tenant_id(),
-                )
-                .await?;
+            for (idx, (quantity, _, product)) in order_items_data.iter().enumerate() {
+                match req.items[idx].variant_id.as_deref().map(crate::types::snowflake_id::parse_id) {
+                    Some(Ok(vid)) => {
+                        crate::models::product_variant::tx_deduct_stock(
+                            &mut tx,
+                            vid,
+                            *quantity,
+                            auth.tenant_id(),
+                        )
+                        .await?;
+                    }
+                    _ => {
+                        crate::models::product::tx_deduct_stock(
+                            &mut tx,
+                            product.id,
+                            *quantity,
+                            auth.tenant_id(),
+                        )
+                        .await?;
+                    }
+                }
             }
 
             Ok(order)
@@ -383,7 +435,15 @@ impl OrderService for OrderServiceImpl {
                 )
                 .await?;
                 for item in &order_items {
-                    if let Some(pid) = item.product_id {
+                    if let Some(vid) = item.variant_id {
+                        crate::models::product_variant::tx_replenish_stock(
+                            &mut tx,
+                            vid,
+                            item.quantity,
+                            auth.tenant_id(),
+                        )
+                        .await?;
+                    } else if let Some(pid) = item.product_id {
                         crate::models::product::tx_replenish_stock(
                             &mut tx,
                             pid,
@@ -603,7 +663,15 @@ impl OrderService for OrderServiceImpl {
                 )
                 .await?;
                 for item in &order_items {
-                    if let Some(pid) = item.product_id {
+                    if let Some(vid) = item.variant_id {
+                        crate::models::product_variant::tx_replenish_stock(
+                            &mut tx,
+                            vid,
+                            item.quantity,
+                            auth.tenant_id(),
+                        )
+                        .await?;
+                    } else if let Some(pid) = item.product_id {
                         crate::models::product::tx_replenish_stock(
                             &mut tx,
                             pid,
@@ -619,6 +687,7 @@ impl OrderService for OrderServiceImpl {
         }
         .await;
         result?;
+
         self.after_cancelled(&order);
         Ok(())
     }
@@ -817,6 +886,7 @@ mod tests {
             items: vec![CreateOrderItemRequest {
                 product_id: prod_id.to_string(),
                 quantity,
+                variant_id: None,
             }],
             currency: None,
             buyer_name: None,
@@ -897,10 +967,12 @@ mod tests {
                         CreateOrderItemRequest {
                             product_id: p1.id.to_string(),
                             quantity: 3,
+                            variant_id: None,
                         },
                         CreateOrderItemRequest {
                             product_id: p2.id.to_string(),
                             quantity: 1,
+                            variant_id: None,
                         },
                     ],
                     currency: Some("USD".into()),
@@ -970,6 +1042,7 @@ mod tests {
                     items: vec![CreateOrderItemRequest {
                         product_id: "99999999".into(),
                         quantity: 1,
+                        variant_id: None,
                     }],
                     currency: None,
                     buyer_name: None,
@@ -1580,6 +1653,7 @@ mod tests {
                     items: vec![CreateOrderItemRequest {
                         product_id: prod.id.to_string(),
                         quantity: 1,
+                        variant_id: None,
                     }],
                     currency: None,
                     buyer_name: None,
@@ -1624,6 +1698,7 @@ mod tests {
                     items: vec![CreateOrderItemRequest {
                         product_id: prod.id.to_string(),
                         quantity: 1,
+                        variant_id: None,
                     }],
                     currency: None,
                     buyer_name: None,
@@ -1659,6 +1734,7 @@ mod tests {
                     items: vec![CreateOrderItemRequest {
                         product_id: prod.id.to_string(),
                         quantity: 1,
+                        variant_id: None,
                     }],
                     currency: None,
                     buyer_name: None,
@@ -1694,6 +1770,7 @@ mod tests {
                     items: vec![CreateOrderItemRequest {
                         product_id: prod.id.to_string(),
                         quantity: 1,
+                        variant_id: None,
                     }],
                     currency: None,
                     buyer_name: Some("Test".to_string()),
