@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.27] - 2026-05-31
+
+- Ci workflows error
+
 ## [0.2.26] - 2026-05-31
 
 - Add product_categories, refactor export typescript sdk
