@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.26] - 2026-05-31
+
+- Add product_categories, refactor export typescript sdk
+
+- Update export typescript
+
+- Improve ecommerce system, add comments, coupon, shipping templates
+
+- Add user cli, improve ecommerce
+
+- Improve ecommerce system
+
 ## [0.2.25] - 2026-05-27
 
 - Posts admin api
