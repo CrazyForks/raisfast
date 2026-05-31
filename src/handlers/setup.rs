@@ -224,7 +224,7 @@ pub async fn setup_init(
         access_token,
         refresh_token: refresh_token_str,
         expires_in: state.config.jwt_access_expires,
-        user: crate::dto::UserResponse::from_user(admin_user)?,
+        user: crate::dto::UserResponse::from_user_with_contacts(&state.pool, admin_user).await?,
     }))
 }
 

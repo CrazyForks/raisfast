@@ -235,7 +235,7 @@ pub async fn update_role(
         .user_service
         .update_role(&id, req.role, auth.tenant_id())
         .await?;
-    Ok(ApiResponse::success(UserResponse::from_user(u)?))
+    Ok(ApiResponse::success(UserResponse::from_user_with_contacts(&state.pool, u).await?))
 }
 
 // ── Admin handlers ──
@@ -275,7 +275,7 @@ pub async fn admin_update_user(
         .user_service
         .admin_update_user(&id, &req, auth.tenant_id())
         .await?;
-    Ok(ApiResponse::success(UserResponse::from_user(u)?))
+    Ok(ApiResponse::success(UserResponse::from_user_with_contacts(&state.pool, u).await?))
 }
 
 pub async fn admin_delete_user(

@@ -292,7 +292,7 @@ async fn create_login_response_for_user(
         access_token,
         refresh_token: refresh_token_str,
         expires_in: jwt_access_expires,
-        user: crate::dto::UserResponse::from_user(user.clone())?,
+        user: crate::dto::UserResponse::from_user_with_contacts(pool, user.clone()).await?,
     })
 }
 

@@ -231,7 +231,7 @@ pub async fn register(
         tracing::error!("failed to send email verification: {e}");
     }
 
-    UserResponse::from_user(user)
+    UserResponse::from_user_with_contacts(pool, user).await
 }
 
 /// User login.
@@ -316,7 +316,7 @@ pub async fn login(
         access_token,
         refresh_token: refresh_token_str,
         expires_in: jwt_access_expires,
-        user: UserResponse::from_user(user)?,
+        user: UserResponse::from_user_with_contacts(pool, user).await?,
     })
 }
 
@@ -377,7 +377,7 @@ pub async fn refresh(
         access_token,
         refresh_token: new_refresh_token,
         expires_in: jwt_access_expires,
-        user: UserResponse::from_user(user)?,
+        user: UserResponse::from_user_with_contacts(pool, user).await?,
     })
 }
 

@@ -17,7 +17,7 @@ pub async fn get_me(pool: &crate::db::Pool, auth: &AuthUser) -> AppResult<UserRe
     let user = crate::models::user::find_by_id(pool, uid, auth.tenant_id())
         .await?
         .ok_or_else(|| AppError::not_found("user"))?;
-    UserResponse::from_user(user)
+    UserResponse::from_user_with_contacts(pool, user).await
 }
 
 /// Update the current user's profile (username, bio, website, avatar).
@@ -40,7 +40,7 @@ pub async fn update_me(
         auth.tenant_id(),
     )
     .await?;
-    UserResponse::from_user(user)
+    UserResponse::from_user_with_contacts(pool, user).await
 }
 
 /// Get a specific user's public profile.
@@ -52,7 +52,7 @@ pub async fn get_public_user(
     let user = crate::models::user::find_by_id(pool, id, tenant_id)
         .await?
         .ok_or_else(|| AppError::not_found("user"))?;
-    UserResponse::from_user(user)
+    UserResponse::from_user_with_contacts(pool, user).await
 }
 
 /// List users with pagination.
@@ -65,9 +65,11 @@ pub async fn list_users(
     tenant_id: Option<&str>,
 ) -> AppResult<(Vec<UserResponse>, i64)> {
     let (users, total) = crate::models::user::find_all(pool, page, page_size, tenant_id).await?;
-    let responses: AppResult<Vec<UserResponse>> =
-        users.into_iter().map(UserResponse::from_user).collect();
-    Ok((responses?, total))
+    let mut responses = Vec::with_capacity(users.len());
+    for user in users {
+        responses.push(UserResponse::from_user_with_contacts(pool, user).await?);
+    }
+    Ok((responses, total))
 }
 
 #[async_trait]

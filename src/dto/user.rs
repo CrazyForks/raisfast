@@ -191,6 +191,8 @@ pub struct ResendVerificationRequest {
 #[non_exhaustive]
 pub struct UserResponse {
     pub id: String,
+    pub email: Option<String>,
+    pub phone: Option<String>,
     pub username: String,
     pub role: UserRole,
     pub status: UserStatus,
@@ -213,11 +215,27 @@ pub struct UserResponse {
 
 impl UserResponse {
     pub fn from_user(user: User) -> AppResult<Self> {
+        Self::build(user, None, None)
+    }
+
+    pub async fn from_user_with_contacts(
+        pool: &crate::db::Pool,
+        user: User,
+    ) -> AppResult<Self> {
+        let creds = crate::models::user_credential::find_by_user_id(pool, user.id).await?;
+        let email = creds.iter().find(|c| c.auth_type == crate::models::user_credential::AuthType::Email).map(|c| c.identifier.clone());
+        let phone = creds.iter().find(|c| c.auth_type == crate::models::user_credential::AuthType::Phone).map(|c| c.identifier.clone());
+        Self::build(user, email, phone)
+    }
+
+    fn build(user: User, email: Option<String>, phone: Option<String>) -> AppResult<Self> {
         let role = user.role;
         let status = user.status;
         let registered_via = user.registered_via;
         Ok(Self {
             id: user.id.to_string(),
+            email,
+            phone,
             username: user.username,
             role,
             status,
@@ -354,6 +372,8 @@ mod tests {
     fn user_response_from_user_serializes() {
         let resp = UserResponse {
             id: "doc-123".to_string(),
+            email: Some("test@example.com".to_string()),
+            phone: None,
             username: "test".to_string(),
             role: UserRole::Reader,
             status: UserStatus::Active,

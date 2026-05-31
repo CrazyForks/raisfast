@@ -138,7 +138,7 @@ pub async fn verify_sms_and_auth(
         access_token,
         refresh_token: refresh_token_str,
         expires_in: jwt_access_expires,
-        user: crate::dto::UserResponse::from_user(user)?,
+        user: crate::dto::UserResponse::from_user_with_contacts(pool, user).await?,
     })
 }
 
