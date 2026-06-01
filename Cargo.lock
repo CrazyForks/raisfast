@@ -6287,7 +6287,7 @@ checksum = "f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf"
 
 [[package]]
 name = "raisfast"
-version = "0.2.26"
+version = "0.2.27"
 dependencies = [
  "aes-gcm",
  "ammonia",

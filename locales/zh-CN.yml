@@ -33,6 +33,8 @@ zh-CN:
     multipart_read_failed: "读取 multipart 字段失败"
     file_data_read_failed: "读取文件数据失败"
     duplicate_entry: "重复的条目"
+    product_category.has_children: "该分类下有子分类，无法删除"
+    product_category.has_products: "该分类正在被商品使用，无法删除"
   validation:
     email_invalid: "邮箱格式无效"
     required: "%{field}不能为空"

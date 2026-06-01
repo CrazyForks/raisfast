@@ -33,6 +33,8 @@ en:
     multipart_read_failed: "failed to read multipart field"
     file_data_read_failed: "failed to read file data"
     duplicate_entry: "duplicate entry"
+    product_category.has_children: "category has sub-categories, cannot delete"
+    product_category.has_products: "category is in use by products, cannot delete"
   validation:
     email_invalid: "invalid email format"
     required: "%{field} is required"

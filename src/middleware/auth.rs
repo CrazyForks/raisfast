@@ -54,6 +54,7 @@ struct RequestIdentity {
     role: UserRole,
     tenant_id: Option<String>,
     is_super_admin: bool,
+    token_present_but_invalid: bool,
 }
 
 /// Unified identity extractor.
@@ -93,13 +94,16 @@ impl AuthUser {
     }
 
     pub fn ensure_authenticated(&self) -> AppResult<i64> {
+        if self.0.token_present_but_invalid {
+            return Err(AppError::Unauthorized);
+        }
         self.0.user_id.ok_or(AppError::Unauthorized)
     }
 
-    /// Return the authenticated user's ID as a `SnowflakeId`.
-    ///
-    /// Returns `AppError::Unauthorized` if not logged in.
     pub fn ensure_snowflake_user_id(&self) -> AppResult<crate::types::snowflake_id::SnowflakeId> {
+        if self.0.token_present_but_invalid {
+            return Err(AppError::Unauthorized);
+        }
         self.0
             .user_id
             .map(crate::types::snowflake_id::SnowflakeId)
@@ -107,6 +111,9 @@ impl AuthUser {
     }
 
     pub fn ensure_admin(&self) -> AppResult<()> {
+        if self.0.token_present_but_invalid {
+            return Err(AppError::Unauthorized);
+        }
         if self.is_authenticated() && self.is_admin() {
             Ok(())
         } else {
@@ -115,6 +122,9 @@ impl AuthUser {
     }
 
     pub fn ensure_author(&self) -> AppResult<()> {
+        if self.0.token_present_but_invalid {
+            return Err(AppError::Unauthorized);
+        }
         if self.is_authenticated() && self.is_author() {
             Ok(())
         } else {
@@ -128,6 +138,7 @@ impl AuthUser {
             role,
             tenant_id,
             is_super_admin: false,
+            token_present_but_invalid: false,
         })
     }
 }
@@ -145,6 +156,7 @@ impl AuthUser {
                 Some(tenant_id.to_string())
             },
             is_super_admin: false,
+            token_present_but_invalid: false,
         })
     }
 
@@ -159,6 +171,7 @@ impl AuthUser {
                 Some(tenant_id.to_string())
             },
             is_super_admin: true,
+            token_present_but_invalid: false,
         })
     }
 }
@@ -212,11 +225,13 @@ impl FromRequestParts<AppState> for AuthUser {
         state: &AppState,
     ) -> impl std::future::Future<Output = Result<Self, Self::Rejection>> + Send {
         let header_tenant = extract_header_tenant(parts);
+        let has_token = extract_bearer_token(parts).is_some();
         let claims_fut = extract_claims(parts, state);
 
         async move {
             let claims = claims_fut.await;
             let no_tenant = !state.config.builtin_tenantable;
+            let token_invalid = has_token && claims.is_none();
 
             let identity = match (claims, header_tenant) {
                 (Some(c), Some(ht)) if c.role == UserRole::Admin => RequestIdentity {
@@ -224,24 +239,28 @@ impl FromRequestParts<AppState> for AuthUser {
                     role: c.role,
                     tenant_id: if no_tenant { None } else { Some(ht) },
                     is_super_admin: true,
+                    token_present_but_invalid: false,
                 },
                 (Some(c), None) if c.role == UserRole::Admin => RequestIdentity {
                     user_id: Some(*c.user_id),
                     role: c.role,
                     tenant_id: None,
                     is_super_admin: true,
+                    token_present_but_invalid: false,
                 },
                 (Some(c), _) => RequestIdentity {
                     user_id: Some(*c.user_id),
                     role: c.role,
                     tenant_id: if no_tenant { None } else { Some(c.tenant_id) },
                     is_super_admin: false,
+                    token_present_but_invalid: false,
                 },
                 (None, Some(ht)) => RequestIdentity {
                     user_id: None,
                     role: UserRole::Reader,
                     tenant_id: if no_tenant { None } else { Some(ht) },
                     is_super_admin: false,
+                    token_present_but_invalid: token_invalid,
                 },
                 (None, None) => RequestIdentity {
                     user_id: None,
@@ -252,6 +271,7 @@ impl FromRequestParts<AppState> for AuthUser {
                         Some(crate::constants::DEFAULT_TENANT.to_string())
                     },
                     is_super_admin: false,
+                    token_present_but_invalid: token_invalid,
                 },
             };
 

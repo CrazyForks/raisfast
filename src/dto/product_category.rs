@@ -16,6 +16,7 @@ pub struct ProductCategoryResponse {
     #[cfg_attr(feature = "export-types", ts(type = "number"))]
     pub sort_order: i64,
     pub cover_image: Option<String>,
+    pub parent_id: Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -29,6 +30,7 @@ impl ProductCategoryResponse {
             description: cat.description,
             sort_order: cat.sort_order,
             cover_image: cat.cover_image,
+            parent_id: cat.parent_id.map(|v| v.to_string()),
             created_at: cat.created_at.to_rfc3339(),
             updated_at: cat.updated_at.to_rfc3339(),
         }

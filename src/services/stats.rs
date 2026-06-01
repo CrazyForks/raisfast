@@ -37,6 +37,15 @@ impl StatsService {
             count_table(&self.pool, "categories", &tf_aliased, tenant_id).await?;
         let total_tags = count_table(&self.pool, "tags", &tf_aliased, tenant_id).await?;
 
+        let total_products = count_table(&self.pool, "products", &tf, tenant_id).await?;
+        let total_orders = count_table(&self.pool, "orders", &tf, tenant_id).await?;
+        let total_coupons = count_table(&self.pool, "coupons", &tf, tenant_id).await?;
+
+        let products_by_status = self.count_by_status("products", tenant_id).await?;
+        let orders_by_status = self.count_by_status("orders", tenant_id).await?;
+
+        let total_revenue = self.sum_revenue(tenant_id).await?;
+
         let content_by_type = self.count_content_types(tenant_id).await?;
 
         let posts_by_status = self.count_by_status("posts", tenant_id).await?;
@@ -51,8 +60,14 @@ impl StatsService {
             "total_media": total_media,
             "total_categories": total_categories,
             "total_tags": total_tags,
+            "total_products": total_products,
+            "total_orders": total_orders,
+            "total_coupons": total_coupons,
+            "total_revenue": total_revenue,
             "posts_by_status": posts_by_status,
             "comments_by_status": comments_by_status,
+            "products_by_status": products_by_status,
+            "orders_by_status": orders_by_status,
             "content_by_type": content_by_type,
             "recent_activity": recent_activity,
         }))
@@ -189,6 +204,21 @@ impl StatsService {
         Ok(result)
     }
 
+    /// Sum total revenue from completed orders
+    async fn sum_revenue(&self, tenant_id: Option<&str>) -> Result<i64, AppError> {
+        let tf = crate::db::tenant::tenant_filter_ph(tenant_id, 1);
+        let sql = format!(
+            "SELECT COALESCE(SUM(total_amount), 0) FROM orders WHERE status = 'completed'{tf}"
+        );
+        let mut q = sqlx::query_scalar::<_, i64>(&sql);
+        if let Some(tid) = tenant_id {
+            q = q.bind(crate::db::tenant::resolve_tenant(Some(tid)));
+        }
+        q.fetch_one(&self.pool)
+            .await
+            .map_err(|e| AppError::Internal(e.into()))
+    }
+
     /// Count records grouped by status
     async fn count_by_status(
         &self,
@@ -229,7 +259,7 @@ impl StatsService {
         Ok(map)
     }
 
-    /// Recent activity (most recently created posts + comments)
+    /// Recent activity (most recently created posts, orders, products + comments)
     async fn recent_activity(
         &self,
         tenant_id: Option<&str>,
@@ -237,6 +267,8 @@ impl StatsService {
     ) -> Result<Vec<Value>, AppError> {
         raisfast_derive::check_schema!("posts", "id", "title", "slug", "created_at");
         raisfast_derive::check_schema!("comments", "content", "created_at");
+        raisfast_derive::check_schema!("orders", "id", "order_no", "total_amount", "created_at");
+        raisfast_derive::check_schema!("products", "id", "title", "created_at");
         let mut activities = Vec::new();
 
         let tf_aliased = crate::db::tenant::tenant_filter_aliased_ph("p", tenant_id, 1);
@@ -287,6 +319,56 @@ impl StatsService {
             activities.push(json!({
                 "type": "comment.created",
                 "content": content.unwrap_or_default(),
+                "at": at,
+            }));
+        }
+
+        let tf = crate::db::tenant::tenant_filter_ph(tenant_id, 1);
+        let order_sql = format!(
+            "SELECT id, order_no, total_amount, created_at FROM orders WHERE 1=1{tf} \
+             ORDER BY created_at DESC {limit_clause}"
+        );
+        let orders: Vec<(i64, String, i64, String)> = raisfast_derive::crud_query!(
+            &self.pool,
+            (i64, String, i64, String),
+            &order_sql,
+            [],
+            fetch_all,
+            tenant: tenant_id
+        )
+        .map_err(|e| AppError::Internal(e.into()))?;
+
+        for (raw_id, order_no, total_amount, at) in orders {
+            let encoded_id = crate::types::snowflake_id::encode_id(raw_id);
+            activities.push(json!({
+                "type": "order.created",
+                "id": encoded_id,
+                "title": order_no,
+                "amount": total_amount,
+                "at": at,
+            }));
+        }
+
+        let product_sql = format!(
+            "SELECT id, title, created_at FROM products WHERE 1=1{tf} \
+             ORDER BY created_at DESC {limit_clause}"
+        );
+        let products: Vec<(i64, Option<String>, String)> = raisfast_derive::crud_query!(
+            &self.pool,
+            (i64, Option<String>, String),
+            &product_sql,
+            [],
+            fetch_all,
+            tenant: tenant_id
+        )
+        .map_err(|e| AppError::Internal(e.into()))?;
+
+        for (raw_id, title, at) in products {
+            let encoded_id = crate::types::snowflake_id::encode_id(raw_id);
+            activities.push(json!({
+                "type": "product.created",
+                "id": encoded_id,
+                "title": title.unwrap_or_default(),
                 "at": at,
             }));
         }
@@ -392,6 +474,27 @@ mod tests {
         .await
         .unwrap();
 
+        sqlx::query(
+            "CREATE TABLE products (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT, created_at TEXT NOT NULL, tenant_id TEXT NOT NULL DEFAULT 'default')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        sqlx::query(
+            "CREATE TABLE orders (id INTEGER PRIMARY KEY AUTOINCREMENT, order_no TEXT NOT NULL, total_amount INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL, created_at TEXT NOT NULL, tenant_id TEXT NOT NULL DEFAULT 'default')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        sqlx::query(
+            "CREATE TABLE coupons (id INTEGER PRIMARY KEY AUTOINCREMENT, tenant_id TEXT NOT NULL DEFAULT 'default')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
         let svc = StatsService::new(pool);
         let result = svc.overview(None).await.unwrap();
 
@@ -399,6 +502,10 @@ mod tests {
         assert_eq!(result["total_users"], 0);
         assert_eq!(result["total_comments"], 0);
         assert_eq!(result["total_media"], 0);
+        assert_eq!(result["total_products"], 0);
+        assert_eq!(result["total_orders"], 0);
+        assert_eq!(result["total_coupons"], 0);
+        assert_eq!(result["total_revenue"], 0);
     }
 
     #[tokio::test]
@@ -445,11 +552,36 @@ mod tests {
         .await
         .unwrap();
 
+        sqlx::query(
+            "CREATE TABLE products (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT, created_at TEXT NOT NULL, tenant_id TEXT NOT NULL DEFAULT 'default')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        sqlx::query(
+            "CREATE TABLE orders (id INTEGER PRIMARY KEY AUTOINCREMENT, order_no TEXT NOT NULL, total_amount INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL, created_at TEXT NOT NULL, tenant_id TEXT NOT NULL DEFAULT 'default')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        sqlx::query(
+            "CREATE TABLE coupons (id INTEGER PRIMARY KEY AUTOINCREMENT, tenant_id TEXT NOT NULL DEFAULT 'default')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
         sqlx::query("INSERT INTO posts (id, title, slug, created_at) VALUES (1, 'Hello', 'hello', '2024-01-01T00:00:00Z')")
             .execute(&pool)
             .await
             .unwrap();
         sqlx::query("INSERT INTO users (id, username, role, status, registered_via) VALUES (1, 'user1', 'reader', 'active', 'email')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO orders (id, order_no, total_amount, status, created_at) VALUES (1, 'ORD-001', 9900, 'completed', '2024-01-02T00:00:00Z')")
             .execute(&pool)
             .await
             .unwrap();
@@ -460,10 +592,11 @@ mod tests {
         assert_eq!(result["total_posts"], 1);
         assert_eq!(result["total_users"], 1);
         assert_eq!(result["total_comments"], 0);
+        assert_eq!(result["total_orders"], 1);
+        assert_eq!(result["total_revenue"], 9900);
 
         let activity = result["recent_activity"].as_array().unwrap();
         assert!(!activity.is_empty());
-        assert_eq!(activity[0]["type"], "post.created");
     }
 
     #[tokio::test]

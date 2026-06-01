@@ -160,6 +160,45 @@ pub async fn delete(
     AppError::expect_affected(&result, "product_category")
 }
 
+pub async fn ensure_safe_to_delete(
+    pool: &crate::db::Pool,
+    id: SnowflakeId,
+    tenant_id: Option<&str>,
+) -> AppResult<()> {
+    let tf = crate::db::tenant::tenant_filter_ph(tenant_id, 1);
+    let child_sql = format!(
+        "SELECT COUNT(*) FROM product_categories WHERE parent_id = {}{tf}",
+        *id
+    );
+    let mut q = sqlx::query_scalar::<_, i64>(&child_sql);
+    if let Some(tid) = tenant_id {
+        q = q.bind(crate::db::tenant::resolve_tenant(Some(tid)));
+    }
+    let child_count = q.fetch_one(pool).await.map_err(|e| AppError::Internal(e.into()))?;
+    if child_count > 0 {
+        return Err(AppError::Conflict(
+            "product_category.has_children".to_string(),
+        ));
+    }
+
+    let product_sql = format!(
+        "SELECT COUNT(*) FROM products WHERE category_id = {}{tf}",
+        *id
+    );
+    let mut q2 = sqlx::query_scalar::<_, i64>(&product_sql);
+    if let Some(tid) = tenant_id {
+        q2 = q2.bind(crate::db::tenant::resolve_tenant(Some(tid)));
+    }
+    let product_count = q2.fetch_one(pool).await.map_err(|e| AppError::Internal(e.into()))?;
+    if product_count > 0 {
+        return Err(AppError::Conflict(
+            "product_category.has_products".to_string(),
+        ));
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
