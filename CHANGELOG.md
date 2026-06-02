@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.29] - 2026-06-02
+
+- Resolve fmt error
+
 ## [0.2.28] - 2026-06-02
 
 - Udate admin stats, product category
