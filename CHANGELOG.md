@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.28] - 2026-06-02
+
+- Udate admin stats, product category
+
+- Document update
+
 ## [0.2.27] - 2026-05-31
 
 - Ci workflows error
