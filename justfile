@@ -1,7 +1,7 @@
-# raisfast 常用命令
+# raisfast common commands
 #
-# 用法: just <recipe>
-# 帮助: just --list
+# Usage: just <recipe>
+# Help:  just --list
 
 set dotenv-load
 
@@ -9,36 +9,47 @@ db        := "sqlite"
 db_url    := "sqlite:./storage/db/raisfast.db?mode=rwc"
 plugin_type := "all"
 
-# ── 默认 ──────────────────────────────────────────────────────────
+# ── Default ───────────────────────────────────────────────────────
 
 default:
     @just --list
 
 features := "db-" + db + " plugin-js plugin-rhai search-tantivy"
 
-# ── 编译 ──────────────────────────────────────────────────────────
+# ── Build ─────────────────────────────────────────────────────────
 
-# 编译检查（默认 SQLite）
+# Check compilation (default SQLite)
 check *FLAGS:
     DATABASE_URL={{db_url}} cargo check --features "{{features}}" {{FLAGS}}
 
-# 编译发布版本
+# Build release binary
 build *FLAGS:
     DATABASE_URL={{db_url}} cargo build --release --features "{{features}}" {{FLAGS}}
 
-# 编译发布版本（含 Admin UI）
+# Build release binary with Admin UI (auto-detects frontend/admin)
 build-full *FLAGS:
-    cd frontend && pnpm install --frozen-lockfile
-    cd frontend/admin && pnpm build
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [ -d "frontend/admin" ]; then
+        echo ">> Building Admin UI from source..."
+        cd frontend && pnpm install --frozen-lockfile
+        cd admin && pnpm build
+        cd ../..
+        rm -rf adminui
+        cp -r frontend/admin/dist adminui
+        echo ">> Admin UI built and copied to adminui/"
+    else
+        echo ">> frontend/admin not found, using existing adminui/ as-is"
+    fi
     DATABASE_URL={{db_url}} cargo build --release --features "{{features}}" {{FLAGS}}
 
-# ── 代码质量 ──────────────────────────────────────────────────────
+# ── Code Quality ──────────────────────────────────────────────────
 
-# 格式化
+# Format code
 fmt:
     cargo fmt
 
-# 格式化检查
+# Check formatting
 fmt-check:
     cargo fmt --check
 
@@ -46,88 +57,88 @@ fmt-check:
 lint:
     DATABASE_URL={{db_url}} cargo clippy --features "{{features}}" -- -D warnings
 
-# 全部质量检查（fmt + lint）
+# Full quality check (fmt + lint)
 qa: fmt-check lint
 
-# ── 测试 ──────────────────────────────────────────────────────────
+# ── Tests ─────────────────────────────────────────────────────────
 
-# 运行所有测试
+# Run all tests
 test *FLAGS:
     DATABASE_URL={{db_url}} cargo test --features "{{features}}" {{FLAGS}}
 
-# 仅运行单元测试
+# Run unit tests only
 test-unit:
     DATABASE_URL={{db_url}} cargo test --lib --features "{{features}}"
 
-# 仅运行集成测试
+# Run integration tests only
 test-integration:
     DATABASE_URL={{db_url}} cargo test --test api_tests --features "{{features}}"
 
-# ── 数据库 ────────────────────────────────────────────────────────
+# ── Database ──────────────────────────────────────────────────────
 
-# 创建 SQLite 数据库并运行迁移
+# Create SQLite database and run migrations
 db-init:
     mkdir -p data
     sqlite3 {{db_url}} < migrations/001_init.sql
     sqlite3 {{db_url}} < migrations/002_add_indexes.sql
 
-# 重新创建数据库（危险：删除现有数据）
+# Recreate database (dangerous: deletes existing data)
 db-reset:
     rm -f data/blog.db
     just db-init
 
-# 运行 CLI 迁移
+# Run CLI migrations
 db-migrate:
     DATABASE_URL={{db_url}} cargo run -- db migrate
 
-# 备份数据库
+# Backup database
 db-backup:
     DATABASE_URL={{db_url}} cargo run -- db backup ./backups
 
-# 生成 sqlx 离线查询元数据
+# Generate sqlx offline query metadata
 db-prepare:
     DATABASE_URL={{db_url}} cargo sqlx prepare -- --features "{{features}}"
 
-# 验证离线编译（不依赖 DATABASE_URL）
+# Verify offline compilation (no DATABASE_URL required)
 check-offline:
     cargo check --features "{{features}}"
 
-# ── 运行 ──────────────────────────────────────────────────────────
+# ── Run ───────────────────────────────────────────────────────────
 
-# 启动开发服务器
+# Start development server
 dev:
     DATABASE_URL={{db_url}} cargo run --features "{{features}}"
 
-# ── 数据库后端切换 ────────────────────────────────────────────────
+# ── Database Backend Switch ───────────────────────────────────────
 
-# 用 PostgreSQL 编译检查
+# Check compilation with PostgreSQL
 pg-check:
     cargo check --features "db-postgres"
 
-# 用 MySQL 编译检查
+# Check compilation with MySQL
 mysql-check:
     cargo check --features "db-mysql"
 
-# ── 完整 CI 流水线 ────────────────────────────────────────────────
+# ── Full CI Pipeline ──────────────────────────────────────────────
 
-# CI: fmt → lint → test（确保所有检查通过）
+# CI: fmt → lint → test (ensure all checks pass)
 ci: fmt-check lint test
 
-# ── 部署 ──────────────────────────────────────────────────────────
+# ── Deploy ────────────────────────────────────────────────────────
 
 fly_target := "x86_64-unknown-linux-musl"
 fly_image := "raisfast-fly"
 
-# 安装 cross（Rust 交叉编译工具）
+# Install cross (Rust cross-compilation tool)
 install-cross:
     cargo install cross --git https://github.com/cross-rs/cross
 
-# 交叉编译 Linux 二进制并部署到 fly.io
+# Cross-compile Linux binary for fly.io
 build-cross:
     @echo "Cross-compiling for Linux via cross..."
     cross build --release --features "{{features}}" --target {{fly_target}}
 
-# 使用已编译的二进制直接部署到 fly.io（跳过编译）
+# Deploy pre-built binary to fly.io (skip compilation)
 deploy-fly:
     @echo "Building Docker image..."
     docker build --platform linux/amd64 -t {{fly_image}} -f deploy/fly/Dockerfile .

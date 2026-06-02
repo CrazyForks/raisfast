@@ -35,6 +35,8 @@ en:
     duplicate_entry: "duplicate entry"
     product_category.has_children: "category has sub-categories, cannot delete"
     product_category.has_products: "category is in use by products, cannot delete"
+    category.has_children: "category has sub-categories, cannot delete"
+    category.has_posts: "category is in use by posts, cannot delete"
   validation:
     email_invalid: "invalid email format"
     required: "%{field} is required"

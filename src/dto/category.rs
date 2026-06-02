@@ -13,6 +13,7 @@ pub struct CategoryResponse {
     pub name: String,
     pub slug: String,
     pub description: Option<String>,
+    pub parent_id: Option<String>,
     #[cfg_attr(feature = "export-types", ts(type = "number"))]
     pub sort_order: i64,
     pub cover_image: Option<String>,
@@ -27,6 +28,7 @@ impl CategoryResponse {
             name: cat.name,
             slug: cat.slug,
             description: cat.description,
+            parent_id: cat.parent_id.map(|v| v.to_string()),
             sort_order: cat.sort_order,
             cover_image: cat.cover_image,
             created_at: cat.created_at.to_rfc3339(),

@@ -66,7 +66,7 @@ pub struct ContentTypeRegistry {
 
 #[derive(Debug, Default)]
 struct RegistryInner {
-    types: HashMap<String, Arc<ContentTypeSchema>>,
+    types: indexmap::IndexMap<String, Arc<ContentTypeSchema>>,
     by_table: HashMap<String, String>,
     by_plural: HashMap<String, String>,
     protected_tables: Vec<String>,
@@ -93,14 +93,23 @@ impl ContentTypeRegistry {
         if !dir.exists() {
             let _ = std::fs::create_dir_all(dir);
         }
-        let entries = std::fs::read_dir(dir).map_err(|e| {
-            AppError::Internal(anyhow::anyhow!(
-                "cannot read content_types dir {dir:?}: {e}"
-            ))
-        })?;
+        let mut entries: Vec<_> = std::fs::read_dir(dir)
+            .map_err(|e| {
+                AppError::Internal(anyhow::anyhow!(
+                    "cannot read content_types dir {dir:?}: {e}"
+                ))
+            })?
+            .filter_map(|e| e.ok())
+            .collect();
+        entries.sort_by_key(|e| {
+            std::cmp::Reverse(
+                e.metadata()
+                    .and_then(|m| m.modified())
+                    .unwrap_or(std::time::SystemTime::UNIX_EPOCH),
+            )
+        });
 
         for entry in entries {
-            let entry = entry.map_err(|e| AppError::Internal(anyhow::anyhow!("{e}")))?;
             let path = entry.path();
             if path.extension().is_some_and(|ext| ext == "toml") {
                 let file_name = path.file_name().unwrap_or_default().to_string_lossy();
@@ -342,7 +351,7 @@ impl ContentTypeRegistry {
                     by_plural: inner.by_plural.clone(),
                     protected_tables: inner.protected_tables.clone(),
                 };
-                new_inner.types.remove(&singular_owned);
+                new_inner.types.shift_remove(&singular_owned);
                 new_inner.by_table.remove(&table);
                 new_inner.by_plural.remove(&plural);
                 new_inner

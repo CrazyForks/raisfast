@@ -16,7 +16,7 @@ use std::sync::OnceLock;
 /// Database timestamp type; all built-in table time fields use this type uniformly
 pub type Timestamp = chrono::DateTime<chrono::Utc>;
 
-pub(crate) const _B0: [u8; 4] = [114 ^ 0x5A, 97 ^ 0x5A, 105 ^ 0x5A, 115 ^ 0x5A];
+pub(crate) const _B0: [u8; 4] = [82 ^ 0x5A, 97 ^ 0x5A, 105 ^ 0x5A, 115 ^ 0x5A];
 
 static SITE_TZ: OnceLock<chrono_tz::Tz> = OnceLock::new();
 

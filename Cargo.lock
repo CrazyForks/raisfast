@@ -6319,6 +6319,7 @@ dependencies = [
  "hyper 1.9.0",
  "hyper-util",
  "image",
+ "indexmap 2.14.0",
  "inventory",
  "jsonwebtoken",
  "lettre",

@@ -119,6 +119,8 @@ impl CategoryService for CategoryServiceImpl {
         let existing =
             crate::models::category::find_by_id(&self.pool, id, auth.tenant_id()).await?;
         self.before_delete(auth, &existing).await?;
+        crate::models::category::ensure_safe_to_delete(&self.pool, existing.id, auth.tenant_id())
+            .await?;
         crate::models::category::delete(&self.pool, existing.id, auth.tenant_id()).await?;
         self.after_deleted(&existing);
         Ok(())

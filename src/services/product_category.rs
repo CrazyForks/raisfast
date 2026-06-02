@@ -109,7 +109,12 @@ impl ProductCategoryService for ProductCategoryServiceImpl {
         let existing =
             crate::models::product_category::find_by_id(&self.pool, id, auth.tenant_id()).await?;
         self.before_delete(auth, &existing).await?;
-        crate::models::product_category::ensure_safe_to_delete(&self.pool, existing.id, auth.tenant_id()).await?;
+        crate::models::product_category::ensure_safe_to_delete(
+            &self.pool,
+            existing.id,
+            auth.tenant_id(),
+        )
+        .await?;
         crate::models::product_category::delete(&self.pool, existing.id, auth.tenant_id()).await?;
         self.after_deleted(&existing);
         Ok(())

@@ -58,6 +58,16 @@ pub fn routes(
         registry,
         restful,
         "/admin/products/{id}",
+        get,
+        admin_get,
+        "system admin",
+        "admin/products"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        restful,
+        "/admin/products/{id}",
         put,
         admin_update,
         "system admin",
@@ -125,6 +135,22 @@ pub async fn admin_list(
         .await?;
     let resp: Vec<ProductResponse> = items.into_iter().map(Into::into).collect();
     Ok(params.paginate(resp, total))
+}
+
+#[utoipa::path(get, path = "/admin/products/{id}", tag = "products",
+    security(("bearer_auth" = [])),
+    params(("id" = String, Path, description = "Product ID")),
+    responses((status = 200, description = "Admin product detail"))
+)]
+pub async fn admin_get(
+    auth: AuthUser,
+    State(state): State<crate::AppState>,
+    Path(id): Path<String>,
+) -> AppResult<ApiResponse<ProductResponse>> {
+    auth.ensure_admin()?;
+    let id = crate::types::snowflake_id::parse_id(&id)?;
+    let p = state.product_service.get(id, &auth).await?;
+    Ok(ApiResponse::success(ProductResponse::from(p)))
 }
 
 #[utoipa::path(post, path = "/admin/products", tag = "products",

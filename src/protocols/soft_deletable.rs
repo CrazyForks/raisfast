@@ -52,6 +52,11 @@ impl Aspect for SoftDeletableAspect {
     }
 
     async fn on_data_before_delete(&self, ctx: &mut DataBeforeDeleteContext) -> AspectResult {
+        if let Some(ref schema) = ctx.schema
+            && !schema.implements_protocol("soft_deletable")
+        {
+            return Ok(Advice::Continue);
+        }
         ctx.soft_delete = true;
         ctx.record
             .insert(COL_DELETED_AT.into(), json!(ctx.base.now));

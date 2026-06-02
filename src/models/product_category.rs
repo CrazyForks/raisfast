@@ -174,7 +174,10 @@ pub async fn ensure_safe_to_delete(
     if let Some(tid) = tenant_id {
         q = q.bind(crate::db::tenant::resolve_tenant(Some(tid)));
     }
-    let child_count = q.fetch_one(pool).await.map_err(|e| AppError::Internal(e.into()))?;
+    let child_count = q
+        .fetch_one(pool)
+        .await
+        .map_err(|e| AppError::Internal(e.into()))?;
     if child_count > 0 {
         return Err(AppError::Conflict(
             "product_category.has_children".to_string(),
@@ -189,7 +192,10 @@ pub async fn ensure_safe_to_delete(
     if let Some(tid) = tenant_id {
         q2 = q2.bind(crate::db::tenant::resolve_tenant(Some(tid)));
     }
-    let product_count = q2.fetch_one(pool).await.map_err(|e| AppError::Internal(e.into()))?;
+    let product_count = q2
+        .fetch_one(pool)
+        .await
+        .map_err(|e| AppError::Internal(e.into()))?;
     if product_count > 0 {
         return Err(AppError::Conflict(
             "product_category.has_products".to_string(),

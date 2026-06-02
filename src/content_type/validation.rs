@@ -430,9 +430,18 @@ fn is_empty_value(v: &Value) -> bool {
 
 fn check_type(ft: &FieldType, val: &Value) -> Result<(), String> {
     match ft {
-        FieldType::Text | FieldType::RichText | FieldType::Email | FieldType::Password => {
+        FieldType::Text | FieldType::RichText | FieldType::Password => {
             if !val.is_string() {
                 return Err("expected string".into());
+            }
+        }
+        FieldType::Email => {
+            if !val.is_string() {
+                return Err("expected string".into());
+            }
+            let s = val.as_str().unwrap_or("");
+            if !s.contains('@') || !s.contains('.') || s.starts_with('@') || s.ends_with('@') {
+                return Err("invalid email format".into());
             }
         }
         FieldType::Integer | FieldType::BigInt => {
@@ -741,12 +750,15 @@ immutable = true
         for ft in &[
             FieldType::Text,
             FieldType::RichText,
-            FieldType::Email,
             FieldType::Password,
         ] {
             assert!(check_type(ft, &json!("hello")).is_ok());
             assert!(check_type(ft, &json!(42)).is_err());
         }
+        // Email requires valid format
+        assert!(check_type(&FieldType::Email, &json!("hello@example.com")).is_ok());
+        assert!(check_type(&FieldType::Email, &json!("hello")).is_err());
+        assert!(check_type(&FieldType::Email, &json!(42)).is_err());
     }
 
     #[test]

@@ -63,7 +63,7 @@ pub(crate) fn _brand() -> String {
     let k0: u8 = 0x5A;
     let k1: u8 = 0xA5;
     let p0 = utils::tz::_B0;
-    let p1: [u8; 4] = [102 ^ 0xA5, 97 ^ 0xA5, 115 ^ 0xA5, 116 ^ 0xA5];
+    let p1: [u8; 4] = [70 ^ 0xA5, 97 ^ 0xA5, 115 ^ 0xA5, 116 ^ 0xA5];
     let mut v = Vec::with_capacity(p0.len() + p1.len());
     for b in p0 {
         v.push(b ^ k0);

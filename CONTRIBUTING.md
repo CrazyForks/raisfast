@@ -10,7 +10,7 @@ raisfast is in **early alpha**. The codebase evolves rapidly and APIs may change
 
 ### Bug Reports
 
-- Open a [GitHub Issue](https://github.com/snkzhong/raisfast/issues/new)
+- Open a [GitHub Issue](https://github.com/raisfast/raisfast/issues/new)
 - Include: Rust version, OS, feature flags used, steps to reproduce, expected vs actual behavior
 - Check existing issues before filing a new one
 
@@ -38,16 +38,15 @@ raisfast is in **early alpha**. The codebase evolves rapidly and APIs may change
 ### Prerequisites
 
 - Rust 1.85+ (edition 2024)
-- pnpm (for Admin UI development)
 - SQLite 3.x
 
 ### Build
 
 ```bash
 # Backend only
-cargo build --features "db-sqlite plugin-all search-tantivy"
+just build
 
-# Backend + Admin UI
+# Backend + embed Admin UI
 just build-full
 ```
 
@@ -62,15 +61,6 @@ cargo clippy --features "db-sqlite plugin-all search-tantivy" -- -D warnings
 
 # Format check
 cargo fmt --check
-```
-
-### Admin UI Development
-
-```bash
-cd frontend/admin
-pnpm install
-pnpm dev    # Dev server at http://localhost:5173
-pnpm build  # Production build (embedded into Rust binary)
 ```
 
 ## Code Style
@@ -105,5 +95,4 @@ Before contributing, please read:
 
 By contributing, you agree that your contributions will be licensed under the same license as the module you're modifying:
 
-- Core framework: MIT
-- Commercial modules: BSL 1.1
+- Licensed: apache 2.0

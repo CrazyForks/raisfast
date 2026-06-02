@@ -70,6 +70,7 @@ inherits = "release"
 lto = "thin"
 
 [dependencies]
+indexmap = "2"
 # Web framework
 axum = { version = "0.8", features = ["macros", "multipart", "ws"] }
 async-graphql = "7"

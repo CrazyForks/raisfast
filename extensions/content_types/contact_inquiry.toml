@@ -1,0 +1,49 @@
+[content_type]
+name = "Contact Inquiry"
+singular = "contact_inquiry"
+plural = "contact_inquiries"
+table = "contact_inquiries"
+description = "Contact form submissions from the website"
+implements = ["timestampable"]
+
+[fields.name]
+type = "text"
+required = true
+max_length = 200
+label = "Name"
+
+[fields.company]
+type = "text"
+max_length = 200
+label = "Company"
+
+[fields.phone]
+type = "text"
+max_length = 50
+label = "Phone"
+
+[fields.email]
+type = "email"
+required = true
+label = "Email"
+
+[fields.message]
+type = "text"
+required = true
+max_length = 5000
+label = "Message"
+
+[api.list]
+access = "admin"
+
+[api.get]
+access = "admin"
+
+[api.create]
+access = "public"
+
+[api.update]
+access = "admin"
+
+[api.delete]
+access = "admin"

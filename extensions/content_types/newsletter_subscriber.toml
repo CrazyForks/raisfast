@@ -1,0 +1,32 @@
+[content_type]
+name = "Newsletter Subscriber"
+singular = "newsletter_subscriber"
+plural = "newsletter_subscribers"
+table = "newsletter_subscribers"
+description = "Newsletter email subscriptions"
+implements = ["timestampable"]
+
+[fields.email]
+type = "email"
+required = true
+unique = true
+label = "Email"
+
+[[indexes]]
+fields = ["email"]
+unique = true
+
+[api.list]
+access = "admin"
+
+[api.get]
+access = "admin"
+
+[api.create]
+access = "public"
+
+[api.update]
+access = "admin"
+
+[api.delete]
+access = "admin"
