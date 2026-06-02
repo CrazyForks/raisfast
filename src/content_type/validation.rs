@@ -747,11 +747,7 @@ immutable = true
 
     #[test]
     fn check_type_all_text_variants() {
-        for ft in &[
-            FieldType::Text,
-            FieldType::RichText,
-            FieldType::Password,
-        ] {
+        for ft in &[FieldType::Text, FieldType::RichText, FieldType::Password] {
             assert!(check_type(ft, &json!("hello")).is_ok());
             assert!(check_type(ft, &json!(42)).is_err());
         }
