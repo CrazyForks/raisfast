@@ -84,8 +84,8 @@ pub async fn find_paginated(
 }
 
 pub async fn find_by_id(pool: &crate::db::Pool, id: SnowflakeId) -> AppResult<WebhookSubscription> {
-    raisfast_derive::crud_find_one!(pool, "webhook_subscriptions", WebhookSubscription, where: ("id", id))
-        .map_err(Into::into)
+    let result: WebhookSubscription = raisfast_derive::crud_find_one!(pool, "webhook_subscriptions", WebhookSubscription, where: ("id", id))?;
+    Ok(result)
 }
 
 pub async fn update(pool: &crate::db::Pool, sub: &WebhookSubscription) -> AppResult<()> {

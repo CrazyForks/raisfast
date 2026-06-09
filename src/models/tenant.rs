@@ -83,7 +83,7 @@ pub async fn create(
             "updated_at" => now
         ]
     )
-    .map_err(|e| AppError::Conflict(format!("create tenant failed: {e}")))?;
+    .map_err(|e: sqlx::Error| AppError::Conflict(format!("create tenant failed: {e}")))?;
 
     find_by_id(pool, id)
         .await?

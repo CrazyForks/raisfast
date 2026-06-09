@@ -22,6 +22,10 @@ use raisfast::config::app::AppConfig;
 mod cli;
 mod logging;
 
+pub(crate) mod db {
+    pub use raisfast::db::*;
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let config = AppConfig::init();

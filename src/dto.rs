@@ -140,13 +140,14 @@ export_types!(
 );
 
 fn validate_password(pwd: &str) -> Result<(), validator::ValidationError> {
-    let has_letter = pwd.chars().any(|c| c.is_ascii_alphabetic());
+    let has_uppercase = pwd.chars().any(|c| c.is_ascii_uppercase());
+    let has_lowercase = pwd.chars().any(|c| c.is_ascii_lowercase());
     let has_digit = pwd.chars().any(|c| c.is_ascii_digit());
-    if has_letter && has_digit {
+    if has_uppercase && has_lowercase && has_digit {
         Ok(())
     } else {
         let mut err = validator::ValidationError::new("password_strength");
-        err.message = Some("password must contain both letters and digits".into());
+        err.message = Some("password must contain uppercase, lowercase letters and digits".into());
         Err(err)
     }
 }
@@ -217,7 +218,7 @@ mod tests {
 
     #[test]
     fn validate_password_valid() {
-        assert!(validate_password("abc123").is_ok());
+        assert!(validate_password("Abc123").is_ok());
         assert!(validate_password("Password1").is_ok());
     }
 

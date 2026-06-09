@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 use crate::config::app::AppConfig;
 use crate::db::DbDriver;
-use crate::db::{DbArguments, DbConnection, DbPoolConnection, DbQueryResult, Pool};
+use crate::db::{DbArguments, DbConnection, DbPoolConnection, DbQueryResult, DbRow, Pool};
 use crate::event::Event;
 use crate::eventbus::EventBus;
 use crate::plugins::Permissions;
@@ -351,7 +351,9 @@ impl HostContext {
                 for p in &params {
                     Self::add_param(&mut args, p);
                 }
-                let rows = sqlx::query_with(&sql, args).fetch_all(pool).await?;
+                let rows = sqlx::query_with::<crate::db::pool::Db, _>(&sql, args)
+                    .fetch_all(pool)
+                    .await?;
                 let json = crate::plugins::rows_to_json(&rows);
                 Ok::<_, sqlx::Error>(json)
             }) {
@@ -403,7 +405,10 @@ impl HostContext {
                 let result: Result<DbQueryResult, sqlx::Error> =
                     build_and_exec(&mut tx_state.conn, &sql, &params, &handle);
                 match result {
-                    Ok(r) => format!(r#"{{"rows_affected":{}}}"#, r.rows_affected()),
+                    Ok(r) => {
+                        let affected: u64 = r.rows_affected();
+                        format!(r#"{{"rows_affected":{affected}}}"#)
+                    }
                     Err(_) => r#"{"error":"database write failed"}"#.to_string(),
                 }
             });
@@ -420,10 +425,16 @@ impl HostContext {
             for p in &params {
                 Self::add_param(&mut args, p);
             }
-            let result: Result<DbQueryResult, sqlx::Error> =
-                handle.block_on(async { sqlx::query_with(&sql, args).execute(pool).await });
+            let result: Result<DbQueryResult, sqlx::Error> = handle.block_on(async {
+                sqlx::query_with::<crate::db::pool::Db, _>(&sql, args)
+                    .execute(pool)
+                    .await
+            });
             match result {
-                Ok(r) => format!(r#"{{"rows_affected":{}}}"#, r.rows_affected()),
+                Ok(r) => {
+                    let affected: u64 = r.rows_affected();
+                    format!(r#"{{"rows_affected":{affected}}}"#)
+                }
                 Err(_) => r#"{"error":"database write failed"}"#.to_string(),
             }
         })
@@ -444,18 +455,27 @@ impl HostContext {
             return r#"{"error":"transaction already active"}"#.to_string();
         }
         let handle = tokio::runtime::Handle::current();
-        tokio::task::block_in_place(|| match handle.block_on(async { pool.acquire().await }) {
-            Ok(mut conn) => {
-                match handle.block_on(async { sqlx::query("BEGIN").execute(&mut *conn).await }) {
-                    Ok(_) => {
-                        tracing::info!("[plugin:{}] transaction begun", self.plugin_id);
-                        *tx_guard = Some(TxState { conn });
-                        r#"{"ok":true}"#.to_string()
+        tokio::task::block_in_place(|| {
+            let acquire: Result<DbPoolConnection, sqlx::Error> =
+                handle.block_on(async { pool.acquire().await });
+            match acquire {
+                Ok(mut conn) => {
+                    match handle.block_on(async {
+                        sqlx::query::<crate::db::pool::Db>("BEGIN")
+                            .execute(&mut *conn)
+                            .await
+                    }) {
+                        Ok(_r) => {
+                            let _: crate::db::pool::DbQueryResult = _r;
+                            tracing::info!("[plugin:{}] transaction begun", self.plugin_id);
+                            *tx_guard = Some(TxState { conn });
+                            r#"{"ok":true}"#.to_string()
+                        }
+                        Err(e) => format!(r#"{{"error":"BEGIN failed: {e}"}}"#),
                     }
-                    Err(e) => format!(r#"{{"error":"BEGIN failed: {e}"}}"#),
                 }
+                Err(e) => format!(r#"{{"error":"cannot acquire connection: {e}"}}"#),
             }
-            Err(e) => format!(r#"{{"error":"cannot acquire connection: {e}"}}"#),
         })
     }
 
@@ -468,17 +488,23 @@ impl HostContext {
         };
         let handle = tokio::runtime::Handle::current();
         tokio::task::block_in_place(|| {
-            match handle
-                .block_on(async { sqlx::query("COMMIT").execute(&mut *tx_state.conn).await })
-            {
-                Ok(_) => {
+            match handle.block_on(async {
+                sqlx::query::<crate::db::pool::Db>("COMMIT")
+                    .execute(&mut *tx_state.conn)
+                    .await
+            }) {
+                Ok(_r) => {
+                    let _: crate::db::pool::DbQueryResult = _r;
                     tracing::info!("[plugin:{}] transaction committed", self.plugin_id);
                     r#"{"ok":true}"#.to_string()
                 }
                 Err(e) => {
-                    let _ = handle.block_on(async {
-                        sqlx::query("ROLLBACK").execute(&mut *tx_state.conn).await
-                    });
+                    let _: Result<crate::db::pool::DbQueryResult, sqlx::Error> =
+                        handle.block_on(async {
+                            sqlx::query::<crate::db::pool::Db>("ROLLBACK")
+                                .execute(&mut *tx_state.conn)
+                                .await
+                        });
                     format!(r#"{{"error":"COMMIT failed, rolled back: {e}"}}"#)
                 }
             }
@@ -494,10 +520,13 @@ impl HostContext {
         };
         let handle = tokio::runtime::Handle::current();
         tokio::task::block_in_place(|| {
-            match handle
-                .block_on(async { sqlx::query("ROLLBACK").execute(&mut *tx_state.conn).await })
-            {
-                Ok(_) => {
+            match handle.block_on(async {
+                sqlx::query::<crate::db::pool::Db>("ROLLBACK")
+                    .execute(&mut *tx_state.conn)
+                    .await
+            }) {
+                Ok(_r) => {
+                    let _: crate::db::pool::DbQueryResult = _r;
                     tracing::info!("[plugin:{}] transaction rolled back", self.plugin_id);
                     r#"{"ok":true}"#.to_string()
                 }
@@ -513,8 +542,11 @@ impl HostContext {
             let handle = tokio::runtime::Handle::current();
             let plugin_id = self.plugin_id.clone();
             tokio::task::block_in_place(|| {
-                let _ = handle
-                    .block_on(async { sqlx::query("ROLLBACK").execute(&mut *tx_state.conn).await });
+                let _ = handle.block_on(async {
+                    sqlx::query::<crate::db::pool::Db>("ROLLBACK")
+                        .execute(&mut *tx_state.conn)
+                        .await
+                });
                 tracing::warn!(
                     "[plugin:{plugin_id}] cleaned up dangling transaction (rolled back)"
                 );
@@ -620,8 +652,16 @@ impl HostContext {
         );
         let handle = tokio::runtime::Handle::current();
         tokio::task::block_in_place(|| {
-            match handle.block_on(async { sqlx::query_with(&sql, args).execute(pool).await }) {
-                Ok(r) => format!(r#"{{"rows_affected":{}}}"#, r.rows_affected()),
+            let result: Result<DbQueryResult, sqlx::Error> = handle.block_on(async {
+                sqlx::query_with::<crate::db::pool::Db, _>(&sql, args)
+                    .execute(pool)
+                    .await
+            });
+            match result {
+                Ok(r) => {
+                    let affected: u64 = r.rows_affected();
+                    format!(r#"{{"rows_affected":{affected}}}"#)
+                }
                 Err(e) => format!(r#"{{"error":"insert failed: {e}"}}"#),
             }
         })
@@ -653,8 +693,11 @@ impl HostContext {
 
         let handle = tokio::runtime::Handle::current();
         tokio::task::block_in_place(|| {
-            match handle.block_on(async { sqlx::query_with(&sql, args).fetch_optional(pool).await })
-            {
+            match handle.block_on(async {
+                sqlx::query_with::<crate::db::pool::Db, _>(&sql, args)
+                    .fetch_optional(pool)
+                    .await
+            }) {
                 Ok(Some(row)) => {
                     let json = crate::plugins::rows_to_json(std::slice::from_ref(&row));
                     format!(r#"{{"data":{json}}}"#)
@@ -689,9 +732,14 @@ impl HostContext {
 
         let handle = tokio::runtime::Handle::current();
         tokio::task::block_in_place(|| {
-            match handle.block_on(async { sqlx::query_with(&sql, args).fetch_all(pool).await }) {
+            let result: Result<Vec<DbRow>, sqlx::Error> = handle.block_on(async {
+                sqlx::query_with::<crate::db::pool::Db, _>(&sql, args)
+                    .fetch_all(pool)
+                    .await
+            });
+            match result {
                 Ok(rows) => {
-                    let count = rows.len();
+                    let count: usize = rows.len();
                     let json = crate::plugins::rows_to_json(&rows);
                     format!(r#"{{"data":{json},"total":{count}}}"#)
                 }
@@ -771,8 +819,16 @@ impl HostContext {
         let sql = format!("UPDATE {table} SET {}{where_sql}", set_parts.join(", "));
         let handle = tokio::runtime::Handle::current();
         tokio::task::block_in_place(|| {
-            match handle.block_on(async { sqlx::query_with(&sql, args).execute(pool).await }) {
-                Ok(r) => format!(r#"{{"rows_affected":{}}}"#, r.rows_affected()),
+            let result: Result<DbQueryResult, sqlx::Error> = handle.block_on(async {
+                sqlx::query_with::<crate::db::pool::Db, _>(&sql, args)
+                    .execute(pool)
+                    .await
+            });
+            match result {
+                Ok(r) => {
+                    let affected: u64 = r.rows_affected();
+                    format!(r#"{{"rows_affected":{affected}}}"#)
+                }
                 Err(e) => format!(r#"{{"error":"update failed: {e}"}}"#),
             }
         })
@@ -824,8 +880,16 @@ impl HostContext {
         let sql = format!("DELETE FROM {table}{where_sql}");
         let handle = tokio::runtime::Handle::current();
         tokio::task::block_in_place(|| {
-            match handle.block_on(async { sqlx::query_with(&sql, args).execute(pool).await }) {
-                Ok(r) => format!(r#"{{"rows_affected":{}}}"#, r.rows_affected()),
+            let result: Result<DbQueryResult, sqlx::Error> = handle.block_on(async {
+                sqlx::query_with::<crate::db::pool::Db, _>(&sql, args)
+                    .execute(pool)
+                    .await
+            });
+            match result {
+                Ok(r) => {
+                    let affected: u64 = r.rows_affected();
+                    format!(r#"{{"rows_affected":{affected}}}"#)
+                }
                 Err(e) => format!(r#"{{"error":"delete failed: {e}"}}"#),
             }
         })
@@ -1002,8 +1066,16 @@ impl HostContext {
         let sql = format!("UPDATE {table} SET {}{where_sql}", set_parts.join(", "));
         let handle = tokio::runtime::Handle::current();
         tokio::task::block_in_place(|| {
-            match handle.block_on(async { sqlx::query_with(&sql, args).execute(pool).await }) {
-                Ok(r) => format!(r#"{{"rows_affected":{}}}"#, r.rows_affected()),
+            let result: Result<DbQueryResult, sqlx::Error> = handle.block_on(async {
+                sqlx::query_with::<crate::db::pool::Db, _>(&sql, args)
+                    .execute(pool)
+                    .await
+            });
+            match result {
+                Ok(r) => {
+                    let affected: u64 = r.rows_affected();
+                    format!(r#"{{"rows_affected":{affected}}}"#)
+                }
                 Err(e) => format!(r#"{{"error":"increment failed: {e}"}}"#),
             }
         })
@@ -1060,7 +1132,9 @@ impl HostContext {
         let handle = tokio::runtime::Handle::current();
         tokio::task::block_in_place(|| {
             match handle.block_on(async {
-                let row = sqlx::query_with(&sql, args).fetch_one(pool).await?;
+                let row: DbRow = sqlx::query_with::<crate::db::pool::Db, _>(&sql, args)
+                    .fetch_one(pool)
+                    .await?;
                 Ok::<_, sqlx::Error>(row)
             }) {
                 Ok(row) => {
@@ -1202,9 +1276,14 @@ impl HostContext {
 
         let handle = tokio::runtime::Handle::current();
         tokio::task::block_in_place(|| {
-            match handle.block_on(async { sqlx::query_with(&sql, args).fetch_all(pool).await }) {
+            let result: Result<Vec<DbRow>, sqlx::Error> = handle.block_on(async {
+                sqlx::query_with::<crate::db::pool::Db, _>(&sql, args)
+                    .fetch_all(pool)
+                    .await
+            });
+            match result {
                 Ok(rows) => {
-                    let count = rows.len();
+                    let count: usize = rows.len();
                     let json = crate::plugins::rows_to_json(&rows);
                     format!(r#"{{"data":{json},"total":{count}}}"#)
                 }
@@ -1455,7 +1534,11 @@ fn build_and_exec(
     for p in params {
         add_param_value(&mut args, p);
     }
-    handle.block_on(async { sqlx::query_with(sql, args).execute(conn).await })
+    handle.block_on(async {
+        sqlx::query_with::<crate::db::pool::Db, _>(sql, args)
+            .execute(conn)
+            .await
+    })
 }
 
 fn add_param_value(args: &mut DbArguments, p: &serde_json::Value) {
@@ -1697,7 +1780,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn host_context_get_data_set_data_with_real_db() {
         let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query(crate::db::schema::SCHEMA_SQL)
+        sqlx::query::<crate::db::pool::Db>(crate::db::schema::SCHEMA_SQL)
             .execute(&pool)
             .await
             .unwrap();
@@ -1722,7 +1805,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn host_context_get_data_isolation_between_plugins() {
         let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query(crate::db::schema::SCHEMA_SQL)
+        sqlx::query::<crate::db::pool::Db>(crate::db::schema::SCHEMA_SQL)
             .execute(&pool)
             .await
             .unwrap();
@@ -1754,7 +1837,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn host_context_db_query_with_real_db() {
         let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query(crate::db::schema::SCHEMA_SQL)
+        sqlx::query::<crate::db::pool::Db>(crate::db::schema::SCHEMA_SQL)
             .execute(&pool)
             .await
             .unwrap();
@@ -1774,7 +1857,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn host_context_db_query_table_not_permitted() {
         let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query(crate::db::schema::SCHEMA_SQL)
+        sqlx::query::<crate::db::pool::Db>(crate::db::schema::SCHEMA_SQL)
             .execute(&pool)
             .await
             .unwrap();
@@ -1793,7 +1876,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn host_context_db_query_wildcard_permission() {
         let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query(crate::db::schema::SCHEMA_SQL)
+        sqlx::query::<crate::db::pool::Db>(crate::db::schema::SCHEMA_SQL)
             .execute(&pool)
             .await
             .unwrap();
@@ -1861,7 +1944,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn host_context_db_execute_with_real_db() {
         let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query(crate::db::schema::SCHEMA_SQL)
+        sqlx::query::<crate::db::pool::Db>(crate::db::schema::SCHEMA_SQL)
             .execute(&pool)
             .await
             .unwrap();
@@ -1890,7 +1973,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn host_context_db_execute_parameterized() {
         let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query(crate::db::schema::SCHEMA_SQL)
+        sqlx::query::<crate::db::pool::Db>(crate::db::schema::SCHEMA_SQL)
             .execute(&pool)
             .await
             .unwrap();
@@ -1973,7 +2056,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn host_context_transaction_commit_roundtrip() {
         let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query(crate::db::schema::SCHEMA_SQL)
+        sqlx::query::<crate::db::pool::Db>(crate::db::schema::SCHEMA_SQL)
             .execute(&pool)
             .await
             .unwrap();
@@ -2007,7 +2090,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn host_context_transaction_rollback_discards() {
         let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query(crate::db::schema::SCHEMA_SQL)
+        sqlx::query::<crate::db::pool::Db>(crate::db::schema::SCHEMA_SQL)
             .execute(&pool)
             .await
             .unwrap();
@@ -2063,7 +2146,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn host_context_cleanup_tx_rolls_back() {
         let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query(crate::db::schema::SCHEMA_SQL)
+        sqlx::query::<crate::db::pool::Db>(crate::db::schema::SCHEMA_SQL)
             .execute(&pool)
             .await
             .unwrap();
@@ -2127,7 +2210,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn db_insert_and_fetch_one() {
         let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query(crate::db::schema::SCHEMA_SQL)
+        sqlx::query::<crate::db::pool::Db>(crate::db::schema::SCHEMA_SQL)
             .execute(&pool)
             .await
             .unwrap();
@@ -2143,7 +2226,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn db_fetch_one_not_found() {
         let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query(crate::db::schema::SCHEMA_SQL)
+        sqlx::query::<crate::db::pool::Db>(crate::db::schema::SCHEMA_SQL)
             .execute(&pool)
             .await
             .unwrap();
@@ -2156,7 +2239,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn db_fetch_one_object_where() {
         let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query(crate::db::schema::SCHEMA_SQL)
+        sqlx::query::<crate::db::pool::Db>(crate::db::schema::SCHEMA_SQL)
             .execute(&pool)
             .await
             .unwrap();
@@ -2171,7 +2254,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn db_fetch_one_array_where() {
         let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query(crate::db::schema::SCHEMA_SQL)
+        sqlx::query::<crate::db::pool::Db>(crate::db::schema::SCHEMA_SQL)
             .execute(&pool)
             .await
             .unwrap();
@@ -2186,7 +2269,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn db_fetch_all_with_order_and_limit() {
         let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query(crate::db::schema::SCHEMA_SQL)
+        sqlx::query::<crate::db::pool::Db>(crate::db::schema::SCHEMA_SQL)
             .execute(&pool)
             .await
             .unwrap();
@@ -2203,7 +2286,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn db_update() {
         let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query(crate::db::schema::SCHEMA_SQL)
+        sqlx::query::<crate::db::pool::Db>(crate::db::schema::SCHEMA_SQL)
             .execute(&pool)
             .await
             .unwrap();
@@ -2221,7 +2304,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn db_update_empty_data() {
         let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query(crate::db::schema::SCHEMA_SQL)
+        sqlx::query::<crate::db::pool::Db>(crate::db::schema::SCHEMA_SQL)
             .execute(&pool)
             .await
             .unwrap();
@@ -2234,7 +2317,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn db_delete() {
         let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query(crate::db::schema::SCHEMA_SQL)
+        sqlx::query::<crate::db::pool::Db>(crate::db::schema::SCHEMA_SQL)
             .execute(&pool)
             .await
             .unwrap();
@@ -2252,7 +2335,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn db_count() {
         let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query(crate::db::schema::SCHEMA_SQL)
+        sqlx::query::<crate::db::pool::Db>(crate::db::schema::SCHEMA_SQL)
             .execute(&pool)
             .await
             .unwrap();
@@ -2268,7 +2351,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn db_count_with_where() {
         let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query(crate::db::schema::SCHEMA_SQL)
+        sqlx::query::<crate::db::pool::Db>(crate::db::schema::SCHEMA_SQL)
             .execute(&pool)
             .await
             .unwrap();
@@ -2307,7 +2390,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn db_crud_no_permission() {
         let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query(crate::db::schema::SCHEMA_SQL)
+        sqlx::query::<crate::db::pool::Db>(crate::db::schema::SCHEMA_SQL)
             .execute(&pool)
             .await
             .unwrap();
@@ -2333,7 +2416,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn db_increment_simple() {
         let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query(crate::db::schema::SCHEMA_SQL)
+        sqlx::query::<crate::db::pool::Db>(crate::db::schema::SCHEMA_SQL)
             .execute(&pool)
             .await
             .unwrap();
@@ -2371,7 +2454,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn db_increment_negative_delta() {
         let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query(crate::db::schema::SCHEMA_SQL)
+        sqlx::query::<crate::db::pool::Db>(crate::db::schema::SCHEMA_SQL)
             .execute(&pool)
             .await
             .unwrap();
@@ -2398,7 +2481,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn db_increment_with_min_clamp() {
         let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query(crate::db::schema::SCHEMA_SQL)
+        sqlx::query::<crate::db::pool::Db>(crate::db::schema::SCHEMA_SQL)
             .execute(&pool)
             .await
             .unwrap();
@@ -2425,7 +2508,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn db_increment_with_set() {
         let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query(crate::db::schema::SCHEMA_SQL)
+        sqlx::query::<crate::db::pool::Db>(crate::db::schema::SCHEMA_SQL)
             .execute(&pool)
             .await
             .unwrap();
@@ -2467,7 +2550,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn db_increment_no_permission() {
         let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query(crate::db::schema::SCHEMA_SQL)
+        sqlx::query::<crate::db::pool::Db>(crate::db::schema::SCHEMA_SQL)
             .execute(&pool)
             .await
             .unwrap();
@@ -2486,7 +2569,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn db_sum_basic() {
         let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query(crate::db::schema::SCHEMA_SQL)
+        sqlx::query::<crate::db::pool::Db>(crate::db::schema::SCHEMA_SQL)
             .execute(&pool)
             .await
             .unwrap();
@@ -2515,7 +2598,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn db_sum_empty() {
         let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query(crate::db::schema::SCHEMA_SQL)
+        sqlx::query::<crate::db::pool::Db>(crate::db::schema::SCHEMA_SQL)
             .execute(&pool)
             .await
             .unwrap();
@@ -2540,7 +2623,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn db_group_by_count() {
         let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query(crate::db::schema::SCHEMA_SQL)
+        sqlx::query::<crate::db::pool::Db>(crate::db::schema::SCHEMA_SQL)
             .execute(&pool)
             .await
             .unwrap();
@@ -2574,7 +2657,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn db_group_by_with_sum() {
         let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query(crate::db::schema::SCHEMA_SQL)
+        sqlx::query::<crate::db::pool::Db>(crate::db::schema::SCHEMA_SQL)
             .execute(&pool)
             .await
             .unwrap();
@@ -2610,7 +2693,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn db_group_by_with_where() {
         let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query(crate::db::schema::SCHEMA_SQL)
+        sqlx::query::<crate::db::pool::Db>(crate::db::schema::SCHEMA_SQL)
             .execute(&pool)
             .await
             .unwrap();
@@ -2643,7 +2726,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn db_group_by_with_limit() {
         let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query(crate::db::schema::SCHEMA_SQL)
+        sqlx::query::<crate::db::pool::Db>(crate::db::schema::SCHEMA_SQL)
             .execute(&pool)
             .await
             .unwrap();
@@ -2663,7 +2746,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn db_group_by_missing_field() {
         let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query(crate::db::schema::SCHEMA_SQL)
+        sqlx::query::<crate::db::pool::Db>(crate::db::schema::SCHEMA_SQL)
             .execute(&pool)
             .await
             .unwrap();
@@ -2688,7 +2771,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn db_group_by_no_permission() {
         let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query(crate::db::schema::SCHEMA_SQL)
+        sqlx::query::<crate::db::pool::Db>(crate::db::schema::SCHEMA_SQL)
             .execute(&pool)
             .await
             .unwrap();
@@ -2707,7 +2790,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn db_increment_multi_column_with_min() {
         let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query(crate::db::schema::SCHEMA_SQL)
+        sqlx::query::<crate::db::pool::Db>(crate::db::schema::SCHEMA_SQL)
             .execute(&pool)
             .await
             .unwrap();

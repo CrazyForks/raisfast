@@ -198,6 +198,7 @@ pub async fn register(
             &crate::commands::user::CreateUserCmd {
                 username: req.username.clone(),
                 registered_via,
+                role: None,
             },
             tenant_id,
         )
@@ -230,6 +231,61 @@ pub async fn register(
     {
         tracing::error!("failed to send email verification: {e}");
     }
+
+    UserResponse::from_user_with_contacts(pool, user).await
+}
+
+/// Admin creates a user directly.
+///
+/// Unlike public registration, this bypasses `registration_email_enabled` and email
+/// verification. Optionally accepts a custom role (defaults to Reader).
+pub async fn admin_create_user(
+    aspect_engine: &AspectEngine,
+    req: crate::dto::AdminCreateUserRequest,
+    tenant_id: Option<&str>,
+    pool: &crate::db::Pool,
+) -> AppResult<UserResponse> {
+    if crate::models::user_credential::find_by_auth_type_and_identifier(
+        pool,
+        AuthType::Email,
+        &req.email,
+    )
+    .await?
+    .is_some()
+    {
+        return Err(AppError::Conflict("email_registered".into()));
+    }
+
+    validate_password_strength(&req.password)?;
+    let password_hash = hash_password(&req.password)?;
+    let cred_data = crate::models::user_credential::wrap_password_hash(&password_hash);
+
+    let user = in_transaction!(pool, tx, {
+        let user = crate::models::user::tx_create(
+            &mut tx,
+            &crate::commands::user::CreateUserCmd {
+                username: req.username.clone(),
+                registered_via: crate::models::user::RegisteredVia::Email,
+                role: req.role,
+            },
+            tenant_id,
+        )
+        .await?;
+
+        crate::models::user_credential::tx_create(
+            &mut tx,
+            user.id,
+            AuthType::Email,
+            &req.email,
+            &cred_data,
+            true,
+        )
+        .await?;
+
+        Ok::<_, crate::errors::app_error::AppError>(user)
+    })?;
+
+    aspect_engine.emit(Event::UserRegistered(user.clone()));
 
     UserResponse::from_user_with_contacts(pool, user).await
 }

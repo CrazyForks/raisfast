@@ -32,14 +32,14 @@ pub async fn find_by_id(
     id: SnowflakeId,
     tenant_id: Option<&str>,
 ) -> AppResult<Option<ProductVariant>> {
-    raisfast_derive::crud_find!(
+    let result: Option<ProductVariant> = raisfast_derive::crud_find!(
         pool,
         "product_variants",
         ProductVariant,
         where: ("id", id),
         tenant: tenant_id
-    )
-    .map_err(Into::into)
+    )?;
+    Ok(result)
 }
 
 pub async fn find_by_sku(
@@ -47,14 +47,14 @@ pub async fn find_by_sku(
     sku: &str,
     tenant_id: Option<&str>,
 ) -> AppResult<Option<ProductVariant>> {
-    raisfast_derive::crud_find!(
+    let result: Option<ProductVariant> = raisfast_derive::crud_find!(
         pool,
         "product_variants",
         ProductVariant,
         where: ("sku", sku),
         tenant: tenant_id
-    )
-    .map_err(Into::into)
+    )?;
+    Ok(result)
 }
 
 pub async fn find_by_product_id(
@@ -127,7 +127,7 @@ pub async fn update(
     cmd: &crate::commands::UpdateProductVariantCmd,
     tenant_id: Option<&str>,
 ) -> AppResult<bool> {
-    let result = raisfast_derive::crud_update!(
+    let result: crate::db::pool::DbQueryResult = raisfast_derive::crud_update!(
         pool,
         "product_variants",
         bind: [
@@ -218,7 +218,7 @@ pub async fn tx_deduct_stock(
     if let Some(tid) = tenant_id {
         q = q.bind(tid);
     }
-    let result = q.execute(&mut *tx).await?;
+    let result: crate::db::pool::DbQueryResult = q.execute(&mut *tx).await?;
     if result.rows_affected() == 0 {
         return Err(AppError::BadRequest("insufficient_stock".into()));
     }
@@ -296,6 +296,10 @@ mod tests {
                 cost_price: None,
                 sale_price: None,
                 has_variants: false,
+                tag_ids: None,
+                og_title: None,
+                og_description: None,
+                og_image: None,
             },
             None,
         )

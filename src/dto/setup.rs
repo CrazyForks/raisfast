@@ -14,6 +14,11 @@ pub struct DatabaseStatusInfo {
     pub db_type: String,
     pub connected: bool,
     pub url_masked: String,
+    pub host: Option<String>,
+    pub port: Option<u16>,
+    pub username: Option<String>,
+    pub password: Option<String>,
+    pub database: Option<String>,
 }
 
 #[derive(Debug, Serialize)]

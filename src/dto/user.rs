@@ -28,6 +28,18 @@ pub struct RegisterRequest {
 
 #[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Deserialize, Validate, ToSchema)]
+pub struct AdminCreateUserRequest {
+    #[validate(email)]
+    pub email: String,
+    #[validate(length(min = 2, max = 50))]
+    pub username: String,
+    #[validate(length(min = 8, max = 128), custom(function = "validate_password"))]
+    pub password: String,
+    pub role: Option<UserRole>,
+}
+
+#[cfg_attr(feature = "export-types", derive(TS))]
+#[derive(Debug, Deserialize, Validate, ToSchema)]
 pub struct LoginRequest {
     #[validate(email)]
     pub email: String,
@@ -54,6 +66,10 @@ pub struct UpdateUserRequest {
     pub social_links: Option<SocialLinks>,
     #[cfg_attr(feature = "export-types", ts(type = "unknown"))]
     pub metadata: Option<UserMetadata>,
+    pub role: Option<UserRole>,
+    pub status: Option<UserStatus>,
+    #[validate(length(min = 8, max = 128), custom(function = "validate_password"))]
+    pub password: Option<String>,
 }
 
 #[cfg_attr(feature = "export-types", derive(TS))]
@@ -349,6 +365,9 @@ mod tests {
             avatar: None,
             social_links: None,
             metadata: None,
+            role: None,
+            status: None,
+            password: None,
         };
         assert!(req.validate().is_ok());
     }

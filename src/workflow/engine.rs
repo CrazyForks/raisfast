@@ -87,12 +87,13 @@ impl WorkflowService {
             "SELECT id, name, description, steps, initial_step, version, enabled, created_at, updated_at FROM workflow_definitions WHERE id = {}",
             crate::db::Driver::ph(1)
         );
-        sqlx::query_as::<_, WorkflowDefinition>(&sql)
-            .bind(id)
-            .fetch_optional(&self.pool)
-            .await
-            .map_err(|e| AppError::Internal(anyhow::anyhow!("{e}")))?
-            .ok_or_else(|| AppError::not_found("workflow definition"))
+        let result: Option<WorkflowDefinition> =
+            sqlx::query_as::<crate::db::pool::Db, WorkflowDefinition>(&sql)
+                .bind(id)
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(|e: sqlx::Error| AppError::Internal(anyhow::anyhow!("{e}")))?;
+        result.ok_or_else(|| AppError::not_found("workflow definition"))
     }
 
     /// Delete workflow definition

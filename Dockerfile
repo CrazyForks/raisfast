@@ -21,7 +21,7 @@ RUN touch src/main.rs \
 
 FROM debian:bookworm-slim
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN apt-get update && apt-get upgrade -y && apt-get install -y --no-install-recommends \
     ca-certificates \
     curl \
     && rm -rf /var/lib/apt/lists/*
@@ -32,7 +32,6 @@ RUN groupadd --gid 1000 app \
 WORKDIR /app
 
 COPY --from=builder /app/target/release/raisfast /app/raisfast
-COPY migrations/ migrations/
 
 RUN mkdir -p /app/data /app/logs /app/uploads /app/plugins-data \
     && chown -R app:app /app/data /app/logs /app/uploads /app/plugins-data

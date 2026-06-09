@@ -257,6 +257,7 @@ mod tests {
             &crate::commands::user::CreateUserCmd {
                 username: crate::utils::id::new_id().to_string(),
                 registered_via: crate::models::user::RegisteredVia::Email,
+                role: None,
             },
             None,
         )
@@ -276,11 +277,18 @@ mod tests {
                 content: "body".into(),
                 excerpt: None,
                 cover_image: None,
+                image_ids: None,
                 status: crate::models::post::PostStatus::Published,
                 created_by: user_id,
                 updated_by: None,
                 category_id: None,
                 tag_ids: None,
+                meta_title: None,
+                meta_description: None,
+                og_title: None,
+                og_description: None,
+                og_image: None,
+                canonical_url: None,
             },
             None,
         )

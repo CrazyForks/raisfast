@@ -15,13 +15,21 @@ pub struct CreatePostRequest {
     pub title: String,
     #[validate(length(min = 1))]
     pub content: String,
+    pub slug: Option<String>,
     pub excerpt: Option<String>,
     pub cover_image: Option<String>,
+    pub image_ids: Option<String>,
     pub status: Option<PostStatus>,
     #[validate(custom(function = "super::validate_optional_id"))]
     pub category_id: Option<String>,
     #[validate(custom(function = "super::validate_id_vec"))]
     pub tag_ids: Option<Vec<String>>,
+    pub meta_title: Option<String>,
+    pub meta_description: Option<String>,
+    pub og_title: Option<String>,
+    pub og_description: Option<String>,
+    pub og_image: Option<String>,
+    pub canonical_url: Option<String>,
 }
 
 #[cfg_attr(feature = "export-types", derive(TS))]
@@ -30,13 +38,21 @@ pub struct UpdatePostRequest {
     #[validate(length(min = 1, max = 200))]
     pub title: Option<String>,
     pub content: Option<String>,
+    pub slug: Option<String>,
     pub excerpt: Option<String>,
     pub cover_image: Option<String>,
+    pub image_ids: Option<String>,
     pub status: Option<PostStatus>,
     #[validate(custom(function = "super::validate_optional_id"))]
     pub category_id: Option<String>,
     #[validate(custom(function = "super::validate_id_vec"))]
     pub tag_ids: Option<Vec<String>>,
+    pub meta_title: Option<String>,
+    pub meta_description: Option<String>,
+    pub og_title: Option<String>,
+    pub og_description: Option<String>,
+    pub og_image: Option<String>,
+    pub canonical_url: Option<String>,
 }
 
 #[cfg_attr(feature = "export-types", derive(TS))]
@@ -49,6 +65,7 @@ pub struct PostResponse {
     pub content: String,
     pub excerpt: Option<String>,
     pub cover_image: Option<String>,
+    pub image_ids: Option<String>,
     pub status: PostStatus,
     pub author_name: Option<String>,
     pub category_name: Option<String>,
@@ -92,6 +109,7 @@ pub struct AdminPostListQuery {
     pub page: Option<i64>,
     pub page_size: Option<i64>,
     pub status: Option<PostStatus>,
+    pub keyword: Option<String>,
 }
 
 impl PostResponse {
@@ -105,8 +123,8 @@ impl PostResponse {
             content: p.content,
             status,
             cover_image: p.cover_image,
+            image_ids: p.image_ids,
             author_name: None,
-            category_name: None,
             tags: vec![],
             view_count: p.view_count,
             is_pinned: p.is_pinned,
@@ -129,6 +147,7 @@ impl PostResponse {
             excerpt_highlight: None,
             created_by: None,
             category_id: None,
+            category_name: None,
         })
     }
 }

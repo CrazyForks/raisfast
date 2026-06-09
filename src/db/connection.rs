@@ -147,6 +147,88 @@ async fn try_connect(database_url: &str, pool_size: u32) -> Result<Pool, sqlx::E
     }
 }
 
+/// Execute the full schema SQL, splitting into individual statements for MySQL.
+///
+/// SQLite and PostgreSQL can handle multiple statements in a single query,
+/// but MySQL requires each statement to be sent separately.
+pub async fn execute_schema(pool: &Pool) -> anyhow::Result<()> {
+    #[cfg(feature = "db-mysql")]
+    {
+        for stmt in split_sql_statements(crate::db::schema::SCHEMA_SQL) {
+            sqlx::query::<crate::db::pool::Db>(&stmt)
+                .execute(pool)
+                .await
+                .map_err(|e| anyhow::anyhow!("schema statement failed: {e}\nSQL: {stmt}"))?;
+        }
+    }
+    #[cfg(not(feature = "db-mysql"))]
+    {
+        sqlx::query::<crate::db::pool::Db>(crate::db::schema::SCHEMA_SQL)
+            .execute(pool)
+            .await
+            .map_err(|e| anyhow::anyhow!("schema execution failed: {e}"))?;
+    }
+    Ok(())
+}
+
+/// Split a SQL script into individual statements, respecting string literals and comments.
+#[cfg(feature = "db-mysql")]
+fn split_sql_statements(sql: &str) -> Vec<String> {
+    let mut stmts = Vec::new();
+    let mut current = String::new();
+    let mut chars = sql.chars().peekable();
+    let mut in_single_quote = false;
+
+    while let Some(ch) = chars.next() {
+        if in_single_quote {
+            current.push(ch);
+            if ch == '\'' {
+                in_single_quote = false;
+            }
+            continue;
+        }
+
+        match ch {
+            '\'' => {
+                in_single_quote = true;
+                current.push(ch);
+            }
+            '-' => {
+                current.push(ch);
+                if chars.peek() == Some(&'-') {
+                    chars.next();
+                    current.push('-');
+                    while let Some(&c) = chars.peek() {
+                        if c == '\n' {
+                            chars.next();
+                            current.push(c);
+                            break;
+                        }
+                        chars.next();
+                    }
+                }
+            }
+            ';' => {
+                let trimmed = current.trim();
+                if !trimmed.is_empty() {
+                    stmts.push(trimmed.to_string());
+                }
+                current.clear();
+            }
+            _ => {
+                current.push(ch);
+            }
+        }
+    }
+
+    let trimmed = current.trim();
+    if !trimmed.is_empty() {
+        stmts.push(trimmed.to_string());
+    }
+
+    stmts
+}
+
 /// On first startup, automatically execute schema to create tables + seed data.
 ///
 /// Checks for the existence of the `_migrations` table to determine if this is the first run.
@@ -157,10 +239,7 @@ pub async fn ensure_schema(pool: &Pool) -> anyhow::Result<()> {
 
     if !has_migrations {
         tracing::info!("first run — executing schema...");
-        sqlx::query(crate::db::schema::SCHEMA_SQL)
-            .execute(pool)
-            .await
-            .map_err(|e| anyhow::anyhow!("schema execution failed: {e}"))?;
+        execute_schema(pool).await?;
 
         let schema_label = db_label();
         let checksum = sha256_hex(crate::db::schema::SCHEMA_SQL);
@@ -182,10 +261,10 @@ pub async fn ensure_schema(pool: &Pool) -> anyhow::Result<()> {
                  )";
             #[cfg(feature = "db-mysql")]
             let sql = "CREATE TABLE IF NOT EXISTS _migrations (\
-                 filename TEXT PRIMARY KEY, \
+                 filename VARCHAR(255) PRIMARY KEY, \
                  batch INTEGER NOT NULL, \
                  checksum TEXT NOT NULL, \
-                 applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP\
+                 applied_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP\
                  )";
             sqlx::query(sql)
                 .execute(pool)
@@ -215,7 +294,7 @@ pub async fn ensure_schema(pool: &Pool) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Run all pending incremental migration files from `migrations/{db}/`.
+/// Run all pending incremental migration files embedded in the binary.
 ///
 /// Should be called explicitly via `db migrate` CLI command, not automatically on startup.
 /// Migrations are sorted alphabetically and tracked in `_migrations`.
@@ -223,38 +302,9 @@ pub async fn ensure_schema(pool: &Pool) -> anyhow::Result<()> {
 /// All applied migrations in one call share the same batch number (max batch + 1).
 /// `.down.sql` files are excluded from migration scanning (they are rollback scripts).
 pub async fn run_pending_migrations(pool: &Pool) -> anyhow::Result<()> {
-    let db_name = match db_label() {
-        "sqlite" => "sqlite",
-        "postgres" => "postgres",
-        "mysql" => "mysql",
-        other => {
-            anyhow::bail!("unknown db label '{other}'");
-        }
-    };
+    let filenames = crate::db::schema::embedded_migration_filenames();
 
-    let migrations_dir = std::path::Path::new("./migrations").join(db_name);
-    if !migrations_dir.exists() {
-        tracing::info!("no migrations directory found, nothing to do");
-        return Ok(());
-    }
-
-    let schema_label = format!("schema.{db_name}.sql");
-
-    let mut entries: Vec<_> = std::fs::read_dir(&migrations_dir)
-        .ok()
-        .map(|dir| {
-            dir.filter_map(|e| e.ok())
-                .filter(|e| {
-                    let name = e.file_name().to_string_lossy().to_string();
-                    let is_sql = e.path().extension().is_some_and(|ext| ext == "sql");
-                    is_sql && name != schema_label && !name.contains(".down.")
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-    entries.sort_by_key(|e| e.file_name());
-
-    if entries.is_empty() {
+    if filenames.is_empty() {
         tracing::info!("no migration files found");
         return Ok(());
     }
@@ -282,18 +332,18 @@ pub async fn run_pending_migrations(pool: &Pool) -> anyhow::Result<()> {
 
     let mut applied = 0u32;
 
-    for entry in &entries {
-        let filename = entry.file_name().to_string_lossy().to_string();
-
+    for filename in &filenames {
         let existing: Option<(String,)> = sqlx::query_as(&check_sql)
-            .bind(&filename)
+            .bind(filename)
             .fetch_optional(pool)
             .await
             .ok()
             .flatten();
 
+        let sql = crate::db::schema::embedded_migration_sql(filename)
+            .ok_or_else(|| anyhow::anyhow!("embedded migration {filename} not found"))?;
+
         if let Some((recorded_checksum,)) = existing {
-            let sql = std::fs::read_to_string(entry.path()).unwrap_or_default();
             let current_checksum = sha256_hex(&sql);
             if recorded_checksum != current_checksum {
                 tracing::warn!(
@@ -304,7 +354,6 @@ pub async fn run_pending_migrations(pool: &Pool) -> anyhow::Result<()> {
             continue;
         }
 
-        let sql = std::fs::read_to_string(entry.path())?;
         let checksum = sha256_hex(&sql);
 
         tracing::info!(filename = %filename, batch, "applying migration...");
@@ -314,7 +363,7 @@ pub async fn run_pending_migrations(pool: &Pool) -> anyhow::Result<()> {
             .map_err(|e| anyhow::anyhow!("migration {filename} failed: {e}"))?;
 
         sqlx::query(&insert_sql)
-            .bind(&filename)
+            .bind(filename)
             .bind(batch)
             .bind(&checksum)
             .execute(pool)
@@ -337,21 +386,10 @@ pub async fn run_pending_migrations(pool: &Pool) -> anyhow::Result<()> {
 /// Rollback the last batch (or the last `step` individual migrations).
 ///
 /// For each migration being rolled back, looks for a corresponding `.down.sql` file
-/// in `migrations/{db}/`. For example, `001_add_foo.sql` → `001_add_foo.down.sql`.
+/// embedded in the binary. For example, `001_add_foo.sql` → `001_add_foo.down.sql`.
 /// If the `.down.sql` file is missing, that migration is skipped with a warning.
 /// The schema baseline (`schema.{db}.sql`, batch 0) is never rolled back.
 pub async fn rollback_migrations(pool: &Pool, step: Option<u32>) -> anyhow::Result<()> {
-    let db_name = match db_label() {
-        "sqlite" => "sqlite",
-        "postgres" => "postgres",
-        "mysql" => "mysql",
-        other => {
-            anyhow::bail!("unknown db label '{other}'");
-        }
-    };
-
-    let migrations_dir = std::path::Path::new("./migrations").join(db_name);
-
     let ph = crate::db::Driver::ph;
 
     let filenames: Vec<String> = if let Some(n) = step {
@@ -407,19 +445,17 @@ pub async fn rollback_migrations(pool: &Pool, step: Option<u32>) -> anyhow::Resu
             format!("{filename}.down.sql")
         };
 
-        let down_path = migrations_dir.join(&down_filename);
-
-        if !down_path.exists() {
-            tracing::warn!(
-                filename = %filename,
-                "no rollback file found (expected {}), skipping",
-                down_filename
-            );
-            continue;
-        }
-
-        let sql = std::fs::read_to_string(&down_path)
-            .map_err(|e| anyhow::anyhow!("read {down_filename} failed: {e}"))?;
+        let sql = match crate::db::schema::embedded_migration_sql(&down_filename) {
+            Some(s) => s,
+            None => {
+                tracing::warn!(
+                    filename = %filename,
+                    "no rollback file found (expected {}), skipping",
+                    down_filename
+                );
+                continue;
+            }
+        };
 
         tracing::info!(filename = %filename, "rolling back...");
         sqlx::query(&sql)
@@ -454,21 +490,24 @@ async fn ensure_migrations_table_schema(pool: &Pool) {
     {
         tracing::debug!("migration schema: batch column: {e}");
     }
-    if let Err(e) =
-        sqlx::query("ALTER TABLE _migrations ADD COLUMN checksum TEXT NOT NULL DEFAULT ''")
-            .execute(pool)
-            .await
     {
-        tracing::debug!("migration schema: checksum column: {e}");
+        #[cfg(feature = "db-sqlite")]
+        let sql = "ALTER TABLE _migrations ADD COLUMN checksum TEXT NOT NULL DEFAULT ''";
+        #[cfg(feature = "db-postgres")]
+        let sql = "ALTER TABLE _migrations ADD COLUMN checksum TEXT NOT NULL DEFAULT ''";
+        #[cfg(feature = "db-mysql")]
+        let sql = "ALTER TABLE _migrations ADD COLUMN checksum VARCHAR(64) NOT NULL DEFAULT ''";
+        if let Err(e) = sqlx::query(sql).execute(pool).await {
+            tracing::debug!("migration schema: checksum column: {e}");
+        }
     }
     {
         #[cfg(feature = "db-sqlite")]
-        let sql = "ALTER TABLE _migrations ADD COLUMN applied_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))";
+        let sql = "ALTER TABLE _migrations ADD COLUMN applied_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT:%M:%SZ', 'now'))";
         #[cfg(feature = "db-postgres")]
         let sql = "ALTER TABLE _migrations ADD COLUMN applied_at TEXT NOT NULL DEFAULT NOW()";
         #[cfg(feature = "db-mysql")]
-        let sql =
-            "ALTER TABLE _migrations ADD COLUMN applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP";
+        let sql = "ALTER TABLE _migrations ADD COLUMN applied_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP";
         if let Err(e) = sqlx::query(sql).execute(pool).await {
             tracing::debug!("migration schema: applied_at column: {e}");
         }

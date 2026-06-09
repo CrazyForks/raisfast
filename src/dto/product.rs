@@ -4,6 +4,15 @@ use ts_rs::TS;
 use utoipa::ToSchema;
 use validator::Validate;
 
+#[derive(Debug, Deserialize)]
+pub struct AdminProductListQuery {
+    pub page: Option<i64>,
+    pub page_size: Option<i64>,
+    pub keyword: Option<String>,
+    pub status: Option<String>,
+    pub category_id: Option<String>,
+}
+
 use super::validate_optional_id;
 
 #[cfg_attr(feature = "export-types", derive(TS))]
@@ -36,10 +45,14 @@ pub struct CreateProductRequest {
     pub virtual_sales: Option<i64>,
     pub meta_title: Option<String>,
     pub meta_description: Option<String>,
+    pub og_title: Option<String>,
+    pub og_description: Option<String>,
+    pub og_image: Option<String>,
     pub stock: Option<i64>,
     pub cost_price: Option<i64>,
     pub sale_price: Option<i64>,
     pub has_variants: Option<bool>,
+    pub tag_ids: Option<String>,
 }
 
 #[cfg_attr(feature = "export-types", derive(TS))]
@@ -74,10 +87,14 @@ pub struct UpdateProductRequest {
     pub virtual_sales: Option<i64>,
     pub meta_title: Option<String>,
     pub meta_description: Option<String>,
+    pub og_title: Option<String>,
+    pub og_description: Option<String>,
+    pub og_image: Option<String>,
     pub stock: Option<i64>,
     pub cost_price: Option<i64>,
     pub sale_price: Option<i64>,
     pub has_variants: Option<bool>,
+    pub tag_ids: Option<String>,
 }
 
 #[cfg_attr(feature = "export-types", derive(TS))]
@@ -119,6 +136,9 @@ pub struct ProductResponse {
     pub virtual_sales: i64,
     pub meta_title: Option<String>,
     pub meta_description: Option<String>,
+    pub og_title: Option<String>,
+    pub og_description: Option<String>,
+    pub og_image: Option<String>,
     pub published_at: Option<String>,
     #[cfg_attr(feature = "export-types", ts(type = "number"))]
     pub stock: i64,
@@ -131,6 +151,7 @@ pub struct ProductResponse {
     pub version: i64,
     pub created_at: String,
     pub updated_at: String,
+    pub tags: Vec<crate::models::post::TagBrief>,
 }
 
 impl From<crate::models::product::Product> for ProductResponse {
@@ -162,6 +183,9 @@ impl From<crate::models::product::Product> for ProductResponse {
             virtual_sales: p.virtual_sales,
             meta_title: p.meta_title,
             meta_description: p.meta_description,
+            og_title: p.og_title,
+            og_description: p.og_description,
+            og_image: p.og_image,
             published_at: p.published_at.map(|t| t.to_string()),
             stock: p.stock,
             cost_price: p.cost_price,
@@ -170,6 +194,7 @@ impl From<crate::models::product::Product> for ProductResponse {
             version: p.version,
             created_at: p.created_at.to_string(),
             updated_at: p.updated_at.to_string(),
+            tags: vec![],
         }
     }
 }

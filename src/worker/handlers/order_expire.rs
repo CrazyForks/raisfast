@@ -33,7 +33,7 @@ impl JobHandler for ExpireOrdersHandler {
             Driver::ph(1)
         );
         let orders: Vec<crate::models::order::Order> = sqlx::query_as(&sql)
-            .bind(cutoff.format("%Y-%m-%dT%H:%M:%SZ").to_string())
+            .bind(cutoff.format("%Y-%m-%d %H:%M:%S").to_string())
             .fetch_all(&self.pool)
             .await?;
 
@@ -164,6 +164,10 @@ mod tests {
                 cost_price: None,
                 sale_price: None,
                 has_variants: false,
+                tag_ids: None,
+                og_title: None,
+                og_description: None,
+                og_image: None,
             },
             None,
         )
@@ -229,7 +233,7 @@ mod tests {
         if created_at_offset_minutes != 0 {
             let offset = chrono::Duration::minutes(created_at_offset_minutes);
             let past = (chrono::Utc::now() + offset)
-                .format("%Y-%m-%dT%H:%M:%SZ")
+                .format("%Y-%m-%d %H:%M:%S")
                 .to_string();
             sqlx::query("UPDATE orders SET created_at = ? WHERE id = ?")
                 .bind(&past)
@@ -403,7 +407,7 @@ mod tests {
         .unwrap();
 
         let past = (chrono::Utc::now() - chrono::Duration::minutes(60))
-            .format("%Y-%m-%dT%H:%M:%SZ")
+            .format("%Y-%m-%d %H:%M:%S")
             .to_string();
         sqlx::query("UPDATE orders SET created_at = ? WHERE id = ?")
             .bind(&past)

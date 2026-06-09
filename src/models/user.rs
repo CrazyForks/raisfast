@@ -120,11 +120,10 @@ pub async fn create(
         tenant: tenant_id
     )?;
 
-    let user =
-        raisfast_derive::crud_find!(pool, "users", User, where: ("id", id), tenant: tenant_id)?
-            .ok_or_else(|| {
-                AppError::Internal(anyhow::anyhow!("failed to fetch newly created user"))
-            })?;
+    let user: Option<User> =
+        raisfast_derive::crud_find!(pool, "users", User, where: ("id", id), tenant: tenant_id)?;
+    let user = user
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("failed to fetch newly created user")))?;
     Ok(user)
 }
 
@@ -211,6 +210,24 @@ pub async fn update_role(
         .ok_or_else(|| AppError::not_found("user"))
 }
 
+pub async fn update_status(
+    pool: &crate::db::Pool,
+    id: SnowflakeId,
+    status: UserStatus,
+    tenant_id: Option<&str>,
+) -> AppResult<User> {
+    let now = crate::utils::tz::now_utc();
+    let result = raisfast_derive::crud_update!(pool, "users",
+        bind: ["status" => status, "updated_at" => &now],
+        where: ("id", id),
+        tenant: tenant_id
+    )?;
+    AppError::expect_affected(&result, "user")?;
+    find_by_id(pool, id, tenant_id)
+        .await?
+        .ok_or_else(|| AppError::not_found("user"))
+}
+
 pub async fn delete_by_id(
     pool: &crate::db::Pool,
     id: SnowflakeId,
@@ -230,6 +247,7 @@ pub async fn tx_create(
         crate::utils::tz::now_utc(),
     );
     let registered_via = cmd.registered_via;
+    let role = cmd.role.unwrap_or(UserRole::Reader);
     if let Some(tid) = tenant_id {
         raisfast_derive::crud_insert!(&mut *tx, "users", [
             "id" => id,
@@ -237,7 +255,7 @@ pub async fn tx_create(
             "username" => &cmd.username,
             "created_at" => now,
             "updated_at" => now,
-            "role" => UserRole::Reader,
+            "role" => role,
             "status" => UserStatus::Active,
             "registered_via" => registered_via
         ])?;
@@ -247,7 +265,7 @@ pub async fn tx_create(
             "username" => &cmd.username,
             "created_at" => now,
             "updated_at" => now,
-            "role" => UserRole::Reader,
+            "role" => role,
             "status" => UserStatus::Active,
             "registered_via" => registered_via
         ])?;
@@ -293,6 +311,7 @@ mod tests {
         crate::commands::user::CreateUserCmd {
             username: username.to_string(),
             registered_via: RegisteredVia::Email,
+            role: None,
         }
     }
     #[tokio::test]

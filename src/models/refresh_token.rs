@@ -51,8 +51,9 @@ pub async fn create_token(
 ///
 /// Returns `Ok(Some(token))` or `Ok(None)` when not found.
 pub async fn find_by_token(pool: &crate::db::Pool, token: &str) -> AppResult<Option<RefreshToken>> {
-    raisfast_derive::crud_find!(pool, "refresh_tokens", RefreshToken, where: ("token", token))
-        .map_err(Into::into)
+    let result: Option<RefreshToken> =
+        raisfast_derive::crud_find!(pool, "refresh_tokens", RefreshToken, where: ("token", token))?;
+    Ok(result)
 }
 
 /// Delete a refresh token by token string
@@ -120,6 +121,7 @@ mod tests {
         let cmd = crate::commands::user::CreateUserCmd {
             username: crate::utils::id::new_id().to_string(),
             registered_via: crate::models::user::RegisteredVia::Email,
+            role: None,
         };
         let user = crate::models::user::create(pool, &cmd, None).await.unwrap();
         *user.id

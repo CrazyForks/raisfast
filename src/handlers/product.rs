@@ -1,4 +1,6 @@
-use crate::dto::{CreateProductRequest, ProductResponse, UpdateProductRequest};
+use crate::dto::{
+    BatchRequest, BatchResponse, CreateProductRequest, ProductResponse, UpdateProductRequest,
+};
 use crate::errors::app_error::AppResult;
 use crate::errors::response::ApiResponse;
 use crate::errors::validation;
@@ -27,7 +29,7 @@ pub fn routes(
         r,
         registry,
         restful,
-        "/products/{id}",
+        "/products/{slug}",
         get,
         get_product,
         "system public",
@@ -50,6 +52,16 @@ pub fn routes(
         "/admin/products",
         create,
         admin_create,
+        "system admin",
+        "admin/products"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        restful,
+        "/admin/products/batch",
+        post,
+        admin_batch,
         "system admin",
         "admin/products"
     );
@@ -111,11 +123,15 @@ pub async fn list_active(
 pub async fn get_product(
     auth: AuthUser,
     State(state): State<crate::AppState>,
-    Path(id): Path<String>,
+    Path(slug): Path<String>,
 ) -> AppResult<ApiResponse<ProductResponse>> {
-    let id = crate::types::snowflake_id::parse_id(&id)?;
-    let p = state.product_service.get(id, &auth).await?;
-    Ok(ApiResponse::success(ProductResponse::from(p)))
+    let p = crate::models::product::find_by_slug(&state.pool, &slug, auth.tenant_id())
+        .await?
+        .ok_or_else(|| crate::errors::app_error::AppError::not_found("product"))?;
+    let mut resp = ProductResponse::from(p);
+    let id = crate::types::snowflake_id::parse_id(&resp.id)?;
+    resp.tags = crate::models::tagging::get_tags_for(&state.pool, "product", id).await?;
+    Ok(ApiResponse::success(resp))
 }
 
 #[utoipa::path(get, path = "/admin/products", tag = "products",
@@ -125,13 +141,20 @@ pub async fn get_product(
 pub async fn admin_list(
     auth: AuthUser,
     State(state): State<crate::AppState>,
-    Query(mut params): Query<PaginationParams>,
+    Query(query): Query<crate::dto::product::AdminProductListQuery>,
 ) -> AppResult<ApiResponse<crate::errors::response::PaginatedData<ProductResponse>>> {
     auth.ensure_admin()?;
-    params.sanitize();
+    let params = PaginationParams::from_options(query.page, query.page_size);
     let (items, total) = state
         .product_service
-        .list_admin(&auth, params.page, params.page_size, None)
+        .list_admin(
+            &auth,
+            params.page,
+            params.page_size,
+            query.status.as_deref(),
+            query.keyword.as_deref(),
+            query.category_id.as_deref(),
+        )
         .await?;
     let resp: Vec<ProductResponse> = items.into_iter().map(Into::into).collect();
     Ok(params.paginate(resp, total))
@@ -150,7 +173,9 @@ pub async fn admin_get(
     auth.ensure_admin()?;
     let id = crate::types::snowflake_id::parse_id(&id)?;
     let p = state.product_service.get(id, &auth).await?;
-    Ok(ApiResponse::success(ProductResponse::from(p)))
+    let mut resp = ProductResponse::from(p);
+    resp.tags = crate::models::tagging::get_tags_for(&state.pool, "product", id).await?;
+    Ok(ApiResponse::success(resp))
 }
 
 #[utoipa::path(post, path = "/admin/products", tag = "products",
@@ -202,4 +227,21 @@ pub async fn admin_delete(
     let id = crate::types::snowflake_id::parse_id(&id)?;
     state.product_service.delete(id, &auth).await?;
     Ok(ApiResponse::success(()))
+}
+
+pub async fn admin_batch(
+    auth: AuthUser,
+    State(state): State<crate::AppState>,
+    Json(req): Json<BatchRequest>,
+) -> AppResult<ApiResponse<BatchResponse>> {
+    auth.ensure_admin()?;
+    validation::validate(&req)?;
+    let affected = state
+        .product_service
+        .batch(&auth, &req.action, &req.ids)
+        .await?;
+    Ok(ApiResponse::success(BatchResponse::new(
+        &req.action,
+        affected,
+    )))
 }

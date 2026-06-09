@@ -6,7 +6,8 @@ use axum::Json;
 use axum::extract::{Path, Query, State};
 
 use crate::dto::{
-    BatchRequestWithRole, UpdatePasswordRequest, UpdateRoleRequest, UpdateUserRequest, UserResponse,
+    AdminCreateUserRequest, BatchRequestWithRole, UpdatePasswordRequest, UpdateRoleRequest,
+    UpdateUserRequest, UserResponse,
 };
 use crate::errors::app_error::AppResult;
 use crate::errors::response::{ApiResponse, PaginatedData};
@@ -81,6 +82,16 @@ pub fn routes(
         list_users,
         "system admin",
         "users"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        restful,
+        "/admin/users",
+        post,
+        admin_create_user,
+        "system admin",
+        "admin/users"
     );
     let r = reg_route!(
         r,
@@ -241,6 +252,23 @@ pub async fn update_role(
 }
 
 // ── Admin handlers ──
+
+pub async fn admin_create_user(
+    auth: AuthUser,
+    State(state): State<crate::AppState>,
+    Json(req): Json<AdminCreateUserRequest>,
+) -> AppResult<ApiResponse<UserResponse>> {
+    auth.ensure_admin()?;
+    validation::validate(&req)?;
+    let user = crate::services::auth::admin_create_user(
+        &state.aspect_engine,
+        req,
+        auth.tenant_id(),
+        &state.pool,
+    )
+    .await?;
+    Ok(ApiResponse::success(user))
+}
 
 pub async fn admin_list_users(
     auth: AuthUser,

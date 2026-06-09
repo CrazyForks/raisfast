@@ -206,7 +206,7 @@ pub async fn create_schedule_with_plugin(
 
 /// Find by ID
 pub async fn find_by_id(pool: &Pool, id: SnowflakeId) -> AppResult<Option<CronSchedule>> {
-    let row = sqlx::query_as::<_, CronScheduleRow>(&format!(
+    let row: Option<CronScheduleRow> = sqlx::query_as::<_, CronScheduleRow>(&format!(
         "SELECT id, label, job_type, payload, cron_expr, enabled, last_run_at, next_run_at, plugin_id, created_at, updated_at
          FROM cron_schedules WHERE id = {}",
         Driver::ph(1)
@@ -220,7 +220,7 @@ pub async fn find_by_id(pool: &Pool, id: SnowflakeId) -> AppResult<Option<CronSc
 
 /// List all schedules
 pub async fn list_schedules(pool: &Pool) -> AppResult<Vec<CronSchedule>> {
-    let rows = sqlx::query_as::<_, CronScheduleRow>(
+    let rows: Vec<CronScheduleRow> = sqlx::query_as::<_, CronScheduleRow>(
         "SELECT id, label, job_type, payload, cron_expr, enabled, last_run_at, next_run_at, plugin_id, created_at, updated_at
          FROM cron_schedules ORDER BY created_at ASC",
     )
@@ -233,7 +233,7 @@ pub async fn list_schedules(pool: &Pool) -> AppResult<Vec<CronSchedule>> {
 /// Enable/disable a schedule
 pub async fn toggle_schedule(pool: &Pool, id: SnowflakeId, enabled: bool) -> AppResult<()> {
     let now = crate::utils::tz::now_utc();
-    let result = raisfast_derive::crud_update!(pool, "cron_schedules",
+    let result: crate::db::pool::DbQueryResult = raisfast_derive::crud_update!(pool, "cron_schedules",
         bind: ["enabled" => enabled, "updated_at" => now],
         where: ("id", id)
     )?;
@@ -568,7 +568,7 @@ pub async fn list_execution_logs(
     schedule_id: SnowflakeId,
     limit: i64,
 ) -> AppResult<Vec<CronExecutionLog>> {
-    let rows = sqlx::query_as::<_, CronExecLogRow>(&format!(
+    let rows: Vec<CronExecLogRow> = sqlx::query_as::<_, CronExecLogRow>(&format!(
         "SELECT el.id, el.schedule_id, el.job_type, el.label, el.status, el.duration_ms, el.error, el.started_at, el.finished_at
          FROM cron_execution_log el
          WHERE el.schedule_id = {}
@@ -588,7 +588,7 @@ pub async fn list_execution_logs(
 
 /// Query recent execution records across all schedules
 pub async fn recent_execution_logs(pool: &Pool, limit: i64) -> AppResult<Vec<CronExecutionLog>> {
-    let rows = sqlx::query_as::<_, CronExecLogRow>(&format!(
+    let rows: Vec<CronExecLogRow> = sqlx::query_as::<_, CronExecLogRow>(&format!(
         "SELECT id, schedule_id, job_type, label, status, duration_ms, error, started_at, finished_at
          FROM cron_execution_log
          ORDER BY started_at DESC LIMIT {}",
@@ -607,7 +607,7 @@ pub async fn recent_execution_logs(pool: &Pool, limit: i64) -> AppResult<Vec<Cro
 /// Clean up expired execution logs
 pub async fn cleanup_execution_logs(pool: &Pool, retention_days: i64) -> AppResult<u64> {
     let threshold = crate::utils::tz::now_utc() - chrono::Duration::days(retention_days);
-    let result = sqlx::query(&format!(
+    let result: crate::db::pool::DbQueryResult = sqlx::query(&format!(
         "DELETE FROM cron_execution_log WHERE started_at < {}",
         Driver::ph(1)
     ))

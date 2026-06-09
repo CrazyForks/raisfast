@@ -25,10 +25,14 @@ pub struct CreateProductCmd {
     pub virtual_sales: i64,
     pub meta_title: Option<String>,
     pub meta_description: Option<String>,
+    pub og_title: Option<String>,
+    pub og_description: Option<String>,
+    pub og_image: Option<String>,
     pub stock: i64,
     pub cost_price: Option<i64>,
     pub sale_price: Option<i64>,
     pub has_variants: bool,
+    pub tag_ids: Option<Vec<i64>>,
 }
 
 pub struct UpdateProductCmd {
@@ -58,10 +62,14 @@ pub struct UpdateProductCmd {
     pub virtual_sales: i64,
     pub meta_title: Option<String>,
     pub meta_description: Option<String>,
-    pub published_at: Option<String>,
+    pub og_title: Option<String>,
+    pub og_description: Option<String>,
+    pub og_image: Option<String>,
+    pub published_at: Option<crate::utils::tz::Timestamp>,
     pub stock: i64,
     pub cost_price: Option<i64>,
     pub sale_price: Option<i64>,
     pub has_variants: bool,
     pub version: i64,
+    pub tag_ids: Option<Vec<i64>>,
 }

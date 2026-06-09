@@ -7,6 +7,7 @@
 use std::path::Path;
 
 use crate::config::app::AppConfig;
+#[cfg(feature = "db-sqlite")]
 use crate::db::connection::init_pool;
 
 /// Backup the database.

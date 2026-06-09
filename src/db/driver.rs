@@ -74,11 +74,26 @@ pub trait DbDriver: sealed::Sealed {
     /// Truncate a datetime column to day granularity.
     fn date_trunc_day(col: &str) -> String;
 
+    /// Current date expression for comparing with `date_trunc_day`.
+    fn current_date() -> String;
+
     /// UPSERT conflict clause.
     fn upsert_clause(conflict_cols: &str, assignments: &str) -> String;
 
     /// Reference to the new/excluded value in an UPSERT.
     fn excluded_col(col: &str) -> String;
+
+    /// Cast an expression to a signed integer type.
+    ///
+    /// MySQL's `COUNT(*)` and `SUM()` return `DECIMAL`, which `i64` cannot decode.
+    /// This wraps the expression in `CAST(... AS SIGNED)` on MySQL; other backends return it as-is.
+    fn cast_int(expr: &str) -> String;
+
+    /// Cast a datetime expression to CHAR for decoding as Rust `String`.
+    ///
+    /// MySQL returns `DATETIME`/`DATE` which sqlx cannot decode into `String`.
+    /// SQLite and PostgreSQL store timestamps as TEXT already.
+    fn cast_ts(expr: &str) -> String;
 
     /// `RETURNING *` clause (empty string on MySQL).
     fn returning_clause() -> &'static str;
@@ -156,12 +171,24 @@ impl DbDriver for Sqlite {
         format!("DATE({col})")
     }
 
+    fn current_date() -> String {
+        "DATE('now')".to_string()
+    }
+
     fn upsert_clause(conflict_cols: &str, assignments: &str) -> String {
         format!("ON CONFLICT({conflict_cols}) DO UPDATE SET {assignments}")
     }
 
     fn excluded_col(col: &str) -> String {
         format!("excluded.{col}")
+    }
+
+    fn cast_int(expr: &str) -> String {
+        expr.to_string()
+    }
+
+    fn cast_ts(expr: &str) -> String {
+        expr.to_string()
     }
 
     fn returning_clause() -> &'static str {
@@ -285,12 +312,24 @@ impl DbDriver for Postgres {
         format!("DATE_TRUNC('day', {col}::timestamp)")
     }
 
+    fn current_date() -> String {
+        "CURRENT_DATE".to_string()
+    }
+
     fn upsert_clause(conflict_cols: &str, assignments: &str) -> String {
         format!("ON CONFLICT({conflict_cols}) DO UPDATE SET {assignments}")
     }
 
     fn excluded_col(col: &str) -> String {
         format!("excluded.{col}")
+    }
+
+    fn cast_int(expr: &str) -> String {
+        expr.to_string()
+    }
+
+    fn cast_ts(expr: &str) -> String {
+        expr.to_string()
     }
 
     fn returning_clause() -> &'static str {
@@ -425,7 +464,11 @@ impl DbDriver for MySql {
     }
 
     fn date_trunc_day(col: &str) -> String {
-        format!("DATE({col})")
+        format!("CAST(DATE({col}) AS CHAR)")
+    }
+
+    fn current_date() -> String {
+        "CURDATE()".to_string()
     }
 
     fn upsert_clause(conflict_cols: &str, assignments: &str) -> String {
@@ -435,6 +478,14 @@ impl DbDriver for MySql {
 
     fn excluded_col(col: &str) -> String {
         format!("VALUES({col})")
+    }
+
+    fn cast_int(expr: &str) -> String {
+        format!("CAST({expr} AS SIGNED)")
+    }
+
+    fn cast_ts(expr: &str) -> String {
+        format!("CAST({expr} AS CHAR)")
     }
 
     fn returning_clause() -> &'static str {
@@ -454,7 +505,7 @@ impl DbDriver for MySql {
     fn columns_sql(table: &str) -> (String, usize) {
         (
             format!(
-                "SELECT column_name, data_type FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = '{table}'"
+                "SELECT column_name, CAST(column_type AS CHAR) FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = '{table}'"
             ),
             0,
         )
@@ -487,7 +538,7 @@ impl DbDriver for MySql {
 
     async fn has_column(pool: &Pool, table: &str, column: &str) -> bool {
         assert!(is_safe_identifier(table), "unsafe table: {table}");
-        sqlx::query_scalar(
+        sqlx::query_scalar::<crate::db::pool::Db, i32>(
             "SELECT 1 FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = ? AND column_name = ?",
         )
         .bind(table)
@@ -503,7 +554,7 @@ impl DbDriver for MySql {
         let sql = format!(
             "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = '{table}'"
         );
-        sqlx::query_scalar::<_, i64>(&sql)
+        sqlx::query_scalar::<crate::db::pool::Db, i64>(&sql)
             .fetch_one(pool)
             .await
             .unwrap_or(0)
@@ -514,7 +565,7 @@ impl DbDriver for MySql {
         let sql = format!(
             "SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name NOT IN ({excluded})"
         );
-        let rows = sqlx::query_as::<_, (String,)>(&sql)
+        let rows = sqlx::query_as::<crate::db::pool::Db, (String,)>(&sql)
             .fetch_all(pool)
             .await
             .unwrap_or_default();
@@ -527,9 +578,11 @@ impl DbDriver for MySql {
     ) -> Result<Vec<(String, String)>, sqlx::Error> {
         use sqlx::Row;
         let sql = format!(
-            "SELECT column_name, data_type FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = '{table}'"
+            "SELECT column_name, CAST(column_type AS CHAR) FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = '{table}'"
         );
-        let rows = sqlx::query(&sql).fetch_all(pool).await?;
+        let rows = sqlx::query::<crate::db::pool::Db>(&sql)
+            .fetch_all(pool)
+            .await?;
         let mut cols = Vec::new();
         for row in &rows {
             let name: String = row.try_get(0).unwrap_or_default();

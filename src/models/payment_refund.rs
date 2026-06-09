@@ -200,7 +200,7 @@ pub async fn tx_find_by_provider_refund_id(
         "SELECT * FROM payment_refunds WHERE provider_refund_id = {} LIMIT 1",
         crate::db::Driver::ph(1)
     );
-    sqlx::query_as::<_, PaymentRefund>(&sql)
+    sqlx::query_as::<crate::db::pool::Db, PaymentRefund>(&sql)
         .bind(provider_refund_id)
         .fetch_one(&mut *tx)
         .await

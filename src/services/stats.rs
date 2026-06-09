@@ -93,24 +93,27 @@ impl StatsService {
         });
 
         if has_status {
+            let cnt_expr = crate::db::Driver::cast_int("COUNT(*)");
             let status_sql = if has_tenant {
                 let tid = crate::db::tenant::resolve_tenant(tenant_id).to_string();
                 let sql = format!(
-                    "SELECT status, COUNT(*) as cnt FROM {table} WHERE tenant_id = {} GROUP BY status",
+                    "SELECT status, {cnt_expr} as cnt FROM {table} WHERE tenant_id = {} GROUP BY status",
                     crate::db::Driver::ph(1)
                 );
-                let rows: Vec<(String, i64)> = sqlx::query_as::<_, (String, i64)>(&sql)
-                    .bind(&tid)
-                    .fetch_all(&self.pool)
-                    .await
-                    .map_err(|e| AppError::Internal(e.into()))?;
+                let rows: Vec<(String, i64)> =
+                    sqlx::query_as::<crate::db::pool::Db, (String, i64)>(&sql)
+                        .bind(&tid)
+                        .fetch_all(&self.pool)
+                        .await
+                        .map_err(|e: sqlx::Error| AppError::Internal(e.into()))?;
                 rows
             } else {
-                let sql = format!("SELECT status, COUNT(*) as cnt FROM {table} GROUP BY status");
-                let rows: Vec<(String, i64)> = sqlx::query_as::<_, (String, i64)>(&sql)
-                    .fetch_all(&self.pool)
-                    .await
-                    .map_err(|e| AppError::Internal(e.into()))?;
+                let sql = format!("SELECT status, {cnt_expr} as cnt FROM {table} GROUP BY status");
+                let rows: Vec<(String, i64)> =
+                    sqlx::query_as::<crate::db::pool::Db, (String, i64)>(&sql)
+                        .fetch_all(&self.pool)
+                        .await
+                        .map_err(|e: sqlx::Error| AppError::Internal(e.into()))?;
                 rows
             };
 
@@ -148,32 +151,33 @@ impl StatsService {
 
         let date_expr = date_trunc_day_expr("created_at");
 
+        let cnt_expr = crate::db::Driver::cast_int("COUNT(*)");
         let ago = crate::db::Driver::ago_expr(days);
         let sql = if has_tenant {
             format!(
-                "SELECT {date_expr} as d, COUNT(*) as cnt FROM {table} \
+                "SELECT {date_expr} as d, {cnt_expr} as cnt FROM {table} \
                  WHERE tenant_id = {} AND created_at >= {ago} \
                  GROUP BY d ORDER BY d",
                 crate::db::Driver::ph(1)
             )
         } else {
             format!(
-                "SELECT {date_expr} as d, COUNT(*) as cnt FROM {table} \
+                "SELECT {date_expr} as d, {cnt_expr} as cnt FROM {table} \
                  WHERE created_at >= {ago} \
                  GROUP BY d ORDER BY d"
             )
         };
 
-        let mut q = sqlx::query_as::<_, (String, i64)>(&sql);
+        let mut q = sqlx::query_as::<crate::db::pool::Db, (String, i64)>(&sql);
         if has_tenant {
             let tid = crate::db::tenant::resolve_tenant(tenant_id).to_string();
             q = q.bind(tid);
         }
 
-        let rows = q
+        let rows: Vec<(String, i64)> = q
             .fetch_all(&self.pool)
             .await
-            .map_err(|e| AppError::Internal(e.into()))?;
+            .map_err(|e: sqlx::Error| AppError::Internal(e.into()))?;
 
         let data: Vec<Value> = rows
             .into_iter()
@@ -207,16 +211,17 @@ impl StatsService {
     /// Sum total revenue from completed orders
     async fn sum_revenue(&self, tenant_id: Option<&str>) -> Result<i64, AppError> {
         let tf = crate::db::tenant::tenant_filter_ph(tenant_id, 1);
-        let sql = format!(
-            "SELECT COALESCE(SUM(total_amount), 0) FROM orders WHERE status = 'completed'{tf}"
-        );
-        let mut q = sqlx::query_scalar::<_, i64>(&sql);
+        let sum_expr = crate::db::Driver::cast_int("COALESCE(SUM(total_amount), 0)");
+        let sql = format!("SELECT {sum_expr} FROM orders WHERE status = 'completed'{tf}");
+        let mut q = sqlx::query_scalar::<crate::db::pool::Db, i64>(&sql);
         if let Some(tid) = tenant_id {
             q = q.bind(crate::db::tenant::resolve_tenant(Some(tid)));
         }
-        q.fetch_one(&self.pool)
+        let result: i64 = q
+            .fetch_one(&self.pool)
             .await
-            .map_err(|e| AppError::Internal(e.into()))
+            .map_err(|e: sqlx::Error| AppError::Internal(e.into()))?;
+        Ok(result)
     }
 
     /// Count records grouped by status
@@ -233,23 +238,24 @@ impl StatsService {
 
         let has_tenant = crate::db::tenant::has_tenant_id(&self.pool, table).await;
 
-        let rows = if has_tenant {
+        let cnt_expr = crate::db::Driver::cast_int("COUNT(*)");
+        let rows: Vec<(String, i64)> = if has_tenant {
             let tid = crate::db::tenant::resolve_tenant(tenant_id).to_string();
             let sql = format!(
-                "SELECT status, COUNT(*) as cnt FROM {table} WHERE tenant_id = {} GROUP BY status",
+                "SELECT status, {cnt_expr} as cnt FROM {table} WHERE tenant_id = {} GROUP BY status",
                 crate::db::Driver::ph(1)
             );
-            sqlx::query_as::<_, (String, i64)>(&sql)
+            sqlx::query_as::<crate::db::pool::Db, (String, i64)>(&sql)
                 .bind(&tid)
                 .fetch_all(&self.pool)
                 .await
-                .map_err(|e| AppError::Internal(e.into()))?
+                .map_err(|e: sqlx::Error| AppError::Internal(e.into()))?
         } else {
-            let sql = format!("SELECT status, COUNT(*) as cnt FROM {table} GROUP BY status");
-            sqlx::query_as::<_, (String, i64)>(&sql)
+            let sql = format!("SELECT status, {cnt_expr} as cnt FROM {table} GROUP BY status");
+            sqlx::query_as::<crate::db::pool::Db, (String, i64)>(&sql)
                 .fetch_all(&self.pool)
                 .await
-                .map_err(|e| AppError::Internal(e.into()))?
+                .map_err(|e: sqlx::Error| AppError::Internal(e.into()))?
         };
 
         let mut map = serde_json::Map::new();
@@ -275,8 +281,9 @@ impl StatsService {
         let limit_clause = format!("LIMIT {limit}");
 
         let post_sql = format!(
-            "SELECT p.id, p.title, p.slug, p.created_at FROM posts p WHERE 1=1{tf_aliased} \
-             ORDER BY p.created_at DESC {limit_clause}"
+            "SELECT p.id, p.title, p.slug, {} FROM posts p WHERE 1=1{tf_aliased} \
+             ORDER BY p.created_at DESC {limit_clause}",
+            crate::db::Driver::cast_ts("p.created_at")
         );
 
         let posts: Vec<(i64, Option<String>, String, String)> = raisfast_derive::crud_query!(
@@ -287,7 +294,7 @@ impl StatsService {
             fetch_all,
             tenant: tenant_id
         )
-        .map_err(|e| AppError::Internal(e.into()))?;
+        .map_err(|e: sqlx::Error| AppError::Internal(e.into()))?;
 
         for (raw_id, title, slug, at) in posts {
             let encoded_id = crate::types::snowflake_id::encode_id(raw_id);
@@ -301,8 +308,9 @@ impl StatsService {
         }
 
         let comment_sql = format!(
-            "SELECT c.content, c.created_at FROM comments c WHERE 1=1{tf_aliased} \
-             ORDER BY c.created_at DESC {limit_clause}"
+            "SELECT c.content, {} FROM comments c WHERE 1=1{tf_aliased} \
+             ORDER BY c.created_at DESC {limit_clause}",
+            crate::db::Driver::cast_ts("c.created_at")
         );
 
         let comments: Vec<(Option<String>, String)> = raisfast_derive::crud_query!(
@@ -313,7 +321,7 @@ impl StatsService {
             fetch_all,
             tenant: tenant_id
         )
-        .map_err(|e| AppError::Internal(e.into()))?;
+        .map_err(|e: sqlx::Error| AppError::Internal(e.into()))?;
 
         for (content, at) in comments {
             activities.push(json!({
@@ -325,8 +333,9 @@ impl StatsService {
 
         let tf = crate::db::tenant::tenant_filter_ph(tenant_id, 1);
         let order_sql = format!(
-            "SELECT id, order_no, total_amount, created_at FROM orders WHERE 1=1{tf} \
-             ORDER BY created_at DESC {limit_clause}"
+            "SELECT id, order_no, total_amount, {} FROM orders WHERE 1=1{tf} \
+             ORDER BY created_at DESC {limit_clause}",
+            crate::db::Driver::cast_ts("created_at")
         );
         let orders: Vec<(i64, String, i64, String)> = raisfast_derive::crud_query!(
             &self.pool,
@@ -336,7 +345,7 @@ impl StatsService {
             fetch_all,
             tenant: tenant_id
         )
-        .map_err(|e| AppError::Internal(e.into()))?;
+        .map_err(|e: sqlx::Error| AppError::Internal(e.into()))?;
 
         for (raw_id, order_no, total_amount, at) in orders {
             let encoded_id = crate::types::snowflake_id::encode_id(raw_id);
@@ -350,8 +359,9 @@ impl StatsService {
         }
 
         let product_sql = format!(
-            "SELECT id, title, created_at FROM products WHERE 1=1{tf} \
-             ORDER BY created_at DESC {limit_clause}"
+            "SELECT id, title, {} FROM products WHERE 1=1{tf} \
+             ORDER BY created_at DESC {limit_clause}",
+            crate::db::Driver::cast_ts("created_at")
         );
         let products: Vec<(i64, Option<String>, String)> = raisfast_derive::crud_query!(
             &self.pool,
@@ -361,7 +371,7 @@ impl StatsService {
             fetch_all,
             tenant: tenant_id
         )
-        .map_err(|e| AppError::Internal(e.into()))?;
+        .map_err(|e: sqlx::Error| AppError::Internal(e.into()))?;
 
         for (raw_id, title, at) in products {
             let encoded_id = crate::types::snowflake_id::encode_id(raw_id);
@@ -392,14 +402,17 @@ async fn count_table(
     tenant_id: Option<&str>,
 ) -> Result<i64, AppError> {
     validate_table_name(table)?;
-    let sql = format!("SELECT COUNT(*) FROM {table} WHERE 1=1{tenant_filter}");
-    let mut q = sqlx::query_scalar::<_, i64>(&sql);
+    let cnt_expr = crate::db::Driver::cast_int("COUNT(*)");
+    let sql = format!("SELECT {cnt_expr} FROM {table} WHERE 1=1{tenant_filter}");
+    let mut q = sqlx::query_scalar::<crate::db::pool::Db, i64>(&sql);
     if tenant_id.is_some() {
         q = q.bind(crate::db::tenant::resolve_tenant(tenant_id));
     }
-    q.fetch_one(pool)
+    let result: i64 = q
+        .fetch_one(pool)
         .await
-        .map_err(|e| AppError::Internal(e.into()))
+        .map_err(|e: sqlx::Error| AppError::Internal(e.into()))?;
+    Ok(result)
 }
 
 /// Check if a table has a specific column

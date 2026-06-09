@@ -284,7 +284,7 @@ fn decrypt_callback_resource(
 
     let key = Sha256::digest(api_key.as_bytes());
     let cipher = Aes256Gcm::new_from_slice(&key)
-        .map_err(|e| AppError::Internal(anyhow::Error::from(e).context("wechat aes init")))?;
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("wechat aes init: {e:?}")))?;
     let ciphertext = BASE64.decode(ciphertext_b64).map_err(|e| {
         AppError::Internal(anyhow::Error::from(e).context("wechat resource base64 decode"))
     })?;
@@ -297,9 +297,7 @@ fn decrypt_callback_resource(
                 aad: associated_data.as_bytes(),
             },
         )
-        .map_err(|e| {
-            AppError::Internal(anyhow::Error::from(e).context("wechat resource decrypt"))
-        })?;
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("wechat resource decrypt: {e:?}")))?;
     String::from_utf8(plaintext)
         .map_err(|e| AppError::Internal(anyhow::Error::from(e).context("wechat resource utf8")))
 }
@@ -334,6 +332,7 @@ impl PaymentProvider for WechatPayProvider {
         channel: &PaymentChannel,
         order: &PaymentOrder,
         _return_url: Option<&str>,
+        _notify_url: Option<&str>,
     ) -> AppResult<ProviderResponse> {
         let creds = decrypt_credentials(channel, &self.encrypt_key)?;
         let private_key = parse_private_key(&creds.private_key)?;

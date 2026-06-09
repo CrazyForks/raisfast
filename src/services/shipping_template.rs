@@ -363,6 +363,10 @@ mod tests {
                 cost_price: None,
                 sale_price: None,
                 has_variants: false,
+                tag_ids: None,
+                og_title: None,
+                og_description: None,
+                og_image: None,
             },
             None,
         )
@@ -438,6 +442,10 @@ mod tests {
                 cost_price: None,
                 sale_price: None,
                 has_variants: false,
+                tag_ids: None,
+                og_title: None,
+                og_description: None,
+                og_image: None,
             },
             None,
         )
@@ -495,6 +503,10 @@ mod tests {
                 cost_price: None,
                 sale_price: None,
                 has_variants: false,
+                tag_ids: None,
+                og_title: None,
+                og_description: None,
+                og_image: None,
             },
             None,
         )
@@ -568,6 +580,10 @@ mod tests {
                 cost_price: None,
                 sale_price: None,
                 has_variants: false,
+                tag_ids: None,
+                og_title: None,
+                og_description: None,
+                og_image: None,
             },
             None,
         )

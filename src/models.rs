@@ -49,6 +49,7 @@ pub mod reusable_block;
 pub mod shipping_template;
 pub mod sms_code;
 pub mod tag;
+pub mod tagging;
 pub mod tenant;
 pub mod user;
 pub mod user_address;

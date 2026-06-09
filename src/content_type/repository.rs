@@ -1285,6 +1285,22 @@ impl ContentRepository {
         }
 
         for index_sql in super::migration::generate_indexes(ct) {
+            #[cfg(feature = "db-mysql")]
+            {
+                if let Some(idx_name) = index_sql.split_whitespace().nth(3) {
+                    let check = format!(
+                        "SELECT COUNT(*) FROM information_schema.statistics WHERE table_schema = DATABASE() AND table_name = '{table}' AND index_name = '{idx_name}'",
+                        table = ct.table
+                    );
+                    if let Ok(exists) = sqlx::query_scalar::<crate::db::pool::Db, i64>(&check)
+                        .fetch_one(&self.pool)
+                        .await
+                        && exists > 0
+                    {
+                        continue;
+                    }
+                }
+            }
             if let Err(e) = sqlx::query(&index_sql).execute(&self.pool).await {
                 tracing::warn!("index creation skipped: {}", e);
             }
@@ -1389,20 +1405,21 @@ pub(crate) fn row_to_value(
 
 fn cell_to_json(row: &DbRow, col: &str, id_columns: &std::collections::HashSet<&str>) -> Value {
     if id_columns.contains(col)
-        && let Ok(Some(v)) = row.try_get::<Option<i64>, _>(col)
+        && let Ok(Some(v)) = row.try_get::<Option<i64>, &str>(col)
     {
         return json!(crate::types::snowflake_id::encode_id(v));
     }
-    if let Ok(Some(v)) = row.try_get::<Option<i64>, _>(col) {
+    if let Ok(Some(v)) = row.try_get::<Option<i64>, &str>(col) {
         return json!(v);
     }
-    if let Ok(Some(v)) = row.try_get::<Option<f64>, _>(col) {
+    if let Ok(Some(v)) = row.try_get::<Option<f64>, &str>(col) {
         return json!(v);
     }
-    if let Ok(Some(v)) = row.try_get::<Option<bool>, _>(col) {
+    if let Ok(Some(v)) = row.try_get::<Option<bool>, &str>(col) {
         return json!(v);
     }
-    if let Ok(Some(s)) = row.try_get::<Option<String>, _>(col) {
+    if let Ok(Some(s)) = row.try_get::<Option<String>, &str>(col) {
+        let s: String = s;
         if s.is_empty() {
             return Value::Null;
         }

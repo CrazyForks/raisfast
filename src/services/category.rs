@@ -65,6 +65,12 @@ impl CategoryService for CategoryServiceImpl {
             description: req.description,
             parent_id,
             sort_order: req.sort_order.unwrap_or(0),
+            cover_image: req.cover_image,
+            meta_title: req.meta_title,
+            meta_description: req.meta_description,
+            og_title: req.og_title,
+            og_description: req.og_description,
+            og_image: req.og_image,
         };
         let cat =
             crate::models::category::create(&self.pool, &cmd, auth.tenant_id(), auth.user_id())
@@ -82,11 +88,17 @@ impl CategoryService for CategoryServiceImpl {
         let existing =
             crate::models::category::find_by_id(&self.pool, id, auth.tenant_id()).await?;
         let (req, _d) = self.before_update(auth, &existing, req).await?;
-        let new_slug = req
-            .name
-            .as_ref()
-            .map(|n| slug_aspect::generate_slug(n))
-            .unwrap_or(existing.slug);
+        let new_slug = if let Some(ref slug_val) = req.slug {
+            if slug_val.is_empty() {
+                slug_aspect::generate_slug(existing.name.as_str())
+            } else {
+                slug_aspect::generate_slug(slug_val)
+            }
+        } else if let Some(ref n) = req.name {
+            slug_aspect::generate_slug(n)
+        } else {
+            existing.slug
+        };
 
         let parent_id = if let Some(ref raw_id) = req.parent_id {
             if raw_id.parse::<i64>().is_ok() {
@@ -107,6 +119,12 @@ impl CategoryService for CategoryServiceImpl {
             description: req.description,
             parent_id,
             sort_order: req.sort_order,
+            cover_image: req.cover_image,
+            meta_title: req.meta_title,
+            meta_description: req.meta_description,
+            og_title: req.og_title,
+            og_description: req.og_description,
+            og_image: req.og_image,
         };
         let updated =
             crate::models::category::update(&self.pool, &cmd, auth.tenant_id(), auth.user_id())
@@ -178,9 +196,16 @@ mod tests {
                 &a,
                 CreateCategoryRequest {
                     name: "Tech".into(),
+                    slug: None,
                     description: Some("Technology".into()),
                     parent_id: None,
                     sort_order: None,
+                    cover_image: None,
+                    meta_title: None,
+                    meta_description: None,
+                    og_title: None,
+                    og_description: None,
+                    og_image: None,
                 },
             )
             .await
@@ -208,9 +233,16 @@ mod tests {
                 &a,
                 CreateCategoryRequest {
                     name: "Old".into(),
+                    slug: None,
                     description: None,
                     parent_id: None,
                     sort_order: None,
+                    cover_image: None,
+                    meta_title: None,
+                    meta_description: None,
+                    og_title: None,
+                    og_description: None,
+                    og_image: None,
                 },
             )
             .await
@@ -221,9 +253,16 @@ mod tests {
                 cat.id,
                 crate::dto::UpdateCategoryRequest {
                     name: Some("New".into()),
+                    slug: None,
                     description: None,
                     parent_id: None,
                     sort_order: None,
+                    cover_image: None,
+                    meta_title: None,
+                    meta_description: None,
+                    og_title: None,
+                    og_description: None,
+                    og_image: None,
                 },
             )
             .await
@@ -242,9 +281,16 @@ mod tests {
                 &a,
                 CreateCategoryRequest {
                     name: "Del".into(),
+                    slug: None,
                     description: None,
                     parent_id: None,
                     sort_order: None,
+                    cover_image: None,
+                    meta_title: None,
+                    meta_description: None,
+                    og_title: None,
+                    og_description: None,
+                    og_image: None,
                 },
             )
             .await
@@ -272,9 +318,16 @@ mod tests {
                 &a,
                 CreateCategoryRequest {
                     name: format!("Cat{i}"),
+                    slug: None,
                     description: None,
                     parent_id: None,
                     sort_order: None,
+                    cover_image: None,
+                    meta_title: None,
+                    meta_description: None,
+                    og_title: None,
+                    og_description: None,
+                    og_image: None,
                 },
             )
             .await

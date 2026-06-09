@@ -39,7 +39,8 @@ pub async fn list_reusable(
     pool: &crate::db::Pool,
     tenant_id: Option<&str>,
 ) -> AppResult<Vec<ReusableBlock>> {
-    raisfast_derive::crud_list!(pool, "reusable_blocks", ReusableBlock, order_by: "name ASC", tenant: tenant_id).map_err(Into::into)
+    let result: Vec<ReusableBlock> = raisfast_derive::crud_list!(pool, "reusable_blocks", ReusableBlock, order_by: "name ASC", tenant: tenant_id)?;
+    Ok(result)
 }
 
 pub async fn create_reusable(
@@ -114,6 +115,7 @@ mod tests {
             &crate::commands::user::CreateUserCmd {
                 username: "blockuser".to_string(),
                 registered_via: crate::models::user::RegisteredVia::Email,
+                role: None,
             },
             None,
         )

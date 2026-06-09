@@ -123,6 +123,7 @@ mod tests {
             content: String::new(),
             excerpt: None,
             cover_image: None,
+            image_ids: None,
             status: PostStatus::Published,
             created_by: None,
             author_name: None,

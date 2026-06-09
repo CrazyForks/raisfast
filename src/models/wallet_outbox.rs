@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 
 use crate::db::{DbDriver, Driver};
-use crate::errors::app_error::AppResult;
+use crate::errors::app_error::{AppError, AppResult};
 use crate::types::snowflake_id::SnowflakeId;
 use crate::utils::tz::Timestamp;
 
@@ -79,11 +79,12 @@ pub async fn fetch_pending(pool: &crate::db::Pool, limit: i64) -> AppResult<Vec<
         "SELECT * FROM wallet_outbox WHERE status IN ('pending', 'failed') AND attempts < max_attempts ORDER BY created_at ASC LIMIT {}",
         Driver::ph(1)
     );
-    sqlx::query_as::<_, WalletOutbox>(&sql)
+    let result: Vec<WalletOutbox> = sqlx::query_as::<crate::db::pool::Db, WalletOutbox>(&sql)
         .bind(limit)
         .fetch_all(pool)
         .await
-        .map_err(Into::into)
+        .map_err(|e: sqlx::Error| AppError::Internal(e.into()))?;
+    Ok(result)
 }
 
 pub async fn mark_processing(pool: &crate::db::Pool, id: SnowflakeId) -> AppResult<()> {

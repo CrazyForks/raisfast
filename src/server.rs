@@ -845,9 +845,7 @@ async fn spawn_workers(
     let queue = Arc::new(DefaultJobQueue::new(pool.clone()));
 
     if let Err(e) = async {
-        sqlx::query(crate::db::schema::SCHEMA_SQL)
-            .execute(&pool)
-            .await?;
+        crate::db::connection::ensure_schema(&pool).await?;
         if config.cron_seed_enabled {
             seed_defaults(&pool, &config.cron_schedules).await?;
         }

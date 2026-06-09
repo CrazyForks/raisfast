@@ -12,6 +12,7 @@ use crate::dto::{CreateProductRequest, UpdateProductRequest};
 use crate::errors::app_error::{AppError, AppResult};
 use crate::middleware::auth::AuthUser;
 use crate::models::product::Product;
+use crate::services::options::OptionsService;
 use crate::types::snowflake_id::SnowflakeId;
 
 /// Product business logic trait.
@@ -38,7 +39,10 @@ pub trait ProductService: Send + Sync {
         page: i64,
         page_size: i64,
         status: Option<&str>,
+        keyword: Option<&str>,
+        category_id: Option<&str>,
     ) -> AppResult<(Vec<Product>, i64)>;
+    async fn batch(&self, auth: &AuthUser, action: &str, ids: &[String]) -> AppResult<usize>;
 }
 
 #[aspect_service(entity = "products", model = Product)]
@@ -46,6 +50,7 @@ pub struct ProductServiceImpl {
     #[engine]
     aspect_engine: Arc<AspectEngine>,
     pool: Arc<crate::db::Pool>,
+    options: Arc<OptionsService>,
 }
 
 #[async_trait]
@@ -54,10 +59,18 @@ impl ProductService for ProductServiceImpl {
         let (req, _d) = self.before_create(auth, req).await?;
         let product_type = req.product_type.as_deref().unwrap_or("custom");
         let fulfillment_type = req.fulfillment_type.as_deref().unwrap_or("digital");
-        let currency = req.currency.as_deref().unwrap_or("CNY");
+        let default_currency = self
+            .options
+            .get(auth.tenant_id(), "default_currency")
+            .await
+            .and_then(|v| v.as_str().map(String::from))
+            .unwrap_or_else(|| "USD".to_string());
+        let currency = req.currency.as_deref().unwrap_or(&default_currency);
+        crate::models::currencies::ensure_active(&self.pool, currency, auth.tenant_id()).await?;
         let generated_slug = slug_aspect::generate_slug(&req.title);
         let slug = req.slug.as_deref().or(Some(generated_slug.as_str()));
         let category_id = resolve_category_id(&self.pool, auth, req.category_id.as_deref()).await?;
+        let tag_ids = parse_tag_ids(&self.pool, req.tag_ids.as_deref(), auth.tenant_id()).await?;
         let p = crate::models::product::insert(
             &self.pool,
             &CreateProductCmd {
@@ -84,14 +97,25 @@ impl ProductService for ProductServiceImpl {
                 virtual_sales: req.virtual_sales.unwrap_or(0),
                 meta_title: req.meta_title,
                 meta_description: req.meta_description,
+                og_title: req.og_title,
+                og_description: req.og_description,
+                og_image: req.og_image,
                 stock: req.stock.unwrap_or(0),
                 cost_price: req.cost_price,
                 sale_price: req.sale_price,
                 has_variants: req.has_variants.unwrap_or(false),
+                tag_ids: tag_ids.clone(),
             },
             auth.tenant_id(),
         )
         .await?;
+        if let Some(ref ids) = tag_ids {
+            let _guard = crate::db::connection::acquire_write().await;
+            let mut tx = self.pool.begin().await?;
+            crate::models::tagging::sync_tags_tx(&mut tx, "product", p.id, ids, auth.tenant_id())
+                .await?;
+            tx.commit().await?;
+        }
         self.after_created(&p);
         Ok(p)
     }
@@ -139,18 +163,13 @@ impl ProductService for ProductServiceImpl {
             None => existing.category_id.map(|c| *c),
         };
 
-        let existing_published_at_str = existing
-            .published_at
-            .map(|t| t.format("%Y-%m-%dT%H:%M:%SZ").to_string());
-        let generated_published_at;
-        let published_at: Option<&str> = if status == "active"
+        let published_at: Option<crate::utils::tz::Timestamp> = if status == "active"
             && existing.status.as_str() != "active"
             && existing.published_at.is_none()
         {
-            generated_published_at = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-            Some(generated_published_at.as_str())
+            Some(crate::utils::tz::now_utc())
         } else {
-            existing_published_at_str.as_deref()
+            existing.published_at
         };
 
         let updated = crate::models::product::update(
@@ -182,12 +201,16 @@ impl ProductService for ProductServiceImpl {
                 virtual_sales,
                 meta_title: req.meta_title.or(existing.meta_title),
                 meta_description: req.meta_description.or(existing.meta_description),
+                og_title: req.og_title.or(existing.og_title),
+                og_description: req.og_description.or(existing.og_description),
+                og_image: req.og_image.or(existing.og_image),
                 stock,
                 cost_price,
                 sale_price,
                 has_variants,
-                published_at: published_at.map(|s| s.to_string()),
+                published_at,
                 version: req.version,
+                tag_ids: None,
             },
             auth.tenant_id(),
         )
@@ -195,6 +218,23 @@ impl ProductService for ProductServiceImpl {
 
         if !updated {
             return Err(AppError::Conflict("version_conflict".into()));
+        }
+
+        if let Some(ref raw) = req.tag_ids {
+            let tag_ids = parse_tag_ids(&self.pool, Some(raw.as_str()), auth.tenant_id()).await?;
+            if let Some(ids) = tag_ids {
+                let _guard = crate::db::connection::acquire_write().await;
+                let mut tx = self.pool.begin().await?;
+                crate::models::tagging::sync_tags_tx(
+                    &mut tx,
+                    "product",
+                    existing.id,
+                    &ids,
+                    auth.tenant_id(),
+                )
+                .await?;
+                tx.commit().await?;
+            }
         }
 
         let result = crate::models::product::find_by_id(&self.pool, existing.id, auth.tenant_id())
@@ -236,6 +276,8 @@ impl ProductService for ProductServiceImpl {
         page: i64,
         page_size: i64,
         status: Option<&str>,
+        keyword: Option<&str>,
+        category_id: Option<&str>,
     ) -> AppResult<(Vec<Product>, i64)> {
         crate::models::product::find_all_admin(
             &self.pool,
@@ -243,8 +285,104 @@ impl ProductService for ProductServiceImpl {
             page,
             page_size,
             status,
+            keyword,
+            category_id,
         )
         .await
+    }
+
+    async fn batch(&self, auth: &AuthUser, action: &str, ids: &[String]) -> AppResult<usize> {
+        let mut affected = 0usize;
+        let target_status = match action {
+            "delete" => None,
+            "activate" => Some("active"),
+            "deactivate" => Some("draft"),
+            "archive" => Some("archived"),
+            _ => return Ok(0),
+        };
+
+        for raw_id in ids {
+            let Ok(parsed_id) = crate::types::snowflake_id::parse_id(raw_id) else {
+                continue;
+            };
+            let Some(int_id) = raisfast_derive::crud_resolve_id!(&self.pool, "products", *parsed_id, tenant: auth.tenant_id())?
+            else {
+                continue;
+            };
+
+            if action == "delete" {
+                if self.delete(SnowflakeId(int_id), auth).await.is_ok() {
+                    affected += 1;
+                }
+                continue;
+            }
+
+            let Ok(Some(existing)) = crate::models::product::find_by_id(
+                &self.pool,
+                SnowflakeId(int_id),
+                auth.tenant_id(),
+            )
+            .await
+            else {
+                continue;
+            };
+
+            let status = target_status.unwrap_or(existing.status.as_str());
+            let published_at: Option<crate::utils::tz::Timestamp> = if status == "active"
+                && existing.status.as_str() != "active"
+                && existing.published_at.is_none()
+            {
+                Some(crate::utils::tz::now_utc())
+            } else {
+                existing.published_at
+            };
+
+            let cmd = UpdateProductCmd {
+                id: existing.id,
+                category_id: existing.category_id.map(|c| *c),
+                title: existing.title,
+                description: existing.description,
+                cover_url: existing.cover_url,
+                product_type: existing.product_type.to_string(),
+                fulfillment_type: existing.fulfillment_type.to_string(),
+                delivery_hook: existing.delivery_hook,
+                weight: existing.weight,
+                price: existing.price,
+                currency: existing.currency,
+                status: status.to_string(),
+                attributes: existing.attributes,
+                sort_order: existing.sort_order,
+                slug: existing.slug,
+                content: existing.content,
+                image_ids: existing.image_ids,
+                original_price: existing.original_price,
+                specs: existing.specs,
+                unit: existing.unit,
+                min_purchase: existing.min_purchase,
+                max_purchase: existing.max_purchase,
+                total_sales: existing.total_sales,
+                virtual_sales: existing.virtual_sales,
+                meta_title: existing.meta_title,
+                meta_description: existing.meta_description,
+                og_title: existing.og_title,
+                og_description: existing.og_description,
+                og_image: existing.og_image,
+                published_at,
+                stock: existing.stock,
+                cost_price: existing.cost_price,
+                sale_price: existing.sale_price,
+                has_variants: existing.has_variants,
+                version: existing.version,
+                tag_ids: None,
+            };
+            if crate::models::product::update(&self.pool, &cmd, auth.tenant_id())
+                .await
+                .is_ok()
+            {
+                affected += 1;
+            }
+        }
+        Ok(affected)
     }
 }
 
@@ -264,6 +402,27 @@ async fn resolve_category_id(
     }
 }
 
+async fn parse_tag_ids(
+    pool: &crate::db::Pool,
+    raw: Option<&str>,
+    tenant_id: Option<&str>,
+) -> AppResult<Option<Vec<i64>>> {
+    let Some(raw) = raw else { return Ok(None) };
+    let Ok(ids) = serde_json::from_str::<Vec<String>>(raw) else {
+        return Ok(None);
+    };
+    let mut resolved = Vec::new();
+    for raw_id in ids {
+        let parsed = crate::types::snowflake_id::parse_id(&raw_id)?;
+        if let Some(int_id) =
+            raisfast_derive::crud_resolve_id!(pool, "tags", *parsed, tenant: tenant_id)?
+        {
+            resolved.push(int_id);
+        }
+    }
+    Ok(Some(resolved))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -276,21 +435,23 @@ mod tests {
         AuthUser::from_parts(
             Some(1),
             crate::models::user::UserRole::Admin,
-            tid.map(|s| s.to_string()),
+            tid.map(|s| s.to_string())
+                .or_else(|| Some("default".to_string())),
         )
     }
 
-    fn make_service(pool: crate::db::Pool) -> Arc<dyn ProductService> {
+    async fn make_service(pool: crate::db::Pool) -> Arc<dyn ProductService> {
         Arc::new(ProductServiceImpl::new(
             Arc::new(AspectEngine::new()),
             Arc::new(pool),
+            Arc::new(OptionsService::new(Arc::new(setup_pool().await), false).await),
         ))
     }
 
     #[tokio::test]
     async fn create_product_basic() {
         let pool = setup_pool().await;
-        let svc = make_service(pool.clone());
+        let svc = make_service(pool.clone()).await;
         let a = auth(None);
         let p = svc
             .create(
@@ -319,10 +480,14 @@ mod tests {
                     virtual_sales: None,
                     meta_title: None,
                     meta_description: None,
+                    og_title: None,
+                    og_description: None,
+                    og_image: None,
                     stock: None,
                     cost_price: None,
                     sale_price: None,
                     has_variants: None,
+                    tag_ids: None,
                 },
             )
             .await
@@ -335,7 +500,7 @@ mod tests {
     #[tokio::test]
     async fn create_product_with_custom_type() {
         let pool = setup_pool().await;
-        let svc = make_service(pool.clone());
+        let svc = make_service(pool.clone()).await;
         let a = auth(None);
         let p = svc
             .create(
@@ -364,10 +529,14 @@ mod tests {
                     virtual_sales: None,
                     meta_title: None,
                     meta_description: None,
+                    og_title: None,
+                    og_description: None,
+                    og_image: None,
                     stock: None,
                     cost_price: None,
                     sale_price: None,
                     has_variants: None,
+                    tag_ids: None,
                 },
             )
             .await
@@ -387,7 +556,7 @@ mod tests {
     #[tokio::test]
     async fn get_product_found() {
         let pool = setup_pool().await;
-        let svc = make_service(pool.clone());
+        let svc = make_service(pool.clone()).await;
         let a = auth(None);
         let p = svc
             .create(
@@ -416,10 +585,14 @@ mod tests {
                     virtual_sales: None,
                     meta_title: None,
                     meta_description: None,
+                    og_title: None,
+                    og_description: None,
+                    og_image: None,
                     stock: None,
                     cost_price: None,
                     sale_price: None,
                     has_variants: None,
+                    tag_ids: None,
                 },
             )
             .await
@@ -431,7 +604,7 @@ mod tests {
     #[tokio::test]
     async fn get_product_not_found() {
         let pool = setup_pool().await;
-        let svc = make_service(pool.clone());
+        let svc = make_service(pool.clone()).await;
         let a = auth(None);
         assert!(svc.get(SnowflakeId(0), &a).await.is_err());
     }
@@ -439,7 +612,7 @@ mod tests {
     #[tokio::test]
     async fn update_product_changes_title() {
         let pool = setup_pool().await;
-        let svc = make_service(pool.clone());
+        let svc = make_service(pool.clone()).await;
         let a = auth(None);
         let p = svc
             .create(
@@ -468,10 +641,14 @@ mod tests {
                     virtual_sales: None,
                     meta_title: None,
                     meta_description: None,
+                    og_title: None,
+                    og_description: None,
+                    og_image: None,
                     stock: None,
                     cost_price: None,
                     sale_price: None,
                     has_variants: None,
+                    tag_ids: None,
                 },
             )
             .await
@@ -506,10 +683,14 @@ mod tests {
                     virtual_sales: None,
                     meta_title: None,
                     meta_description: None,
+                    og_title: None,
+                    og_description: None,
+                    og_image: None,
                     stock: None,
                     cost_price: None,
                     sale_price: None,
                     has_variants: None,
+                    tag_ids: None,
                 },
             )
             .await
@@ -527,7 +708,7 @@ mod tests {
     #[tokio::test]
     async fn update_product_version_conflict() {
         let pool = setup_pool().await;
-        let svc = make_service(pool.clone());
+        let svc = make_service(pool.clone()).await;
         let a = auth(None);
         let p = svc
             .create(
@@ -556,10 +737,14 @@ mod tests {
                     virtual_sales: None,
                     meta_title: None,
                     meta_description: None,
+                    og_title: None,
+                    og_description: None,
+                    og_image: None,
                     stock: None,
                     cost_price: None,
                     sale_price: None,
                     has_variants: None,
+                    tag_ids: None,
                 },
             )
             .await
@@ -594,10 +779,14 @@ mod tests {
                     virtual_sales: None,
                     meta_title: None,
                     meta_description: None,
+                    og_title: None,
+                    og_description: None,
+                    og_image: None,
                     stock: None,
                     cost_price: None,
                     sale_price: None,
                     has_variants: None,
+                    tag_ids: None,
                 },
             )
             .await
@@ -608,7 +797,7 @@ mod tests {
     #[tokio::test]
     async fn update_product_not_found() {
         let pool = setup_pool().await;
-        let svc = make_service(pool.clone());
+        let svc = make_service(pool.clone()).await;
         let a = auth(None);
         let err = svc
             .update(
@@ -640,10 +829,14 @@ mod tests {
                     virtual_sales: None,
                     meta_title: None,
                     meta_description: None,
+                    og_title: None,
+                    og_description: None,
+                    og_image: None,
                     stock: None,
                     cost_price: None,
                     sale_price: None,
                     has_variants: None,
+                    tag_ids: None,
                 },
             )
             .await
@@ -654,7 +847,7 @@ mod tests {
     #[tokio::test]
     async fn delete_product_success() {
         let pool = setup_pool().await;
-        let svc = make_service(pool.clone());
+        let svc = make_service(pool.clone()).await;
         let a = auth(None);
         let p = svc
             .create(
@@ -683,10 +876,14 @@ mod tests {
                     virtual_sales: None,
                     meta_title: None,
                     meta_description: None,
+                    og_title: None,
+                    og_description: None,
+                    og_image: None,
                     stock: None,
                     cost_price: None,
                     sale_price: None,
                     has_variants: None,
+                    tag_ids: None,
                 },
             )
             .await
@@ -698,7 +895,7 @@ mod tests {
     #[tokio::test]
     async fn delete_product_not_found() {
         let pool = setup_pool().await;
-        let svc = make_service(pool.clone());
+        let svc = make_service(pool.clone()).await;
         let a = auth(None);
         assert!(svc.delete(SnowflakeId(0), &a).await.is_err());
     }
@@ -706,7 +903,7 @@ mod tests {
     #[tokio::test]
     async fn list_active_products() {
         let pool = setup_pool().await;
-        let svc = make_service(pool.clone());
+        let svc = make_service(pool.clone()).await;
         let a = auth(None);
         for i in 0..3 {
             let p = svc
@@ -740,6 +937,10 @@ mod tests {
                         cost_price: None,
                         sale_price: None,
                         has_variants: None,
+                        tag_ids: None,
+                        og_title: None,
+                        og_description: None,
+                        og_image: None,
                     },
                 )
                 .await
@@ -758,7 +959,7 @@ mod tests {
     #[tokio::test]
     async fn list_admin_products_with_filter() {
         let pool = setup_pool().await;
-        let svc = make_service(pool.clone());
+        let svc = make_service(pool.clone()).await;
         let a = auth(None);
         let p = svc
             .create(
@@ -787,10 +988,14 @@ mod tests {
                     virtual_sales: None,
                     meta_title: None,
                     meta_description: None,
+                    og_title: None,
+                    og_description: None,
+                    og_image: None,
                     stock: None,
                     cost_price: None,
                     sale_price: None,
                     has_variants: None,
+                    tag_ids: None,
                 },
             )
             .await
@@ -830,14 +1035,21 @@ mod tests {
                 cost_price: None,
                 sale_price: None,
                 has_variants: None,
+                tag_ids: None,
+                og_title: None,
+                og_description: None,
+                og_image: None,
             },
         )
         .await
         .unwrap();
 
-        let (_, total_all) = svc.list_admin(&a, 1, 10, None).await.unwrap();
+        let (_, total_all) = svc.list_admin(&a, 1, 10, None, None, None).await.unwrap();
         assert_eq!(total_all, 2);
-        let (active, total_active) = svc.list_admin(&a, 1, 10, Some("active")).await.unwrap();
+        let (active, total_active) = svc
+            .list_admin(&a, 1, 10, Some("active"), None, None)
+            .await
+            .unwrap();
         assert_eq!(total_active, 1);
         assert_eq!(active.len(), 1);
     }

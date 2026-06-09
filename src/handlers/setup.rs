@@ -59,6 +59,8 @@ pub async fn setup_status(
 
     let db_type = detect_db_type(&state.config.database_url);
     let url_masked = mask_db_url(&state.config.database_url);
+    let (db_host, db_port, db_username, db_password, db_database) =
+        parse_db_url_fields(&state.config.database_url);
 
     let storage_path = state.config.storage_root_dir.clone();
     let storage_writable = is_storage_writable(&storage_path);
@@ -81,6 +83,11 @@ pub async fn setup_status(
             db_type,
             connected: db_connected,
             url_masked,
+            host: db_host,
+            port: db_port,
+            username: db_username,
+            password: db_password,
+            database: db_database,
         },
         storage: crate::dto::StorageStatusInfo {
             writable: storage_writable,
@@ -238,6 +245,78 @@ fn detect_db_type(url: &str) -> String {
     } else {
         "unknown".into()
     }
+}
+
+#[allow(clippy::type_complexity)]
+fn parse_db_url_fields(
+    url: &str,
+) -> (
+    Option<String>,
+    Option<u16>,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+) {
+    if url.starts_with("sqlite:") {
+        let path = url.strip_prefix("sqlite:").unwrap_or(url);
+        let path = path
+            .trim_start_matches("./")
+            .split('?')
+            .next()
+            .unwrap_or(path);
+        return (None, None, None, None, Some(path.to_string()));
+    }
+    let Some(scheme_end) = url.find("://") else {
+        return (None, None, None, None, None);
+    };
+    let rest = &url[scheme_end + 3..];
+    let (user_part, after_at) = if let Some(at_pos) = rest.find('@') {
+        (&rest[..at_pos], &rest[at_pos + 1..])
+    } else {
+        return (None, None, None, None, None);
+    };
+    let (username, password) = if let Some(colon_pos) = user_part.find(':') {
+        let u = &user_part[..colon_pos];
+        let p = &user_part[colon_pos + 1..];
+        (
+            if u.is_empty() {
+                None
+            } else {
+                Some(u.to_string())
+            },
+            if p.is_empty() {
+                None
+            } else {
+                Some(p.to_string())
+            },
+        )
+    } else if user_part.is_empty() {
+        (None, None)
+    } else {
+        (Some(user_part.to_string()), None)
+    };
+    let host_port_db = after_at;
+    let slash_pos = host_port_db.find('/').unwrap_or(host_port_db.len());
+    let host_port = &host_port_db[..slash_pos];
+    let database = if slash_pos < host_port_db.len() {
+        let db = &host_port_db[slash_pos + 1..];
+        let db = db.split('?').next().unwrap_or(db);
+        if db.is_empty() {
+            None
+        } else {
+            Some(db.to_string())
+        }
+    } else {
+        None
+    };
+    let (host, port) = if let Some(colon_pos) = host_port.rfind(':') {
+        let h = &host_port[..colon_pos];
+        let p = &host_port[colon_pos + 1..];
+        (Some(h.to_string()), p.parse().ok())
+    } else {
+        (Some(host_port.to_string()), None)
+    };
+    (host, port, username, password, database)
 }
 
 fn mask_db_url(url: &str) -> String {

@@ -42,6 +42,7 @@ pub trait PaymentProvider: Send + Sync {
         channel: &PaymentChannel,
         order: &PaymentOrder,
         return_url: Option<&str>,
+        notify_url: Option<&str>,
     ) -> AppResult<ProviderResponse>;
     async fn query(
         &self,

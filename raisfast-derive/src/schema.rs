@@ -86,6 +86,37 @@ impl Dialect {
         }
     }
 
+    /// Quote a SQL identifier (table name, column name) for the current dialect.
+    ///
+    /// MySQL uses backticks, PostgreSQL uses double quotes, SQLite accepts both.
+    pub fn qi(&self, name: &str) -> String {
+        match self {
+            Dialect::Mysql => format!("`{name}`"),
+            Dialect::Postgres => format!("\"{name}\""),
+            Dialect::Sqlite => name.to_string(),
+        }
+    }
+
+    pub fn qi_col(&self, col: &str) -> String {
+        if col.contains('.') {
+            col.split('.')
+                .map(|part| self.qi(part))
+                .collect::<Vec<_>>()
+                .join(".")
+        } else {
+            self.qi(col)
+        }
+    }
+
+    /// Quote and comma-join a list of identifiers.
+    pub fn qi_list(&self, names: &[String]) -> String {
+        names
+            .iter()
+            .map(|n| self.qi(n))
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+
     /// Unnumbered placeholder token for runtime `sqlx::query()` calls.
     #[expect(dead_code)]
     pub fn ph_unnumbered(&self) -> &'static str {
@@ -124,8 +155,8 @@ impl Dialect {
     /// Reference to the new/excluded value in an UPSERT.
     pub fn excluded_col(&self, col: &str) -> String {
         match self {
-            Dialect::Mysql => format!("VALUES({col})"),
-            _ => format!("excluded.{col}"),
+            Dialect::Mysql => format!("VALUES({})", self.qi(col)),
+            _ => format!("excluded.{}", self.qi(col)),
         }
     }
 }
@@ -195,11 +226,16 @@ impl Schema {
         Some(parts.join(", "))
     }
 
-    /// Return just the column names for a table, joined by `", "`.
+    /// Return just the column names for a table, quoted for the current dialect.
     pub fn column_names(&self, table: &str) -> Vec<String> {
         self.tables
             .get(table)
-            .map(|ts| ts.columns.iter().map(|c| c.name.clone()).collect())
+            .map(|ts| {
+                ts.columns
+                    .iter()
+                    .map(|c| self.dialect.qi(&c.name))
+                    .collect()
+            })
             .unwrap_or_default()
     }
 }
@@ -267,8 +303,9 @@ fn extract_table_name(rest: &str) -> Option<String> {
     let rest = rest.trim();
     let rest = rest.strip_prefix("IF NOT EXISTS").unwrap_or(rest).trim();
     let name = rest
-        .split(|c: char| !c.is_alphanumeric() && c != '_')
+        .split(|c: char| !c.is_alphanumeric() && c != '_' && c != '`')
         .next()?;
+    let name = name.trim_matches('`');
     if name.is_empty() {
         return None;
     }
@@ -282,15 +319,48 @@ fn parse_column_line(line: &str) -> Option<ColumnSchema> {
         || line.starts_with("UNIQUE(")
         || line.starts_with("CHECK(")
         || line.starts_with("FOREIGN")
+        || line.starts_with("INDEX")
+        || line.starts_with("UNIQUE INDEX")
+        || line.starts_with("CONSTRAINT")
     {
         return None;
     }
 
     let mut parts = line.splitn(2, char::is_whitespace);
-    let name = parts.next()?.trim();
+    let name = parts.next()?.trim().trim_matches('`');
     let rest = parts.next()?.trim().to_uppercase();
 
     if name.is_empty() {
+        return None;
+    }
+
+    if !rest.starts_with("INTEGER")
+        && !rest.starts_with("INT")
+        && !rest.starts_with("BIGINT")
+        && !rest.starts_with("TINYINT")
+        && !rest.starts_with("SMALLINT")
+        && !rest.starts_with("REAL")
+        && !rest.starts_with("FLOAT")
+        && !rest.starts_with("DOUBLE")
+        && !rest.starts_with("DECIMAL")
+        && !rest.starts_with("NUMERIC")
+        && !rest.starts_with("TEXT")
+        && !rest.starts_with("LONGTEXT")
+        && !rest.starts_with("MEDIUMTEXT")
+        && !rest.starts_with("VARCHAR")
+        && !rest.starts_with("CHAR")
+        && !rest.starts_with("BLOB")
+        && !rest.starts_with("LONGBLOB")
+        && !rest.starts_with("MEDIUMBLOB")
+        && !rest.starts_with("TINYBLOB")
+        && !rest.starts_with("JSON")
+        && !rest.starts_with("BOOLEAN")
+        && !rest.starts_with("BOOL")
+        && !rest.starts_with("DATETIME")
+        && !rest.starts_with("DATE")
+        && !rest.starts_with("TIMESTAMP")
+        && !rest.starts_with("TIME")
+    {
         return None;
     }
 

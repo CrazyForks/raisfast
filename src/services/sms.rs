@@ -96,6 +96,7 @@ pub async fn verify_sms_and_auth(
                 &crate::commands::CreateUserCmd {
                     username,
                     registered_via: crate::models::user::RegisteredVia::Phone,
+                    role: None,
                 },
                 None,
             )

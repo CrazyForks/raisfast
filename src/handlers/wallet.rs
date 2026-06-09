@@ -271,11 +271,16 @@ pub async fn admin_credit(
     auth.ensure_admin()?;
     validation::validate(&req)?;
     let user_id = parse_id(&req.user_id)?;
+    let target_auth = AuthUser::from_parts(
+        Some(user_id.0),
+        crate::models::user::UserRole::Reader,
+        auth.tenant_id().map(|s| s.to_string()),
+    );
 
     let tx = state
         .wallet_service
         .credit(
-            user_id,
+            &target_auth,
             &req.currency,
             req.amount,
             WalletTxType::Recharge,
@@ -303,11 +308,16 @@ pub async fn admin_debit(
     auth.ensure_admin()?;
     validation::validate(&req)?;
     let user_id = parse_id(&req.user_id)?;
+    let target_auth = AuthUser::from_parts(
+        Some(user_id.0),
+        crate::models::user::UserRole::Reader,
+        auth.tenant_id().map(|s| s.to_string()),
+    );
 
     let tx = state
         .wallet_service
         .debit(
-            user_id,
+            &target_auth,
             &req.currency,
             req.amount,
             WalletTxType::Payment,

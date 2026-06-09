@@ -4,6 +4,7 @@ use axum::http::HeaderMap;
 use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
 use rsa::pkcs1::DecodeRsaPrivateKey;
 use rsa::pkcs1v15::Pkcs1v15Sign;
+use rsa::pkcs8::DecodePrivateKey as DecodePkcs8PrivateKey;
 use rsa::pkcs8::DecodePublicKey;
 use rsa::sha2::{Digest, Sha256};
 use serde::{Deserialize, Serialize};
@@ -108,30 +109,55 @@ fn decrypt_credentials(
         .map_err(|e| AppError::Internal(anyhow::Error::from(e).context("alipay credentials parse")))
 }
 
+fn wrap_pem(header: &str, footer: &str, raw: &str) -> String {
+    let clean: String = raw.chars().filter(|c| !c.is_whitespace()).collect();
+    let mut lines = Vec::new();
+    for chunk in clean.as_bytes().chunks(64) {
+        lines.push(String::from_utf8_lossy(chunk).to_string());
+    }
+    format!("{}\n{}\n{}", header, lines.join("\n"), footer)
+}
+
 fn parse_private_key(pem_or_raw: &str) -> AppResult<rsa::RsaPrivateKey> {
-    let pem = if pem_or_raw.starts_with("-----BEGIN") {
-        pem_or_raw.to_string()
+    let trimmed = pem_or_raw.trim();
+    let pem = if trimmed.starts_with("-----BEGIN") {
+        trimmed.to_string()
     } else {
-        format!(
-            "-----BEGIN RSA PRIVATE KEY-----\n{}\n-----END RSA PRIVATE KEY-----",
-            pem_or_raw
+        wrap_pem(
+            "-----BEGIN PRIVATE KEY-----",
+            "-----END PRIVATE KEY-----",
+            trimmed,
         )
     };
-    rsa::RsaPrivateKey::from_pkcs1_pem(&pem)
-        .map_err(|e| AppError::Internal(anyhow::Error::from(e).context("alipay private key parse")))
+    rsa::RsaPrivateKey::from_pkcs8_pem(&pem)
+        .or_else(|_| {
+            let pem = if trimmed.starts_with("-----BEGIN") {
+                trimmed.to_string()
+            } else {
+                wrap_pem(
+                    "-----BEGIN RSA PRIVATE KEY-----",
+                    "-----END RSA PRIVATE KEY-----",
+                    trimmed,
+                )
+            };
+            rsa::RsaPrivateKey::from_pkcs1_pem(&pem)
+        })
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("alipay private key parse: {e}")))
 }
 
 fn parse_public_key(pem_or_raw: &str) -> AppResult<rsa::RsaPublicKey> {
-    let pem = if pem_or_raw.starts_with("-----BEGIN") {
-        pem_or_raw.to_string()
+    let trimmed = pem_or_raw.trim();
+    let pem = if trimmed.starts_with("-----BEGIN") {
+        trimmed.to_string()
     } else {
-        format!(
-            "-----BEGIN PUBLIC KEY-----\n{}\n-----END PUBLIC KEY-----",
-            pem_or_raw
+        wrap_pem(
+            "-----BEGIN PUBLIC KEY-----",
+            "-----END PUBLIC KEY-----",
+            trimmed,
         )
     };
     rsa::RsaPublicKey::from_public_key_pem(&pem)
-        .map_err(|e| AppError::Internal(anyhow::Error::from(e).context("alipay public key parse")))
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("alipay public key parse: {e}")))
 }
 
 fn gateway_url(creds: &AlipayCredentials) -> &str {
@@ -209,6 +235,7 @@ fn build_common_params(
     creds: &AlipayCredentials,
     method: &str,
     biz_content: &str,
+    notify_url: Option<&str>,
 ) -> BTreeMap<String, String> {
     let mut params = BTreeMap::new();
     params.insert("app_id".to_string(), creds.app_id.clone());
@@ -221,6 +248,9 @@ fn build_common_params(
     );
     params.insert("version".to_string(), VERSION.to_string());
     params.insert("biz_content".to_string(), biz_content.to_string());
+    if let Some(url) = notify_url {
+        params.insert("notify_url".to_string(), url.to_string());
+    }
     params
 }
 
@@ -229,8 +259,9 @@ async fn call_alipay(
     private_key: &rsa::RsaPrivateKey,
     method: &str,
     biz_content: &str,
+    notify_url: Option<&str>,
 ) -> AppResult<String> {
-    let params = build_common_params(creds, method, biz_content);
+    let params = build_common_params(creds, method, biz_content, notify_url);
     let sign = sign_params(&params, private_key)?;
 
     let mut form = params.clone();
@@ -288,8 +319,15 @@ impl PaymentProvider for AlipayProvider {
         channel: &PaymentChannel,
         order: &PaymentOrder,
         _return_url: Option<&str>,
+        notify_url: Option<&str>,
     ) -> AppResult<ProviderResponse> {
         let creds = decrypt_credentials(channel, &self.encrypt_key)?;
+        tracing::info!(
+            "alipay create: app_id={}, test_mode={}, gateway={}",
+            creds.app_id,
+            creds.test_mode,
+            gateway_url(&creds)
+        );
         let private_key = parse_private_key(&creds.private_key)?;
 
         let biz = PrecreateBizContent {
@@ -302,7 +340,14 @@ impl PaymentProvider for AlipayProvider {
             AppError::Internal(anyhow::Error::from(e).context("biz_content serialize"))
         })?;
 
-        let body = call_alipay(&creds, &private_key, "alipay.trade.precreate", &biz_json).await?;
+        let body = call_alipay(
+            &creds,
+            &private_key,
+            "alipay.trade.precreate",
+            &biz_json,
+            notify_url,
+        )
+        .await?;
 
         let resp: AlipayResponse<PrecreateResult> = serde_json::from_str(&body).map_err(|e| {
             AppError::Internal(anyhow::Error::from(e).context("alipay response parse"))
@@ -345,7 +390,7 @@ impl PaymentProvider for AlipayProvider {
             AppError::Internal(anyhow::Error::from(e).context("biz_content serialize"))
         })?;
 
-        let body = call_alipay(&creds, &private_key, "alipay.trade.query", &biz_json).await?;
+        let body = call_alipay(&creds, &private_key, "alipay.trade.query", &biz_json, None).await?;
 
         let resp: AlipayResponse<QueryResult> = serde_json::from_str(&body).map_err(|e| {
             AppError::Internal(anyhow::Error::from(e).context("alipay response parse"))
@@ -389,7 +434,8 @@ impl PaymentProvider for AlipayProvider {
             AppError::Internal(anyhow::Error::from(e).context("biz_content serialize"))
         })?;
 
-        let body = call_alipay(&creds, &private_key, "alipay.trade.cancel", &biz_json).await?;
+        let body =
+            call_alipay(&creds, &private_key, "alipay.trade.cancel", &biz_json, None).await?;
 
         let resp: AlipayResponse<CancelResult> = serde_json::from_str(&body).map_err(|e| {
             AppError::Internal(anyhow::Error::from(e).context("alipay response parse"))
@@ -427,7 +473,8 @@ impl PaymentProvider for AlipayProvider {
             AppError::Internal(anyhow::Error::from(e).context("biz_content serialize"))
         })?;
 
-        let body = call_alipay(&creds, &private_key, "alipay.trade.refund", &biz_json).await?;
+        let body =
+            call_alipay(&creds, &private_key, "alipay.trade.refund", &biz_json, None).await?;
 
         let resp: AlipayResponse<RefundResult> = serde_json::from_str(&body).map_err(|e| {
             AppError::Internal(anyhow::Error::from(e).context("alipay response parse"))
@@ -606,7 +653,7 @@ mod tests {
             private_key: String::new(),
             test_mode: false,
         };
-        let params = build_common_params(&creds, "alipay.trade.precreate", "{}");
+        let params = build_common_params(&creds, "alipay.trade.precreate", "{}", None);
         assert_eq!(params.get("app_id").unwrap(), "2021001234");
         assert_eq!(params.get("method").unwrap(), "alipay.trade.precreate");
         assert_eq!(params.get("charset").unwrap(), "utf-8");
@@ -649,7 +696,7 @@ mod tests {
         let body = serde_urlencoded::to_string(&params).unwrap();
 
         let channel = PaymentChannel {
-            id: 1,
+            id: crate::types::snowflake_id::SnowflakeId(1),
             tenant_id: None,
             provider: "alipay".into(),
             name: "Alipay".into(),

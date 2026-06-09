@@ -65,7 +65,9 @@ pub async fn create(
         "created_at" => now
     ])?;
 
-    raisfast_derive::crud_find!(pool, "sms_codes", SmsCode, where: ("id", id))?.ok_or_else(|| {
+    let result: Option<SmsCode> =
+        raisfast_derive::crud_find!(pool, "sms_codes", SmsCode, where: ("id", id))?;
+    result.ok_or_else(|| {
         crate::errors::app_error::AppError::Internal(anyhow::anyhow!("failed to fetch sms code"))
     })
 }
@@ -160,7 +162,7 @@ pub enum VerifyResult {
 pub async fn cleanup_expired(pool: &crate::db::Pool) -> AppResult<u64> {
     let now = crate::utils::tz::now_utc();
     let sql = format!("DELETE FROM sms_codes WHERE expires_at < {}", Driver::ph(1));
-    let result = sqlx::query(&sql).bind(now).execute(pool).await?;
+    let result: crate::db::pool::DbQueryResult = sqlx::query(&sql).bind(now).execute(pool).await?;
     Ok(result.rows_affected())
 }
 

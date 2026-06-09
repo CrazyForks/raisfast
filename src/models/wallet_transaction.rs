@@ -110,16 +110,16 @@ pub async fn find_tx_by_transaction_no(
     pool: &crate::db::Pool,
     transaction_no: &str,
 ) -> AppResult<Option<WalletTransaction>> {
-    raisfast_derive::crud_find!(pool, "wallet_transactions", WalletTransaction, where: ("transaction_no", transaction_no))
-        .map_err(Into::into)
+    let result: Option<WalletTransaction> = raisfast_derive::crud_find!(pool, "wallet_transactions", WalletTransaction, where: ("transaction_no", transaction_no))?;
+    Ok(result)
 }
 
 pub async fn find_tx_by_id(
     pool: &crate::db::Pool,
     id: SnowflakeId,
 ) -> AppResult<Option<WalletTransaction>> {
-    raisfast_derive::crud_find!(pool, "wallet_transactions", WalletTransaction, where: ("id", id))
-        .map_err(Into::into)
+    let result: Option<WalletTransaction> = raisfast_derive::crud_find!(pool, "wallet_transactions", WalletTransaction, where: ("id", id))?;
+    Ok(result)
 }
 
 pub async fn has_reversal_for(
@@ -202,6 +202,7 @@ mod tests {
             &crate::commands::user::CreateUserCmd {
                 username: crate::utils::id::new_id().to_string(),
                 registered_via: crate::models::user::RegisteredVia::Email,
+                role: None,
             },
             None,
         )

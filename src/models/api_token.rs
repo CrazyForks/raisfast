@@ -141,6 +141,7 @@ mod tests {
             &crate::commands::user::CreateUserCmd {
                 username: crate::utils::id::new_id().to_string(),
                 registered_via: crate::models::user::RegisteredVia::Email,
+                role: None,
             },
             None,
         )

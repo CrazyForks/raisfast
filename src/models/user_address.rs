@@ -34,14 +34,14 @@ pub async fn find_by_id(
     id: SnowflakeId,
     tenant_id: Option<&str>,
 ) -> AppResult<Option<UserAddress>> {
-    raisfast_derive::crud_find!(
+    let result: Option<UserAddress> = raisfast_derive::crud_find!(
         pool,
         "user_addresses",
         UserAddress,
         where: ("id", id),
         tenant: tenant_id
-    )
-    .map_err(Into::into)
+    )?;
+    Ok(result)
 }
 
 pub async fn find_by_user_id(
@@ -64,14 +64,14 @@ pub async fn find_default_by_user(
     user_id: SnowflakeId,
     tenant_id: Option<&str>,
 ) -> AppResult<Option<UserAddress>> {
-    raisfast_derive::crud_find!(
+    let result: Option<UserAddress> = raisfast_derive::crud_find!(
         pool,
         "user_addresses",
         UserAddress,
         where: AND(("user_id", user_id), ("is_default", true)),
         tenant: tenant_id
-    )
-    .map_err(Into::into)
+    )?;
+    Ok(result)
 }
 
 pub async fn insert(
@@ -116,7 +116,7 @@ pub async fn update(
     cmd: &crate::commands::UpdateUserAddressCmd,
     tenant_id: Option<&str>,
 ) -> AppResult<bool> {
-    let result = raisfast_derive::crud_update!(
+    let result: crate::db::pool::DbQueryResult = raisfast_derive::crud_update!(
         pool,
         "user_addresses",
         bind: [

@@ -6,6 +6,7 @@ use crate::aspects::engine::AspectEngine;
 use crate::db::pool::DbConnection;
 use crate::errors::app_error::{AppError, AppResult};
 use crate::event::Event;
+use crate::middleware::auth::AuthUser;
 use crate::models::currencies;
 use crate::models::wallet;
 use crate::models::wallet::WalletStatus;
@@ -19,7 +20,7 @@ pub trait WalletService: Send + Sync {
     #[allow(clippy::too_many_arguments)]
     async fn credit(
         &self,
-        user_id: SnowflakeId,
+        auth: &AuthUser,
         currency: &str,
         amount: i64,
         tx_type: WalletTxType,
@@ -32,7 +33,7 @@ pub trait WalletService: Send + Sync {
     #[allow(clippy::too_many_arguments)]
     async fn debit(
         &self,
-        user_id: SnowflakeId,
+        auth: &AuthUser,
         currency: &str,
         amount: i64,
         tx_type: WalletTxType,
@@ -45,6 +46,7 @@ pub trait WalletService: Send + Sync {
     #[allow(clippy::too_many_arguments)]
     async fn transfer(
         &self,
+        auth: &AuthUser,
         from_user_id: SnowflakeId,
         to_user_id: SnowflakeId,
         currency: &str,
@@ -144,8 +146,12 @@ impl WalletServiceImpl {
     }
 }
 
-async fn ensure_currency_active(tx: &mut DbConnection, currency: &str) -> AppResult<()> {
-    currencies::find_by_code_tx(tx, currency)
+async fn ensure_currency_active(
+    tx: &mut DbConnection,
+    currency: &str,
+    tenant_id: Option<&str>,
+) -> AppResult<()> {
+    currencies::find_by_code_tx(tx, currency, tenant_id)
         .await?
         .ok_or_else(|| AppError::BadRequest(format!("currency_not_active: {currency}")))?;
     Ok(())
@@ -259,7 +265,7 @@ async fn reverse_single_tx(
 #[allow(clippy::too_many_arguments)]
 pub async fn credit_wallet(
     pool: &crate::db::Pool,
-    user_id: SnowflakeId,
+    auth: &AuthUser,
     currency: &str,
     amount: i64,
     tx_type: WalletTxType,
@@ -268,6 +274,7 @@ pub async fn credit_wallet(
     reference_id: Option<&str>,
     metadata: Option<&str>,
 ) -> AppResult<WalletTransaction> {
+    let user_id = auth.ensure_snowflake_user_id()?;
     if amount <= 0 {
         return Err(AppError::BadRequest("amount_must_be_positive".into()));
     }
@@ -283,7 +290,7 @@ pub async fn credit_wallet(
             return Ok(existing);
         }
 
-        ensure_currency_active(&mut tx, currency).await?;
+        ensure_currency_active(&mut tx, currency, auth.tenant_id()).await?;
 
         let w = tx_find_or_create(&mut tx, user_id, currency).await?;
         if w.status != WalletStatus::Active {
@@ -319,7 +326,7 @@ pub async fn credit_wallet(
 #[allow(clippy::too_many_arguments)]
 pub async fn debit_wallet(
     pool: &crate::db::Pool,
-    user_id: SnowflakeId,
+    auth: &AuthUser,
     currency: &str,
     amount: i64,
     tx_type: WalletTxType,
@@ -328,6 +335,7 @@ pub async fn debit_wallet(
     reference_id: Option<&str>,
     metadata: Option<&str>,
 ) -> AppResult<WalletTransaction> {
+    let user_id = auth.ensure_snowflake_user_id()?;
     if amount <= 0 {
         return Err(AppError::BadRequest("amount_must_be_positive".into()));
     }
@@ -343,7 +351,7 @@ pub async fn debit_wallet(
             return Ok(existing);
         }
 
-        ensure_currency_active(&mut tx, currency).await?;
+        ensure_currency_active(&mut tx, currency, auth.tenant_id()).await?;
 
         let w = tx_find_or_create(&mut tx, user_id, currency).await?;
         if w.status != WalletStatus::Active {
@@ -379,6 +387,7 @@ pub async fn debit_wallet(
 #[allow(clippy::too_many_arguments)]
 pub async fn transfer(
     pool: &crate::db::Pool,
+    auth: &AuthUser,
     from_user_id: SnowflakeId,
     to_user_id: SnowflakeId,
     currency: &str,
@@ -416,7 +425,7 @@ pub async fn transfer(
             return Err(AppError::Conflict("duplicate_transaction".into()));
         }
 
-        ensure_currency_active(&mut tx, currency).await?;
+        ensure_currency_active(&mut tx, currency, auth.tenant_id()).await?;
 
         let from_wallet = tx_find_or_create(&mut tx, from_user_id, currency).await?;
         let to_wallet = tx_find_or_create(&mut tx, to_user_id, currency).await?;
@@ -645,7 +654,7 @@ pub async fn tx_list_to_response(
 impl WalletService for WalletServiceImpl {
     async fn credit(
         &self,
-        user_id: SnowflakeId,
+        auth: &AuthUser,
         currency: &str,
         amount: i64,
         tx_type: WalletTxType,
@@ -656,7 +665,7 @@ impl WalletService for WalletServiceImpl {
     ) -> AppResult<WalletTransaction> {
         let tx = credit_wallet(
             &self.pool,
-            user_id,
+            auth,
             currency,
             amount,
             tx_type,
@@ -672,7 +681,7 @@ impl WalletService for WalletServiceImpl {
 
     async fn debit(
         &self,
-        user_id: SnowflakeId,
+        auth: &AuthUser,
         currency: &str,
         amount: i64,
         tx_type: WalletTxType,
@@ -683,7 +692,7 @@ impl WalletService for WalletServiceImpl {
     ) -> AppResult<WalletTransaction> {
         let tx = debit_wallet(
             &self.pool,
-            user_id,
+            auth,
             currency,
             amount,
             tx_type,
@@ -699,6 +708,7 @@ impl WalletService for WalletServiceImpl {
 
     async fn transfer(
         &self,
+        auth: &AuthUser,
         from_user_id: SnowflakeId,
         to_user_id: SnowflakeId,
         currency: &str,
@@ -710,6 +720,7 @@ impl WalletService for WalletServiceImpl {
     ) -> AppResult<(WalletTransaction, WalletTransaction)> {
         let (out_tx, in_tx) = transfer(
             &self.pool,
+            auth,
             from_user_id,
             to_user_id,
             currency,
@@ -853,6 +864,8 @@ impl WalletService for WalletServiceImpl {
 mod tests {
     use super::*;
     use crate::errors::app_error::AppError;
+    use crate::middleware::auth::AuthUser;
+    use crate::models::user::UserRole;
 
     struct TestContext {
         pool: crate::db::Pool,
@@ -902,26 +915,10 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
-        crate::models::currencies::create(&pool, "CNY", "Chinese Yuan", 2)
-            .await
-            .unwrap();
-        crate::models::currencies::create(&pool, "USD", "US Dollar", 2)
-            .await
-            .unwrap();
         TestContext {
             pool,
             _guard: TempDbGuard { path },
         }
-    }
-
-    #[allow(dead_code)]
-    async fn seed_currencies(pool: &crate::db::Pool) {
-        crate::models::currencies::create(pool, "CNY", "Chinese Yuan", 2)
-            .await
-            .unwrap();
-        crate::models::currencies::create(pool, "USD", "US Dollar", 2)
-            .await
-            .unwrap();
     }
 
     async fn insert_user(pool: &crate::db::Pool) -> crate::models::user::User {
@@ -930,6 +927,7 @@ mod tests {
             &crate::commands::user::CreateUserCmd {
                 username: crate::utils::id::new_id().to_string(),
                 registered_via: crate::models::user::RegisteredVia::Email,
+                role: None,
             },
             None,
         )
@@ -951,7 +949,7 @@ mod tests {
 
         let tx = credit_wallet(
             &ctx,
-            user.id,
+            &AuthUser::new_test(user.id.0, UserRole::Reader, "default"),
             "CNY",
             500,
             T::Recharge,
@@ -990,7 +988,7 @@ mod tests {
         let tx_no = new_tx_no();
         let tx1 = credit_wallet(
             &ctx,
-            user.id,
+            &AuthUser::new_test(user.id.0, UserRole::Reader, "default"),
             "CNY",
             500,
             T::Recharge,
@@ -1004,7 +1002,7 @@ mod tests {
 
         let tx2 = credit_wallet(
             &ctx,
-            user.id,
+            &AuthUser::new_test(user.id.0, UserRole::Reader, "default"),
             "CNY",
             500,
             T::Recharge,
@@ -1031,7 +1029,7 @@ mod tests {
 
         let err = credit_wallet(
             &ctx,
-            user.id,
+            &AuthUser::new_test(user.id.0, UserRole::Reader, "default"),
             "CNY",
             0,
             T::Recharge,
@@ -1056,7 +1054,7 @@ mod tests {
 
         let err = credit_wallet(
             &ctx,
-            user.id,
+            &AuthUser::new_test(user.id.0, UserRole::Reader, "default"),
             "CNY",
             -100,
             T::Recharge,
@@ -1081,7 +1079,7 @@ mod tests {
 
         credit_wallet(
             &ctx,
-            user.id,
+            &AuthUser::new_test(user.id.0, UserRole::Reader, "default"),
             "CNY",
             300,
             T::Recharge,
@@ -1094,7 +1092,7 @@ mod tests {
         .unwrap();
         credit_wallet(
             &ctx,
-            user.id,
+            &AuthUser::new_test(user.id.0, UserRole::Reader, "default"),
             "CNY",
             700,
             T::Recharge,
@@ -1122,7 +1120,7 @@ mod tests {
 
         credit_wallet(
             &ctx,
-            user.id,
+            &AuthUser::new_test(user.id.0, UserRole::Reader, "default"),
             "CNY",
             1000,
             T::Recharge,
@@ -1136,7 +1134,7 @@ mod tests {
 
         let tx = debit_wallet(
             &ctx,
-            user.id,
+            &AuthUser::new_test(user.id.0, UserRole::Reader, "default"),
             "CNY",
             400,
             T::Payment,
@@ -1166,7 +1164,7 @@ mod tests {
 
         credit_wallet(
             &ctx,
-            user.id,
+            &AuthUser::new_test(user.id.0, UserRole::Reader, "default"),
             "CNY",
             100,
             T::Recharge,
@@ -1180,7 +1178,7 @@ mod tests {
 
         let err = debit_wallet(
             &ctx,
-            user.id,
+            &AuthUser::new_test(user.id.0, UserRole::Reader, "default"),
             "CNY",
             200,
             T::Payment,
@@ -1213,7 +1211,7 @@ mod tests {
 
         credit_wallet(
             &ctx,
-            user.id,
+            &AuthUser::new_test(user.id.0, UserRole::Reader, "default"),
             "CNY",
             500,
             T::Recharge,
@@ -1227,7 +1225,7 @@ mod tests {
 
         let tx = debit_wallet(
             &ctx,
-            user.id,
+            &AuthUser::new_test(user.id.0, UserRole::Reader, "default"),
             "CNY",
             500,
             T::Payment,
@@ -1249,7 +1247,7 @@ mod tests {
 
         credit_wallet(
             &ctx,
-            user.id,
+            &AuthUser::new_test(user.id.0, UserRole::Reader, "default"),
             "CNY",
             1000,
             T::Recharge,
@@ -1263,7 +1261,7 @@ mod tests {
 
         let tx1 = debit_wallet(
             &ctx,
-            user.id,
+            &AuthUser::new_test(user.id.0, UserRole::Reader, "default"),
             "CNY",
             300,
             T::Payment,
@@ -1276,7 +1274,7 @@ mod tests {
         .unwrap();
         let tx2 = debit_wallet(
             &ctx,
-            user.id,
+            &AuthUser::new_test(user.id.0, UserRole::Reader, "default"),
             "CNY",
             300,
             T::Payment,
@@ -1303,7 +1301,7 @@ mod tests {
 
         let err = debit_wallet(
             &ctx,
-            user.id,
+            &AuthUser::new_test(user.id.0, UserRole::Reader, "default"),
             "CNY",
             0,
             T::Payment,
@@ -1328,7 +1326,7 @@ mod tests {
 
         let err = debit_wallet(
             &ctx,
-            user.id,
+            &AuthUser::new_test(user.id.0, UserRole::Reader, "default"),
             "CNY",
             100,
             T::Payment,
@@ -1358,7 +1356,7 @@ mod tests {
 
         credit_wallet(
             &ctx,
-            from_user.id,
+            &AuthUser::new_test(from_user.id.0, UserRole::Reader, "default"),
             "CNY",
             1000,
             T::Recharge,
@@ -1373,6 +1371,7 @@ mod tests {
         let tx_no = new_tx_no();
         let (out_tx, in_tx) = transfer(
             &ctx,
+            &AuthUser::new_test(from_user.id.0, UserRole::Reader, "default"),
             from_user.id,
             to_user.id,
             "CNY",
@@ -1415,7 +1414,7 @@ mod tests {
 
         credit_wallet(
             &ctx,
-            from_user.id,
+            &AuthUser::new_test(from_user.id.0, UserRole::Reader, "default"),
             "CNY",
             100,
             T::Recharge,
@@ -1429,6 +1428,7 @@ mod tests {
 
         let err = transfer(
             &ctx,
+            &AuthUser::new_test(from_user.id.0, UserRole::Reader, "default"),
             from_user.id,
             to_user.id,
             "CNY",
@@ -1456,7 +1456,7 @@ mod tests {
 
         credit_wallet(
             &ctx,
-            user.id,
+            &AuthUser::new_test(user.id.0, UserRole::Reader, "default"),
             "CNY",
             1000,
             T::Recharge,
@@ -1470,6 +1470,7 @@ mod tests {
 
         let err = transfer(
             &ctx,
+            &AuthUser::new_test(user.id.0, UserRole::Reader, "default"),
             user.id,
             user.id,
             "CNY",
@@ -1496,7 +1497,7 @@ mod tests {
 
         credit_wallet(
             &ctx,
-            from_user.id,
+            &AuthUser::new_test(from_user.id.0, UserRole::Reader, "default"),
             "CNY",
             1000,
             T::Recharge,
@@ -1511,6 +1512,7 @@ mod tests {
         let tx_no = new_tx_no();
         let (out1, in1) = transfer(
             &ctx,
+            &AuthUser::new_test(from_user.id.0, UserRole::Reader, "default"),
             from_user.id,
             to_user.id,
             "CNY",
@@ -1524,6 +1526,7 @@ mod tests {
         .unwrap();
         let (out2, in2) = transfer(
             &ctx,
+            &AuthUser::new_test(from_user.id.0, UserRole::Reader, "default"),
             from_user.id,
             to_user.id,
             "CNY",
@@ -1554,6 +1557,7 @@ mod tests {
 
         let err = transfer(
             &ctx,
+            &AuthUser::new_test(from_user.id.0, UserRole::Reader, "default"),
             from_user.id,
             to_user.id,
             "CNY",
@@ -1581,7 +1585,7 @@ mod tests {
 
         let original = credit_wallet(
             &ctx,
-            user.id,
+            &AuthUser::new_test(user.id.0, UserRole::Reader, "default"),
             "CNY",
             500,
             T::Recharge,
@@ -1616,7 +1620,7 @@ mod tests {
 
         credit_wallet(
             &ctx,
-            user.id,
+            &AuthUser::new_test(user.id.0, UserRole::Reader, "default"),
             "CNY",
             1000,
             T::Recharge,
@@ -1630,7 +1634,7 @@ mod tests {
 
         let original = debit_wallet(
             &ctx,
-            user.id,
+            &AuthUser::new_test(user.id.0, UserRole::Reader, "default"),
             "CNY",
             300,
             T::Payment,
@@ -1664,7 +1668,7 @@ mod tests {
 
         let original = credit_wallet(
             &ctx,
-            user.id,
+            &AuthUser::new_test(user.id.0, UserRole::Reader, "default"),
             "CNY",
             500,
             T::Recharge,
@@ -1693,7 +1697,7 @@ mod tests {
 
         let original = credit_wallet(
             &ctx,
-            user.id,
+            &AuthUser::new_test(user.id.0, UserRole::Reader, "default"),
             "CNY",
             500,
             T::Recharge,
@@ -1725,7 +1729,7 @@ mod tests {
 
         let original = credit_wallet(
             &ctx,
-            user.id,
+            &AuthUser::new_test(user.id.0, UserRole::Reader, "default"),
             "CNY",
             500,
             T::Recharge,
@@ -1757,7 +1761,7 @@ mod tests {
 
         credit_wallet(
             &ctx,
-            user.id,
+            &AuthUser::new_test(user.id.0, UserRole::Reader, "default"),
             "CNY",
             1000,
             T::Recharge,
@@ -1770,7 +1774,7 @@ mod tests {
         .unwrap();
         let credit_tx = credit_wallet(
             &ctx,
-            user.id,
+            &AuthUser::new_test(user.id.0, UserRole::Reader, "default"),
             "CNY",
             500,
             T::Recharge,
@@ -1783,7 +1787,7 @@ mod tests {
         .unwrap();
         debit_wallet(
             &ctx,
-            user.id,
+            &AuthUser::new_test(user.id.0, UserRole::Reader, "default"),
             "CNY",
             1400,
             T::Payment,
@@ -1829,7 +1833,7 @@ mod tests {
 
         credit_wallet(
             &ctx,
-            from_user.id,
+            &AuthUser::new_test(from_user.id.0, UserRole::Reader, "default"),
             "CNY",
             1000,
             T::Recharge,
@@ -1844,6 +1848,7 @@ mod tests {
         let tx_no = new_tx_no();
         let (out_tx, _in_tx) = transfer(
             &ctx,
+            &AuthUser::new_test(from_user.id.0, UserRole::Reader, "default"),
             from_user.id,
             to_user.id,
             "CNY",
@@ -1885,7 +1890,7 @@ mod tests {
 
         credit_wallet(
             &ctx,
-            from_user.id,
+            &AuthUser::new_test(from_user.id.0, UserRole::Reader, "default"),
             "CNY",
             1000,
             T::Recharge,
@@ -1900,6 +1905,7 @@ mod tests {
         let tx_no = new_tx_no();
         let (_out_tx, in_tx) = transfer(
             &ctx,
+            &AuthUser::new_test(from_user.id.0, UserRole::Reader, "default"),
             from_user.id,
             to_user.id,
             "CNY",
@@ -1938,7 +1944,7 @@ mod tests {
 
         credit_wallet(
             &ctx,
-            from_user.id,
+            &AuthUser::new_test(from_user.id.0, UserRole::Reader, "default"),
             "CNY",
             1000,
             T::Recharge,
@@ -1953,6 +1959,7 @@ mod tests {
         let tx_no = new_tx_no();
         let (out_tx, _in_tx) = transfer(
             &ctx,
+            &AuthUser::new_test(from_user.id.0, UserRole::Reader, "default"),
             from_user.id,
             to_user.id,
             "CNY",
@@ -1968,7 +1975,7 @@ mod tests {
         // receiver spends the money
         debit_wallet(
             &ctx,
-            to_user.id,
+            &AuthUser::new_test(to_user.id.0, UserRole::Reader, "default"),
             "CNY",
             500,
             T::Payment,
@@ -1998,7 +2005,7 @@ mod tests {
 
         credit_wallet(
             &ctx,
-            from_user.id,
+            &AuthUser::new_test(from_user.id.0, UserRole::Reader, "default"),
             "CNY",
             1000,
             T::Recharge,
@@ -2013,6 +2020,7 @@ mod tests {
         let tx_no = new_tx_no();
         let (out_tx, in_tx) = transfer(
             &ctx,
+            &AuthUser::new_test(from_user.id.0, UserRole::Reader, "default"),
             from_user.id,
             to_user.id,
             "CNY",

@@ -1,7 +1,7 @@
 //! Tag model and database queries
 //!
 //! Defines data structures for tags and CRUD operations on the `tags` table.
-//! Tags are associated with posts via the `posts_tags` join table in a many-to-many relationship.
+//! Tags are associated with posts via the `taggings` polymorphic join table in a many-to-many relationship.
 
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "export-types")]
@@ -32,8 +32,9 @@ pub struct Tag {
 }
 
 pub async fn find_all(pool: &crate::db::Pool, tenant_id: Option<&str>) -> AppResult<Vec<Tag>> {
-    raisfast_derive::crud_list!(pool, "tags", Tag, order_by: "name", tenant: tenant_id)
-        .map_err(Into::into)
+    let result: Vec<Tag> =
+        raisfast_derive::crud_list!(pool, "tags", Tag, order_by: "name", tenant: tenant_id)?;
+    Ok(result)
 }
 
 pub async fn find_paginated(
@@ -58,8 +59,9 @@ pub async fn find_by_id(
     id: SnowflakeId,
     tenant_id: Option<&str>,
 ) -> AppResult<Tag> {
-    raisfast_derive::crud_find_one!(pool, "tags", Tag, where: ("id", id), tenant: tenant_id)
-        .map_err(Into::into)
+    let result: Tag =
+        raisfast_derive::crud_find_one!(pool, "tags", Tag, where: ("id", id), tenant: tenant_id)?;
+    Ok(result)
 }
 
 pub async fn create(
@@ -114,6 +116,10 @@ pub async fn delete(
     id: SnowflakeId,
     tenant_id: Option<&str>,
 ) -> AppResult<()> {
+    let count = crate::models::tagging::count_by_tag_id(pool, id.0).await?;
+    if count > 0 {
+        return Err(AppError::Conflict("tag_in_use".into()));
+    }
     let result = raisfast_derive::crud_delete!(pool, "tags", where: ("id", id), tenant: tenant_id)?;
     AppError::expect_affected(&result, "tag")
 }
@@ -184,5 +190,24 @@ mod tests {
         delete(&pool, tag.id, None).await.unwrap();
         let result = find_by_id(&pool, tag.id, None).await;
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn delete_tag_in_use_rejected() {
+        let pool = setup_pool().await;
+        let tag = create(&pool, "rust", "rust", None, None).await.unwrap();
+
+        let id = crate::utils::id::new_snowflake_id();
+        raisfast_derive::crud_insert!(
+            &pool,
+            "taggings",
+            ["id" => id, "tag_id" => tag.id.0, "taggable_type" => "post", "taggable_id" => 1i64],
+            tenant: None as Option<&str>
+        )
+        .unwrap();
+
+        let err = delete(&pool, tag.id, None).await.unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("tag_in_use"), "got: {msg}");
     }
 }

@@ -29,17 +29,20 @@ pub async fn find_by_user_and_currency(
     user_id: SnowflakeId,
     currency: &str,
 ) -> AppResult<Option<Wallet>> {
-    raisfast_derive::crud_find!(pool, "wallets", Wallet, where: AND(("user_id", user_id), ("currency", currency)))
-        .map_err(Into::into)
+    let result: Option<Wallet> = raisfast_derive::crud_find!(pool, "wallets", Wallet, where: AND(("user_id", user_id), ("currency", currency)))?;
+    Ok(result)
 }
 
 pub async fn find_by_id(pool: &crate::db::Pool, id: SnowflakeId) -> AppResult<Option<Wallet>> {
-    raisfast_derive::crud_find!(pool, "wallets", Wallet, where: ("id", id)).map_err(Into::into)
+    let result: Option<Wallet> =
+        raisfast_derive::crud_find!(pool, "wallets", Wallet, where: ("id", id))?;
+    Ok(result)
 }
 
 pub async fn find_by_user(pool: &crate::db::Pool, user_id: SnowflakeId) -> AppResult<Vec<Wallet>> {
-    raisfast_derive::crud_find_all!(pool, "wallets", Wallet, where: ("user_id", user_id))
-        .map_err(Into::into)
+    let result: Vec<Wallet> =
+        raisfast_derive::crud_find_all!(pool, "wallets", Wallet, where: ("user_id", user_id))?;
+    Ok(result)
 }
 
 pub async fn create(
@@ -58,7 +61,9 @@ pub async fn create(
         "created_at" => now,
         "updated_at" => now
     ])?;
-    raisfast_derive::crud_find_one!(pool, "wallets", Wallet, where: ("id", id)).map_err(Into::into)
+    let result: Wallet =
+        raisfast_derive::crud_find_one!(pool, "wallets", Wallet, where: ("id", id))?;
+    Ok(result)
 }
 
 pub async fn find_or_create(
@@ -159,14 +164,14 @@ pub async fn apply_wallet_delta(
             Driver::ph(3),
             Driver::ph(4)
         );
-        let affected = sqlx::query(&sql)
+        let result: crate::db::pool::DbQueryResult = sqlx::query(&sql)
             .bind(delta)
             .bind(crate::utils::tz::now_str())
             .bind(wallet_id)
             .bind(version)
             .execute(&mut *tx)
-            .await?
-            .rows_affected();
+            .await?;
+        let affected = result.rows_affected();
         if affected == 0 {
             return Err(crate::errors::app_error::AppError::Conflict(
                 "concurrent_wallet_update".into(),
@@ -182,15 +187,15 @@ pub async fn apply_wallet_delta(
             Driver::ph(4),
             Driver::ph(5)
         );
-        let affected = sqlx::query(&sql)
+        let result: crate::db::pool::DbQueryResult = sqlx::query(&sql)
             .bind(abs)
             .bind(crate::utils::tz::now_str())
             .bind(wallet_id)
             .bind(abs)
             .bind(version)
             .execute(&mut *tx)
-            .await?
-            .rows_affected();
+            .await?;
+        let affected = result.rows_affected();
         if affected == 0 {
             return Err(crate::errors::app_error::AppError::BadRequest(
                 "insufficient_balance_or_concurrent_update".into(),
@@ -215,6 +220,7 @@ mod tests {
             &crate::commands::user::CreateUserCmd {
                 username: crate::utils::id::new_id().to_string(),
                 registered_via: crate::models::user::RegisteredVia::Email,
+                role: None,
             },
             None,
         )

@@ -55,16 +55,16 @@ pub async fn find_by_auth_type_and_identifier(
     auth_type: AuthType,
     identifier: &str,
 ) -> AppResult<Option<UserCredential>> {
-    raisfast_derive::crud_find!(pool, "user_credentials", UserCredential, where: AND(("auth_type", auth_type), ("identifier", identifier)))
-        .map_err(Into::into)
+    let result: Option<UserCredential> = raisfast_derive::crud_find!(pool, "user_credentials", UserCredential, where: AND(("auth_type", auth_type), ("identifier", identifier)))?;
+    Ok(result)
 }
 
 pub async fn find_by_user_id(
     pool: &crate::db::Pool,
     user_id: SnowflakeId,
 ) -> AppResult<Vec<UserCredential>> {
-    raisfast_derive::crud_find_all!(pool, "user_credentials", UserCredential, where: ("user_id", user_id))
-        .map_err(Into::into)
+    let result: Vec<UserCredential> = raisfast_derive::crud_find_all!(pool, "user_credentials", UserCredential, where: ("user_id", user_id))?;
+    Ok(result)
 }
 
 pub async fn count_by_user(pool: &crate::db::Pool, user_id: SnowflakeId) -> AppResult<i64> {
@@ -124,7 +124,8 @@ pub async fn update_verified(
 }
 
 pub async fn delete_by_id(pool: &crate::db::Pool, id: SnowflakeId) -> AppResult<bool> {
-    let result = raisfast_derive::crud_delete!(pool, "user_credentials", where: ("id", id))?;
+    let result: crate::db::pool::DbQueryResult =
+        raisfast_derive::crud_delete!(pool, "user_credentials", where: ("id", id))?;
     Ok(result.rows_affected() > 0)
 }
 
@@ -132,8 +133,9 @@ pub async fn find_by_id(
     pool: &crate::db::Pool,
     id: SnowflakeId,
 ) -> AppResult<Option<UserCredential>> {
-    raisfast_derive::crud_find!(pool, "user_credentials", UserCredential, where: ("id", id))
-        .map_err(Into::into)
+    let result: Option<UserCredential> =
+        raisfast_derive::crud_find!(pool, "user_credentials", UserCredential, where: ("id", id))?;
+    Ok(result)
 }
 
 pub async fn tx_create(

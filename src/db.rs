@@ -21,12 +21,12 @@ pub mod prelude {
     pub use super::driver::is_safe_identifier;
     pub use super::driver::sanitize_identifier;
     pub use super::pool::{
-        DbArguments, DbConnection, DbPoolConnection, DbQueryResult, DbRow, Pool, Transaction,
+        Db, DbArguments, DbConnection, DbPoolConnection, DbQueryResult, DbRow, Pool, Transaction,
     };
 }
 
 pub use driver::DbDriver;
 pub use driver::Driver;
 pub use pool::{
-    DbArguments, DbConnection, DbPoolConnection, DbQueryResult, DbRow, Pool, Transaction,
+    Db, DbArguments, DbConnection, DbPoolConnection, DbQueryResult, DbRow, Pool, Transaction,
 };

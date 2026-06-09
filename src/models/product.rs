@@ -68,6 +68,9 @@ pub struct Product {
     pub virtual_sales: i64,
     pub meta_title: Option<String>,
     pub meta_description: Option<String>,
+    pub og_title: Option<String>,
+    pub og_description: Option<String>,
+    pub og_image: Option<String>,
     pub published_at: Option<Timestamp>,
     pub stock: i64,
     pub cost_price: Option<i64>,
@@ -76,6 +79,19 @@ pub struct Product {
     pub version: i64,
     pub created_at: Timestamp,
     pub updated_at: Timestamp,
+}
+
+pub async fn find_by_slug(
+    pool: &crate::db::Pool,
+    slug: &str,
+    tenant_id: Option<&str>,
+) -> AppResult<Option<Product>> {
+    raisfast_derive::crud_find!(
+        pool, "products", Product,
+        where: AND(("slug", slug), ("status", "active")),
+        tenant: tenant_id
+    )
+    .map_err(Into::into)
 }
 
 pub async fn find_by_id(
@@ -111,7 +127,79 @@ pub async fn find_all_admin(
     page: i64,
     page_size: i64,
     status: Option<&str>,
+    keyword: Option<&str>,
+    category_id: Option<&str>,
 ) -> AppResult<(Vec<Product>, i64)> {
+    let has_kw = keyword.is_some_and(|k| !k.is_empty());
+    if has_kw || category_id.is_some() {
+        let offset = (page - 1).saturating_mul(page_size);
+        let kw_pattern = keyword.filter(|k| !k.is_empty()).map(|k| format!("%{k}%"));
+
+        let mut conditions = vec!["1=1".to_string()];
+        let mut ph_idx = 1usize;
+
+        if status.is_some() {
+            let ph = crate::db::Driver::ph(ph_idx);
+            ph_idx += 1;
+            conditions.push(format!("status = {ph}"));
+        }
+
+        if kw_pattern.is_some() {
+            let ph1 = crate::db::Driver::ph(ph_idx);
+            let ph2 = crate::db::Driver::ph(ph_idx + 1);
+            ph_idx += 2;
+            conditions.push(format!("(title LIKE {ph1} OR description LIKE {ph2})"));
+        }
+
+        if category_id.is_some() {
+            let ph = crate::db::Driver::ph(ph_idx);
+            ph_idx += 1;
+            conditions.push(format!("category_id = {ph}"));
+        }
+
+        let tf = crate::db::tenant::tenant_filter_ph(tenant_id, ph_idx);
+        ph_idx += if tenant_id.is_some() { 1 } else { 0 };
+
+        let where_clause = conditions.join(" AND ");
+        let limit_ph = crate::db::Driver::ph(ph_idx);
+        let offset_ph = crate::db::Driver::ph(ph_idx + 1);
+
+        let sql = format!(
+            "SELECT * FROM products WHERE {where_clause}{tf} ORDER BY sort_order, created_at DESC LIMIT {limit_ph} OFFSET {offset_ph}"
+        );
+        let mut q = sqlx::query_as::<_, Product>(&sql);
+        if let Some(s) = status {
+            q = q.bind(s);
+        }
+        if let Some(p) = &kw_pattern {
+            q = q.bind(p).bind(p);
+        }
+        if let Some(c) = category_id {
+            q = q.bind(c);
+        }
+        if let Some(tid) = tenant_id {
+            q = q.bind(tid);
+        }
+        let items = q.bind(page_size).bind(offset).fetch_all(pool).await?;
+
+        let count_sql = format!("SELECT COUNT(*) FROM products WHERE {where_clause}{tf}");
+        let mut cq = sqlx::query_as::<_, (i64,)>(&count_sql);
+        if let Some(s) = status {
+            cq = cq.bind(s);
+        }
+        if let Some(p) = &kw_pattern {
+            cq = cq.bind(p).bind(p);
+        }
+        if let Some(c) = category_id {
+            cq = cq.bind(c);
+        }
+        if let Some(tid) = tenant_id {
+            cq = cq.bind(tid);
+        }
+        let total = cq.fetch_one(pool).await?;
+        return Ok((items, total.0));
+    }
+
     let result = raisfast_derive::crud_query_paged!(
         pool, Product,
         table: "products",
@@ -161,6 +249,9 @@ pub async fn insert(
             "virtual_sales" => cmd.virtual_sales,
             "meta_title" => &cmd.meta_title,
             "meta_description" => &cmd.meta_description,
+            "og_title" => &cmd.og_title,
+            "og_description" => &cmd.og_description,
+            "og_image" => &cmd.og_image,
             "stock" => cmd.stock,
             "cost_price" => cmd.cost_price,
             "sale_price" => cmd.sale_price,
@@ -180,7 +271,7 @@ pub async fn update(
     cmd: &UpdateProductCmd,
     tenant_id: Option<&str>,
 ) -> AppResult<bool> {
-    let affected = raisfast_derive::crud_update!(
+    let result: crate::db::pool::DbQueryResult = raisfast_derive::crud_update!(
         pool, "products",
         bind: [
             "category_id" => cmd.category_id,
@@ -208,6 +299,9 @@ pub async fn update(
             "virtual_sales" => cmd.virtual_sales,
             "meta_title" => &cmd.meta_title,
             "meta_description" => &cmd.meta_description,
+            "og_title" => &cmd.og_title,
+            "og_description" => &cmd.og_description,
+            "og_image" => &cmd.og_image,
             "published_at" => &cmd.published_at,
             "stock" => cmd.stock,
             "cost_price" => cmd.cost_price,
@@ -217,9 +311,8 @@ pub async fn update(
         raw: ["updated_at" => crate::db::Driver::now_fn(), "version" => "version + 1"],
         where: AND(("id", cmd.id), ("version", cmd.version)),
         tenant: tenant_id
-    )?
-    .rows_affected();
-    Ok(affected > 0)
+    )?;
+    Ok(result.rows_affected() > 0)
 }
 
 pub async fn delete_by_id(
@@ -227,7 +320,7 @@ pub async fn delete_by_id(
     id: SnowflakeId,
     tenant_id: Option<&str>,
 ) -> AppResult<bool> {
-    let result =
+    let result: crate::db::pool::DbQueryResult =
         raisfast_derive::crud_delete!(pool, "products", where: ("id", id), tenant: tenant_id)?;
     Ok(result.rows_affected() > 0)
 }
@@ -271,7 +364,7 @@ pub async fn tx_deduct_stock(
     if let Some(tid) = tenant_id {
         q = q.bind(tid);
     }
-    let result = q.execute(&mut *tx).await?;
+    let result: crate::db::pool::DbQueryResult = q.execute(&mut *tx).await?;
     if result.rows_affected() == 0 {
         return Err(AppError::BadRequest("insufficient_stock".into()));
     }
@@ -312,7 +405,7 @@ pub async fn tx_replenish_stock(
     if let Some(tid) = tenant_id {
         q = q.bind(tid);
     }
-    let result = q.execute(&mut *tx).await?;
+    let result: crate::db::pool::DbQueryResult = q.execute(&mut *tx).await?;
     if result.rows_affected() == 0 {
         return Err(AppError::Internal(anyhow::anyhow!(
             "product not found for stock replenishment"
@@ -357,10 +450,14 @@ mod tests {
                 virtual_sales: 0,
                 meta_title: None,
                 meta_description: None,
+                og_title: None,
+                og_description: None,
+                og_image: None,
                 stock: 0,
                 cost_price: None,
                 sale_price: None,
                 has_variants: false,
+                tag_ids: None,
             },
             None,
         )
@@ -445,10 +542,14 @@ mod tests {
                 virtual_sales: 0,
                 meta_title: None,
                 meta_description: None,
+                og_title: None,
+                og_description: None,
+                og_image: None,
                 stock: 0,
                 cost_price: None,
                 sale_price: None,
                 has_variants: false,
+                tag_ids: None,
             },
             None,
         )
@@ -501,6 +602,10 @@ mod tests {
                 cost_price: None,
                 sale_price: None,
                 has_variants: false,
+                tag_ids: None,
+                og_title: None,
+                og_description: None,
+                og_image: None,
                 version,
             },
             None,
@@ -554,6 +659,10 @@ mod tests {
                 cost_price: None,
                 sale_price: None,
                 has_variants: false,
+                tag_ids: None,
+                og_title: None,
+                og_description: None,
+                og_image: None,
                 version: 999,
             },
             None,
@@ -624,7 +733,7 @@ mod tests {
         for i in 0..4 {
             seed_product(&pool, &format!("P{i}"), "draft").await;
         }
-        let (items, total) = super::find_all_admin(&pool, None, 1, 10, None)
+        let (items, total) = super::find_all_admin(&pool, None, 1, 10, None, None, None)
             .await
             .unwrap();
         assert_eq!(total, 4);
@@ -640,7 +749,7 @@ mod tests {
         }
         seed_product(&pool, "Draft1", "draft").await;
 
-        let (items, total) = super::find_all_admin(&pool, None, 1, 10, Some("active"))
+        let (items, total) = super::find_all_admin(&pool, None, 1, 10, Some("active"), None, None)
             .await
             .unwrap();
         assert_eq!(total, 3);
@@ -685,10 +794,14 @@ mod tests {
                 virtual_sales: 0,
                 meta_title: None,
                 meta_description: None,
+                og_title: None,
+                og_description: None,
+                og_image: None,
                 stock,
                 cost_price: None,
                 sale_price: None,
                 has_variants: false,
+                tag_ids: None,
             },
             None,
         )

@@ -149,10 +149,12 @@ struct WebhookData {
     #[allow(dead_code)]
     payload_type: Option<String>,
     payment_id: Option<String>,
+    #[allow(dead_code)]
     status: Option<String>,
     total_amount: Option<i64>,
     #[allow(dead_code)]
     currency: Option<String>,
+    #[allow(dead_code)]
     customer: Option<WebhookCustomer>,
 }
 
@@ -330,6 +332,7 @@ impl PaymentProvider for DodoProvider {
         channel: &PaymentChannel,
         order: &PaymentOrder,
         return_url: Option<&str>,
+        _notify_url: Option<&str>,
     ) -> AppResult<ProviderResponse> {
         let creds = decrypt_credentials(channel, &self.encrypt_key)?;
         let product_id = extract_product_id(channel)?;

@@ -54,6 +54,7 @@ pub trait PostService: Send + Sync {
         page: i64,
         page_size: i64,
         status: Option<PostStatus>,
+        keyword: Option<&str>,
     ) -> AppResult<(Vec<PostResponse>, i64)>;
     async fn admin_update(
         &self,
@@ -206,11 +207,18 @@ impl PostService for PostServiceImpl {
             content: req.content,
             excerpt: Some(excerpt),
             cover_image: req.cover_image,
+            image_ids: req.image_ids,
             status,
             created_by,
             updated_by: auth.user_id(),
             category_id,
             tag_ids,
+            meta_title: req.meta_title,
+            meta_description: req.meta_description,
+            og_title: req.og_title,
+            og_description: req.og_description,
+            og_image: req.og_image,
+            canonical_url: req.canonical_url,
         };
         let p = create_post_with_tags(&self.pool, cmd, auth.tenant_id()).await?;
 
@@ -312,8 +320,9 @@ impl PostService for PostServiceImpl {
         page: i64,
         page_size: i64,
         status: Option<PostStatus>,
+        keyword: Option<&str>,
     ) -> AppResult<(Vec<PostResponse>, i64)> {
-        list_all_posts_inner(&self.pool, page, page_size, status, auth).await
+        list_all_posts_inner(&self.pool, page, page_size, status, keyword, auth).await
     }
 
     async fn admin_update(
@@ -405,12 +414,20 @@ impl PostService for PostServiceImpl {
                                 &post,
                                 UpdatePostRequest {
                                     title: None,
+                                    slug: None,
                                     content: None,
                                     excerpt: None,
                                     cover_image: None,
+                                    image_ids: None,
                                     status: Some(status),
                                     category_id: None,
                                     tag_ids: None,
+                                    meta_title: None,
+                                    meta_description: None,
+                                    og_title: None,
+                                    og_description: None,
+                                    og_image: None,
+                                    canonical_url: None,
                                 },
                             )
                             .await?;
@@ -421,10 +438,17 @@ impl PostService for PostServiceImpl {
                             content: None,
                             excerpt: None,
                             cover_image: None,
+                            image_ids: None,
                             status: req.status,
                             category_id: None,
                             tag_ids: None,
                             updated_by: auth.user_id(),
+                            meta_title: None,
+                            meta_description: None,
+                            og_title: None,
+                            og_description: None,
+                            og_image: None,
+                            canonical_url: None,
                         };
                         if update_post_with_tags(&self.pool, cmd, auth.tenant_id())
                             .await
@@ -464,17 +488,23 @@ impl PostServiceImpl {
         auth: &AuthUser,
     ) -> AppResult<PostResponse> {
         let content = req.content.as_deref().unwrap_or(&existing.content);
-        let new_slug = req
-            .title
-            .as_ref()
-            .map(slugify)
-            .filter(|s| s != &existing.slug);
-        if let Some(slug_str) = new_slug.as_deref() {
-            AspectEngine::set_dispatched_field(
-                &mut d,
-                "slug",
-                slug_aspect::make_unique_slug(slug_str),
-            );
+        if let Some(ref slug_val) = req.slug {
+            if !slug_val.is_empty() && slug_val != &existing.slug {
+                AspectEngine::set_dispatched_field(
+                    &mut d,
+                    "slug",
+                    slug_aspect::make_unique_slug(slug_val),
+                );
+            }
+        } else if let Some(ref title_val) = req.title {
+            let slugified = slugify(title_val);
+            if slugified != existing.slug {
+                AspectEngine::set_dispatched_field(
+                    &mut d,
+                    "slug",
+                    slug_aspect::make_unique_slug(&slugified),
+                );
+            }
         }
 
         let slug = d.str("slug");
@@ -510,10 +540,17 @@ impl PostServiceImpl {
             content: Some(content.to_string()),
             excerpt: Some(excerpt),
             cover_image: req.cover_image,
+            image_ids: req.image_ids,
             status: req.status,
             category_id,
             tag_ids,
             updated_by: auth.user_id(),
+            meta_title: req.meta_title,
+            meta_description: req.meta_description,
+            og_title: req.og_title,
+            og_description: req.og_description,
+            og_image: req.og_image,
+            canonical_url: req.canonical_url,
         };
         update_post_with_tags(&self.pool, cmd, auth.tenant_id()).await?;
 
@@ -536,6 +573,7 @@ async fn joined_row_to_response(
         content: r.content,
         excerpt: r.excerpt,
         cover_image: r.cover_image,
+        image_ids: r.image_ids,
         status,
         created_by: None,
         author_name: r.author_name,
@@ -578,6 +616,7 @@ async fn build_response_from_post(
         content: post.content.clone(),
         excerpt: post.excerpt.clone(),
         cover_image: post.cover_image.clone(),
+        image_ids: post.image_ids.clone(),
         status,
         created_by: None,
         author_name,
@@ -735,6 +774,7 @@ async fn list_posts_inner(
             content: r.content,
             excerpt: r.excerpt,
             cover_image: r.cover_image,
+            image_ids: r.image_ids,
             status,
             created_by: None,
             author_name: r.author_name,
@@ -770,11 +810,18 @@ async fn list_all_posts_inner(
     page: i64,
     page_size: i64,
     status: Option<PostStatus>,
+    keyword: Option<&str>,
     auth: &AuthUser,
 ) -> AppResult<(Vec<PostResponse>, i64)> {
-    let (rows, total) =
-        crate::models::post::find_all_joined(pool, page, page_size, status, auth.tenant_id())
-            .await?;
+    let (rows, total) = crate::models::post::find_all_joined(
+        pool,
+        page,
+        page_size,
+        status,
+        keyword,
+        auth.tenant_id(),
+    )
+    .await?;
 
     let post_ids: Vec<SnowflakeId> = rows.iter().map(|r| r.id).collect();
     let tags_map = crate::models::post::get_tags_for_posts(pool, &post_ids, auth.tenant_id())
@@ -792,6 +839,7 @@ async fn list_all_posts_inner(
             content: r.content,
             excerpt: r.excerpt,
             cover_image: r.cover_image,
+            image_ids: r.image_ids,
             status,
             created_by: None,
             author_name: r.author_name,
@@ -833,7 +881,7 @@ async fn create_post_with_tags(
         let _guard = crate::db::connection::acquire_write().await;
         let mut tx = pool.begin().await?;
         let p = crate::models::post::create_tx(&mut tx, &cmd, tenant_id).await?;
-        crate::models::post::sync_tags_tx(&mut tx, p.id, tag_ids).await?;
+        crate::models::tagging::sync_tags_tx(&mut tx, "post", p.id, tag_ids, tenant_id).await?;
         tx.commit().await?;
         Ok(p)
     } else {
@@ -850,7 +898,7 @@ async fn update_post_with_tags(
         let _guard = crate::db::connection::acquire_write().await;
         let mut tx = pool.begin().await?;
         crate::models::post::update_tx(&mut tx, &cmd, tenant_id).await?;
-        crate::models::post::sync_tags_tx(&mut tx, cmd.id, tag_ids).await?;
+        crate::models::tagging::sync_tags_tx(&mut tx, "post", cmd.id, tag_ids, tenant_id).await?;
         tx.commit().await?;
         crate::models::post::find_by_id(pool, cmd.id, tenant_id)
             .await?

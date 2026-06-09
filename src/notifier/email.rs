@@ -288,7 +288,7 @@ impl EmailSender for AliyunDirectMailSender {
             ("SignatureNonce", uuid::Uuid::new_v4().to_string()),
             (
                 "Timestamp",
-                chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string(),
+                chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string(),
             ),
             ("AccountName", self.from.clone()),
             ("AddressType", "1".to_string()),

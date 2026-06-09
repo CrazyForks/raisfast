@@ -128,10 +128,18 @@ async fn build_test_app(pool: raisfast::db::Pool) -> (axum::Router, AppState) {
         product_service: Arc::new(raisfast::services::product::ProductServiceImpl::new(
             Arc::new(raisfast::aspects::engine::AspectEngine::new()),
             Arc::new(pool.clone()),
+            Arc::new(
+                raisfast::services::options::OptionsService::new(Arc::new(pool.clone()), false)
+                    .await,
+            ),
         )),
         order_service: Arc::new(raisfast::services::order::OrderServiceImpl::new(
             Arc::new(raisfast::aspects::engine::AspectEngine::new()),
             Arc::new(pool.clone()),
+            Arc::new(
+                raisfast::services::options::OptionsService::new(Arc::new(pool.clone()), false)
+                    .await,
+            ),
         )),
         cart_service: Arc::new(raisfast::services::cart::CartServiceImpl::new(Arc::new(
             pool.clone(),
@@ -370,14 +378,17 @@ async fn build_test_app(pool: raisfast::db::Pool) -> (axum::Router, AppState) {
                 .delete(h_block::delete_reusable),
         )
         .route("/products", get(h_product::list_active))
-        .route("/products/{id}", get(h_product::get_product))
+        .route("/products/{slug}", get(h_product::get_product))
         .route(
             "/admin/products",
             get(h_product::admin_list).post(h_product::admin_create),
         )
+        .route("/admin/products/batch", http_post(h_product::admin_batch))
         .route(
             "/admin/products/{id}",
-            put(h_product::admin_update).delete(h_product::admin_delete),
+            get(h_product::admin_get)
+                .put(h_product::admin_update)
+                .delete(h_product::admin_delete),
         )
         .route(
             "/product-categories",

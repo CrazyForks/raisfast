@@ -16,6 +16,11 @@ pub struct ProductCategoryResponse {
     #[cfg_attr(feature = "export-types", ts(type = "number"))]
     pub sort_order: i64,
     pub cover_image: Option<String>,
+    pub meta_title: Option<String>,
+    pub meta_description: Option<String>,
+    pub og_title: Option<String>,
+    pub og_description: Option<String>,
+    pub og_image: Option<String>,
     pub parent_id: Option<String>,
     pub created_at: String,
     pub updated_at: String,
@@ -30,6 +35,11 @@ impl ProductCategoryResponse {
             description: cat.description,
             sort_order: cat.sort_order,
             cover_image: cat.cover_image,
+            meta_title: cat.meta_title,
+            meta_description: cat.meta_description,
+            og_title: cat.og_title,
+            og_description: cat.og_description,
+            og_image: cat.og_image,
             parent_id: cat.parent_id.map(|v| v.to_string()),
             created_at: cat.created_at.to_rfc3339(),
             updated_at: cat.updated_at.to_rfc3339(),
@@ -46,6 +56,12 @@ pub struct CreateProductCategoryRequest {
     #[validate(custom(function = "validate_optional_id"))]
     pub parent_id: Option<String>,
     pub sort_order: Option<i64>,
+    pub cover_image: Option<String>,
+    pub meta_title: Option<String>,
+    pub meta_description: Option<String>,
+    pub og_title: Option<String>,
+    pub og_description: Option<String>,
+    pub og_image: Option<String>,
 }
 
 #[cfg_attr(feature = "export-types", derive(TS))]
@@ -57,6 +73,12 @@ pub struct UpdateProductCategoryRequest {
     #[validate(custom(function = "validate_optional_id"))]
     pub parent_id: Option<String>,
     pub sort_order: Option<i64>,
+    pub cover_image: Option<String>,
+    pub meta_title: Option<String>,
+    pub meta_description: Option<String>,
+    pub og_title: Option<String>,
+    pub og_description: Option<String>,
+    pub og_image: Option<String>,
 }
 
 #[cfg(test)]
@@ -70,6 +92,12 @@ mod tests {
             description: None,
             parent_id: None,
             sort_order: None,
+            cover_image: None,
+            meta_title: None,
+            meta_description: None,
+            og_title: None,
+            og_description: None,
+            og_image: None,
         };
         assert!(req.validate().is_ok());
     }
@@ -81,6 +109,12 @@ mod tests {
             description: None,
             parent_id: None,
             sort_order: None,
+            cover_image: None,
+            meta_title: None,
+            meta_description: None,
+            og_title: None,
+            og_description: None,
+            og_image: None,
         };
         assert!(req.validate().is_err());
     }

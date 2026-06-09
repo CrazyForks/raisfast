@@ -215,6 +215,7 @@ mod tests {
             &crate::commands::user::CreateUserCmd {
                 username: "mediauser".to_string(),
                 registered_via: crate::models::user::RegisteredVia::Email,
+                role: None,
             },
             None,
         )

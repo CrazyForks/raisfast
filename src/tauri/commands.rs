@@ -141,9 +141,16 @@ pub async fn post_create(
         content,
         excerpt: None,
         cover_image: None,
+        image_ids: None,
         status: None,
         category_id: None,
         tag_ids: None,
+        meta_title: None,
+        meta_description: None,
+        og_title: None,
+        og_description: None,
+        og_image: None,
+        canonical_url: None,
     };
     let uid: i64 = user_id.parse().map_err(|e| e.to_string())?;
     let auth = crate::middleware::auth::AuthUser::from_parts(

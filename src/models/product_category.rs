@@ -16,6 +16,11 @@ pub struct ProductCategory {
     pub slug: String,
     pub description: Option<String>,
     pub cover_image: Option<String>,
+    pub meta_title: Option<String>,
+    pub meta_description: Option<String>,
+    pub og_title: Option<String>,
+    pub og_description: Option<String>,
+    pub og_image: Option<String>,
     pub parent_id: Option<SnowflakeId>,
     pub sort_order: i64,
     pub created_by: Option<SnowflakeId>,
@@ -28,14 +33,14 @@ pub async fn find_all(
     pool: &crate::db::Pool,
     tenant_id: Option<&str>,
 ) -> AppResult<Vec<ProductCategory>> {
-    raisfast_derive::crud_list!(
+    let result: Vec<ProductCategory> = raisfast_derive::crud_list!(
         pool,
         "product_categories",
         ProductCategory,
         order_by: "sort_order, name",
         tenant: tenant_id
-    )
-    .map_err(Into::into)
+    )?;
+    Ok(result)
 }
 
 pub async fn find_paginated(
@@ -61,14 +66,14 @@ pub async fn find_by_id(
     id: SnowflakeId,
     tenant_id: Option<&str>,
 ) -> AppResult<ProductCategory> {
-    raisfast_derive::crud_find_one!(
+    let result: ProductCategory = raisfast_derive::crud_find_one!(
         pool,
         "product_categories",
         ProductCategory,
         where: ("id", id),
         tenant: tenant_id
-    )
-    .map_err(Into::into)
+    )?;
+    Ok(result)
 }
 
 pub async fn create(
@@ -90,6 +95,12 @@ pub async fn create(
             "name" => &cmd.name,
             "slug" => &cmd.slug,
             "description" => &cmd.description,
+            "cover_image" => &cmd.cover_image,
+            "meta_title" => &cmd.meta_title,
+            "meta_description" => &cmd.meta_description,
+            "og_title" => &cmd.og_title,
+            "og_description" => &cmd.og_description,
+            "og_image" => &cmd.og_image,
             "parent_id" => cmd.parent_id,
             "sort_order" => cmd.sort_order,
             "created_by" => created_by,
@@ -125,6 +136,36 @@ pub async fn update(
         .or(existing.description);
     let parent = cmd.parent_id.or(existing.parent_id.map(|v| *v));
     let sort = cmd.sort_order.unwrap_or(existing.sort_order);
+    let cover_image = cmd
+        .cover_image
+        .as_deref()
+        .map(std::string::ToString::to_string)
+        .or(existing.cover_image);
+    let meta_title = cmd
+        .meta_title
+        .as_deref()
+        .map(std::string::ToString::to_string)
+        .or(existing.meta_title);
+    let meta_description = cmd
+        .meta_description
+        .as_deref()
+        .map(std::string::ToString::to_string)
+        .or(existing.meta_description);
+    let og_title = cmd
+        .og_title
+        .as_deref()
+        .map(std::string::ToString::to_string)
+        .or(existing.og_title);
+    let og_description = cmd
+        .og_description
+        .as_deref()
+        .map(std::string::ToString::to_string)
+        .or(existing.og_description);
+    let og_image = cmd
+        .og_image
+        .as_deref()
+        .map(std::string::ToString::to_string)
+        .or(existing.og_image);
 
     let now = crate::utils::tz::now_utc();
     raisfast_derive::crud_update!(
@@ -136,6 +177,12 @@ pub async fn update(
             "description" => desc,
             "parent_id" => parent,
             "sort_order" => sort,
+            "cover_image" => cover_image,
+            "meta_title" => meta_title,
+            "meta_description" => meta_description,
+            "og_title" => og_title,
+            "og_description" => og_description,
+            "og_image" => og_image,
             "updated_by" => updated_by,
             "updated_at" => &now
         ],
@@ -170,14 +217,14 @@ pub async fn ensure_safe_to_delete(
         "SELECT COUNT(*) FROM product_categories WHERE parent_id = {}{tf}",
         *id
     );
-    let mut q = sqlx::query_scalar::<_, i64>(&child_sql);
+    let mut q = sqlx::query_scalar::<crate::db::pool::Db, i64>(&child_sql);
     if let Some(tid) = tenant_id {
         q = q.bind(crate::db::tenant::resolve_tenant(Some(tid)));
     }
-    let child_count = q
+    let child_count: i64 = q
         .fetch_one(pool)
         .await
-        .map_err(|e| AppError::Internal(e.into()))?;
+        .map_err(|e: sqlx::Error| AppError::Internal(e.into()))?;
     if child_count > 0 {
         return Err(AppError::Conflict(
             "product_category.has_children".to_string(),
@@ -188,14 +235,14 @@ pub async fn ensure_safe_to_delete(
         "SELECT COUNT(*) FROM products WHERE category_id = {}{tf}",
         *id
     );
-    let mut q2 = sqlx::query_scalar::<_, i64>(&product_sql);
+    let mut q2 = sqlx::query_scalar::<crate::db::pool::Db, i64>(&product_sql);
     if let Some(tid) = tenant_id {
         q2 = q2.bind(crate::db::tenant::resolve_tenant(Some(tid)));
     }
-    let product_count = q2
+    let product_count: i64 = q2
         .fetch_one(pool)
         .await
-        .map_err(|e| AppError::Internal(e.into()))?;
+        .map_err(|e: sqlx::Error| AppError::Internal(e.into()))?;
     if product_count > 0 {
         return Err(AppError::Conflict(
             "product_category.has_products".to_string(),
@@ -221,6 +268,12 @@ mod tests {
             description: None,
             parent_id: None,
             sort_order: 0,
+            cover_image: None,
+            meta_title: None,
+            meta_description: None,
+            og_title: None,
+            og_description: None,
+            og_image: None,
         }
     }
 
@@ -264,6 +317,12 @@ mod tests {
                     description: None,
                     parent_id: None,
                     sort_order: 0,
+                    cover_image: None,
+                    meta_title: None,
+                    meta_description: None,
+                    og_title: None,
+                    og_description: None,
+                    og_image: None,
                 },
                 None,
                 None,
@@ -289,6 +348,12 @@ mod tests {
                 description: Some("updated desc".to_string()),
                 parent_id: None,
                 sort_order: Some(10),
+                cover_image: None,
+                meta_title: None,
+                meta_description: None,
+                og_title: None,
+                og_description: None,
+                og_image: None,
             },
             None,
             None,
@@ -330,6 +395,12 @@ mod tests {
                 description: None,
                 parent_id: Some(*parent.id),
                 sort_order: 0,
+                cover_image: None,
+                meta_title: None,
+                meta_description: None,
+                og_title: None,
+                og_description: None,
+                og_image: None,
             },
             None,
             None,

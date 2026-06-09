@@ -406,7 +406,13 @@ pub async fn admin_list(
 
     let (posts, total) = state
         .post_service
-        .list_all(&auth, pagination.page, pagination.page_size, query.status)
+        .list_all(
+            &auth,
+            pagination.page,
+            pagination.page_size,
+            query.status,
+            query.keyword.as_deref(),
+        )
         .await?;
 
     Ok(pagination.paginate(posts, total))

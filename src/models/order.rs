@@ -100,7 +100,56 @@ pub async fn find_all_admin_paginated(
     page: i64,
     page_size: i64,
     status: Option<&str>,
+    keyword: Option<&str>,
 ) -> AppResult<(Vec<Order>, i64)> {
+    if let Some(kw) = keyword.filter(|k| !k.is_empty()) {
+        let pattern = format!("%{kw}%");
+        let offset = (page - 1).saturating_mul(page_size);
+        let tf = tenant_filter_ph(tenant_id, 4);
+        let status_filter = if status.is_some() {
+            format!(" AND status = {}", crate::db::Driver::ph(3))
+        } else {
+            String::new()
+        };
+        let sql = format!(
+            "SELECT * FROM orders WHERE (order_no LIKE {} OR buyer_name LIKE {}){}{tf} ORDER BY created_at DESC LIMIT {} OFFSET {}",
+            crate::db::Driver::ph(1),
+            crate::db::Driver::ph(2),
+            status_filter,
+            crate::db::Driver::ph(5),
+            crate::db::Driver::ph(6),
+        );
+        let mut q = sqlx::query_as::<_, Order>(&sql)
+            .bind(&pattern)
+            .bind(&pattern);
+        if let Some(s) = status {
+            q = q.bind(s);
+        }
+        if let Some(tid) = tenant_id {
+            q = q.bind(tid);
+        }
+        let orders = q.bind(page_size).bind(offset).fetch_all(pool).await?;
+
+        let count_sql = format!(
+            "SELECT {} FROM orders WHERE (order_no LIKE {} OR buyer_name LIKE {}){}{tf}",
+            Driver::cast_int("COUNT(*)"),
+            crate::db::Driver::ph(1),
+            crate::db::Driver::ph(2),
+            status_filter,
+        );
+        let mut cq = sqlx::query_as::<_, (i64,)>(&count_sql)
+            .bind(&pattern)
+            .bind(&pattern);
+        if let Some(s) = status {
+            cq = cq.bind(s);
+        }
+        if let Some(tid) = tenant_id {
+            cq = cq.bind(tid);
+        }
+        let total = cq.fetch_one(pool).await?;
+        return Ok((orders, total.0));
+    }
+
     let result = raisfast_derive::crud_query_paged!(
         pool, Order,
         table: "orders",
@@ -369,9 +418,16 @@ pub async fn get_stats_query(
     pool: &crate::db::Pool,
     tenant_id: Option<&str>,
 ) -> AppResult<crate::dto::OrderStatsResponse> {
-    raisfast_derive::check_schema!("orders", "status", "tenant_id", "total_amount");
+    raisfast_derive::check_schema!(
+        "orders",
+        "status",
+        "tenant_id",
+        "total_amount",
+        "created_at"
+    );
     let sql = format!(
-        "SELECT status, COUNT(*) as cnt FROM orders WHERE 1=1{} GROUP BY status",
+        "SELECT status, {} as cnt FROM orders WHERE 1=1{} GROUP BY status",
+        Driver::cast_int("COUNT(*)"),
         tenant_filter_ph(tenant_id, 1)
     );
     let rows =
@@ -392,11 +448,34 @@ pub async fn get_stats_query(
     }
 
     let rev_sql = format!(
-        "SELECT COALESCE(SUM(total_amount), 0) FROM orders WHERE status = 'completed'{}",
+        "SELECT {} FROM orders WHERE status = 'completed'{}",
+        Driver::cast_int("COALESCE(SUM(total_amount), 0)"),
         tenant_filter_ph(tenant_id, 1)
     );
     let (total_revenue,) =
         raisfast_derive::crud_query!(pool, (i64,), &rev_sql, [], fetch_one, tenant: tenant_id)?;
+
+    let today_filter = format!(
+        " AND {} = {}",
+        Driver::date_trunc_day("created_at"),
+        Driver::current_date()
+    );
+    let today_sql = format!(
+        "SELECT {} FROM orders WHERE 1=1{}{}",
+        Driver::cast_int("COUNT(*)"),
+        tenant_filter_ph(tenant_id, 1),
+        today_filter
+    );
+    let (today_orders,) =
+        raisfast_derive::crud_query!(pool, (i64,), &today_sql, [], fetch_one, tenant: tenant_id)?;
+
+    let today_rev_sql = format!(
+        "SELECT {} FROM orders WHERE status = 'completed'{}{}",
+        Driver::cast_int("COALESCE(SUM(total_amount), 0)"),
+        tenant_filter_ph(tenant_id, 1),
+        today_filter
+    );
+    let (today_revenue,) = raisfast_derive::crud_query!(pool, (i64,), &today_rev_sql, [], fetch_one, tenant: tenant_id)?;
 
     Ok(crate::dto::OrderStatsResponse {
         total_orders,
@@ -404,6 +483,8 @@ pub async fn get_stats_query(
         paid_orders,
         completed_orders,
         total_revenue,
+        today_orders,
+        today_revenue,
     })
 }
 
@@ -691,7 +772,7 @@ mod tests {
         for _ in 0..4 {
             seed_order(&pool, uid).await;
         }
-        let (items, total) = super::find_all_admin_paginated(&pool, None, 1, 10, None)
+        let (items, total) = super::find_all_admin_paginated(&pool, None, 1, 10, None, None)
             .await
             .unwrap();
         assert_eq!(total, 4);
@@ -710,9 +791,10 @@ mod tests {
         }
         seed_order(&pool, uid).await;
 
-        let (items, total) = super::find_all_admin_paginated(&pool, None, 1, 10, Some("paid"))
-            .await
-            .unwrap();
+        let (items, total) =
+            super::find_all_admin_paginated(&pool, None, 1, 10, Some("paid"), None)
+                .await
+                .unwrap();
         assert_eq!(total, 3);
         assert_eq!(items.len(), 3);
         assert!(items.iter().all(|o| o.status == OrderStatus::Paid));
@@ -721,7 +803,7 @@ mod tests {
     #[tokio::test]
     async fn find_all_admin_paginated_empty() {
         let pool = setup_pool().await;
-        let (items, total) = super::find_all_admin_paginated(&pool, None, 1, 10, None)
+        let (items, total) = super::find_all_admin_paginated(&pool, None, 1, 10, None, None)
             .await
             .unwrap();
         assert_eq!(total, 0);

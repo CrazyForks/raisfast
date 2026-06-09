@@ -521,7 +521,7 @@ pub fn default_cron_schedules() -> Vec<CronScheduleConfig> {
             job_type: "generate_sitemap".into(),
             payload: None,
             cron_expr: "0 0 */6 * * *".into(),
-            enabled: true,
+            enabled: false,
         },
         CronScheduleConfig {
             label: "Cleanup Old Jobs".into(),
@@ -1230,14 +1230,19 @@ impl AppConfig {
         let line = format!("APP_KEY={key}");
         if env_path.exists() {
             if let Ok(content) = std::fs::read_to_string(env_path) {
-                let updated = if content.contains("APP_KEY=") {
+                let has_own_line = content.lines().any(|l| l.starts_with("APP_KEY="));
+                let updated = if has_own_line {
                     content
                         .lines()
                         .map(|l| if l.starts_with("APP_KEY=") { &line } else { l })
                         .collect::<Vec<_>>()
                         .join("\n")
                 } else {
-                    format!("{content}\n{line}")
+                    let cleaned: Vec<&str> = content
+                        .lines()
+                        .filter(|l| !l.trim().starts_with("# APP_KEY="))
+                        .collect();
+                    format!("{line}\n{}", cleaned.join("\n"))
                 };
                 let _ = std::fs::write(env_path, updated);
             }

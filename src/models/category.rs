@@ -85,6 +85,12 @@ pub async fn create(
             "description" => &cmd.description,
             "parent_id" => cmd.parent_id,
             "sort_order" => cmd.sort_order,
+            "cover_image" => &cmd.cover_image,
+            "meta_title" => &cmd.meta_title,
+            "meta_description" => &cmd.meta_description,
+            "og_title" => &cmd.og_title,
+            "og_description" => &cmd.og_description,
+            "og_image" => &cmd.og_image,
             "created_by" => created_by,
             "updated_by" => created_by,
             "created_at" => now,
@@ -116,10 +122,40 @@ pub async fn update(
         .or(existing.description);
     let parent = cmd.parent_id.or(existing.parent_id.map(|v| *v));
     let sort = cmd.sort_order.unwrap_or(existing.sort_order);
+    let cover_image = cmd
+        .cover_image
+        .as_deref()
+        .map(std::string::ToString::to_string)
+        .or(existing.cover_image);
+    let meta_title = cmd
+        .meta_title
+        .as_deref()
+        .map(std::string::ToString::to_string)
+        .or(existing.meta_title);
+    let meta_description = cmd
+        .meta_description
+        .as_deref()
+        .map(std::string::ToString::to_string)
+        .or(existing.meta_description);
+    let og_title = cmd
+        .og_title
+        .as_deref()
+        .map(std::string::ToString::to_string)
+        .or(existing.og_title);
+    let og_description = cmd
+        .og_description
+        .as_deref()
+        .map(std::string::ToString::to_string)
+        .or(existing.og_description);
+    let og_image = cmd
+        .og_image
+        .as_deref()
+        .map(std::string::ToString::to_string)
+        .or(existing.og_image);
 
     let now = crate::utils::tz::now_utc();
     raisfast_derive::crud_update!(pool, "categories",
-        bind: ["name" => name, "slug" => slug, "description" => desc, "parent_id" => parent, "sort_order" => sort, "updated_by" => updated_by, "updated_at" => &now],
+        bind: ["name" => name, "slug" => slug, "description" => desc, "parent_id" => parent, "sort_order" => sort, "cover_image" => cover_image, "meta_title" => meta_title, "meta_description" => meta_description, "og_title" => og_title, "og_description" => og_description, "og_image" => og_image, "updated_by" => updated_by, "updated_at" => &now],
         where: ("id", cat_id),
         tenant: tenant_id
     )?;
@@ -192,6 +228,12 @@ mod tests {
             description: None,
             parent_id: None,
             sort_order: 0,
+            cover_image: None,
+            meta_title: None,
+            meta_description: None,
+            og_title: None,
+            og_description: None,
+            og_image: None,
         }
     }
 
@@ -238,6 +280,12 @@ mod tests {
                 description: None,
                 parent_id: None,
                 sort_order: None,
+                cover_image: None,
+                meta_title: None,
+                meta_description: None,
+                og_title: None,
+                og_description: None,
+                og_image: None,
             },
             None,
             None,

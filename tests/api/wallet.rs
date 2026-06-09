@@ -8,10 +8,10 @@ fn unique_tag() -> u64 {
 
 async fn setup_admin() -> (axum::Router, AppState, String) {
     let (app, state) = test_app().await;
-    raisfast::models::currencies::create(&state.pool, "CNY", "Chinese Yuan", 2)
+    raisfast::models::currencies::create(&state.pool, "default", "CNY", "Chinese Yuan", 2)
         .await
         .unwrap();
-    raisfast::models::currencies::create(&state.pool, "USD", "US Dollar", 2)
+    raisfast::models::currencies::create(&state.pool, "default", "USD", "US Dollar", 2)
         .await
         .unwrap();
     let (int_id, id) = create_admin(&state.pool).await;

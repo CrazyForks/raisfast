@@ -318,6 +318,7 @@ async fn auto_register_user(
         &CreateUserCmd {
             username,
             registered_via: crate::models::user::RegisteredVia::Oauth,
+            role: None,
         },
         None,
     )

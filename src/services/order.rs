@@ -63,6 +63,7 @@ pub trait OrderService: Send + Sync {
         page: i64,
         page_size: i64,
         status: Option<&str>,
+        keyword: Option<&str>,
     ) -> AppResult<(Vec<(Order, Vec<OrderItem>)>, i64)>;
     async fn update_admin_remark(
         &self,
@@ -76,16 +77,22 @@ pub trait OrderService: Send + Sync {
 pub struct OrderServiceImpl {
     aspect_engine: Arc<AspectEngine>,
     pool: Arc<crate::db::Pool>,
+    options: Arc<crate::services::options::OptionsService>,
     coupon_service: Option<Arc<dyn crate::services::coupon::CouponService>>,
     shipping_template_service:
         Option<Arc<dyn crate::services::shipping_template::ShippingTemplateService>>,
 }
 
 impl OrderServiceImpl {
-    pub fn new(aspect_engine: Arc<AspectEngine>, pool: Arc<crate::db::Pool>) -> Self {
+    pub fn new(
+        aspect_engine: Arc<AspectEngine>,
+        pool: Arc<crate::db::Pool>,
+        options: Arc<crate::services::options::OptionsService>,
+    ) -> Self {
         Self {
             aspect_engine,
             pool,
+            options,
             coupon_service: None,
             shipping_template_service: None,
         }
@@ -203,7 +210,14 @@ impl OrderService for OrderServiceImpl {
 
         let order_no = format!("ORD-{}", uuid::Uuid::now_v7().to_string().replace('-', ""));
 
-        let currency = req.currency.as_deref().unwrap_or("CNY");
+        let default_currency = self
+            .options
+            .get(auth.tenant_id(), "default_currency")
+            .await
+            .and_then(|v| v.as_str().map(String::from))
+            .unwrap_or_else(|| "USD".to_string());
+        let currency = req.currency.as_deref().unwrap_or(&default_currency);
+        crate::models::currencies::ensure_active(&self.pool, currency, auth.tenant_id()).await?;
 
         let (discount_amount, coupon_id) = if let Some(ref coupon_svc) = self.coupon_service {
             let c_id = req
@@ -741,6 +755,7 @@ impl OrderService for OrderServiceImpl {
         page: i64,
         page_size: i64,
         status: Option<&str>,
+        keyword: Option<&str>,
     ) -> AppResult<(Vec<(Order, Vec<OrderItem>)>, i64)> {
         let (orders, total) = crate::models::order::find_all_admin_paginated(
             &self.pool,
@@ -748,6 +763,7 @@ impl OrderService for OrderServiceImpl {
             page,
             page_size,
             status,
+            keyword,
         )
         .await?;
         let mut result = Vec::with_capacity(orders.len());
@@ -792,10 +808,14 @@ mod tests {
         crate::test_pool!()
     }
 
-    fn make_service(pool: crate::db::Pool) -> Arc<dyn OrderService> {
+    async fn make_service(pool: crate::db::Pool) -> Arc<dyn OrderService> {
         Arc::new(OrderServiceImpl::new(
             Arc::new(AspectEngine::new()),
             Arc::new(pool),
+            Arc::new(
+                crate::services::options::OptionsService::new(Arc::new(setup_pool().await), false)
+                    .await,
+            ),
         ))
     }
 
@@ -803,7 +823,8 @@ mod tests {
         AuthUser::from_parts(
             Some(1),
             crate::models::user::UserRole::Admin,
-            tid.map(|s| s.to_string()),
+            tid.map(|s| s.to_string())
+                .or_else(|| Some("default".to_string())),
         )
     }
 
@@ -812,14 +833,14 @@ mod tests {
         AuthUser::from_parts(
             Some(user_int_id),
             crate::models::user::UserRole::Reader,
-            None,
+            Some("default".to_string()),
         )
     }
 
     async fn seed_user(pool: &crate::db::Pool) -> i64 {
         let id = crate::utils::id::new_id();
         let username = format!("testuser_{id}");
-        sqlx::query("INSERT INTO users (id, username, role, status, registered_via) VALUES (?, ?, 'reader', 'active', 'email')")
+        let _: crate::db::pool::DbQueryResult = sqlx::query("INSERT INTO users (id, username, role, status, registered_via) VALUES (?, ?, 'reader', 'active', 'email')")
             .bind(id)
             .bind(&username)
             .execute(pool)
@@ -863,16 +884,21 @@ mod tests {
                 cost_price: None,
                 sale_price: None,
                 has_variants: false,
+                tag_ids: None,
+                og_title: None,
+                og_description: None,
+                og_image: None,
             },
             None,
         )
         .await
         .unwrap();
-        sqlx::query("UPDATE products SET status = 'active' WHERE id = ?")
-            .bind(p.id)
-            .execute(pool)
-            .await
-            .unwrap();
+        let _: crate::db::pool::DbQueryResult =
+            sqlx::query("UPDATE products SET status = 'active' WHERE id = ?")
+                .bind(p.id)
+                .execute(pool)
+                .await
+                .unwrap();
         crate::models::product::find_by_id(pool, p.id, None)
             .await
             .unwrap()
@@ -920,7 +946,7 @@ mod tests {
     #[tokio::test]
     async fn create_order_basic() {
         let pool = setup_pool().await;
-        let svc = make_service(pool.clone());
+        let svc = make_service(pool.clone()).await;
         let a = auth(None);
         let uid = seed_user(&pool).await;
         let prod = seed_active_product(&pool, "Widget", 1000).await;
@@ -950,7 +976,7 @@ mod tests {
     #[tokio::test]
     async fn create_order_multiple_items() {
         let pool = setup_pool().await;
-        let svc = make_service(pool.clone());
+        let svc = make_service(pool.clone()).await;
         let a = auth(None);
         let uid = seed_user(&pool).await;
         let p1 = seed_active_product(&pool, "Item1", 100).await;
@@ -998,7 +1024,7 @@ mod tests {
     #[tokio::test]
     async fn create_order_empty_items_error() {
         let pool = setup_pool().await;
-        let svc = make_service(pool.clone());
+        let svc = make_service(pool.clone()).await;
         let a = auth(None);
         let uid = seed_user(&pool).await;
 
@@ -1028,7 +1054,7 @@ mod tests {
     #[tokio::test]
     async fn create_order_product_not_found() {
         let pool = setup_pool().await;
-        let svc = make_service(pool.clone());
+        let svc = make_service(pool.clone()).await;
         let a = auth(None);
         let uid = seed_user(&pool).await;
 
@@ -1062,7 +1088,7 @@ mod tests {
     #[tokio::test]
     async fn create_order_product_not_active() {
         let pool = setup_pool().await;
-        let svc = make_service(pool.clone());
+        let svc = make_service(pool.clone()).await;
         let a = auth(None);
         let uid = seed_user(&pool).await;
 
@@ -1096,6 +1122,10 @@ mod tests {
                 cost_price: None,
                 sale_price: None,
                 has_variants: false,
+                tag_ids: None,
+                og_title: None,
+                og_description: None,
+                og_image: None,
             },
             None,
         )
@@ -1116,7 +1146,7 @@ mod tests {
     #[tokio::test]
     async fn cancel_order_success() {
         let pool = setup_pool().await;
-        let svc = make_service(pool.clone());
+        let svc = make_service(pool.clone()).await;
         let a = auth(None);
         let (uid, order) = seed_order(svc.as_ref(), &pool, &a).await;
 
@@ -1132,7 +1162,7 @@ mod tests {
     #[tokio::test]
     async fn cancel_order_wrong_user() {
         let pool = setup_pool().await;
-        let svc = make_service(pool.clone());
+        let svc = make_service(pool.clone()).await;
         let a = auth(None);
         let (_, order) = seed_order(svc.as_ref(), &pool, &a).await;
 
@@ -1146,7 +1176,7 @@ mod tests {
     #[tokio::test]
     async fn cancel_order_wrong_status() {
         let pool = setup_pool().await;
-        let svc = make_service(pool.clone());
+        let svc = make_service(pool.clone()).await;
         let a = auth(None);
         let (uid, order) = seed_order(svc.as_ref(), &pool, &a).await;
 
@@ -1164,7 +1194,7 @@ mod tests {
     #[tokio::test]
     async fn mark_paid_success() {
         let pool = setup_pool().await;
-        let svc = make_service(pool.clone());
+        let svc = make_service(pool.clone()).await;
         let a = auth(None);
         let (_, order) = seed_order(svc.as_ref(), &pool, &a).await;
 
@@ -1176,7 +1206,7 @@ mod tests {
     #[tokio::test]
     async fn mark_paid_wrong_status() {
         let pool = setup_pool().await;
-        let svc = make_service(pool.clone());
+        let svc = make_service(pool.clone()).await;
         let a = auth(None);
         let (_, order) = seed_order(svc.as_ref(), &pool, &a).await;
 
@@ -1197,7 +1227,7 @@ mod tests {
     #[tokio::test]
     async fn ship_order_success() {
         let pool = setup_pool().await;
-        let svc = make_service(pool.clone());
+        let svc = make_service(pool.clone()).await;
         let a = auth(None);
         let (_, order) = seed_order(svc.as_ref(), &pool, &a).await;
 
@@ -1227,7 +1257,7 @@ mod tests {
     #[tokio::test]
     async fn ship_order_wrong_status() {
         let pool = setup_pool().await;
-        let svc = make_service(pool.clone());
+        let svc = make_service(pool.clone()).await;
         let a = auth(None);
         let (_, order) = seed_order(svc.as_ref(), &pool, &a).await;
 
@@ -1248,7 +1278,7 @@ mod tests {
     #[tokio::test]
     async fn confirm_receipt_success() {
         let pool = setup_pool().await;
-        let svc = make_service(pool.clone());
+        let svc = make_service(pool.clone()).await;
         let a = auth(None);
         let (uid, order) = seed_order(svc.as_ref(), &pool, &a).await;
 
@@ -1273,7 +1303,7 @@ mod tests {
     #[tokio::test]
     async fn confirm_receipt_wrong_user() {
         let pool = setup_pool().await;
-        let svc = make_service(pool.clone());
+        let svc = make_service(pool.clone()).await;
         let a = auth(None);
         let (_, order) = seed_order(svc.as_ref(), &pool, &a).await;
 
@@ -1294,7 +1324,7 @@ mod tests {
     #[tokio::test]
     async fn confirm_receipt_wrong_status() {
         let pool = setup_pool().await;
-        let svc = make_service(pool.clone());
+        let svc = make_service(pool.clone()).await;
         let a = auth(None);
         let (uid, order) = seed_order(svc.as_ref(), &pool, &a).await;
 
@@ -1308,7 +1338,7 @@ mod tests {
     #[tokio::test]
     async fn refund_order_from_paid() {
         let pool = setup_pool().await;
-        let svc = make_service(pool.clone());
+        let svc = make_service(pool.clone()).await;
         let a = auth(None);
         let (_, order) = seed_order(svc.as_ref(), &pool, &a).await;
 
@@ -1328,7 +1358,7 @@ mod tests {
     #[tokio::test]
     async fn refund_order_from_shipped() {
         let pool = setup_pool().await;
-        let svc = make_service(pool.clone());
+        let svc = make_service(pool.clone()).await;
         let a = auth(None);
         let (_, order) = seed_order(svc.as_ref(), &pool, &a).await;
 
@@ -1350,7 +1380,7 @@ mod tests {
     #[tokio::test]
     async fn refund_order_wrong_status() {
         let pool = setup_pool().await;
-        let svc = make_service(pool.clone());
+        let svc = make_service(pool.clone()).await;
         let a = auth(None);
         let (_, order) = seed_order(svc.as_ref(), &pool, &a).await;
 
@@ -1363,7 +1393,7 @@ mod tests {
     #[tokio::test]
     async fn get_order_with_items() {
         let pool = setup_pool().await;
-        let svc = make_service(pool.clone());
+        let svc = make_service(pool.clone()).await;
         let a = auth(None);
         let (_, order) = seed_order(svc.as_ref(), &pool, &a).await;
 
@@ -1376,7 +1406,7 @@ mod tests {
     #[tokio::test]
     async fn get_order_not_found() {
         let pool = setup_pool().await;
-        let svc = make_service(pool);
+        let svc = make_service(pool).await;
         let a = auth(None);
         assert!(svc.get(&a, SnowflakeId(0)).await.is_err());
     }
@@ -1384,7 +1414,7 @@ mod tests {
     #[tokio::test]
     async fn list_user_orders() {
         let pool = setup_pool().await;
-        let svc = make_service(pool.clone());
+        let svc = make_service(pool.clone()).await;
         let a = auth(None);
         let uid = seed_user(&pool).await;
         let prod = seed_active_product(&pool, "Widget", 1000).await;
@@ -1407,7 +1437,7 @@ mod tests {
     #[tokio::test]
     async fn list_admin_orders() {
         let pool = setup_pool().await;
-        let svc = make_service(pool.clone());
+        let svc = make_service(pool.clone()).await;
         let a = auth(None);
         let uid = seed_user(&pool).await;
         let prod = seed_active_product(&pool, "Widget", 1000).await;
@@ -1420,7 +1450,7 @@ mod tests {
         .await
         .unwrap();
 
-        let (orders_with_items, total) = svc.list_admin(&a, 1, 10, None).await.unwrap();
+        let (orders_with_items, total) = svc.list_admin(&a, 1, 10, None, None).await.unwrap();
         assert_eq!(total, 1);
         assert_eq!(orders_with_items.len(), 1);
     }
@@ -1428,7 +1458,7 @@ mod tests {
     #[tokio::test]
     async fn update_admin_remark_success() {
         let pool = setup_pool().await;
-        let svc = make_service(pool.clone());
+        let svc = make_service(pool.clone()).await;
         let a = auth(None);
         let (_, order) = seed_order(svc.as_ref(), &pool, &a).await;
 
@@ -1445,7 +1475,7 @@ mod tests {
     #[tokio::test]
     async fn get_stats() {
         let pool = setup_pool().await;
-        let svc = make_service(pool.clone());
+        let svc = make_service(pool.clone()).await;
         let a = auth(None);
         let uid = seed_user(&pool).await;
         let prod = seed_active_product(&pool, "Widget", 1000).await;
@@ -1488,7 +1518,7 @@ mod tests {
     #[tokio::test]
     async fn full_lifecycle_pending_to_completed() {
         let pool = setup_pool().await;
-        let svc = make_service(pool.clone());
+        let svc = make_service(pool.clone()).await;
         let a = auth(None);
         let (uid, order) = seed_order(svc.as_ref(), &pool, &a).await;
 
@@ -1534,7 +1564,7 @@ mod tests {
     #[tokio::test]
     async fn create_order_deducts_stock() {
         let pool = setup_pool().await;
-        let svc = make_service(pool.clone());
+        let svc = make_service(pool.clone()).await;
         let a = auth(None);
         let uid = seed_user(&pool).await;
         let prod = seed_active_product(&pool, "Widget", 1000).await;
@@ -1555,7 +1585,7 @@ mod tests {
     #[tokio::test]
     async fn cancel_order_replenishes_stock() {
         let pool = setup_pool().await;
-        let svc = make_service(pool.clone());
+        let svc = make_service(pool.clone()).await;
         let a = auth(None);
         let uid = seed_user(&pool).await;
         let prod = seed_active_product(&pool, "Widget", 1000).await;
@@ -1586,17 +1616,18 @@ mod tests {
     #[tokio::test]
     async fn create_order_insufficient_stock() {
         let pool = setup_pool().await;
-        let svc = make_service(pool.clone());
+        let svc = make_service(pool.clone()).await;
         let a = auth(None);
         let uid = seed_user(&pool).await;
         let prod = seed_active_product(&pool, "Widget", 1000).await;
 
-        sqlx::query("UPDATE products SET stock = ? WHERE id = ?")
-            .bind(2i64)
-            .bind(prod.id)
-            .execute(&pool)
-            .await
-            .unwrap();
+        let _: crate::db::pool::DbQueryResult =
+            sqlx::query("UPDATE products SET stock = ? WHERE id = ?")
+                .bind(2i64)
+                .bind(prod.id)
+                .execute(&pool)
+                .await
+                .unwrap();
 
         let err = svc
             .create(
@@ -1640,7 +1671,7 @@ mod tests {
     #[tokio::test]
     async fn create_order_with_shipping_address_id() {
         let pool = setup_pool().await;
-        let svc = make_service(pool.clone());
+        let svc = make_service(pool.clone()).await;
         let a = auth(None);
         let uid = seed_user(&pool).await;
         let prod = seed_active_product(&pool, "Widget", 1000).await;
@@ -1684,7 +1715,7 @@ mod tests {
     #[tokio::test]
     async fn create_order_with_wrong_user_address_forbidden() {
         let pool = setup_pool().await;
-        let svc = make_service(pool.clone());
+        let svc = make_service(pool.clone()).await;
         let a = auth(None);
         let uid1 = seed_user(&pool).await;
         let uid2 = seed_user(&pool).await;
@@ -1722,7 +1753,7 @@ mod tests {
     #[tokio::test]
     async fn create_order_with_nonexistent_address_not_found() {
         let pool = setup_pool().await;
-        let svc = make_service(pool.clone());
+        let svc = make_service(pool.clone()).await;
         let a = auth(None);
         let uid = seed_user(&pool).await;
         let prod = seed_active_product(&pool, "Widget", 1000).await;
@@ -1758,7 +1789,7 @@ mod tests {
     #[tokio::test]
     async fn create_order_address_text_used_when_no_id() {
         let pool = setup_pool().await;
-        let svc = make_service(pool.clone());
+        let svc = make_service(pool.clone()).await;
         let a = auth(None);
         let uid = seed_user(&pool).await;
         let prod = seed_active_product(&pool, "Widget", 1000).await;

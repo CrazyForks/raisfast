@@ -23,6 +23,7 @@ macro_rules! define_db_types {
         QueryResult = $result:ty,
         PoolConnection = $pc:ty,
     }) => {
+        pub type Db = $db_type;
         pub type Pool = $pool;
         pub type Transaction<'a> = $tx;
         pub type DbRow = $row;
@@ -70,7 +71,7 @@ define_db_types!(sqlx::MySql {
     Transaction = sqlx::Transaction<'a, sqlx::MySql>,
     Row = sqlx::mysql::MySqlRow,
     Connection = sqlx::mysql::MySqlConnection,
-    Arguments = sqlx::mysql::MySqlArguments<'q>,
+        Arguments = sqlx::mysql::MySqlArguments,
     QueryResult = sqlx::mysql::MySqlQueryResult,
     PoolConnection = sqlx::pool::PoolConnection<sqlx::MySql>,
 });

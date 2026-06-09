@@ -53,59 +53,142 @@ impl JobQueue for DefaultJobQueue {
         let now = crate::utils::tz::now_utc();
         let limit_i64 = limit as i64;
 
-        let returning = crate::db::Driver::returning_col(&format!(
-            "{COL_ID}, job_type, payload, attempts, max_attempts, created_at"
-        ));
-        let sql = format!(
-            "UPDATE jobs SET status = {}, attempts = attempts + 1, updated_at = {}
-             WHERE {COL_ID} IN (
-               SELECT {COL_ID} FROM jobs
-               WHERE status = {} AND (run_after IS NULL OR run_after <= {})
-               ORDER BY created_at ASC LIMIT {}
-             )
-             {returning}",
-            Driver::ph(1),
-            Driver::ph(2),
-            Driver::ph(3),
-            Driver::ph(4),
-            Driver::ph(5)
-        );
+        #[cfg(not(feature = "db-mysql"))]
+        {
+            let returning = crate::db::Driver::returning_col(&format!(
+                "{COL_ID}, job_type, payload, attempts, max_attempts, created_at"
+            ));
+            let sql = format!(
+                "UPDATE jobs SET status = {}, attempts = attempts + 1, updated_at = {}
+                 WHERE {COL_ID} IN (
+                   SELECT {COL_ID} FROM jobs
+                   WHERE status = {} AND (run_after IS NULL OR run_after <= {})
+                   ORDER BY created_at ASC LIMIT {}
+                 )
+                 {returning}",
+                Driver::ph(1),
+                Driver::ph(2),
+                Driver::ph(3),
+                Driver::ph(4),
+                Driver::ph(5)
+            );
 
-        let rows = sqlx::query(&sql)
-            .bind(JobStatus::Running)
-            .bind(now)
-            .bind(JobStatus::Pending)
-            .bind(now)
-            .bind(limit_i64)
-            .fetch_all(&self.pool)
-            .await?;
+            let rows: Vec<crate::db::pool::DbRow> = sqlx::query::<crate::db::pool::Db>(&sql)
+                .bind(JobStatus::Running)
+                .bind(now)
+                .bind(JobStatus::Pending)
+                .bind(now)
+                .bind(limit_i64)
+                .fetch_all(&self.pool)
+                .await?;
 
-        let mut jobs = Vec::with_capacity(rows.len());
-        for row in rows {
-            let id: i64 = row.get::<Option<i64>, _>("id").unwrap_or_default();
-            let job_type: String = row.get("job_type");
-            let payload: String = row.get("payload");
-            let attempts: i32 = row.get("attempts");
-            let max_attempts: i32 = row.get("max_attempts");
-            let created_at: Timestamp = row.get("created_at");
-            match parse_job(&job_type, &payload) {
-                Ok(job) => jobs.push(QueuedJob {
-                    id: id.to_string(),
-                    job,
-                    attempts: attempts as u32,
-                    max_attempts: max_attempts as u32,
-                    created_at,
-                }),
-                Err(e) => {
-                    tracing::error!("failed to parse job {id}: {e}");
-                    let _ = self
-                        .dead(&id.to_string(), &format!("parse error: {e}"))
-                        .await;
+            let mut jobs = Vec::with_capacity(rows.len());
+            for row in rows {
+                let id: i64 = row.get::<Option<i64>, _>("id").unwrap_or_default();
+                let job_type: String = row.get::<String, _>("job_type");
+                let payload: String = row.get::<String, _>("payload");
+                let attempts: i32 = row.get::<i32, _>("attempts");
+                let max_attempts: i32 = row.get::<i32, _>("max_attempts");
+                let created_at: Timestamp = row.get::<Timestamp, _>("created_at");
+                match parse_job(&job_type, &payload) {
+                    Ok(job) => jobs.push(QueuedJob {
+                        id: id.to_string(),
+                        job,
+                        attempts: attempts as u32,
+                        max_attempts: max_attempts as u32,
+                        created_at,
+                    }),
+                    Err(e) => {
+                        tracing::error!("failed to parse job {id}: {e}");
+                        let _ = self
+                            .dead(&id.to_string(), &format!("parse error: {e}"))
+                            .await;
+                    }
                 }
             }
+
+            Ok(jobs)
         }
 
-        Ok(jobs)
+        #[cfg(feature = "db-mysql")]
+        {
+            let select_sql = format!(
+                "SELECT {COL_ID} FROM jobs \
+                 WHERE status = {} AND (run_after IS NULL OR run_after <= {}) \
+                 ORDER BY created_at ASC LIMIT {}",
+                Driver::ph(1),
+                Driver::ph(2),
+                Driver::ph(3)
+            );
+            let ids: Vec<i64> = sqlx::query_scalar::<crate::db::pool::Db, i64>(&select_sql)
+                .bind(JobStatus::Pending)
+                .bind(now)
+                .bind(limit_i64)
+                .fetch_all(&self.pool)
+                .await?;
+
+            if ids.is_empty() {
+                return Ok(Vec::new());
+            }
+
+            let mut jobs = Vec::with_capacity(ids.len());
+            for job_id in ids {
+                let update_sql = format!(
+                    "UPDATE jobs SET status = {}, attempts = attempts + 1, updated_at = {} \
+                     WHERE {COL_ID} = {} AND status = {}",
+                    Driver::ph(1),
+                    Driver::ph(2),
+                    Driver::ph(3),
+                    Driver::ph(4)
+                );
+                let row = sqlx::query::<crate::db::pool::Db>(&update_sql)
+                    .bind(JobStatus::Running)
+                    .bind(now)
+                    .bind(job_id)
+                    .bind(JobStatus::Pending)
+                    .execute(&self.pool)
+                    .await;
+
+                if let Err(e) = row {
+                    tracing::debug!("dequeue race lost for job {job_id}: {e}");
+                    continue;
+                }
+
+                let fetch_sql = format!(
+                    "SELECT job_type, payload, attempts, max_attempts, created_at FROM jobs WHERE {COL_ID} = {}",
+                    Driver::ph(1)
+                );
+                let fetched: crate::db::pool::DbRow =
+                    sqlx::query::<crate::db::pool::Db>(&fetch_sql)
+                        .bind(job_id)
+                        .fetch_one(&self.pool)
+                        .await?;
+
+                let job_type: String = fetched.get::<String, _>("job_type");
+                let payload: String = fetched.get::<String, _>("payload");
+                let attempts: i32 = fetched.get::<i32, _>("attempts");
+                let max_attempts: i32 = fetched.get::<i32, _>("max_attempts");
+                let created_at: Timestamp = fetched.get::<Timestamp, _>("created_at");
+
+                match parse_job(&job_type, &payload) {
+                    Ok(job) => jobs.push(QueuedJob {
+                        id: job_id.to_string(),
+                        job,
+                        attempts: attempts as u32,
+                        max_attempts: max_attempts as u32,
+                        created_at,
+                    }),
+                    Err(e) => {
+                        tracing::error!("failed to parse job {job_id}: {e}");
+                        let _ = self
+                            .dead(&job_id.to_string(), &format!("parse error: {e}"))
+                            .await;
+                    }
+                }
+            }
+
+            Ok(jobs)
+        }
     }
 
     async fn complete(&self, id: &str) -> AppResult<()> {
@@ -132,14 +215,17 @@ impl JobQueue for DefaultJobQueue {
                 "SELECT attempts, max_attempts FROM jobs WHERE {COL_ID} = {}",
                 Driver::ph(1)
             );
-            let row = sqlx::query(&sql).bind(id).fetch_optional(&mut *tx).await?;
+            let row: Option<crate::db::pool::DbRow> = sqlx::query::<crate::db::pool::Db>(&sql)
+                .bind(id)
+                .fetch_optional(&mut *tx)
+                .await?;
 
             let Some(r) = row else {
                 return Err(AppError::not_found("job"));
             };
 
-            let attempts: i32 = r.get("attempts");
-            let max_attempts: i32 = r.get("max_attempts");
+            let attempts: i32 = r.get::<i32, _>("attempts");
+            let max_attempts: i32 = r.get::<i32, _>("max_attempts");
 
             if attempts >= max_attempts {
                 raisfast_derive::crud_update!(&mut *tx, "jobs",
@@ -180,7 +266,7 @@ impl JobQueue for DefaultJobQueue {
     }
 
     async fn stats(&self) -> AppResult<JobStats> {
-        let row = sqlx::query(&format!(
+        let row: crate::db::pool::DbRow = sqlx::query::<crate::db::pool::Db>(&format!(
             "SELECT
                 COALESCE(SUM(CASE WHEN status={} THEN 1 ELSE 0 END), 0) as pending,
                 COALESCE(SUM(CASE WHEN status={} THEN 1 ELSE 0 END), 0) as running,
@@ -220,7 +306,7 @@ impl JobQueue for DefaultJobQueue {
         let offset = (page - 1) * page_size;
 
         let (items, total): (Vec<JobRow>, i64) = if let Some(s) = status {
-            let rows = sqlx::query(&format!(
+            let rows: Vec<crate::db::pool::DbRow> = sqlx::query::<crate::db::pool::Db>(&format!(
                 "SELECT {COL_ID}, job_type, payload, status, attempts, max_attempts, run_after, error, created_at, updated_at
                  FROM jobs WHERE status = {} ORDER BY created_at DESC LIMIT {} OFFSET {}",
                 Driver::ph(1), Driver::ph(2), Driver::ph(3)
@@ -231,7 +317,7 @@ impl JobQueue for DefaultJobQueue {
             .fetch_all(&self.pool)
             .await?;
 
-            let total: i64 = sqlx::query_scalar(&format!(
+            let total: i64 = sqlx::query_scalar::<crate::db::pool::Db, i64>(&format!(
                 "SELECT COUNT(*) FROM jobs WHERE status = {}",
                 Driver::ph(1)
             ))
@@ -242,26 +328,26 @@ impl JobQueue for DefaultJobQueue {
 
             let items = rows
                 .into_iter()
-                .map(|r| JobRow {
+                .map(|r: crate::db::pool::DbRow| JobRow {
                     id: r
                         .get::<Option<i64>, _>(COL_ID)
-                        .map(|i| i.to_string())
+                        .map(|i: i64| i.to_string())
                         .unwrap_or_default(),
-                    job_type: r.get("job_type"),
-                    payload: r.get("payload"),
-                    status: r.get("status"),
+                    job_type: r.get::<String, _>("job_type"),
+                    payload: r.get::<String, _>("payload"),
+                    status: r.get::<super::JobStatus, _>("status"),
                     attempts: r.get::<i32, _>("attempts") as u32,
                     max_attempts: r.get::<i32, _>("max_attempts") as u32,
-                    run_after: r.get("run_after"),
-                    error: r.get("error"),
-                    created_at: r.get("created_at"),
-                    updated_at: r.get("updated_at"),
+                    run_after: r.get::<Option<crate::utils::tz::Timestamp>, _>("run_after"),
+                    error: r.get::<Option<String>, _>("error"),
+                    created_at: r.get::<crate::utils::tz::Timestamp, _>("created_at"),
+                    updated_at: r.get::<crate::utils::tz::Timestamp, _>("updated_at"),
                 })
                 .collect();
 
             (items, total)
         } else {
-            let rows = sqlx::query(&format!(
+            let rows: Vec<crate::db::pool::DbRow> = sqlx::query::<crate::db::pool::Db>(&format!(
                 "SELECT {COL_ID}, job_type, payload, status, attempts, max_attempts, run_after, error, created_at, updated_at
                  FROM jobs ORDER BY created_at DESC LIMIT {} OFFSET {}",
                 Driver::ph(1), Driver::ph(2)
@@ -271,27 +357,28 @@ impl JobQueue for DefaultJobQueue {
             .fetch_all(&self.pool)
             .await?;
 
-            let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM jobs")
-                .fetch_one(&self.pool)
-                .await
-                .unwrap_or(0);
+            let total: i64 =
+                sqlx::query_scalar::<crate::db::pool::Db, i64>("SELECT COUNT(*) FROM jobs")
+                    .fetch_one(&self.pool)
+                    .await
+                    .unwrap_or(0);
 
             let items = rows
                 .into_iter()
-                .map(|r| JobRow {
+                .map(|r: crate::db::pool::DbRow| JobRow {
                     id: r
                         .get::<Option<i64>, _>(COL_ID)
-                        .map(|i| i.to_string())
+                        .map(|i: i64| i.to_string())
                         .unwrap_or_default(),
-                    job_type: r.get("job_type"),
-                    payload: r.get("payload"),
-                    status: r.get("status"),
+                    job_type: r.get::<String, _>("job_type"),
+                    payload: r.get::<String, _>("payload"),
+                    status: r.get::<super::JobStatus, _>("status"),
                     attempts: r.get::<i32, _>("attempts") as u32,
                     max_attempts: r.get::<i32, _>("max_attempts") as u32,
-                    run_after: r.get("run_after"),
-                    error: r.get("error"),
-                    created_at: r.get("created_at"),
-                    updated_at: r.get("updated_at"),
+                    run_after: r.get::<Option<crate::utils::tz::Timestamp>, _>("run_after"),
+                    error: r.get::<Option<String>, _>("error"),
+                    created_at: r.get::<crate::utils::tz::Timestamp, _>("created_at"),
+                    updated_at: r.get::<crate::utils::tz::Timestamp, _>("updated_at"),
                 })
                 .collect();
 
@@ -306,7 +393,7 @@ impl JobQueue for DefaultJobQueue {
         let id: i64 = id
             .parse()
             .map_err(|e| AppError::Internal(anyhow::anyhow!("invalid id: {e}")))?;
-        let result = raisfast_derive::crud_update!(&self.pool, "jobs",
+        let result: crate::db::pool::DbQueryResult = raisfast_derive::crud_update!(&self.pool, "jobs",
             bind: [
                 "status" => JobStatus::Pending,
                 "attempts" => 0i32,
@@ -346,7 +433,7 @@ impl JobQueue for DefaultJobQueue {
             Driver::ph(2),
             crate::db::Driver::ago_expr(7)
         );
-        let result = sqlx::query(&sql)
+        let result: crate::db::pool::DbQueryResult = sqlx::query::<crate::db::pool::Db>(&sql)
             .bind(JobStatus::Completed)
             .bind(JobStatus::Dead)
             .execute(&self.pool)
@@ -368,7 +455,7 @@ mod tests {
 
     async fn setup() -> DefaultJobQueue {
         let pool = Pool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query(crate::db::schema::SCHEMA_SQL)
+        sqlx::query::<crate::db::pool::Db>(crate::db::schema::SCHEMA_SQL)
             .execute(&pool)
             .await
             .unwrap();
@@ -386,7 +473,7 @@ mod tests {
     #[tokio::test]
     async fn enqueue_and_dequeue() {
         let pool = Pool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query(crate::db::schema::SCHEMA_SQL)
+        sqlx::query::<crate::db::pool::Db>(crate::db::schema::SCHEMA_SQL)
             .execute(&pool)
             .await
             .unwrap();

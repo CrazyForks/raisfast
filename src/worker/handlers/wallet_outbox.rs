@@ -47,11 +47,16 @@ impl JobHandler for ProcessWalletOutboxHandler {
                 continue;
             }
 
+            let auth = crate::middleware::auth::AuthUser::from_parts(
+                Some(entry.user_id.0),
+                crate::models::user::UserRole::Reader,
+                entry.tenant_id.clone(),
+            );
             let result = match entry.entry_type.as_str() {
                 "credit" => {
                     crate::services::wallet::credit_wallet(
                         &self.pool,
-                        entry.user_id,
+                        &auth,
                         &entry.currency,
                         entry.amount,
                         parse_tx_type(&entry.tx_type),
@@ -68,7 +73,7 @@ impl JobHandler for ProcessWalletOutboxHandler {
                 "debit" => {
                     crate::services::wallet::debit_wallet(
                         &self.pool,
-                        entry.user_id,
+                        &auth,
                         &entry.currency,
                         entry.amount,
                         parse_tx_type(&entry.tx_type),

@@ -192,8 +192,18 @@ pub async fn create_order(
     Json(req): Json<CreateOrderRequest>,
 ) -> AppResult<ApiResponse<OrderResponse>> {
     let user_id = auth.ensure_snowflake_user_id()?;
-    validation::validate(&req)?;
-    let (o, items) = state.order_service.create(&auth, user_id, req).await?;
+    validation::validate(&req).map_err(|e| {
+        tracing::error!("order create validation failed: {e}");
+        e
+    })?;
+    let (o, items) = state
+        .order_service
+        .create(&auth, user_id, req)
+        .await
+        .map_err(|e| {
+            tracing::error!("order create service failed: {e}");
+            e
+        })?;
     Ok(ApiResponse::success(to_order_response(o, items)))
 }
 
@@ -279,13 +289,19 @@ pub async fn confirm_receipt(
 pub async fn admin_list(
     auth: AuthUser,
     State(state): State<crate::AppState>,
-    Query(mut params): Query<PaginationParams>,
+    Query(query): Query<crate::dto::order::AdminOrderListQuery>,
 ) -> AppResult<ApiResponse<crate::errors::response::PaginatedData<OrderResponse>>> {
     auth.ensure_admin()?;
-    params.sanitize();
+    let params = PaginationParams::from_options(query.page, query.page_size);
     let (orders, total) = state
         .order_service
-        .list_admin(&auth, params.page, params.page_size, None)
+        .list_admin(
+            &auth,
+            params.page,
+            params.page_size,
+            query.status.as_deref(),
+            query.keyword.as_deref(),
+        )
         .await?;
     let responses: Vec<_> = orders
         .into_iter()

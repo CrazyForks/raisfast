@@ -44,13 +44,23 @@ pub fn routes(
         "system admin",
         "admin/currencies"
     );
-    reg_route!(
+    let r = reg_route!(
         r,
         registry,
         restful,
         "/admin/currencies/{code}",
         put,
         update_currency,
+        "system admin",
+        "admin/currencies"
+    );
+    reg_route!(
+        r,
+        registry,
+        restful,
+        "/admin/currencies/{code}",
+        delete,
+        delete_currency,
         "system admin",
         "admin/currencies"
     )
@@ -65,7 +75,7 @@ pub async fn list_currencies(
     State(state): State<crate::AppState>,
 ) -> Result<ApiResponse<Vec<CurrencyResponse>>, AppError> {
     auth.ensure_admin()?;
-    let rows = svc::list(&state.pool).await?;
+    let rows = svc::list(&state.pool, auth.tenant_id()).await?;
     Ok(ApiResponse::success(
         rows.into_iter().map(CurrencyResponse::from).collect(),
     ))
@@ -82,7 +92,7 @@ pub async fn get_currency(
     Path(code): Path<String>,
 ) -> Result<ApiResponse<CurrencyResponse>, AppError> {
     auth.ensure_admin()?;
-    let c = svc::get_by_code(&state.pool, &code).await?;
+    let c = svc::get_by_code(&state.pool, &code, auth.tenant_id()).await?;
     Ok(ApiResponse::success(CurrencyResponse::from(c)))
 }
 
@@ -98,8 +108,9 @@ pub async fn create_currency(
 ) -> Result<ApiResponse<CurrencyResponse>, AppError> {
     auth.ensure_admin()?;
     validation::validate(&req)?;
+    let tenant_id = auth.tenant_id().unwrap_or(crate::constants::DEFAULT_TENANT);
     let decimals = req.decimals.unwrap_or(2);
-    let c = svc::create(&state.pool, &req.code, &req.name, decimals).await?;
+    let c = svc::create(&state.pool, tenant_id, &req.code, &req.name, decimals).await?;
     Ok(ApiResponse::success(CurrencyResponse::from(c)))
 }
 
@@ -117,7 +128,32 @@ pub async fn update_currency(
 ) -> Result<ApiResponse<CurrencyResponse>, AppError> {
     auth.ensure_admin()?;
     validation::validate(&req)?;
-    svc::update(&state.pool, &code, req.name.as_deref(), req.is_active).await?;
-    let c = svc::get_by_code(&state.pool, &code).await?;
+    svc::update(
+        &state.pool,
+        &code,
+        req.name.as_deref(),
+        req.is_active,
+        auth.tenant_id(),
+    )
+    .await?;
+    let c = svc::get_by_code(&state.pool, &code, auth.tenant_id()).await?;
     Ok(ApiResponse::success(CurrencyResponse::from(c)))
+}
+
+#[utoipa::path(delete, path = "/admin/currencies/{code}", tag = "currencies",
+    security(("bearer_auth" = [])),
+    params(("code" = String, Path, description = "Currency code")),
+    responses((status = 200, description = "Currency deleted"))
+)]
+pub async fn delete_currency(
+    auth: AuthUser,
+    State(state): State<crate::AppState>,
+    Path(code): Path<String>,
+) -> Result<ApiResponse<serde_json::Value>, AppError> {
+    auth.ensure_admin()?;
+    svc::delete(&state.pool, &code, auth.tenant_id()).await?;
+    Ok(ApiResponse::success(serde_json::json!({
+        "code": code,
+        "deleted": true,
+    })))
 }

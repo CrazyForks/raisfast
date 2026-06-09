@@ -212,6 +212,10 @@ mod tests {
                 cost_price: None,
                 sale_price: None,
                 has_variants: false,
+                tag_ids: None,
+                og_title: None,
+                og_description: None,
+                og_image: None,
             },
             None,
         )
@@ -573,7 +577,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn tx_delete_by_user_id() -> Result<(), Box<dyn std::error::Error>> {
+    async fn tx_delete_by_user_id() -> Result<(), crate::errors::app_error::AppError> {
         let pool = setup_pool().await;
         let uid = seed_user(&pool).await;
         let pid = seed_product(&pool).await;
@@ -587,14 +591,17 @@ mod tests {
             None,
             None,
         )
-        .await?;
+        .await
+        .unwrap();
 
         crate::in_transaction!(&pool, tx, {
             super::tx_delete_by_user_id(&mut tx, SnowflakeId(uid), None).await?;
             Ok(())
         })?;
 
-        let items = super::find_by_user_id(&pool, SnowflakeId(uid), None).await?;
+        let items = super::find_by_user_id(&pool, SnowflakeId(uid), None)
+            .await
+            .unwrap();
         assert!(items.is_empty());
         Ok(())
     }

@@ -23,6 +23,7 @@ struct CreemCredentials {
 }
 
 #[derive(Serialize)]
+#[serde(rename_all = "snake_case")]
 struct CheckoutRequest {
     product_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -35,15 +36,6 @@ struct CheckoutRequest {
 struct CheckoutResponse {
     id: String,
     checkout_url: String,
-    order: Option<CreemOrderBrief>,
-}
-
-#[derive(Deserialize)]
-struct CreemOrderBrief {
-    #[allow(dead_code)]
-    id: String,
-    #[allow(dead_code)]
-    status: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -61,6 +53,7 @@ struct CreemOrderDetail {
 }
 
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct CreemWebhookPayload {
     event_type: Option<String>,
     object: serde_json::Value,
@@ -120,17 +113,29 @@ async fn do_create_checkout(
         .json(&body)
         .send()
         .await
-        .map_err(creem_error)?;
+        .map_err(|e| {
+            tracing::error!("creem create checkout request failed: {e}");
+            creem_error(e)
+        })?;
 
     if !resp.status().is_success() {
         let status = resp.status();
         let text = resp.text().await.unwrap_or_default();
+        tracing::error!("creem create checkout rejected: status={status}, body={text}");
         return Err(AppError::Internal(anyhow::anyhow!(
             "creem create checkout failed: {status} - {text}"
         )));
     }
 
-    resp.json::<CheckoutResponse>().await.map_err(creem_error)
+    let resp_text = resp.text().await.map_err(|e| {
+        tracing::error!("creem create checkout read body failed: {e}");
+        creem_error(e)
+    })?;
+    let checkout: CheckoutResponse = serde_json::from_str(&resp_text).map_err(|e| {
+        tracing::error!("creem create checkout parse failed: {e}, body={resp_text}");
+        AppError::Internal(anyhow::anyhow!("creem response parse failed: {e}"))
+    })?;
+    Ok(checkout)
 }
 
 async fn do_get_checkout(
@@ -203,6 +208,7 @@ impl PaymentProvider for CreemProvider {
         channel: &PaymentChannel,
         order: &PaymentOrder,
         return_url: Option<&str>,
+        _notify_url: Option<&str>,
     ) -> AppResult<ProviderResponse> {
         let creds = decrypt_credentials(channel, &self.encrypt_key)?;
         let product_id = extract_product_id(channel)?;
@@ -227,11 +233,13 @@ impl PaymentProvider for CreemProvider {
         )
         .await?;
 
-        let provider_order_id = checkout
-            .order
-            .as_ref()
-            .map(|o| o.id.clone())
-            .unwrap_or(checkout.id);
+        let provider_order_id = checkout.id.clone();
+
+        tracing::info!(
+            "creem checkout created: id={}, url={}",
+            provider_order_id,
+            checkout.checkout_url
+        );
 
         Ok(ProviderResponse {
             provider_order_id,
@@ -310,25 +318,28 @@ impl PaymentProvider for CreemProvider {
 
         let (provider_order_id, status, amount, provider_tx_id) = match event_type {
             "checkout.completed" => {
-                let order = obj.get("order").ok_or_else(|| {
-                    AppError::BadRequest("creem checkout.completed: missing order".into())
-                })?;
-                let id = order
+                let checkout_id = obj
                     .get("id")
                     .and_then(|v| v.as_str())
                     .unwrap_or("")
                     .to_string();
+                let order = obj.get("order").ok_or_else(|| {
+                    AppError::BadRequest("creem checkout.completed: missing order".into())
+                })?;
                 let raw_status = order
                     .get("status")
                     .and_then(|v| v.as_str())
                     .unwrap_or("paid");
                 let amt = order.get("amount").and_then(|v| v.as_i64()).unwrap_or(0);
                 let tx_id = obj
-                    .get("transaction")
-                    .and_then(|t| t.get("id"))
+                    .get("subscription")
+                    .and_then(|s| s.get("last_transaction_id"))
                     .and_then(|v| v.as_str())
                     .map(String::from);
-                (id, creem_status_to_payment(raw_status), amt, tx_id)
+                tracing::info!(
+                    "creem checkout.completed: checkout={checkout_id}, status={raw_status}, amount={amt}"
+                );
+                (checkout_id, creem_status_to_payment(raw_status), amt, tx_id)
             }
             "refund.created" => {
                 let refund_id = obj
@@ -336,16 +347,24 @@ impl PaymentProvider for CreemProvider {
                     .and_then(|v| v.as_str())
                     .unwrap_or("")
                     .to_string();
+                let amt = obj
+                    .get("refund_amount")
+                    .and_then(|v| v.as_i64())
+                    .unwrap_or(0);
+                let checkout_id = obj
+                    .get("checkout")
+                    .and_then(|c| c.get("id"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
                 let tx_id = obj
                     .get("transaction")
                     .and_then(|t| t.get("id"))
                     .and_then(|v| v.as_str())
                     .map(String::from);
-                let amt = obj
-                    .get("refund_amount")
-                    .and_then(|v| v.as_i64())
-                    .unwrap_or(0);
-                (refund_id, PaymentStatus::Refunded, amt, tx_id)
+                tracing::info!(
+                    "creem refund.created: refund={refund_id}, checkout={checkout_id}, amount={amt}"
+                );
+                (checkout_id.to_string(), PaymentStatus::Refunded, amt, tx_id)
             }
             _ => {
                 return Err(AppError::BadRequest(format!(
@@ -370,6 +389,10 @@ mod tests {
 
     fn test_key() -> [u8; 32] {
         [42u8; 32]
+    }
+
+    fn test_channel_id() -> crate::types::snowflake_id::SnowflakeId {
+        crate::types::snowflake_id::SnowflakeId(1)
     }
 
     #[test]
@@ -418,7 +441,7 @@ mod tests {
     #[test]
     fn signature_verification_valid() {
         let secret = "test_webhook_secret";
-        let body = br#"{"event_type":"checkout.completed","object":{}}"#;
+        let body = br#"{"eventType":"checkout.completed","object":{}}"#;
         let mut mac = HmacSha256::new_from_slice(secret.as_bytes()).unwrap();
         mac.update(body);
         let sig = hex::encode(mac.finalize().into_bytes());
@@ -428,7 +451,7 @@ mod tests {
 
     #[test]
     fn signature_verification_invalid() {
-        let body = br#"{"event_type":"test"}"#;
+        let body = br#"{"eventType":"test"}"#;
         assert!(verify_signature(body, "badsig", "secret").is_err());
     }
 
@@ -439,7 +462,7 @@ mod tests {
             crate::payment::crypto::aes256gcm_encrypt(r#"{"api_key":"test_key"}"#, &key).unwrap();
 
         let channel = PaymentChannel {
-            id: 1,
+            id: test_channel_id(),
             tenant_id: None,
             provider: "creem".into(),
             name: "Creem".into(),
@@ -461,7 +484,7 @@ mod tests {
     #[test]
     fn extract_product_id_missing_settings() {
         let channel = PaymentChannel {
-            id: 1,
+            id: test_channel_id(),
             tenant_id: None,
             provider: "creem".into(),
             name: "Creem".into(),
@@ -489,7 +512,7 @@ mod tests {
         .unwrap();
 
         let channel = PaymentChannel {
-            id: 1,
+            id: test_channel_id(),
             tenant_id: None,
             provider: "creem".into(),
             name: "Creem".into(),
@@ -515,15 +538,17 @@ mod tests {
         let webhook_secret = "wh_secret_123";
 
         let body = serde_json::json!({
-            "event_type": "checkout.completed",
+            "eventType": "checkout.completed",
             "object": {
+                "id": "ch_4l0N34kxo16AhRKUHFUuXr",
+                "object": "checkout",
                 "order": {
-                    "id": "order_001",
+                    "id": "ord_4aDwWXjMLpes4Kj4XqNnUA",
                     "status": "paid",
                     "amount": 9999
                 },
-                "transaction": {
-                    "id": "txn_001"
+                "metadata": {
+                    "payment_order_id": "12345"
                 }
             }
         });
@@ -536,14 +561,17 @@ mod tests {
         let mut headers = HeaderMap::new();
         headers.insert("creem-signature", sig.parse().unwrap());
 
+        let encrypted_secret =
+            crate::payment::crypto::aes256gcm_encrypt(webhook_secret, &key).unwrap();
+
         let channel = PaymentChannel {
-            id: 1,
+            id: test_channel_id(),
             tenant_id: None,
             provider: "creem".into(),
             name: "Creem".into(),
             is_live: 0,
             credentials: String::new(),
-            webhook_secret: Some(webhook_secret.to_string()),
+            webhook_secret: Some(encrypted_secret),
             settings: None,
             is_active: 1,
             sort_order: 0,
@@ -558,10 +586,77 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(result.provider_order_id, "order_001");
+        assert_eq!(result.provider_order_id, "ch_4l0N34kxo16AhRKUHFUuXr");
         assert!(matches!(result.status, PaymentStatus::Paid));
         assert_eq!(result.amount, 9999);
-        assert_eq!(result.provider_tx_id.as_deref(), Some("txn_001"));
+        assert!(result.provider_tx_id.is_none());
+    }
+
+    #[tokio::test]
+    async fn verify_callback_parses_checkout_completed_subscription() {
+        let key = test_key();
+        let webhook_secret = "wh_secret_sub";
+
+        let body = serde_json::json!({
+            "eventType": "checkout.completed",
+            "object": {
+                "id": "ch_sub123",
+                "object": "checkout",
+                "order": {
+                    "id": "ord_sub123",
+                    "status": "paid",
+                    "amount": 1000
+                },
+                "subscription": {
+                    "id": "sub_abc",
+                    "last_transaction_id": "tran_5yMaWzAl3jxuGJMCOrYWwk"
+                },
+                "metadata": {
+                    "payment_order_id": "67890"
+                }
+            }
+        });
+        let body_bytes = serde_json::to_vec(&body).unwrap();
+
+        let mut mac = HmacSha256::new_from_slice(webhook_secret.as_bytes()).unwrap();
+        mac.update(&body_bytes);
+        let sig = hex::encode(mac.finalize().into_bytes());
+
+        let mut headers = HeaderMap::new();
+        headers.insert("creem-signature", sig.parse().unwrap());
+
+        let encrypted_secret =
+            crate::payment::crypto::aes256gcm_encrypt(webhook_secret, &key).unwrap();
+
+        let channel = PaymentChannel {
+            id: test_channel_id(),
+            tenant_id: None,
+            provider: "creem".into(),
+            name: "Creem".into(),
+            is_live: 0,
+            credentials: String::new(),
+            webhook_secret: Some(encrypted_secret),
+            settings: None,
+            is_active: 1,
+            sort_order: 0,
+            version: 1,
+            created_at: crate::utils::tz::Timestamp::default(),
+            updated_at: crate::utils::tz::Timestamp::default(),
+        };
+
+        let provider = CreemProvider::new(key);
+        let result = provider
+            .verify_callback(&channel, &headers, &body_bytes)
+            .await
+            .unwrap();
+
+        assert_eq!(result.provider_order_id, "ch_sub123");
+        assert!(matches!(result.status, PaymentStatus::Paid));
+        assert_eq!(result.amount, 1000);
+        assert_eq!(
+            result.provider_tx_id.as_deref(),
+            Some("tran_5yMaWzAl3jxuGJMCOrYWwk")
+        );
     }
 
     #[tokio::test]
@@ -570,10 +665,13 @@ mod tests {
         let webhook_secret = "wh_secret_456";
 
         let body = serde_json::json!({
-            "event_type": "refund.created",
+            "eventType": "refund.created",
             "object": {
-                "id": "refund_001",
+                "id": "ref_3DB9NQFvk18TJwSqd0N6bd",
                 "refund_amount": 5000,
+                "checkout": {
+                    "id": "ch_4l0N34kxo16AhRKUHFUuXr"
+                },
                 "transaction": {
                     "id": "txn_002"
                 }
@@ -588,14 +686,17 @@ mod tests {
         let mut headers = HeaderMap::new();
         headers.insert("creem-signature", sig.parse().unwrap());
 
+        let encrypted_secret =
+            crate::payment::crypto::aes256gcm_encrypt(webhook_secret, &key).unwrap();
+
         let channel = PaymentChannel {
-            id: 1,
+            id: test_channel_id(),
             tenant_id: None,
             provider: "creem".into(),
             name: "Creem".into(),
             is_live: 0,
             credentials: String::new(),
-            webhook_secret: Some(webhook_secret.to_string()),
+            webhook_secret: Some(encrypted_secret),
             settings: None,
             is_active: 1,
             sort_order: 0,
@@ -610,16 +711,17 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(result.provider_order_id, "refund_001");
+        assert_eq!(result.provider_order_id, "ch_4l0N34kxo16AhRKUHFUuXr");
         assert!(matches!(result.status, PaymentStatus::Refunded));
         assert_eq!(result.amount, 5000);
+        assert_eq!(result.provider_tx_id.as_deref(), Some("txn_002"));
     }
 
     #[tokio::test]
     async fn cancel_is_noop() {
         let key = test_key();
         let channel = PaymentChannel {
-            id: 1,
+            id: test_channel_id(),
             tenant_id: None,
             provider: "creem".into(),
             name: "Creem".into(),
@@ -642,7 +744,7 @@ mod tests {
     async fn refund_returns_error() {
         let key = test_key();
         let channel = PaymentChannel {
-            id: 1,
+            id: test_channel_id(),
             tenant_id: None,
             provider: "creem".into(),
             name: "Creem".into(),

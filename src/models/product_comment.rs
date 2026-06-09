@@ -55,14 +55,14 @@ pub async fn find_by_id(
     id: SnowflakeId,
     tenant_id: Option<&str>,
 ) -> AppResult<Option<ProductComment>> {
-    raisfast_derive::crud_find!(
+    let result: Option<ProductComment> = raisfast_derive::crud_find!(
         pool,
         "product_comments",
         ProductComment,
         where: ("id", id),
         tenant: tenant_id
-    )
-    .map_err(Into::into)
+    )?;
+    Ok(result)
 }
 
 pub async fn find_by_product_order_user(
@@ -72,14 +72,14 @@ pub async fn find_by_product_order_user(
     user_id: SnowflakeId,
     tenant_id: Option<&str>,
 ) -> AppResult<Option<ProductComment>> {
-    raisfast_derive::crud_find!(
+    let result: Option<ProductComment> = raisfast_derive::crud_find!(
         pool,
         "product_comments",
         ProductComment,
         where: AND(("product_id", product_id), ("order_id", order_id), ("user_id", user_id)),
         tenant: tenant_id
-    )
-    .map_err(Into::into)
+    )?;
+    Ok(result)
 }
 
 pub async fn find_by_product_paginated(
@@ -188,7 +188,7 @@ pub async fn update(
     let content = cmd.content.as_deref().unwrap_or(&existing.content);
     let images = cmd.images.as_deref().or(existing.images.as_deref());
 
-    let affected = raisfast_derive::crud_update!(
+    let result: crate::db::pool::DbQueryResult = raisfast_derive::crud_update!(
         pool,
         "product_comments",
         bind: [
@@ -200,9 +200,8 @@ pub async fn update(
         raw: ["updated_at" => crate::db::Driver::now_fn()],
         where: ("id", cmd.id),
         tenant: tenant_id
-    )?
-    .rows_affected();
-    Ok(affected > 0)
+    )?;
+    Ok(result.rows_affected() > 0)
 }
 
 pub async fn update_status(
@@ -355,6 +354,10 @@ mod tests {
                 cost_price: None,
                 sale_price: None,
                 has_variants: false,
+                tag_ids: None,
+                og_title: None,
+                og_description: None,
+                og_image: None,
             },
             None,
         )

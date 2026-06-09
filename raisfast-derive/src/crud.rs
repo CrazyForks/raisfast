@@ -177,11 +177,11 @@ fn emit_tenant_code(
         },
         proc_macro2::Span::call_site(),
     );
-    let alias_prefix = match tenant_alias {
-        Some(a) => format!("{}.", a.value()),
-        None => String::new(),
+    let tenant_col = match tenant_alias {
+        Some(a) => format!("{}.{}", d.qi(&a.value()), d.qi("tenant_id")),
+        None => d.qi("tenant_id"),
     };
-    let alias_prefix_lit = syn::LitStr::new(&alias_prefix, proc_macro2::Span::call_site());
+    let tenant_col_lit = syn::LitStr::new(&tenant_col, proc_macro2::Span::call_site());
 
     if tid.is_some() {
         let tid_expr = tid.as_ref().unwrap();
@@ -194,7 +194,7 @@ fn emit_tenant_code(
                         "?".to_string()
                     };
                     __ph_idx += 1;
-                    (format!(" AND {}tenant_id = {}", #alias_prefix_lit, __tph), Some(_tid))
+                    (format!(" AND {} = {}", #tenant_col_lit, __tph), Some(_tid))
                 },
                 None => (String::new(), None),
             };
@@ -230,7 +230,7 @@ fn expand_delete(input: TokenStream) -> TokenStream {
     let pool = &parsed.pool;
     let d = dialect();
     let table_str = table.value();
-    let table_lit = syn::LitStr::new(&table_str, table.span());
+    let table_lit = syn::LitStr::new(&d.qi(&table_str), table.span());
 
     let wr = crate::where_dsl::generate_where_runtime(&parsed.dsl_where, d);
     let (local_stmts, bind_stmts) = emit_runtime_binds(&wr.binds);
@@ -245,7 +245,7 @@ fn expand_delete(input: TokenStream) -> TokenStream {
             #sql_code
             #tenant_sql
             let __sql = format!("DELETE FROM {} WHERE {}{}", #table_lit, __where_sql, __tenant_sql);
-            let mut __q = sqlx::query(&__sql);
+            let mut __q = sqlx::query::<crate::db::pool::Db>(&__sql);
             #(#bind_stmts)*
             #tenant_bind
             __q.execute(#pool).await
@@ -277,22 +277,24 @@ fn expand_insert(input: TokenStream) -> TokenStream {
     let table_str = table.value();
     let col_strs: Vec<String> = parsed.cols.iter().map(|l| l.value()).collect();
 
-    let col_list = col_strs.join(", ");
-    let n = col_strs.len();
     let d = dialect();
+    let qi_table = d.qi(&table_str);
+    let col_list = d.qi_list(&col_strs);
+    let n = col_strs.len();
 
     let val_idents: Vec<syn::Ident> = (0..vals.len())
         .map(|i| syn::Ident::new(&format!("__vi_{}", i), proc_macro2::Span::call_site()))
         .collect();
 
     if parsed.tid.is_some() {
-        let col_list_with = format!("{}, tenant_id", col_list);
+        let qi_tid = d.qi("tenant_id");
+        let col_list_with = format!("{}, {}", col_list, qi_tid);
         let ph_with: Vec<String> = (1..=n + 1).map(|i| d.ph(i)).collect();
         let ph: Vec<String> = (1..=n).map(|i| d.ph(i)).collect();
         let sql_with = syn::LitStr::new(
             &format!(
                 "INSERT INTO {} ({}) VALUES ({})",
-                table_str,
+                qi_table,
                 col_list_with,
                 ph_with.join(", ")
             ),
@@ -301,7 +303,7 @@ fn expand_insert(input: TokenStream) -> TokenStream {
         let sql_without = syn::LitStr::new(
             &format!(
                 "INSERT INTO {} ({}) VALUES ({})",
-                table_str,
+                qi_table,
                 col_list,
                 ph.join(", ")
             ),
@@ -310,10 +312,11 @@ fn expand_insert(input: TokenStream) -> TokenStream {
         let expanded = quote! {
             {
                 #(let #val_idents = #vals;)*
-                match #tid {
+                let __r: sqlx::Result<crate::db::pool::DbQueryResult> = match #tid {
                     Some(_tid) => sqlx::query!(#sql_with, #(#val_idents),*, _tid).execute(#pool).await,
                     None => sqlx::query!(#sql_without, #(#val_idents),*).execute(#pool).await,
-                }
+                };
+                __r
             }
         };
         TokenStream::from(expanded)
@@ -322,7 +325,7 @@ fn expand_insert(input: TokenStream) -> TokenStream {
         let sql = syn::LitStr::new(
             &format!(
                 "INSERT INTO {} ({}) VALUES ({})",
-                table_str,
+                qi_table,
                 col_list,
                 ph.join(", ")
             ),
@@ -331,7 +334,8 @@ fn expand_insert(input: TokenStream) -> TokenStream {
         let expanded = quote! {
             {
                 #(let #val_idents = #vals;)*
-                sqlx::query!(#sql, #(#val_idents),*).execute(#pool).await
+                let __r: sqlx::Result<crate::db::pool::DbQueryResult> = sqlx::query!(#sql, #(#val_idents),*).execute(#pool).await;
+                __r
             }
         };
         TokenStream::from(expanded)
@@ -356,7 +360,7 @@ fn expand_scalar(input: TokenStream) -> TokenStream {
         let tid = &input.tid;
         let expanded = quote! {
             {
-                let mut _q = sqlx::query_scalar::<_, #ty>(#sql)#(.bind(#vals))*;
+                let mut _q = sqlx::query_scalar::<crate::db::pool::Db, #ty>(#sql)#(.bind(#vals))*;
                 if let Some(_tid) = #tid {
                     _q = _q.bind(_tid);
                 }
@@ -366,7 +370,7 @@ fn expand_scalar(input: TokenStream) -> TokenStream {
         TokenStream::from(expanded)
     } else {
         let expanded = quote! {
-            sqlx::query_scalar::<_, #ty>(#sql)#(.bind(#vals))*.#method(#pool).await
+            sqlx::query_scalar::<crate::db::pool::Db, #ty>(#sql)#(.bind(#vals))*.#method(#pool).await
         };
         TokenStream::from(expanded)
     }
@@ -395,11 +399,12 @@ fn expand_select(input: TokenStream) -> TokenStream {
 
     let pool = &parsed.pool;
     let table_str = table.value();
-    let table_lit = syn::LitStr::new(&table_str, table.span());
+    let table_lit = syn::LitStr::new(&d.qi(&table_str), table.span());
     let sel_str: String = parsed
         .sel_cols
         .iter()
         .map(|l| l.value())
+        .map(|c| d.qi(&c))
         .collect::<Vec<_>>()
         .join(", ");
     let sel_lit = syn::LitStr::new(&sel_str, table.span());
@@ -417,7 +422,7 @@ fn expand_select(input: TokenStream) -> TokenStream {
             #sql_code
             #tenant_sql
             let __sql = format!("SELECT {} FROM {} WHERE {}{}", #sel_lit, #table_lit, __where_sql, __tenant_sql);
-            let mut __q = sqlx::query_as::<_, _>(&__sql);
+            let mut __q = sqlx::query_as::<crate::db::pool::Db, _>(&__sql);
             #(#bind_stmts)*
             #tenant_bind
             __q.fetch_optional(#pool).await
@@ -444,7 +449,7 @@ fn expand_query(input: TokenStream) -> TokenStream {
         let tid = &input.tid;
         let expanded = quote! {
             {
-                let mut _q = sqlx::query_as::<_, #ty>(#sql)#(.bind(#vals))*;
+                let mut _q = sqlx::query_as::<crate::db::pool::Db, #ty>(#sql)#(.bind(#vals))*;
                 if let Some(_tid) = #tid {
                     _q = _q.bind(_tid);
                 }
@@ -454,7 +459,7 @@ fn expand_query(input: TokenStream) -> TokenStream {
         TokenStream::from(expanded)
     } else {
         let expanded = quote! {
-            sqlx::query_as::<_, #ty>(#sql)#(.bind(#vals))*.#method(#pool).await
+            sqlx::query_as::<crate::db::pool::Db, #ty>(#sql)#(.bind(#vals))*.#method(#pool).await
         };
         TokenStream::from(expanded)
     }
@@ -503,7 +508,7 @@ fn expand_find(input: TokenStream, method: FindMethod) -> TokenStream {
     let ty = &parsed.ty;
     let d = dialect();
     let table_str = table.value();
-    let table_lit = syn::LitStr::new(&table_str, table.span());
+    let table_lit = syn::LitStr::new(&d.qi(&table_str), table.span());
     let cols = get_select_columns(table);
     let cols_lit = syn::LitStr::new(&cols, table.span());
 
@@ -535,7 +540,7 @@ fn expand_find(input: TokenStream, method: FindMethod) -> TokenStream {
             #sql_code
             #tenant_sql
             let __sql = format!("SELECT {} FROM {} WHERE {}{}{}", #cols_lit, #table_lit, __where_sql, __tenant_sql, #order_fragment);
-            let mut __q = sqlx::query_as::<_, #ty>(&__sql);
+            let mut __q = sqlx::query_as::<crate::db::pool::Db, #ty>(&__sql);
             #(#bind_stmts)*
             #tenant_bind
             __q.#method_call
@@ -564,7 +569,7 @@ fn expand_count(input: TokenStream) -> TokenStream {
     let pool = &parsed.pool;
     let d = dialect();
     let table_str = table.value();
-    let table_lit = syn::LitStr::new(&table_str, table.span());
+    let table_lit = syn::LitStr::new(&d.qi(&table_str), table.span());
 
     let wr = crate::where_dsl::generate_where_runtime(&parsed.dsl_where, d);
     let (local_stmts, bind_stmts) = emit_runtime_binds(&wr.binds);
@@ -579,7 +584,7 @@ fn expand_count(input: TokenStream) -> TokenStream {
             #sql_code
             #tenant_sql
             let __sql = format!("SELECT COUNT(*) FROM {} WHERE {}{}", #table_lit, __where_sql, __tenant_sql);
-            let mut __q = sqlx::query_scalar::<_, i64>(&__sql);
+            let mut __q = sqlx::query_scalar::<crate::db::pool::Db, i64>(&__sql);
             #(#bind_stmts)*
             #tenant_bind
             __q.fetch_one(#pool).await
@@ -611,17 +616,20 @@ pub fn crud_list(input: TokenStream) -> TokenStream {
     let d = dialect();
     if let Some(ref tid) = input.tid {
         let cols_lit = syn::LitStr::new(&cols, table.span());
-        let table_lit = syn::LitStr::new(&table_str, table.span());
+        let qi_table = d.qi(&table_str);
+        let table_lit = syn::LitStr::new(&qi_table, table.span());
         let ob_lit = syn::LitStr::new(&order_by_str, table.span());
         let tid_ph = d.ph(1);
         let tid_ph_lit = syn::LitStr::new(&tid_ph, table.span());
+        let qi_tid = d.qi("tenant_id");
+        let qi_tid_lit = syn::LitStr::new(&qi_tid, table.span());
         let expanded = quote! {
             {
                 let __sql = match #tid {
-                    Some(_tid) => format!("SELECT {} FROM {} WHERE 1=1 AND tenant_id = {}{}", #cols_lit, #table_lit, #tid_ph_lit, #ob_lit),
+                    Some(_tid) => format!("SELECT {} FROM {} WHERE 1=1 AND {} = {}{}", #cols_lit, #table_lit, #qi_tid_lit, #tid_ph_lit, #ob_lit),
                     None => format!("SELECT {} FROM {} WHERE 1=1{}", #cols_lit, #table_lit, #ob_lit),
                 };
-                let mut _q = sqlx::query_as::<_, #ty>(&__sql);
+                let mut _q = sqlx::query_as::<crate::db::pool::Db, #ty>(&__sql);
                 if let Some(_tid) = #tid {
                     _q = _q.bind(_tid);
                 }
@@ -630,11 +638,12 @@ pub fn crud_list(input: TokenStream) -> TokenStream {
         };
         TokenStream::from(expanded)
     } else {
-        let mut sql_str = format!("SELECT {} FROM {}", cols, table_str);
+        let qi_table = d.qi(&table_str);
+        let mut sql_str = format!("SELECT {} FROM {}", cols, qi_table);
         sql_str.push_str(&order_by_str);
         let sql = syn::LitStr::new(&sql_str, table.span());
         let expanded = quote! {
-            sqlx::query_as::<_, #ty>(#sql).fetch_all(#pool).await
+            sqlx::query_as::<crate::db::pool::Db, #ty>(#sql).fetch_all(#pool).await
         };
         TokenStream::from(expanded)
     }
@@ -669,8 +678,9 @@ fn expand_update(input: TokenStream) -> TokenStream {
     }
 
     let pool = &parsed.pool;
+    let d = dialect();
     let table_str = table.value();
-    let table_lit = syn::LitStr::new(&table_str, table.span());
+    let table_lit = syn::LitStr::new(&d.qi(&table_str), table.span());
     let bind_cols = &parsed.bind_cols;
     let bind_vals = &parsed.bind_vals;
     let opt_cols = &parsed.opt_cols;
@@ -688,7 +698,6 @@ fn expand_update(input: TokenStream) -> TokenStream {
         .map(|i| syn::Ident::new(&format!("__ov_{}", i), proc_macro2::Span::call_site()))
         .collect();
 
-    let d = dialect();
     let numbered = matches!(d, Dialect::Sqlite | Dialect::Postgres);
     let numbered_lit = syn::LitBool::new(numbered, proc_macro2::Span::call_site());
     let ph_prefix_lit = syn::LitStr::new(
@@ -704,16 +713,19 @@ fn expand_update(input: TokenStream) -> TokenStream {
         .enumerate()
         .map(|(i, c)| {
             let ph = d.ph(1 + i);
-            syn::LitStr::new(&format!("{} = {}", c, ph), table.span())
+            syn::LitStr::new(&format!("{} = {}", d.qi(c), ph), table.span())
         })
         .collect();
 
-    let raw_col_names: Vec<syn::LitStr> = raw_pairs.iter().map(|(rc, _)| rc.clone()).collect();
+    let raw_col_names: Vec<syn::LitStr> = raw_pairs
+        .iter()
+        .map(|(rc, _)| syn::LitStr::new(&d.qi(&rc.value()), rc.span()))
+        .collect();
     let raw_exprs: Vec<&syn::Expr> = raw_pairs.iter().map(|(_, rv)| rv).collect();
 
     let opt_col_lits: Vec<syn::LitStr> = opt_cols
         .iter()
-        .map(|c| syn::LitStr::new(&c.value(), c.span()))
+        .map(|c| syn::LitStr::new(&d.qi(&c.value()), c.span()))
         .collect();
 
     let opt_bind_idents: Vec<syn::Ident> = (0..opt_vals.len())
@@ -753,7 +765,7 @@ fn expand_update(input: TokenStream) -> TokenStream {
             let parts: Vec<String> = bind_col_strs
                 .iter()
                 .enumerate()
-                .map(|(i, c)| format!("{} = {}", c, d.ph(1 + i)))
+                .map(|(i, c)| format!("{} = {}", d.qi(c), d.ph(1 + i)))
                 .collect();
             parts.join(", ")
         };
@@ -764,10 +776,11 @@ fn expand_update(input: TokenStream) -> TokenStream {
                 .iter()
                 .enumerate()
                 .map(|(i, (c, _))| {
+                    let qi_c = d.qi(&c.value());
                     if i == 0 {
-                        format!("{} = {{}}", c.value())
+                        format!("{} = {{}}", qi_c)
                     } else {
-                        format!(", {} = {{}}", c.value())
+                        format!(", {} = {{}}", qi_c)
                     }
                 })
                 .collect();
@@ -833,7 +846,7 @@ fn expand_update(input: TokenStream) -> TokenStream {
             #where_sql_code
             #tenant_sql
             let __sql = format!("UPDATE {} SET {} WHERE {}{}", #table_lit, #set_join, __where_sql, __tenant_sql);
-            let mut __q = sqlx::query(&__sql);
+            let mut __q = sqlx::query::<crate::db::pool::Db>(&__sql);
             #(__q = __q.bind(#val_idents);)*
             #opt_bind_code
             #(#where_bind_stmts)*
@@ -914,7 +927,7 @@ fn expand_query_paged_dsl(parsed: &QueryPagedInput) -> TokenStream {
     let where_col_strs: Vec<syn::LitStr> = parsed
         .where_cols
         .iter()
-        .map(|c| syn::LitStr::new(&c.value(), c.span()))
+        .map(|c| syn::LitStr::new(&d.qi(&c.value()), c.span()))
         .collect();
     let where_bind_idents: Vec<syn::Ident> = (0..parsed.where_vals.len())
         .map(|i| syn::Ident::new(&format!("__wp_{}", i), proc_macro2::Span::call_site()))
@@ -923,11 +936,16 @@ fn expand_query_paged_dsl(parsed: &QueryPagedInput) -> TokenStream {
 
     let data_sql_str = format!(
         "SELECT {} FROM {}{}{}",
-        cols, table_str, where_sql, where_base
+        cols,
+        d.qi(&table_str),
+        where_sql,
+        where_base
     );
     let count_sql_str = format!(
         "SELECT COUNT(*) FROM {}{}{}",
-        table_str, where_sql, where_base
+        d.qi(&table_str),
+        where_sql,
+        where_base
     );
 
     let data_sql_lit = syn::LitStr::new(&data_sql_str, table.span());
@@ -937,6 +955,7 @@ fn expand_query_paged_dsl(parsed: &QueryPagedInput) -> TokenStream {
         let base_after_dsl = dsl_bind_count + 1;
         let base_lit =
             syn::LitInt::new(&base_after_dsl.to_string(), proc_macro2::Span::call_site());
+        let qi_tid_lit = syn::LitStr::new(&d.qi("tenant_id"), proc_macro2::Span::call_site());
         let block: proc_macro2::TokenStream = quote! {
             let mut __ph_idx: usize = #base_lit;
             let __tenant_val = #tid_expr;
@@ -948,7 +967,7 @@ fn expand_query_paged_dsl(parsed: &QueryPagedInput) -> TokenStream {
                         "?".to_string()
                     };
                     __ph_idx += 1;
-                    format!(" AND tenant_id = {}", __tph)
+                    format!(" AND {} = {}", #qi_tid_lit, __tph)
                 }
                 None => String::new(),
             };
@@ -1021,7 +1040,7 @@ fn expand_query_paged_dsl(parsed: &QueryPagedInput) -> TokenStream {
             let mut __data_sql = format!("{}{}{}{}", #data_sql_lit, __tenant_sql, __where_sql, #order_str_lit);
             __data_sql.push_str(&format!(" LIMIT {} OFFSET {}", __limit_ph, __offset_ph));
             let mut __count_sql = format!("{}{}{}", #count_sql_lit, __tenant_sql, __where_sql);
-            let mut __dq = sqlx::query_as::<_, #ty>(&__data_sql)#(.bind(#dsl_bind_idents))*;
+            let mut __dq = sqlx::query_as::<crate::db::pool::Db, #ty>(&__data_sql)#(.bind(#dsl_bind_idents))*;
             #tenant_bind_dq
             #(
                 if let Some(ref __wv) = #where_bind_idents {
@@ -1030,7 +1049,7 @@ fn expand_query_paged_dsl(parsed: &QueryPagedInput) -> TokenStream {
             )*
             __dq = __dq.bind(__page_size).bind(__offset);
             let __data = __dq.fetch_all(#pool).await?;
-            let mut __cq = sqlx::query_scalar::<_, i64>(&__count_sql)#(.bind(#dsl_bind_idents))*;
+            let mut __cq = sqlx::query_scalar::<crate::db::pool::Db, i64>(&__count_sql)#(.bind(#dsl_bind_idents))*;
             #tenant_bind_cq
             #(
                 if let Some(ref __wv) = #where_bind_idents {
@@ -1064,7 +1083,7 @@ fn expand_exists(input: TokenStream) -> TokenStream {
     let pool = &parsed.pool;
     let d = dialect();
     let table_str = table.value();
-    let table_lit = syn::LitStr::new(&table_str, table.span());
+    let table_lit = syn::LitStr::new(&d.qi(&table_str), table.span());
 
     let wr = crate::where_dsl::generate_where_runtime(&parsed.dsl_where, d);
     let (local_stmts, bind_stmts) = emit_runtime_binds(&wr.binds);
@@ -1079,7 +1098,7 @@ fn expand_exists(input: TokenStream) -> TokenStream {
             #sql_code
             #tenant_sql
             let __sql = format!("SELECT EXISTS(SELECT 1 FROM {} WHERE {}{}{}) as _e", #table_lit, __where_sql, __tenant_sql, "");
-            let mut __q = sqlx::query_scalar::<_, bool>(&__sql);
+            let mut __q = sqlx::query_scalar::<crate::db::pool::Db, bool>(&__sql);
             #(#bind_stmts)*
             #tenant_bind
             __q.fetch_one(#pool).await
@@ -1113,9 +1132,10 @@ fn expand_upsert(input: TokenStream) -> TokenStream {
     let col_strs: Vec<String> = parsed.cols.iter().map(|l| l.value()).collect();
     let update_col_strs: Vec<String> = parsed.update_cols.iter().map(|l| l.value()).collect();
 
-    let col_list = col_strs.join(", ");
-    let n = col_strs.len();
     let d = dialect();
+    let qi_table = d.qi(&table_str);
+    let col_list = d.qi_list(&col_strs);
+    let n = col_strs.len();
 
     let vals = &parsed.vals;
     let val_idents: Vec<syn::Ident> = (0..vals.len())
@@ -1128,7 +1148,7 @@ fn expand_upsert(input: TokenStream) -> TokenStream {
         .iter()
         .map(|c| {
             let excluded = d.excluded_col(c);
-            format!("{} = {}", c, excluded)
+            format!("{} = {}", d.qi(c), excluded)
         })
         .collect();
     let update_str = update_assignments.join(", ");
@@ -1136,7 +1156,7 @@ fn expand_upsert(input: TokenStream) -> TokenStream {
     let conflict_cols = &parsed.conflict_cols;
     let conflict_str: String = conflict_cols
         .iter()
-        .map(|l| l.value())
+        .map(|l| d.qi(&l.value()))
         .collect::<Vec<_>>()
         .join(", ");
 
@@ -1145,7 +1165,7 @@ fn expand_upsert(input: TokenStream) -> TokenStream {
     let sql = syn::LitStr::new(
         &format!(
             "INSERT INTO {} ({}) VALUES ({}) {}",
-            table_str,
+            qi_table,
             col_list,
             ph.join(", "),
             upsert_sql
@@ -1212,6 +1232,15 @@ fn expand_resolve_ids(input: TokenStream) -> TokenStream {
     let ids = &parsed.ids;
     let d = dialect();
 
+    let qi_id = d.qi("id");
+    let qi_id_lit = syn::LitStr::new(&qi_id, proc_macro2::Span::call_site());
+    let qi_fmt: &str = match d {
+        Dialect::Mysql => "`{}`",
+        Dialect::Postgres => "\"{}\"",
+        Dialect::Sqlite => "{}",
+    };
+    let qi_fmt_lit = syn::LitStr::new(qi_fmt, proc_macro2::Span::call_site());
+
     let numbered = matches!(d, Dialect::Sqlite | Dialect::Postgres);
     let numbered_lit = syn::LitBool::new(numbered, proc_macro2::Span::call_site());
     let ph_prefix_lit = syn::LitStr::new(
@@ -1233,6 +1262,7 @@ fn expand_resolve_ids(input: TokenStream) -> TokenStream {
                     format!("invalid table name: {__table}").into()
                 ))
             } else {
+                let __qi_table = format!(#qi_fmt_lit, __table);
                 let __phs: Vec<String> = (1..=__ids.len())
                     .map(|__i| {
                         if #numbered_lit {
@@ -1242,8 +1272,8 @@ fn expand_resolve_ids(input: TokenStream) -> TokenStream {
                         }
                     })
                     .collect();
-                let __sql = format!("SELECT id FROM {} WHERE id IN ({})", __table, __phs.join(", "));
-                let mut __q = sqlx::query(&__sql);
+                let __sql = format!("SELECT {} FROM {} WHERE {} IN ({})", #qi_id_lit, __qi_table, #qi_id_lit, __phs.join(", "));
+                let mut __q = sqlx::query::<crate::db::pool::Db>(&__sql);
                 for &__id in __ids {
                     __q = __q.bind(__id);
                 }
@@ -1282,6 +1312,15 @@ fn expand_resolve_id(input: TokenStream) -> TokenStream {
     let id = &parsed.id;
     let d = dialect();
 
+    let qi_id = d.qi("id");
+    let qi_id_lit = syn::LitStr::new(&qi_id, proc_macro2::Span::call_site());
+    let qi_fmt: &str = match d {
+        Dialect::Mysql => "`{}`",
+        Dialect::Postgres => "\"{}\"",
+        Dialect::Sqlite => "{}",
+    };
+    let qi_fmt_lit = syn::LitStr::new(qi_fmt, proc_macro2::Span::call_site());
+
     let ph1 = d.ph(1);
     let ph1_lit = syn::LitStr::new(&ph1, proc_macro2::Span::call_site());
 
@@ -1293,12 +1332,13 @@ fn expand_resolve_id(input: TokenStream) -> TokenStream {
                 if !crate::db::driver::is_safe_identifier(__table) {
                     Ok::<Option<i64>, sqlx::Error>(None)
                 } else {
+                    let __qi_table = format!(#qi_fmt_lit, __table);
                     let __id: i64 = #id;
                     let __pool: &crate::db::Pool = #pool;
                     let mut __ph_idx: usize = 2;
                     #tenant_sql
-                    let __sql = format!("SELECT id FROM {} WHERE id = {}{}", __table, #ph1_lit, __tenant_sql);
-                    let mut __q = sqlx::query_scalar::<_, i64>(&__sql).bind(__id);
+                    let __sql = format!("SELECT {} FROM {} WHERE {} = {}{}", #qi_id_lit, __qi_table, #qi_id_lit, #ph1_lit, __tenant_sql);
+                    let mut __q = sqlx::query_scalar::<crate::db::pool::Db, i64>(&__sql).bind(__id);
                     #tenant_bind
                     __q.fetch_optional(__pool).await
                 }
@@ -1312,10 +1352,11 @@ fn expand_resolve_id(input: TokenStream) -> TokenStream {
                 if !crate::db::driver::is_safe_identifier(__table) {
                     Ok::<Option<i64>, sqlx::Error>(None)
                 } else {
+                    let __qi_table = format!(#qi_fmt_lit, __table);
                     let __id: i64 = #id;
                     let __pool: &crate::db::Pool = #pool;
-                    let __sql = format!("SELECT id FROM {} WHERE id = {}", __table, #ph1_lit);
-                    sqlx::query_scalar::<_, i64>(&__sql)
+                    let __sql = format!("SELECT {} FROM {} WHERE {} = {}", #qi_id_lit, __qi_table, #qi_id_lit, #ph1_lit);
+                    sqlx::query_scalar::<crate::db::pool::Db, i64>(&__sql)
                         .bind(__id)
                         .fetch_optional(__pool)
                         .await
@@ -1574,6 +1615,17 @@ impl syn::parse::Parse for JoinInput {
     }
 }
 
+fn qi_table_ref(d: &crate::schema::Dialect, table_ref: &str) -> String {
+    let mut parts = table_ref.splitn(2, char::is_whitespace);
+    let table = parts.next().unwrap_or(table_ref);
+    let alias = parts.next().unwrap_or("");
+    if alias.is_empty() {
+        d.qi(table)
+    } else {
+        format!("{} {}", d.qi(table), alias)
+    }
+}
+
 pub fn crud_join(input: TokenStream) -> TokenStream {
     expand_join(input)
 }
@@ -1584,6 +1636,7 @@ pub fn crud_join_paged(input: TokenStream) -> TokenStream {
     let parsed = parse_macro_input!(input as JoinPagedInput);
     let pool = &parsed.pool;
     let ty = &parsed.ty;
+    let d = dialect();
     let sel_str: String = parsed
         .sel_cols
         .iter()
@@ -1591,23 +1644,27 @@ pub fn crud_join_paged(input: TokenStream) -> TokenStream {
         .collect::<Vec<_>>()
         .join(", ");
     let from_str = parsed.from.value();
+    let qi_from = qi_table_ref(&d, &from_str);
     let join_parts: Vec<String> = parsed
         .joins
         .iter()
         .map(|j| {
             let jt = j.join_type.to_string().to_uppercase();
-            format!("{} JOIN {} ON {}", jt, j.table.value(), j.on.value())
+            format!(
+                "{} JOIN {} ON {}",
+                jt,
+                qi_table_ref(&d, &j.table.value()),
+                j.on.value()
+            )
         })
         .collect();
     let join_str = join_parts.join(" ");
 
-    let d = dialect();
-
     let sel_lit = syn::LitStr::new(&sel_str, proc_macro2::Span::call_site());
-    let from_lit = syn::LitStr::new(&from_str, proc_macro2::Span::call_site());
+    let from_lit = syn::LitStr::new(&qi_from, proc_macro2::Span::call_site());
     let join_lit = syn::LitStr::new(&join_str, proc_macro2::Span::call_site());
     let from_for_count = syn::LitStr::new(
-        from_str.split_whitespace().next().unwrap_or(""),
+        &d.qi(from_str.split_whitespace().next().unwrap_or("")),
         proc_macro2::Span::call_site(),
     );
 
@@ -1633,11 +1690,11 @@ pub fn crud_join_paged(input: TokenStream) -> TokenStream {
     );
 
     let tenant_sql_code = if let Some(tid_expr) = &parsed.tid {
-        let alias_prefix = match tenant_alias_ref {
-            Some(a) => format!("{}.", a.value()),
-            None => String::new(),
+        let tenant_col = match tenant_alias_ref {
+            Some(a) => format!("{}.{}", a.value(), d.qi("tenant_id")),
+            None => d.qi("tenant_id"),
         };
-        let alias_prefix_lit = syn::LitStr::new(&alias_prefix, proc_macro2::Span::call_site());
+        let tenant_col_lit = syn::LitStr::new(&tenant_col, proc_macro2::Span::call_site());
         quote! {
             let (__tenant_sql, __tid_val) = match #tid_expr {
                 Some(_tid) => {
@@ -1647,7 +1704,7 @@ pub fn crud_join_paged(input: TokenStream) -> TokenStream {
                         "?".to_string()
                     };
                     __ph_idx += 1;
-                    (format!(" AND {}tenant_id = {}", #alias_prefix_lit, __tph), Some(_tid))
+                    (format!(" AND {} = {}", #tenant_col_lit, __tph), Some(_tid))
                 },
                 None => (String::new(), None),
             };
@@ -1755,8 +1812,8 @@ pub fn crud_join_paged(input: TokenStream) -> TokenStream {
             #limit_sql_code
             let __data_sql = format!("SELECT {} FROM {} {} WHERE {}{}{}{} LIMIT {} OFFSET {}", #sel_lit, #from_lit, #join_lit, __where_sql, __tenant_sql, #order_lit, "", __limit_ph, __offset_ph);
             let __count_sql = format!("SELECT COUNT(*) FROM {} WHERE {}{}", #from_for_count, __where_sql, __tenant_sql);
-            let mut __dq = sqlx::query_as::<_, #ty>(&__data_sql);
-            let mut __cq = sqlx::query_scalar::<_, i64>(&__count_sql);
+            let mut __dq = sqlx::query_as::<crate::db::pool::Db, #ty>(&__data_sql);
+            let mut __cq = sqlx::query_scalar::<crate::db::pool::Db, i64>(&__count_sql);
             #(#bind_stmts_dq)*
             #(#bind_stmts_cq)*
             #tenant_bind
@@ -1857,6 +1914,7 @@ fn expand_join(input: TokenStream) -> TokenStream {
     let parsed = parse_macro_input!(input as JoinInput);
     let pool = &parsed.pool;
     let ty = &parsed.ty;
+    let d = dialect();
     let sel_str: String = parsed
         .sel_cols
         .iter()
@@ -1864,21 +1922,25 @@ fn expand_join(input: TokenStream) -> TokenStream {
         .collect::<Vec<_>>()
         .join(", ");
     let from_str = parsed.from.value();
+    let qi_from = qi_table_ref(&d, &from_str);
 
     let join_parts: Vec<String> = parsed
         .joins
         .iter()
         .map(|j| {
             let jt = j.join_type.to_string().to_uppercase();
-            format!("{} JOIN {} ON {}", jt, j.table.value(), j.on.value())
+            format!(
+                "{} JOIN {} ON {}",
+                jt,
+                qi_table_ref(&d, &j.table.value()),
+                j.on.value()
+            )
         })
         .collect();
     let join_str = join_parts.join(" ");
 
-    let d = dialect();
-
     let sel_lit = syn::LitStr::new(&sel_str, proc_macro2::Span::call_site());
-    let from_lit = syn::LitStr::new(&from_str, proc_macro2::Span::call_site());
+    let from_lit = syn::LitStr::new(&qi_from, proc_macro2::Span::call_site());
     let join_lit = syn::LitStr::new(&join_str, proc_macro2::Span::call_site());
     let method = &parsed.method;
 
@@ -1965,7 +2027,7 @@ fn expand_join(input: TokenStream) -> TokenStream {
             #tenant_sql
             let mut __sql = format!("SELECT {} FROM {} {} WHERE {}{}{}", #sel_lit, #from_lit, #join_lit, __where_sql, __tenant_sql, #order_lit);
             #limit_sql_code
-            let mut __q = sqlx::query_as::<_, #ty>(&__sql);
+            let mut __q = sqlx::query_as::<crate::db::pool::Db, #ty>(&__sql);
             #(#bind_stmts)*
             #tenant_bind
             #limit_bind

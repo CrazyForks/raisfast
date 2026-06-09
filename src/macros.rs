@@ -100,14 +100,21 @@ macro_rules! in_transaction {
     ($pool:expr, $tx:ident, $body:block) => {{
         let __write_guard = $crate::db::connection::acquire_write().await;
         #[allow(unused_mut)]
-        let mut $tx = $pool.begin().await.map_err(|e| {
-            $crate::errors::app_error::AppError::Internal(anyhow::anyhow!("begin tx: {e}"))
-        })?;
+        let mut $tx: $crate::db::pool::Transaction<'_> = match $pool.begin().await {
+            Ok(tx) => tx,
+            Err(e) => {
+                return Err($crate::errors::app_error::AppError::Internal(
+                    anyhow::anyhow!("begin tx: {e}"),
+                ));
+            }
+        };
         let __tx_result: Result<_, $crate::errors::app_error::AppError> = async { $body }.await;
         if __tx_result.is_ok() {
-            $tx.commit().await.map_err(|e| {
-                $crate::errors::app_error::AppError::Internal(anyhow::anyhow!("commit tx: {e}"))
-            })?;
+            if let Err(e) = $tx.commit().await {
+                return Err($crate::errors::app_error::AppError::Internal(
+                    anyhow::anyhow!("commit tx: {e}"),
+                ));
+            }
         }
         __tx_result
     }};
@@ -201,7 +208,7 @@ macro_rules! __define_enum_sqlx {
             db = sqlx::MySql,
             type_info = sqlx::mysql::MySqlTypeInfo,
             value_ref = sqlx::mysql::MySqlValueRef<'_>,
-            arg_buf = sqlx::mysql::MySqlArgumentBuffer,
+            arg_buf = Vec<u8>,
         }
     };
 }
@@ -219,6 +226,10 @@ macro_rules! __define_enum_sqlx_impl {
             fn type_info() -> $type_info {
                 <String as sqlx::Type<$db>>::type_info()
             }
+
+            fn compatible(ty: &$type_info) -> bool {
+                <String as sqlx::Type<$db>>::compatible(ty)
+            }
         }
 
         impl sqlx::Decode<'_, $db> for $name {
@@ -233,7 +244,7 @@ macro_rules! __define_enum_sqlx_impl {
                 &self,
                 buf: &mut $arg_buf,
             ) -> Result<sqlx::encode::IsNull, sqlx::error::BoxDynError> {
-                <&str as sqlx::Encode<'q, $db>>::encode(self.as_str(), buf)
+                <String as sqlx::Encode<'q, $db>>::encode_by_ref(&self.to_string(), buf)
             }
         }
     };

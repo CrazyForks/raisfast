@@ -111,6 +111,7 @@ mod tests {
             content: "".into(),
             excerpt: None,
             cover_image: None,
+            image_ids: None,
             status: crate::models::post::PostStatus::Published,
             created_by: crate::types::snowflake_id::SnowflakeId(1i64),
             updated_by: Some(crate::types::snowflake_id::SnowflakeId(1i64)),

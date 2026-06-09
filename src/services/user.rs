@@ -129,6 +129,7 @@ impl UserService for UserServiceImpl {
         let user = crate::models::user::find_by_id(&self.pool, uid, tenant_id)
             .await?
             .ok_or_else(|| AppError::not_found("user"))?;
+
         let cmd = UpdateProfileCmd {
             id: user.id,
             username: req.username.clone(),
@@ -138,7 +139,25 @@ impl UserService for UserServiceImpl {
             social_links: req.social_links.clone(),
             metadata: req.metadata.clone(),
         };
-        crate::models::user::update_profile(&self.pool, &cmd, tenant_id).await
+        let mut user = crate::models::user::update_profile(&self.pool, &cmd, tenant_id).await?;
+
+        if let Some(ref role) = req.role {
+            user = crate::models::user::update_role(&self.pool, uid, *role, tenant_id).await?;
+        }
+
+        if let Some(ref status) = req.status {
+            user = crate::models::user::update_status(&self.pool, uid, *status, tenant_id).await?;
+        }
+
+        if let Some(ref password) = req.password {
+            crate::services::auth::validate_password_strength(password)?;
+            let hash = crate::services::auth::hash_password(password)?;
+            let cred_data = crate::models::user_credential::wrap_password_hash(&hash);
+            crate::models::user_credential::update_credential_data(&self.pool, uid, &cred_data)
+                .await?;
+        }
+
+        Ok(user)
     }
 
     async fn delete_user(&self, user_id: &str, tenant_id: Option<&str>) -> AppResult<()> {
@@ -183,6 +202,7 @@ mod tests {
             &crate::commands::CreateUserCmd {
                 username: username.to_string(),
                 registered_via: crate::models::user::RegisteredVia::Email,
+                role: None,
             },
             None,
         )
@@ -221,6 +241,9 @@ mod tests {
                 avatar: None,
                 social_links: None,
                 metadata: None,
+                role: None,
+                status: None,
+                password: None,
             },
         )
         .await

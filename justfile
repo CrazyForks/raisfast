@@ -5,8 +5,10 @@
 
 set dotenv-load
 
-db        := "sqlite"
-db_url    := "sqlite:./storage/db/raisfast.db?mode=rwc"
+#db        := "sqlite"
+#db_url    := "sqlite:./storage/db/raisfast.db?mode=rwc"
+db        := "mysql"
+db_url    := "mysql://root:root@localhost:3306/raisfast"
 plugin_type := "all"
 
 # ── Default ───────────────────────────────────────────────────────
@@ -14,17 +16,17 @@ plugin_type := "all"
 default:
     @just --list
 
-features := "db-" + db + " plugin-js plugin-rhai search-tantivy"
+features := "db-" + db + " plugin-js plugin-rhai search-tantivy payment-all"
 
 # ── Build ─────────────────────────────────────────────────────────
 
 # Check compilation (default SQLite)
 check *FLAGS:
-    DATABASE_URL={{db_url}} cargo check --features "{{features}}" {{FLAGS}}
+    SQLX_OFFLINE=true DATABASE_URL={{db_url}} cargo check --no-default-features --features "{{features}}" {{FLAGS}}
 
 # Build release binary
 build *FLAGS:
-    DATABASE_URL={{db_url}} cargo build --release --features "{{features}}" {{FLAGS}}
+    SQLX_OFFLINE=true DATABASE_URL={{db_url}} cargo build --release --no-default-features --features "{{features}}" {{FLAGS}}
 
 # Build release binary with Admin UI (auto-detects frontend/admin)
 build-full *FLAGS:
@@ -32,8 +34,8 @@ build-full *FLAGS:
     set -euo pipefail
     if [ -d "frontend/admin" ]; then
         echo ">> Building Admin UI from source..."
-        cd frontend && pnpm install --frozen-lockfile
-        cd admin && pnpm build
+        cd frontend/admin && npm ci
+        npm run build
         cd ../..
         rm -rf adminui
         cp -r frontend/admin/dist adminui
@@ -41,7 +43,7 @@ build-full *FLAGS:
     else
         echo ">> frontend/admin not found, using existing adminui/ as-is"
     fi
-    DATABASE_URL={{db_url}} cargo build --release --features "{{features}}" {{FLAGS}}
+    SQLX_OFFLINE=true DATABASE_URL={{db_url}} cargo build --release --no-default-features --features "{{features}}" {{FLAGS}}
 
 # ── Code Quality ──────────────────────────────────────────────────
 
@@ -55,7 +57,7 @@ fmt-check:
 
 # Lint
 lint:
-    DATABASE_URL={{db_url}} cargo clippy --features "{{features}}" -- -D warnings
+    SQLX_OFFLINE=true DATABASE_URL={{db_url}} cargo clippy --no-default-features --features "{{features}}" -- -D warnings
 
 # Full quality check (fmt + lint)
 qa: fmt-check lint
@@ -64,15 +66,15 @@ qa: fmt-check lint
 
 # Run all tests
 test *FLAGS:
-    DATABASE_URL={{db_url}} cargo test --features "{{features}}" {{FLAGS}}
+    SQLX_OFFLINE=true DATABASE_URL={{db_url}} cargo test --no-default-features --features "{{features}}" {{FLAGS}}
 
 # Run unit tests only
 test-unit:
-    DATABASE_URL={{db_url}} cargo test --lib --features "{{features}}"
+    SQLX_OFFLINE=true DATABASE_URL={{db_url}} cargo test --lib --no-default-features --features "{{features}}"
 
 # Run integration tests only
 test-integration:
-    DATABASE_URL={{db_url}} cargo test --test api_tests --features "{{features}}"
+    SQLX_OFFLINE=true DATABASE_URL={{db_url}} cargo test --test api_tests --no-default-features --features "{{features}}"
 
 # ── Database ──────────────────────────────────────────────────────
 
@@ -89,35 +91,35 @@ db-reset:
 
 # Run CLI migrations
 db-migrate:
-    DATABASE_URL={{db_url}} cargo run -- db migrate
+    DATABASE_URL={{db_url}} cargo run --no-default-features --features "{{features}}" -- db migrate
 
 # Backup database
 db-backup:
-    DATABASE_URL={{db_url}} cargo run -- db backup ./backups
+    DATABASE_URL={{db_url}} cargo run --no-default-features --features "{{features}}" -- db backup ./backups
 
 # Generate sqlx offline query metadata
 db-prepare:
-    DATABASE_URL={{db_url}} cargo sqlx prepare -- --features "{{features}}"
+    DATABASE_URL={{db_url}} cargo sqlx prepare -- --no-default-features --features "{{features}}"
 
 # Verify offline compilation (no DATABASE_URL required)
 check-offline:
-    cargo check --features "{{features}}"
+    SQLX_OFFLINE=true cargo check --no-default-features --features "{{features}}"
 
 # ── Run ───────────────────────────────────────────────────────────
 
 # Start development server
 dev:
-    DATABASE_URL={{db_url}} cargo run --features "{{features}}"
+    DATABASE_URL={{db_url}} cargo run --no-default-features --features "{{features}}"
 
 # ── Database Backend Switch ───────────────────────────────────────
 
 # Check compilation with PostgreSQL
 pg-check:
-    cargo check --features "db-postgres"
+    SQLX_OFFLINE=true cargo check --features "db-postgres"
 
 # Check compilation with MySQL
 mysql-check:
-    cargo check --features "db-mysql"
+    SQLX_OFFLINE=true cargo check --features "db-mysql"
 
 # ── Full CI Pipeline ──────────────────────────────────────────────
 

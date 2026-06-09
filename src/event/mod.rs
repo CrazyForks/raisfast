@@ -329,6 +329,7 @@ mod tests {
             content: String::new(),
             excerpt: None,
             cover_image: None,
+            image_ids: None,
             status: crate::models::post::PostStatus::Draft,
             created_by: None,
             author_name: None,

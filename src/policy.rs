@@ -103,6 +103,7 @@ mod tests {
             content: String::new(),
             excerpt: None,
             cover_image: None,
+            image_ids: None,
             status: crate::models::post::PostStatus::Draft,
             created_by: SnowflakeId(created_by),
             updated_by: None,

@@ -1,5 +1,3 @@
-//! Site options API handler
-
 use std::collections::HashMap;
 
 use axum::Json;
@@ -10,6 +8,7 @@ use crate::AppState;
 use crate::dto::{UpdateOptionRequest, UpdateOptionsRequest};
 use crate::errors::app_error::{AppError, AppResult};
 use crate::errors::response::ApiResponse;
+use crate::middleware::auth::AuthUser;
 
 pub fn routes(
     registry: &mut crate::server::RouteRegistry,
@@ -79,14 +78,14 @@ pub fn routes(
     )
 }
 
-/// GET /options/public — Public options (values only) + system feature flags
 #[utoipa::path(get, path = "/options/public", tag = "options",
     responses((status = 200, description = "Public options"))
 )]
 pub async fn get_public_options(
+    auth: AuthUser,
     State(state): State<AppState>,
 ) -> AppResult<ApiResponse<HashMap<String, Value>>> {
-    let mut options = state.options.get_public().await;
+    let mut options = state.options.get_public(auth.tenant_id()).await;
     options.insert(
         "builtin_tenantable".into(),
         Value::Bool(state.config.builtin_tenantable),
@@ -94,31 +93,31 @@ pub async fn get_public_options(
     Ok(ApiResponse::success(options))
 }
 
-/// GET /admin/options — All options (grouped, with metadata)
 #[utoipa::path(get, path = "/admin/options", tag = "options",
     security(("bearer_auth" = [])),
     responses((status = 200, description = "All options grouped"))
 )]
 pub async fn list_options(
+    auth: AuthUser,
     State(state): State<AppState>,
 ) -> AppResult<ApiResponse<Vec<crate::services::options::OptionGroup>>> {
-    let groups = state.options.get_grouped().await?;
+    let groups = state.options.get_grouped(auth.tenant_id()).await?;
     Ok(ApiResponse::success(groups))
 }
 
-/// GET /admin/options/:key — Get a single option
 #[utoipa::path(get, path = "/admin/options/{key}", tag = "options",
     security(("bearer_auth" = [])),
     params(("key" = String, Path, description = "Option key")),
     responses((status = 200, description = "Option value"))
 )]
 pub async fn get_option(
+    auth: AuthUser,
     State(state): State<AppState>,
     Path(key): Path<String>,
 ) -> AppResult<ApiResponse<serde_json::Value>> {
     let entry = state
         .options
-        .get_entry(&key)
+        .get_entry(auth.tenant_id(), &key)
         .await
         .ok_or_else(|| AppError::not_found(&format!("option/{key}")))?;
     Ok(ApiResponse::success(
@@ -126,49 +125,55 @@ pub async fn get_option(
     ))
 }
 
-/// PUT /admin/options — Batch update options
 #[utoipa::path(put, path = "/admin/options", tag = "options",
     security(("bearer_auth" = [])),
     responses((status = 200, description = "Options updated"))
 )]
 pub async fn update_options(
+    auth: AuthUser,
     State(state): State<AppState>,
     Json(body): Json<UpdateOptionsRequest>,
 ) -> AppResult<ApiResponse<Vec<crate::services::options::OptionGroup>>> {
-    state.options.set_batch(body.options).await?;
-    let groups = state.options.get_grouped().await?;
+    state
+        .options
+        .set_batch(auth.tenant_id(), body.options)
+        .await?;
+    let groups = state.options.get_grouped(auth.tenant_id()).await?;
     Ok(ApiResponse::success(groups))
 }
 
-/// PUT /admin/options/:key — Set a single option
 #[utoipa::path(put, path = "/admin/options/{key}", tag = "options",
     security(("bearer_auth" = [])),
     params(("key" = String, Path, description = "Option key")),
     responses((status = 200, description = "Option set"))
 )]
 pub async fn set_option(
+    auth: AuthUser,
     State(state): State<AppState>,
     Path(key): Path<String>,
     Json(body): Json<UpdateOptionRequest>,
 ) -> AppResult<ApiResponse<serde_json::Value>> {
-    state.options.set(&key, body.value).await?;
+    state
+        .options
+        .set(auth.tenant_id(), &key, body.value)
+        .await?;
     Ok(ApiResponse::success(serde_json::json!({
         "option_key": key,
         "updated": true,
     })))
 }
 
-/// DELETE /admin/options/:key — Delete an option
 #[utoipa::path(delete, path = "/admin/options/{key}", tag = "options",
     security(("bearer_auth" = [])),
     params(("key" = String, Path, description = "Option key")),
     responses((status = 200, description = "Option deleted"))
 )]
 pub async fn delete_option(
+    auth: AuthUser,
     State(state): State<AppState>,
     Path(key): Path<String>,
 ) -> AppResult<ApiResponse<serde_json::Value>> {
-    state.options.delete(&key).await?;
+    state.options.delete(auth.tenant_id(), &key).await?;
     Ok(ApiResponse::success(serde_json::json!({
         "option_key": key,
         "deleted": true,

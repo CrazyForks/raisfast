@@ -204,11 +204,12 @@ pub async fn start(
     let triggered_by_int: Option<i64> = match &body.triggered_by {
         Some(uid) if !uid.is_empty() => {
             let sql = format!("SELECT id FROM users WHERE id = {}", Driver::ph(1));
-            sqlx::query_scalar::<_, i64>(&sql)
+            let result: Option<i64> = sqlx::query_scalar::<crate::db::pool::Db, i64>(&sql)
                 .bind(uid.parse::<i64>().unwrap_or(0))
                 .fetch_optional(&state.pool)
                 .await
-                .map_err(|e| AppError::Internal(anyhow::anyhow!("{e}")))?
+                .map_err(|e: sqlx::Error| AppError::Internal(anyhow::anyhow!("{e}")))?;
+            result
         }
         _ => None,
     };

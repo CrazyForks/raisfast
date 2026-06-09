@@ -187,7 +187,7 @@ impl WhereCodegen {
                 self.sql.push(')');
             }
             WhereExpr::Condition { col, op, value, .. } => {
-                self.sql.push_str(col);
+                self.sql.push_str(&self.d.qi_col(col));
                 match op {
                     CmpOp::Eq => {
                         self.sql.push('=');
@@ -317,7 +317,7 @@ fn build_runtime(expr: &WhereExpr, d: Dialect, result: &mut WhereRuntimeResult) 
                 .extend(quote::quote! { __where_sql.push(')'); });
         }
         WhereExpr::Condition { col, op, value, .. } => {
-            let col_lit = syn::LitStr::new(col, proc_macro2::Span::call_site());
+            let col_lit = syn::LitStr::new(&d.qi_col(col), proc_macro2::Span::call_site());
             match op {
                 CmpOp::Eq => {
                     let val = value.as_ref().unwrap();

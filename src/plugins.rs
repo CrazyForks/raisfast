@@ -94,33 +94,38 @@ pub(crate) fn rows_to_json(rows: &[crate::db::DbRow]) -> String {
         .collect();
     let result: Vec<serde_json::Map<String, serde_json::Value>> = rows
         .iter()
-        .map(|row| {
+        .map(|row: &crate::db::DbRow| {
             let mut map = serde_json::Map::new();
             for (i, col) in columns.iter().enumerate() {
-                if let Ok(v) = row.try_get::<Option<i64>, _>(i) {
+                let i: usize = i;
+                if let Ok(v) = row.try_get::<Option<i64>, usize>(i) {
                     map.insert(
                         col.clone(),
-                        v.map_or(serde_json::Value::Null, |n| {
+                        v.map_or(serde_json::Value::Null, |n: i64| {
                             serde_json::Value::Number(n.into())
                         }),
                     );
-                } else if let Ok(v) = row.try_get::<Option<f64>, _>(i) {
+                } else if let Ok(v) = row.try_get::<Option<f64>, usize>(i) {
                     map.insert(
                         col.clone(),
-                        v.and_then(|f| {
+                        v.and_then(|f: f64| {
                             serde_json::Number::from_f64(f).map(serde_json::Value::Number)
                         })
                         .unwrap_or(serde_json::Value::Null),
                     );
-                } else if let Ok(v) = row.try_get::<Option<bool>, _>(i) {
+                } else if let Ok(v) = row.try_get::<Option<bool>, usize>(i) {
                     map.insert(
                         col.clone(),
-                        v.map_or(serde_json::Value::Null, serde_json::Value::Bool),
+                        v.map_or(serde_json::Value::Null, |b: bool| {
+                            serde_json::Value::Bool(b)
+                        }),
                     );
-                } else if let Ok(v) = row.try_get::<Option<String>, _>(i) {
+                } else if let Ok(v) = row.try_get::<Option<String>, usize>(i) {
                     map.insert(
                         col.clone(),
-                        v.map_or(serde_json::Value::Null, serde_json::Value::String),
+                        v.map_or(serde_json::Value::Null, |s: String| {
+                            serde_json::Value::String(s)
+                        }),
                     );
                 } else {
                     map.insert(col.clone(), serde_json::Value::Null);

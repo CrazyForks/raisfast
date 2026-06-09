@@ -47,14 +47,14 @@ pub async fn find_by_id(
     id: SnowflakeId,
     tenant_id: Option<&str>,
 ) -> AppResult<Option<ShippingTemplate>> {
-    raisfast_derive::crud_find!(
+    let result: Option<ShippingTemplate> = raisfast_derive::crud_find!(
         pool,
         "shipping_templates",
         ShippingTemplate,
         where: ("id", id),
         tenant: tenant_id
-    )
-    .map_err(Into::into)
+    )?;
+    Ok(result)
 }
 
 pub async fn find_all_paginated(
@@ -118,7 +118,7 @@ pub async fn update(
         .await?
         .ok_or_else(|| AppError::not_found("shipping_template"))?;
 
-    let affected = raisfast_derive::crud_update!(
+    let result: crate::db::pool::DbQueryResult = raisfast_derive::crud_update!(
         pool,
         "shipping_templates",
         bind: [
@@ -135,9 +135,8 @@ pub async fn update(
         raw: ["updated_at" => crate::db::Driver::now_fn()],
         where: ("id", cmd.id),
         tenant: tenant_id
-    )?
-    .rows_affected();
-    Ok(affected > 0)
+    )?;
+    Ok(result.rows_affected() > 0)
 }
 
 pub async fn delete_by_id(

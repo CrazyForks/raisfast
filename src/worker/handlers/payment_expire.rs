@@ -34,7 +34,7 @@ impl JobHandler for ExpirePaymentOrdersHandler {
             Driver::ph(1)
         );
         let orders: Vec<crate::models::payment_order::PaymentOrder> = sqlx::query_as(&sql)
-            .bind(cutoff.format("%Y-%m-%dT%H:%M:%SZ").to_string())
+            .bind(cutoff.format("%Y-%m-%d %H:%M:%S").to_string())
             .fetch_all(&self.pool)
             .await?;
 

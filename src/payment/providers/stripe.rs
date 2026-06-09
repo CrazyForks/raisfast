@@ -69,6 +69,7 @@ impl PaymentProvider for StripeProvider {
         channel: &PaymentChannel,
         order: &PaymentOrder,
         return_url: Option<&str>,
+        _notify_url: Option<&str>,
     ) -> AppResult<ProviderResponse> {
         let client = create_client(&channel.credentials, &self.encrypt_key)?;
         let currency_str = order.currency.to_lowercase();
@@ -118,7 +119,7 @@ impl PaymentProvider for StripeProvider {
             status: map_stripe_status(&pi.status),
             provider_tx_id: pi.latest_charge.as_ref().map(|c| c.id().to_string()),
             paid_at: None,
-            amount: pi.amount,
+            amount: Some(pi.amount),
         })
     }
 

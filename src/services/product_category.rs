@@ -59,6 +59,12 @@ impl ProductCategoryService for ProductCategoryServiceImpl {
             description: req.description,
             parent_id,
             sort_order: req.sort_order.unwrap_or(0),
+            cover_image: req.cover_image,
+            meta_title: req.meta_title,
+            meta_description: req.meta_description,
+            og_title: req.og_title,
+            og_description: req.og_description,
+            og_image: req.og_image,
         };
         let cat = crate::models::product_category::create(
             &self.pool,
@@ -93,6 +99,12 @@ impl ProductCategoryService for ProductCategoryServiceImpl {
             description: req.description,
             parent_id,
             sort_order: req.sort_order,
+            cover_image: req.cover_image,
+            meta_title: req.meta_title,
+            meta_description: req.meta_description,
+            og_title: req.og_title,
+            og_description: req.og_description,
+            og_image: req.og_image,
         };
         let updated = crate::models::product_category::update(
             &self.pool,
@@ -151,15 +163,10 @@ async fn resolve_parent_id(
 ) -> AppResult<Option<i64>> {
     match raw_id {
         Some(raw) if !raw.is_empty() => {
-            if raw.parse::<i64>().is_ok() {
-                Ok(raw.parse::<i64>().ok())
-            } else {
-                let pid = crate::types::snowflake_id::parse_id(raw)?;
-                let parent =
-                    crate::models::product_category::find_by_id(pool, pid, auth.tenant_id())
-                        .await?;
-                Ok(Some(*parent.id))
-            }
+            let pid = crate::types::snowflake_id::parse_id(raw)?;
+            let parent =
+                crate::models::product_category::find_by_id(pool, pid, auth.tenant_id()).await?;
+            Ok(Some(*parent.id))
         }
         _ => Ok(None),
     }
@@ -178,7 +185,8 @@ mod tests {
         AuthUser::from_parts(
             Some(1),
             crate::models::user::UserRole::Admin,
-            tid.map(|s| s.to_string()),
+            tid.map(|s| s.to_string())
+                .or_else(|| Some("default".to_string())),
         )
     }
 
@@ -202,6 +210,12 @@ mod tests {
                     description: Some("All electronic items".into()),
                     parent_id: None,
                     sort_order: Some(0),
+                    cover_image: None,
+                    meta_title: None,
+                    meta_description: None,
+                    og_title: None,
+                    og_description: None,
+                    og_image: None,
                 },
             )
             .await
@@ -224,6 +238,12 @@ mod tests {
                     description: None,
                     parent_id: None,
                     sort_order: None,
+                    cover_image: None,
+                    meta_title: None,
+                    meta_description: None,
+                    og_title: None,
+                    og_description: None,
+                    og_image: None,
                 },
             )
             .await
@@ -254,6 +274,12 @@ mod tests {
                     description: None,
                     parent_id: None,
                     sort_order: None,
+                    cover_image: None,
+                    meta_title: None,
+                    meta_description: None,
+                    og_title: None,
+                    og_description: None,
+                    og_image: None,
                 },
             )
             .await
@@ -267,6 +293,12 @@ mod tests {
                     description: Some("updated".into()),
                     parent_id: None,
                     sort_order: Some(5),
+                    cover_image: None,
+                    meta_title: None,
+                    meta_description: None,
+                    og_title: None,
+                    og_description: None,
+                    og_image: None,
                 },
             )
             .await
@@ -289,6 +321,12 @@ mod tests {
                     description: None,
                     parent_id: None,
                     sort_order: None,
+                    cover_image: None,
+                    meta_title: None,
+                    meta_description: None,
+                    og_title: None,
+                    og_description: None,
+                    og_image: None,
                 },
             )
             .await
@@ -317,6 +355,12 @@ mod tests {
                 description: None,
                 parent_id: None,
                 sort_order: None,
+                cover_image: None,
+                meta_title: None,
+                meta_description: None,
+                og_title: None,
+                og_description: None,
+                og_image: None,
             },
         )
         .await
@@ -328,6 +372,12 @@ mod tests {
                 description: None,
                 parent_id: None,
                 sort_order: None,
+                cover_image: None,
+                meta_title: None,
+                meta_description: None,
+                og_title: None,
+                og_description: None,
+                og_image: None,
             },
         )
         .await
@@ -349,6 +399,12 @@ mod tests {
                     description: None,
                     parent_id: None,
                     sort_order: None,
+                    cover_image: None,
+                    meta_title: None,
+                    meta_description: None,
+                    og_title: None,
+                    og_description: None,
+                    og_image: None,
                 },
             )
             .await
@@ -375,6 +431,12 @@ mod tests {
                     description: None,
                     parent_id: None,
                     sort_order: None,
+                    cover_image: None,
+                    meta_title: None,
+                    meta_description: None,
+                    og_title: None,
+                    og_description: None,
+                    og_image: None,
                 },
             )
             .await
@@ -387,6 +449,12 @@ mod tests {
                     description: None,
                     parent_id: Some(parent.id.to_string()),
                     sort_order: None,
+                    cover_image: None,
+                    meta_title: None,
+                    meta_description: None,
+                    og_title: None,
+                    og_description: None,
+                    og_image: None,
                 },
             )
             .await
@@ -407,6 +475,12 @@ mod tests {
                     description: None,
                     parent_id: Some("99999".to_string()),
                     sort_order: None,
+                    cover_image: None,
+                    meta_title: None,
+                    meta_description: None,
+                    og_title: None,
+                    og_description: None,
+                    og_image: None,
                 },
             )
             .await;
@@ -426,6 +500,12 @@ mod tests {
                 description: None,
                 parent_id: None,
                 sort_order: None,
+                cover_image: None,
+                meta_title: None,
+                meta_description: None,
+                og_title: None,
+                og_description: None,
+                og_image: None,
             },
         )
         .await
@@ -437,6 +517,12 @@ mod tests {
                 description: None,
                 parent_id: None,
                 sort_order: None,
+                cover_image: None,
+                meta_title: None,
+                meta_description: None,
+                og_title: None,
+                og_description: None,
+                og_image: None,
             },
         )
         .await

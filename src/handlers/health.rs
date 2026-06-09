@@ -41,13 +41,20 @@ impl HealthIndicator for DatabaseIndicator {
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ComponentHealth> + Send + '_>> {
         Box::pin(async {
             match sqlx::query("SELECT 1").execute(&self.pool).await {
-                Ok(_) => ComponentHealth {
-                    status: HealthStatus::Up,
-                    details: None,
-                },
+                Ok(_r) => {
+                    let _: crate::db::pool::DbQueryResult = _r;
+                    ComponentHealth {
+                        status: HealthStatus::Up,
+                        details: None,
+                    }
+                }
                 Err(e) => ComponentHealth {
                     status: HealthStatus::Down,
-                    details: Some(json!({ "error": e.to_string() })),
+                    details: Some({
+                        let mut m = serde_json::Map::new();
+                        m.insert("error".into(), serde_json::Value::String(e.to_string()));
+                        serde_json::Value::Object(m)
+                    }),
                 },
             }
         })
@@ -136,7 +143,7 @@ impl HealthIndicator for CacheIndicator {
                 }
                 Err(e) => ComponentHealth {
                     status: HealthStatus::Degraded,
-                    details: Some(json!({ "error": e.to_string() })),
+                    details: Some(json!({ "error": e.to_string() }) as Value),
                 },
             }
         })

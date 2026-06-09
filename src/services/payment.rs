@@ -654,6 +654,46 @@ pub async fn create_payment_order(
     if let Some(existing) =
         crate::models::payment_order::find_by_idempotency_key(pool, &idempotency_key, None).await?
     {
+        tracing::info!(
+            "idempotent payment order found: id={}, status={:?}",
+            existing.id,
+            existing.status
+        );
+        if existing.status == PaymentStatus::Pending {
+            let key = get_encrypt_key(config)?;
+            let provider = crate::payment::providers::get_provider(&channel.provider, &key)?;
+            let notify_url = format!("{}/api/v1/payment/callback/{}", config.base_url, channel.id);
+            let provider_resp = provider
+                .create(
+                    &channel,
+                    &existing,
+                    req.return_url.as_deref(),
+                    Some(&notify_url),
+                )
+                .await
+                .map_err(|e| {
+                    tracing::error!("creem create retry failed: {e}");
+                    e
+                })
+                .ok();
+            tracing::info!(
+                "creem retry provider_resp: redirect_url={:?}",
+                provider_resp.as_ref().and_then(|r| r.redirect_url.as_ref())
+            );
+            if let Some(ref resp) = provider_resp
+                && let Err(e) = crate::models::payment_order::update_provider_order_id(
+                    pool,
+                    existing.id,
+                    &resp.provider_order_id,
+                    None,
+                    auth.tenant_id(),
+                )
+                .await
+            {
+                tracing::warn!("failed to update provider_order_id on retry: {e}");
+            }
+            return Ok((existing, provider_resp));
+        }
         return Ok((existing, None));
     }
 
@@ -699,8 +739,14 @@ pub async fn create_payment_order(
 
     let key = get_encrypt_key(config)?;
     let provider = crate::payment::providers::get_provider(&channel.provider, &key)?;
+    let notify_url = format!("{}/api/v1/payment/callback/{}", config.base_url, channel.id);
     let provider_response = match provider
-        .create(&channel, &payment_order, req.return_url.as_deref())
+        .create(
+            &channel,
+            &payment_order,
+            req.return_url.as_deref(),
+            Some(&notify_url),
+        )
         .await
     {
         Ok(resp) => {
@@ -891,8 +937,12 @@ pub async fn handle_callback(
         return Err(AppError::BadRequest("order_not_pending".into()));
     }
 
-    if callback.amount != payment_order.amount {
-        return Err(AppError::BadRequest("amount_mismatch".into()));
+    if callback.amount > 0 && callback.amount != payment_order.amount {
+        tracing::warn!(
+            "callback amount mismatch: expected={}, got={} (provider may add tax as MoR)",
+            payment_order.amount,
+            callback.amount
+        );
     }
 
     if callback.status != PaymentStatus::Paid {
@@ -925,24 +975,37 @@ pub async fn handle_callback(
         }
 
         if let Some(ref provider_tx_id) = callback.provider_tx_id {
-            let raw_payload = serde_json::to_string(&callback).ok();
-            let tx_cmd = CreatePaymentTransactionCmd {
-                payment_order_id: payment_order.id,
-                order_id: payment_order.order_id.clone(),
-                user_id: payment_order.user_id,
-                tx_type: "charge".into(),
-                amount: payment_order.amount,
-                currency: payment_order.currency.clone(),
-                provider_tx_id: provider_tx_id.clone(),
-                status: "succeeded".into(),
-                raw_payload,
-            };
-            crate::models::payment_transaction::tx_insert(
-                &mut tx,
-                &tx_cmd,
+            if crate::models::payment_transaction::find_by_provider_tx_id(
+                pool,
+                provider_tx_id,
                 payment_order.tenant_id.as_deref(),
             )
-            .await?;
+            .await?
+            .is_some()
+            {
+                tracing::info!(
+                    "transaction already exists for provider_tx_id={provider_tx_id}, skipping"
+                );
+            } else {
+                let raw_payload = serde_json::to_string(&callback).ok();
+                let tx_cmd = CreatePaymentTransactionCmd {
+                    payment_order_id: payment_order.id,
+                    order_id: payment_order.order_id.clone(),
+                    user_id: payment_order.user_id,
+                    tx_type: "charge".into(),
+                    amount: payment_order.amount,
+                    currency: payment_order.currency.clone(),
+                    provider_tx_id: provider_tx_id.clone(),
+                    status: "succeeded".into(),
+                    raw_payload,
+                };
+                crate::models::payment_transaction::tx_insert(
+                    &mut tx,
+                    &tx_cmd,
+                    payment_order.tenant_id.as_deref(),
+                )
+                .await?;
+            }
         }
 
         if let Some(ref order_id_str) = payment_order.order_id
@@ -1232,8 +1295,8 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
-        let _ = crate::models::currencies::create(&pool, "CNY", "Chinese Yuan", 2).await;
-        let _ = crate::models::currencies::create(&pool, "USD", "US Dollar", 2).await;
+        let _ = crate::models::currencies::create(&pool, "default", "CNY", "Chinese Yuan", 2).await;
+        let _ = crate::models::currencies::create(&pool, "default", "USD", "US Dollar", 2).await;
         pool
     }
 
@@ -1703,9 +1766,11 @@ mod tests {
         assert_eq!(rows, 1);
         tx.commit().await.unwrap();
 
+        let wallet_auth =
+            AuthUser::from_parts(Some(user_id), crate::models::user::UserRole::Reader, None);
         crate::services::wallet::credit_wallet(
             &pool,
-            SnowflakeId(user_id),
+            &wallet_auth,
             "CNY",
             1000,
             WalletTxType::Recharge,
@@ -1764,9 +1829,11 @@ mod tests {
         assert_eq!(rows, 1);
         tx.commit().await.unwrap();
 
+        let wallet_auth =
+            AuthUser::from_parts(Some(user_id), crate::models::user::UserRole::Reader, None);
         crate::services::wallet::credit_wallet(
             &pool,
-            SnowflakeId(user_id),
+            &wallet_auth,
             "CNY",
             1000,
             WalletTxType::Recharge,

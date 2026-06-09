@@ -4,6 +4,14 @@ use ts_rs::TS;
 use utoipa::ToSchema;
 use validator::Validate;
 
+#[derive(Debug, Deserialize)]
+pub struct AdminOrderListQuery {
+    pub page: Option<i64>,
+    pub page_size: Option<i64>,
+    pub keyword: Option<String>,
+    pub status: Option<String>,
+}
+
 #[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Serialize, Deserialize, Clone, Validate, ToSchema)]
 pub struct CreateOrderRequest {
@@ -119,6 +127,10 @@ pub struct OrderStatsResponse {
     pub completed_orders: i64,
     #[cfg_attr(feature = "export-types", ts(type = "number"))]
     pub total_revenue: i64,
+    #[cfg_attr(feature = "export-types", ts(type = "number"))]
+    pub today_orders: i64,
+    #[cfg_attr(feature = "export-types", ts(type = "number"))]
+    pub today_revenue: i64,
 }
 
 #[cfg_attr(feature = "export-types", derive(TS))]

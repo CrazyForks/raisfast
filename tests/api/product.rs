@@ -168,7 +168,11 @@ async fn get_product_by_id() {
     .await;
     let id = create_body["data"]["id"].as_str().unwrap();
 
-    let (status, body) = send(&mut app, get_req(&format!("/api/v1/products/{id}"))).await;
+    let (status, body) = send(
+        &mut app,
+        get_auth(&format!("/api/v1/admin/products/{id}"), &tok),
+    )
+    .await;
     assert!(status.is_success(), "get: {status} {body:?}");
     assert_eq!(body["data"]["title"], "Found");
 }

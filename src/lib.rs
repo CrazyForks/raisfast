@@ -171,10 +171,14 @@ pub async fn build_app_state(
         crate::services::user::UserServiceImpl::new(Arc::new(pool.clone())),
     );
 
+    let options_service =
+        Arc::new(OptionsService::new(Arc::new(pool.clone()), config.builtin_tenantable).await);
+
     let order_service: Arc<dyn crate::services::order::OrderService> =
         Arc::new(crate::services::order::OrderServiceImpl::new(
             aspect_engine.clone(),
             Arc::new(pool.clone()),
+            options_service.clone(),
         ));
 
     let cart_service: Arc<dyn crate::services::cart::CartService> = Arc::new(
@@ -298,14 +302,13 @@ pub async fn build_app_state(
             Arc::new(pool.clone()),
             aspect_engine.clone(),
         ));
+
     let product_service: Arc<dyn crate::services::product::ProductService> =
         Arc::new(crate::services::product::ProductServiceImpl::new(
             aspect_engine.clone(),
             Arc::new(pool.clone()),
+            options_service.clone(),
         ));
-
-    let options_service =
-        Arc::new(OptionsService::new(Arc::new(pool.clone()), config.builtin_tenantable).await);
 
     let rbac_service = Arc::new(RbacService::new(Arc::new(pool.clone())));
 

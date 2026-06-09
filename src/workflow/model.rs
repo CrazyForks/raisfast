@@ -295,8 +295,10 @@ pub async fn create_step_log(
         pool, "workflow_step_logs",
         ["id" => id, "instance_id" => instance_id, "step_id" => step_id, "step_name" => step_name, "status" => WorkflowStepStatus::Running, "input" => input_str, "started_at" => now]
     )?;
-    raisfast_derive::crud_find_one!(pool, "workflow_step_logs", StepLog, where: ("id", id))
-        .map_err(|e| anyhow::anyhow!("failed to fetch created step log: {e}"))
+    let result: StepLog =
+        raisfast_derive::crud_find_one!(pool, "workflow_step_logs", StepLog, where: ("id", id))
+            .map_err(|e: sqlx::Error| anyhow::anyhow!("failed to fetch created step log: {e}"))?;
+    Ok(result)
 }
 
 /// Complete step execution log

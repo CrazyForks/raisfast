@@ -93,7 +93,7 @@ pub async fn create_role(
             "updated_at" => now
         ]
     )
-    .map_err(|e| AppError::Conflict(format!("create role failed: {e}")))?;
+    .map_err(|e: sqlx::Error| AppError::Conflict(format!("create role failed: {e}")))?;
 
     find_role_by_id(pool, id)
         .await?

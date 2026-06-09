@@ -160,10 +160,7 @@ pub fn generate_indexes(ct: &ContentTypeSchema) -> Vec<String> {
     for field in &ct.fields {
         if field.unique && field.field_type != FieldType::Uid {
             let idx_name = format!("idx_{}_{}_unique", ct.table, field.name);
-            indexes.push(format!(
-                "CREATE UNIQUE INDEX IF NOT EXISTS {idx_name} ON {}({})",
-                ct.table, field.name
-            ));
+            indexes.push(create_index_sql(&idx_name, &ct.table, &field.name, true));
         }
     }
 
@@ -171,20 +168,26 @@ pub fn generate_indexes(ct: &ContentTypeSchema) -> Vec<String> {
         let cols = idx.fields.join(",");
         if idx.unique {
             let idx_name = format!("idx_{}_{}_unique", ct.table, idx.fields.join("_"));
-            indexes.push(format!(
-                "CREATE UNIQUE INDEX IF NOT EXISTS {idx_name} ON {}({})",
-                ct.table, cols
-            ));
+            indexes.push(create_index_sql(&idx_name, &ct.table, &cols, true));
         } else {
             let idx_name = format!("idx_{}_{}", ct.table, idx.fields.join("_"));
-            indexes.push(format!(
-                "CREATE INDEX IF NOT EXISTS {idx_name} ON {}({})",
-                ct.table, cols
-            ));
+            indexes.push(create_index_sql(&idx_name, &ct.table, &cols, false));
         }
     }
 
     indexes
+}
+
+fn create_index_sql(name: &str, table: &str, columns: &str, unique: bool) -> String {
+    let unique_kw = if unique { "UNIQUE " } else { "" };
+    #[cfg(feature = "db-mysql")]
+    {
+        format!("CREATE {unique_kw}INDEX {name} ON {table}({columns})")
+    }
+    #[cfg(not(feature = "db-mysql"))]
+    {
+        format!("CREATE {unique_kw}INDEX IF NOT EXISTS {name} ON {table}({columns})")
+    }
 }
 
 /// Generate ALTER TABLE ADD COLUMN SQL from a content type definition and existing columns

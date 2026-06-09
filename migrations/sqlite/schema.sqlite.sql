@@ -17,10 +17,6 @@ CREATE TABLE IF NOT EXISTS tenants (
     updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
 
--- Default tenant
-INSERT OR IGNORE INTO tenants (name, domain, config, status, created_at, updated_at) VALUES
-    ('Default', NULL, '{}', 'active', strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), strftime('%Y-%m-%dT%H:%M:%SZ', 'now'));
-
 -- Users
 CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY,
@@ -41,14 +37,12 @@ CREATE TABLE IF NOT EXISTS users (
     updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
 
-CREATE INDEX IF NOT EXISTS idx_users_username ON users(username);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_users_slug ON users(slug) WHERE slug IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_users_tenant ON users(tenant_id);
 
 -- User credentials
 CREATE TABLE IF NOT EXISTS user_credentials (
     id INTEGER PRIMARY KEY,
-    user_id INTEGER NOT NULL REFERENCES users(id),
+    user_id INTEGER NOT NULL,
     auth_type TEXT NOT NULL,
     identifier TEXT NOT NULL,
     credential_data TEXT NOT NULL,
@@ -59,13 +53,12 @@ CREATE TABLE IF NOT EXISTS user_credentials (
 );
 
 CREATE INDEX IF NOT EXISTS idx_user_credentials_user ON user_credentials(user_id);
-CREATE INDEX IF NOT EXISTS idx_user_credentials_type_id ON user_credentials(auth_type, identifier);
 CREATE INDEX IF NOT EXISTS idx_user_credentials_type ON user_credentials(auth_type);
 
 -- OAuth account bindings
 CREATE TABLE IF NOT EXISTS oauth_accounts (
     id INTEGER PRIMARY KEY,
-    user_id INTEGER NOT NULL REFERENCES users(id),
+    user_id INTEGER NOT NULL,
     provider TEXT NOT NULL,
     provider_user_id TEXT NOT NULL,
     email TEXT,
@@ -81,7 +74,6 @@ CREATE TABLE IF NOT EXISTS oauth_accounts (
 );
 
 CREATE INDEX IF NOT EXISTS idx_oauth_accounts_user ON oauth_accounts(user_id);
-CREATE INDEX IF NOT EXISTS idx_oauth_accounts_provider ON oauth_accounts(provider, provider_user_id);
 
 -- OAuth short-lived state storage (PKCE)
 CREATE TABLE IF NOT EXISTS oauth_states (
@@ -98,22 +90,22 @@ CREATE INDEX IF NOT EXISTS idx_oauth_states_expires ON oauth_states(expires_at);
 -- Currency configuration
 CREATE TABLE IF NOT EXISTS currencies (
     id INTEGER PRIMARY KEY,
-    code TEXT NOT NULL UNIQUE CHECK(code = UPPER(code) AND LENGTH(code) BETWEEN 1 AND 10),
+    tenant_id TEXT NOT NULL DEFAULT 'default',
+    code TEXT NOT NULL CHECK(code = UPPER(code) AND LENGTH(code) BETWEEN 1 AND 10),
     name TEXT NOT NULL,
     decimals INTEGER NOT NULL DEFAULT 0 CHECK(decimals BETWEEN 0 AND 18),
     is_active INTEGER NOT NULL DEFAULT 1,
     version INTEGER NOT NULL DEFAULT 1,
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
-    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    UNIQUE(tenant_id, code)
 );
-
-CREATE UNIQUE INDEX IF NOT EXISTS idx_currencies_code ON currencies(code);
 
 -- User wallets (one per user per currency)
 CREATE TABLE IF NOT EXISTS wallets (
     id INTEGER PRIMARY KEY,
     tenant_id TEXT NOT NULL DEFAULT 'default',
-    user_id INTEGER NOT NULL REFERENCES users(id),
+    user_id INTEGER NOT NULL,
     currency TEXT NOT NULL,
     balance INTEGER NOT NULL DEFAULT 0 CHECK(balance >= 0),
     version INTEGER NOT NULL DEFAULT 1,
@@ -123,7 +115,6 @@ CREATE TABLE IF NOT EXISTS wallets (
     UNIQUE(user_id, currency)
 );
 
-CREATE INDEX IF NOT EXISTS idx_wallets_user ON wallets(user_id);
 CREATE INDEX IF NOT EXISTS idx_wallets_currency ON wallets(currency);
 CREATE INDEX IF NOT EXISTS idx_wallets_tenant ON wallets(tenant_id);
 
@@ -131,8 +122,8 @@ CREATE INDEX IF NOT EXISTS idx_wallets_tenant ON wallets(tenant_id);
 CREATE TABLE IF NOT EXISTS wallet_transactions (
     id INTEGER PRIMARY KEY,
     tenant_id TEXT NOT NULL DEFAULT 'default',
-    wallet_id INTEGER NOT NULL REFERENCES wallets(id),
-    user_id INTEGER NOT NULL REFERENCES users(id),
+    wallet_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
     entry_type TEXT NOT NULL,
     amount INTEGER NOT NULL CHECK(amount > 0),
     balance_after INTEGER NOT NULL CHECK(balance_after >= 0),
@@ -149,23 +140,19 @@ CREATE TABLE IF NOT EXISTS wallet_transactions (
 
 CREATE INDEX IF NOT EXISTS idx_wallet_tx_wallet ON wallet_transactions(wallet_id);
 CREATE INDEX IF NOT EXISTS idx_wallet_tx_user ON wallet_transactions(user_id, created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_wallet_tx_transaction_no ON wallet_transactions(transaction_no);
-CREATE INDEX IF NOT EXISTS idx_wallet_tx_tx_type ON wallet_transactions(tx_type);
 CREATE INDEX IF NOT EXISTS idx_wallet_tx_reference ON wallet_transactions(reference_type, reference_id);
-CREATE INDEX IF NOT EXISTS idx_wallet_tx_created ON wallet_transactions(created_at);
-CREATE INDEX IF NOT EXISTS idx_wallet_transactions_tenant ON wallet_transactions(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_wallet_tx_tenant_user ON wallet_transactions(tenant_id, user_id, created_at DESC);
 
 -- Refresh Tokens
 CREATE TABLE IF NOT EXISTS refresh_tokens (
     id INTEGER PRIMARY KEY,
-    user_id INTEGER NOT NULL REFERENCES users(id),
+    user_id INTEGER NOT NULL,
     token TEXT UNIQUE NOT NULL,
     expires_at TEXT NOT NULL,
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
 
 CREATE INDEX IF NOT EXISTS idx_refresh_tokens_user ON refresh_tokens(user_id);
-CREATE INDEX IF NOT EXISTS idx_refresh_tokens_token ON refresh_tokens(token);
 CREATE INDEX IF NOT EXISTS idx_refresh_tokens_expires_at ON refresh_tokens(expires_at);
 
 -- Site options
@@ -183,20 +170,19 @@ CREATE TABLE IF NOT EXISTS options (
     autoload BOOLEAN NOT NULL DEFAULT 1,
     sort_order INTEGER NOT NULL DEFAULT 0,
     updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
-    UNIQUE(option_key)
+    UNIQUE(tenant_id, option_key)
 );
-
-CREATE INDEX IF NOT EXISTS idx_options_tenant_option_key ON options(tenant_id, option_key);
 
 -- RBAC roles
 CREATE TABLE IF NOT EXISTS roles (
     id INTEGER PRIMARY KEY,
     tenant_id TEXT NOT NULL DEFAULT 'default',
-    name TEXT NOT NULL UNIQUE,
+    name TEXT NOT NULL,
     description TEXT,
     is_system BOOLEAN NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
-    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    UNIQUE(tenant_id, name)
 );
 
 CREATE INDEX IF NOT EXISTS idx_roles_tenant ON roles(tenant_id);
@@ -205,7 +191,7 @@ CREATE INDEX IF NOT EXISTS idx_roles_tenant ON roles(tenant_id);
 CREATE TABLE IF NOT EXISTS permissions (
     id INTEGER PRIMARY KEY,
     tenant_id TEXT NOT NULL DEFAULT 'default',
-    role_id INTEGER NOT NULL REFERENCES roles(id),
+    role_id INTEGER NOT NULL,
     action TEXT NOT NULL,
     subject TEXT NOT NULL,
      fields TEXT,
@@ -236,13 +222,12 @@ CREATE TABLE IF NOT EXISTS audit_log (
 
 CREATE INDEX IF NOT EXISTS idx_audit_log_action ON audit_log(action);
 CREATE INDEX IF NOT EXISTS idx_audit_log_actor ON audit_log(actor_id);
-CREATE INDEX IF NOT EXISTS idx_audit_log_created ON audit_log(created_at);
-CREATE INDEX IF NOT EXISTS idx_audit_log_tenant ON audit_log(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_audit_log_tenant_created ON audit_log(tenant_id, created_at DESC);
 
 -- API Token
 CREATE TABLE IF NOT EXISTS api_tokens (
     id INTEGER PRIMARY KEY,
-    user_id INTEGER NOT NULL REFERENCES users(id),
+    user_id INTEGER NOT NULL,
     name TEXT NOT NULL,
     token_hash TEXT UNIQUE NOT NULL,
     token_prefix TEXT NOT NULL,
@@ -253,7 +238,6 @@ CREATE TABLE IF NOT EXISTS api_tokens (
 );
 
 CREATE INDEX IF NOT EXISTS idx_api_tokens_user_id ON api_tokens(user_id);
-CREATE INDEX IF NOT EXISTS idx_api_tokens_token_hash ON api_tokens(token_hash);
 
 -- Webhook subscriptions
 CREATE TABLE IF NOT EXISTS webhook_subscriptions (
@@ -295,22 +279,19 @@ CREATE TABLE IF NOT EXISTS content_revisions (
     UNIQUE(content_type, record_id, revision_number)
 );
 
-CREATE INDEX IF NOT EXISTS idx_revisions_ct_record
-    ON content_revisions(content_type, record_id);
 CREATE INDEX IF NOT EXISTS idx_revisions_ct_record_rev
     ON content_revisions(content_type, record_id, revision_number DESC);
 
 -- Password reset tokens
 CREATE TABLE IF NOT EXISTS password_reset_tokens (
     id INTEGER PRIMARY KEY,
-    user_id INTEGER NOT NULL REFERENCES users(id),
+    user_id INTEGER NOT NULL,
     token TEXT NOT NULL UNIQUE,
     expires_at TEXT NOT NULL,
     used_at TEXT,
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
 
-CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_token ON password_reset_tokens(token);
 CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_user_id ON password_reset_tokens(user_id);
 CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_expires_at ON password_reset_tokens(expires_at);
 
@@ -333,7 +314,7 @@ CREATE INDEX IF NOT EXISTS idx_sms_codes_expires ON sms_codes(expires_at);
 -- Email verification tokens
 CREATE TABLE IF NOT EXISTS email_verification_tokens (
     id INTEGER PRIMARY KEY,
-    user_id INTEGER NOT NULL REFERENCES users(id),
+    user_id INTEGER NOT NULL,
     token TEXT NOT NULL UNIQUE,
     email TEXT NOT NULL,
     expires_at TEXT NOT NULL,
@@ -341,7 +322,6 @@ CREATE TABLE IF NOT EXISTS email_verification_tokens (
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
 
-CREATE INDEX IF NOT EXISTS idx_email_verification_tokens_token ON email_verification_tokens(token);
 CREATE INDEX IF NOT EXISTS idx_email_verification_tokens_user_id ON email_verification_tokens(user_id);
 CREATE INDEX IF NOT EXISTS idx_email_verification_tokens_expires ON email_verification_tokens(expires_at);
 
@@ -359,8 +339,7 @@ CREATE TABLE IF NOT EXISTS jobs (
     updated_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
 
-CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status);
-CREATE INDEX IF NOT EXISTS idx_jobs_run_after ON jobs(run_after) WHERE status = 'pending';
+CREATE INDEX IF NOT EXISTS idx_jobs_status_run_after ON jobs(status, run_after);
 CREATE INDEX IF NOT EXISTS idx_jobs_type ON jobs(job_type);
 
 -- Cron job schedules
@@ -405,10 +384,10 @@ CREATE INDEX IF NOT EXISTS idx_cron_log_started ON cron_execution_log(started_at
 CREATE TABLE IF NOT EXISTS categories (
     id INTEGER PRIMARY KEY,
     tenant_id TEXT NOT NULL DEFAULT 'default',
-    name TEXT UNIQUE NOT NULL,
-    slug TEXT UNIQUE NOT NULL,
+    name TEXT NOT NULL,
+    slug TEXT NOT NULL,
     description TEXT,
-    parent_id INTEGER REFERENCES categories(id),
+    parent_id INTEGER,
     sort_order INTEGER NOT NULL DEFAULT 0,
     created_by INTEGER,
     updated_by INTEGER,
@@ -419,7 +398,9 @@ CREATE TABLE IF NOT EXISTS categories (
     og_description TEXT,
     og_image TEXT,
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
-    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    UNIQUE(tenant_id, name),
+    UNIQUE(tenant_id, slug)
 );
 
 CREATE INDEX IF NOT EXISTS idx_categories_tenant ON categories(tenant_id);
@@ -428,16 +409,23 @@ CREATE INDEX IF NOT EXISTS idx_categories_tenant ON categories(tenant_id);
 CREATE TABLE IF NOT EXISTS product_categories (
     id INTEGER PRIMARY KEY,
     tenant_id TEXT NOT NULL DEFAULT 'default',
-    name TEXT UNIQUE NOT NULL,
-    slug TEXT UNIQUE NOT NULL,
+    name TEXT NOT NULL,
+    slug TEXT NOT NULL,
     description TEXT,
     cover_image TEXT,
-    parent_id INTEGER REFERENCES product_categories(id),
+    parent_id INTEGER,
     sort_order INTEGER NOT NULL DEFAULT 0,
+    meta_title TEXT,
+    meta_description TEXT,
+    og_title TEXT,
+    og_description TEXT,
+    og_image TEXT,
     created_by INTEGER,
     updated_by INTEGER,
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
-    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    UNIQUE(tenant_id, name),
+    UNIQUE(tenant_id, slug)
 );
 
 CREATE INDEX IF NOT EXISTS idx_product_categories_tenant ON product_categories(tenant_id);
@@ -446,8 +434,8 @@ CREATE INDEX IF NOT EXISTS idx_product_categories_tenant ON product_categories(t
 CREATE TABLE IF NOT EXISTS tags (
     id INTEGER PRIMARY KEY,
     tenant_id TEXT NOT NULL DEFAULT 'default',
-    name TEXT UNIQUE NOT NULL,
-    slug TEXT UNIQUE NOT NULL,
+    name TEXT NOT NULL,
+    slug TEXT NOT NULL,
     created_by INTEGER,
     updated_by INTEGER,
     description TEXT,
@@ -458,7 +446,9 @@ CREATE TABLE IF NOT EXISTS tags (
     og_description TEXT,
     og_image TEXT,
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
-    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    UNIQUE(tenant_id, name),
+    UNIQUE(tenant_id, slug)
 );
 
 CREATE INDEX IF NOT EXISTS idx_tags_tenant ON tags(tenant_id);
@@ -468,14 +458,15 @@ CREATE TABLE IF NOT EXISTS posts (
     id INTEGER PRIMARY KEY,
     tenant_id TEXT NOT NULL DEFAULT 'default',
     title TEXT NOT NULL,
-    slug TEXT UNIQUE NOT NULL,
+    slug TEXT NOT NULL,
     content TEXT NOT NULL,
     excerpt TEXT,
     cover_image TEXT,
+    image_ids TEXT,
     status TEXT NOT NULL DEFAULT 'draft',
-    created_by INTEGER NOT NULL REFERENCES users(id),
+    created_by INTEGER NOT NULL,
     updated_by INTEGER,
-    category_id INTEGER REFERENCES categories(id),
+    category_id INTEGER,
     view_count INTEGER NOT NULL DEFAULT 0,
     is_pinned INTEGER NOT NULL DEFAULT 0,
     password TEXT,
@@ -491,14 +482,13 @@ CREATE TABLE IF NOT EXISTS posts (
     reading_time INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
-    published_at TEXT
+    published_at TEXT,
+    UNIQUE(tenant_id, slug)
 );
 
-CREATE INDEX IF NOT EXISTS idx_posts_slug ON posts(slug);
 CREATE INDEX IF NOT EXISTS idx_posts_status ON posts(status);
 CREATE INDEX IF NOT EXISTS idx_posts_author ON posts(created_by);
 CREATE INDEX IF NOT EXISTS idx_posts_category ON posts(category_id);
-CREATE INDEX IF NOT EXISTS idx_posts_created ON posts(created_at);
 CREATE INDEX IF NOT EXISTS idx_posts_status_created
     ON posts(status, is_pinned DESC, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_posts_status_category
@@ -509,24 +499,36 @@ CREATE INDEX IF NOT EXISTS idx_posts_tenant ON posts(tenant_id);
 
 -- Posts-Tags (many-to-many)
 CREATE TABLE IF NOT EXISTS posts_tags (
-    post_id INTEGER NOT NULL REFERENCES posts(id),
-    tag_id INTEGER NOT NULL REFERENCES tags(id),
+    post_id INTEGER NOT NULL,
+    tag_id INTEGER NOT NULL,
     PRIMARY KEY (post_id, tag_id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_posts_tags_tag_id ON posts_tags(tag_id);
 
+CREATE TABLE IF NOT EXISTS taggings (
+    id INTEGER PRIMARY KEY,
+    tag_id INTEGER NOT NULL,
+    taggable_type TEXT NOT NULL,
+    taggable_id INTEGER NOT NULL,
+    tenant_id TEXT NOT NULL DEFAULT 'default',
+    UNIQUE(tenant_id, tag_id, taggable_type, taggable_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_taggings_tag ON taggings(tag_id);
+CREATE INDEX IF NOT EXISTS idx_taggings_taggable ON taggings(taggable_type, taggable_id);
+
 -- Comments
 CREATE TABLE IF NOT EXISTS comments (
     id INTEGER PRIMARY KEY,
     tenant_id TEXT NOT NULL DEFAULT 'default',
-    post_id INTEGER NOT NULL REFERENCES posts(id),
-    created_by INTEGER REFERENCES users(id),
+    post_id INTEGER NOT NULL,
+    created_by INTEGER,
     updated_by INTEGER,
     nickname TEXT,
     email TEXT,
     content TEXT NOT NULL,
-    parent_id INTEGER REFERENCES comments(id),
+    parent_id INTEGER,
     status TEXT NOT NULL DEFAULT 'pending',
     author_ip TEXT,
     author_url TEXT,
@@ -555,10 +557,10 @@ CREATE TABLE IF NOT EXISTS pages (
     meta_description TEXT,
     og_image         TEXT,
     template         TEXT NOT NULL DEFAULT 'default',
-    parent_id        INTEGER REFERENCES pages(id),
+    parent_id        INTEGER,
     sort_order       INTEGER NOT NULL DEFAULT 0,
     status           TEXT NOT NULL DEFAULT 'draft',
-    created_by       INTEGER NOT NULL REFERENCES users(id),
+    created_by       INTEGER NOT NULL,
     updated_by       INTEGER,
     cover_image      TEXT,
     published_at     TEXT,
@@ -568,10 +570,10 @@ CREATE TABLE IF NOT EXISTS pages (
     og_description TEXT,
     canonical_url TEXT,
     created_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
-    updated_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    UNIQUE(tenant_id, slug)
 );
 
-CREATE INDEX IF NOT EXISTS idx_pages_slug      ON pages(slug);
 CREATE INDEX IF NOT EXISTS idx_pages_status    ON pages(status);
 CREATE INDEX IF NOT EXISTS idx_pages_parent    ON pages(parent_id);
 CREATE INDEX IF NOT EXISTS idx_pages_author    ON pages(created_by);
@@ -598,7 +600,7 @@ CREATE INDEX IF NOT EXISTS idx_reusable_blocks_tenant ON reusable_blocks(tenant_
 CREATE TABLE IF NOT EXISTS media (
     id INTEGER PRIMARY KEY,
     tenant_id TEXT NOT NULL DEFAULT 'default',
-    user_id INTEGER NOT NULL REFERENCES users(id),
+    user_id INTEGER NOT NULL,
     filename TEXT NOT NULL,
     filepath TEXT NOT NULL,
     mimetype TEXT NOT NULL,
@@ -633,7 +635,7 @@ CREATE TABLE IF NOT EXISTS workflow_definitions (
 
 CREATE TABLE IF NOT EXISTS workflow_instances (
     id INTEGER PRIMARY KEY,
-    definition_id INTEGER NOT NULL REFERENCES workflow_definitions(id),
+    definition_id INTEGER NOT NULL,
     status TEXT NOT NULL DEFAULT 'running',
     current_step TEXT,
     context TEXT NOT NULL DEFAULT '{}',
@@ -648,7 +650,7 @@ CREATE INDEX IF NOT EXISTS idx_wf_instances_status ON workflow_instances(status)
 
 CREATE TABLE IF NOT EXISTS workflow_step_logs (
     id INTEGER PRIMARY KEY,
-    instance_id INTEGER NOT NULL REFERENCES workflow_instances(id),
+    instance_id INTEGER NOT NULL,
     step_id TEXT NOT NULL,
     step_name TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'running',
@@ -661,59 +663,11 @@ CREATE TABLE IF NOT EXISTS workflow_step_logs (
 
 CREATE INDEX IF NOT EXISTS idx_wf_step_logs_instance ON workflow_step_logs(instance_id);
 
--- ============================================================
--- Seed data
--- ============================================================
-
--- System roles
-INSERT OR IGNORE INTO roles (tenant_id, name, description, is_system, created_at, updated_at) VALUES
-    ('default', 'admin', 'Super administrator', 1, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
-    ('default', 'editor', 'Editor', 0, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
-    ('default', 'author', 'Author', 0, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
-    ('default', 'reader', 'Reader', 1, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), strftime('%Y-%m-%dT%H:%M:%SZ', 'now'));
-
--- Admin global permissions
-INSERT OR IGNORE INTO permissions (tenant_id, role_id, action, subject, fields, conditions, created_at) VALUES
-    ('default', (SELECT id FROM roles WHERE name = 'admin'), '*', '*', '["*"]', NULL, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'));
-
--- Editor permissions
-INSERT OR IGNORE INTO permissions (tenant_id, role_id, action, subject, fields, conditions, created_at) VALUES
-    ('default', (SELECT id FROM roles WHERE name = 'editor'), 'content-type::*.*', 'content-type::*', '["*"]', NULL, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'));
-
--- Author permissions
-INSERT OR IGNORE INTO permissions (tenant_id, role_id, action, subject, fields, conditions, created_at) VALUES
-    ('default', (SELECT id FROM roles WHERE name = 'author'), 'content-type::post.create', 'content-type::post', '["*"]', NULL, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
-    ('default', (SELECT id FROM roles WHERE name = 'author'), 'content-type::post.read', 'content-type::post', '["*"]', NULL, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
-    ('default', (SELECT id FROM roles WHERE name = 'author'), 'content-type::post.update', 'content-type::post', '["*"]', '{"author_id":"$user.id"}', strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
-    ('default', (SELECT id FROM roles WHERE name = 'author'), 'content-type::post.delete', 'content-type::post', '["*"]', '{"author_id":"$user.id"}', strftime('%Y-%m-%dT%H:%M:%SZ', 'now'));
-
--- Reader permissions
-INSERT OR IGNORE INTO permissions (tenant_id, role_id, action, subject, fields, conditions, created_at) VALUES
-    ('default', (SELECT id FROM roles WHERE name = 'reader'), 'content-type::post.read', 'content-type::post', '["title","slug","content","excerpt","status"]', NULL, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
-    ('default', (SELECT id FROM roles WHERE name = 'reader'), 'content-type::comment.create', 'content-type::comment', '["content","nickname","email"]', NULL, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'));
-
--- Site options
-INSERT OR IGNORE INTO options (tenant_id, option_key, value, type, group_name, label, description, validation, is_public, autoload, sort_order, updated_at) VALUES
-    ('default', 'site_title', '"My Blog"', 'text', 'general', 'Site title', 'Displayed in browser title bar and page header', '{"max_length":100}', 1, 1, 1, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
-    ('default', 'site_description', '""', 'text', 'general', 'Site description', 'Brief description of the site purpose', '{"max_length":500}', 1, 1, 2, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
-    ('default', 'site_url', '""', 'url', 'general', 'Site URL', 'e.g. https://example.com', NULL, 1, 1, 3, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
-    ('default', 'admin_email', '""', 'email', 'general', 'Admin email', NULL, NULL, 0, 1, 4, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
-    ('default', 'timezone', '"UTC"', 'select', 'general', 'Timezone', NULL, '{"values":["UTC","Asia/Shanghai","Asia/Tokyo","US/Eastern","US/Pacific","Europe/London","Europe/Berlin"]}', 1, 1, 5, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
-    ('default', 'date_format', '"%Y-%m-%d"', 'select', 'general', 'Date format', NULL, '{"values":["%Y-%m-%d","%d/%m/%Y","%m/%d/%Y","%Y年%m月%d日"]}', 1, 1, 6, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
-    ('default', 'posts_per_page', '10', 'integer', 'reading', 'Posts per page', NULL, '{"min":1,"max":100}', 1, 1, 10, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
-    ('default', 'rss_items', '20', 'integer', 'reading', 'RSS item count', NULL, '{"min":1,"max":100}', 1, 1, 11, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
-    ('default', 'permalink_structure', '"/:year/:month/:slug"', 'select', 'reading', 'URL structure', NULL, '{"values":["/:year/:month/:slug","/:slug","/posts/:slug"]}', 1, 1, 12, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
-    ('default', 'comment_moderation', 'true', 'boolean', 'discussion', 'Comments require moderation', 'When enabled, new comments require admin approval', NULL, 0, 1, 20, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
-    ('default', 'comment_order', '"asc"', 'select', 'discussion', 'Comment order', NULL, '{"values":["asc","desc"]}', 1, 1, 21, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
-    ('default', 'default_role', '"reader"', 'select', 'discussion', 'Default role for new users', NULL, '{"values":["reader","author"]}', 0, 1, 22, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
-    ('default', 'theme', '"default"', 'select', 'appearance', 'Current theme', NULL, '{"values":["default","corporate","minimal","warm"]}', 1, 1, 30, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
-    ('default', 'maintenance_mode', 'false', 'boolean', 'appearance', 'Maintenance mode', 'When enabled, a maintenance page is shown to visitors', NULL, 1, 1, 31, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'));
-
 -- Products
 CREATE TABLE IF NOT EXISTS products (
     id INTEGER PRIMARY KEY,
     tenant_id TEXT NOT NULL DEFAULT 'default',
-    category_id INTEGER REFERENCES product_categories(id),
+    category_id INTEGER,
     title TEXT NOT NULL,
     description TEXT,
     cover_url TEXT,
@@ -729,7 +683,7 @@ CREATE TABLE IF NOT EXISTS products (
     sort_order INTEGER NOT NULL DEFAULT 0,
     version INTEGER NOT NULL DEFAULT 1,
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
-    slug TEXT UNIQUE,
+    slug TEXT,
     content TEXT,
     image_ids TEXT,
     original_price INTEGER,
@@ -741,6 +695,9 @@ CREATE TABLE IF NOT EXISTS products (
     virtual_sales INTEGER NOT NULL DEFAULT 0,
     meta_title TEXT,
     meta_description TEXT,
+    og_title TEXT,
+    og_description TEXT,
+    og_image TEXT,
     published_at TEXT,
     stock INTEGER NOT NULL DEFAULT 0,
     cost_price INTEGER,
@@ -751,14 +708,14 @@ CREATE TABLE IF NOT EXISTS products (
 
 CREATE INDEX IF NOT EXISTS idx_products_status ON products(status);
 CREATE INDEX IF NOT EXISTS idx_products_type ON products(product_type);
-CREATE INDEX IF NOT EXISTS idx_products_slug ON products(slug);
 CREATE INDEX IF NOT EXISTS idx_products_tenant ON products(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_products_tenant_status ON products(tenant_id, status);
 
 -- Product Variants
 CREATE TABLE IF NOT EXISTS product_variants (
     id INTEGER PRIMARY KEY,
     tenant_id TEXT NOT NULL DEFAULT 'default',
-    product_id INTEGER NOT NULL REFERENCES products(id),
+    product_id INTEGER NOT NULL,
     sku TEXT UNIQUE,
     title TEXT NOT NULL,
     price INTEGER NOT NULL CHECK(price >= 0),
@@ -774,14 +731,13 @@ CREATE TABLE IF NOT EXISTS product_variants (
 );
 
 CREATE INDEX IF NOT EXISTS idx_product_variants_product ON product_variants(product_id);
-CREATE INDEX IF NOT EXISTS idx_product_variants_sku ON product_variants(sku);
 CREATE INDEX IF NOT EXISTS idx_product_variants_tenant ON product_variants(tenant_id);
 
 -- User Addresses
 CREATE TABLE IF NOT EXISTS user_addresses (
     id INTEGER PRIMARY KEY,
     tenant_id TEXT NOT NULL DEFAULT 'default',
-    user_id INTEGER NOT NULL REFERENCES users(id),
+    user_id INTEGER NOT NULL,
     label TEXT NOT NULL DEFAULT '',
     recipient_name TEXT NOT NULL,
     phone TEXT NOT NULL,
@@ -805,7 +761,7 @@ CREATE INDEX IF NOT EXISTS idx_user_addresses_tenant ON user_addresses(tenant_id
 CREATE TABLE IF NOT EXISTS orders (
     id INTEGER PRIMARY KEY,
     tenant_id TEXT NOT NULL DEFAULT 'default',
-    user_id INTEGER NOT NULL REFERENCES users(id),
+    user_id INTEGER NOT NULL,
     order_no TEXT NOT NULL UNIQUE,
     subtotal INTEGER NOT NULL DEFAULT 0,
     discount_amount INTEGER NOT NULL DEFAULT 0,
@@ -838,16 +794,17 @@ CREATE TABLE IF NOT EXISTS orders (
 
 CREATE INDEX IF NOT EXISTS idx_orders_user ON orders(user_id);
 CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status);
-CREATE INDEX IF NOT EXISTS idx_orders_order_no ON orders(order_no);
 CREATE INDEX IF NOT EXISTS idx_orders_tenant ON orders(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_orders_tenant_user_status ON orders(tenant_id, user_id, status);
+CREATE INDEX IF NOT EXISTS idx_orders_tenant_status_created ON orders(tenant_id, status, created_at DESC);
 
 -- Order Items
 CREATE TABLE IF NOT EXISTS order_items (
     id INTEGER PRIMARY KEY,
     tenant_id TEXT NOT NULL DEFAULT 'default',
-    order_id INTEGER NOT NULL REFERENCES orders(id),
-    product_id INTEGER REFERENCES products(id),
-    variant_id INTEGER REFERENCES product_variants(id),
+    order_id INTEGER NOT NULL,
+    product_id INTEGER,
+    variant_id INTEGER,
     title TEXT NOT NULL,
     description TEXT,
     sku TEXT,
@@ -861,14 +818,15 @@ CREATE TABLE IF NOT EXISTS order_items (
 );
 
 CREATE INDEX IF NOT EXISTS idx_order_items_order ON order_items(order_id);
+CREATE INDEX IF NOT EXISTS idx_order_items_product ON order_items(product_id);
 CREATE INDEX IF NOT EXISTS idx_order_items_tenant ON order_items(tenant_id);
 
 CREATE TABLE IF NOT EXISTS cart_items (
     id INTEGER PRIMARY KEY,
     tenant_id TEXT NOT NULL DEFAULT 'default',
-    user_id INTEGER NOT NULL REFERENCES users(id),
-    product_id INTEGER NOT NULL REFERENCES products(id),
-    variant_id INTEGER REFERENCES product_variants(id),
+    user_id INTEGER NOT NULL,
+    product_id INTEGER NOT NULL,
+    variant_id INTEGER,
     quantity INTEGER NOT NULL DEFAULT 1,
     attributes TEXT,
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
@@ -902,12 +860,12 @@ CREATE INDEX IF NOT EXISTS idx_payment_channels_tenant ON payment_channels(tenan
 CREATE TABLE IF NOT EXISTS payment_orders (
     id INTEGER PRIMARY KEY,
     tenant_id TEXT NOT NULL DEFAULT 'default',
-    user_id INTEGER NOT NULL REFERENCES users(id),
+    user_id INTEGER NOT NULL,
     order_id TEXT,
     title TEXT NOT NULL,
     amount INTEGER NOT NULL,
     currency TEXT NOT NULL DEFAULT 'USD',
-    channel_id INTEGER NOT NULL REFERENCES payment_channels(id),
+    channel_id INTEGER NOT NULL,
     provider TEXT NOT NULL,
     provider_order_id TEXT,
     provider_method TEXT,
@@ -936,14 +894,15 @@ CREATE INDEX IF NOT EXISTS idx_payment_orders_status ON payment_orders(status);
 CREATE INDEX IF NOT EXISTS idx_payment_orders_provider ON payment_orders(provider_order_id);
 CREATE INDEX IF NOT EXISTS idx_payment_orders_order_id ON payment_orders(order_id);
 CREATE INDEX IF NOT EXISTS idx_payment_orders_tenant ON payment_orders(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_payment_orders_tenant_status_created ON payment_orders(tenant_id, status, created_at DESC);
 
 -- Payment Transactions
 CREATE TABLE IF NOT EXISTS payment_transactions (
     id INTEGER PRIMARY KEY,
     tenant_id TEXT NOT NULL DEFAULT 'default',
-    payment_order_id INTEGER NOT NULL REFERENCES payment_orders(id),
+    payment_order_id INTEGER NOT NULL,
     order_id TEXT,
-    user_id INTEGER NOT NULL REFERENCES users(id),
+    user_id INTEGER NOT NULL,
     tx_type TEXT NOT NULL,
     amount INTEGER NOT NULL,
     currency TEXT NOT NULL,
@@ -961,15 +920,15 @@ CREATE INDEX IF NOT EXISTS idx_payment_transactions_tenant ON payment_transactio
 CREATE TABLE IF NOT EXISTS payment_refunds (
     id INTEGER PRIMARY KEY,
     tenant_id TEXT NOT NULL DEFAULT 'default',
-    payment_order_id INTEGER NOT NULL REFERENCES payment_orders(id),
+    payment_order_id INTEGER NOT NULL,
     order_id TEXT,
-    user_id INTEGER NOT NULL REFERENCES users(id),
+    user_id INTEGER NOT NULL,
     amount INTEGER NOT NULL,
     currency TEXT NOT NULL,
     reason TEXT,
     provider_refund_id TEXT,
     status TEXT NOT NULL DEFAULT 'pending',
-    payment_tx_id INTEGER REFERENCES payment_transactions(id),
+    payment_tx_id INTEGER,
     metadata TEXT,
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
@@ -1008,9 +967,9 @@ CREATE INDEX IF NOT EXISTS idx_wallet_outbox_tenant ON wallet_outbox(tenant_id);
 CREATE TABLE IF NOT EXISTS product_comments (
     id INTEGER PRIMARY KEY,
     tenant_id TEXT NOT NULL DEFAULT 'default',
-    product_id INTEGER NOT NULL REFERENCES products(id),
-    order_id INTEGER NOT NULL REFERENCES orders(id),
-    user_id INTEGER NOT NULL REFERENCES users(id),
+    product_id INTEGER NOT NULL,
+    order_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
     rating INTEGER NOT NULL DEFAULT 5,
     title TEXT,
     content TEXT NOT NULL,
@@ -1023,7 +982,6 @@ CREATE TABLE IF NOT EXISTS product_comments (
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_product_comments_unique ON product_comments(product_id, order_id, user_id);
-CREATE INDEX IF NOT EXISTS idx_product_comments_product ON product_comments(product_id);
 CREATE INDEX IF NOT EXISTS idx_product_comments_user ON product_comments(user_id);
 CREATE INDEX IF NOT EXISTS idx_product_comments_status ON product_comments(status);
 CREATE INDEX IF NOT EXISTS idx_product_comments_tenant ON product_comments(tenant_id);
@@ -1047,7 +1005,6 @@ CREATE TABLE IF NOT EXISTS coupons (
     updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
 
-CREATE INDEX IF NOT EXISTS idx_coupons_code ON coupons(code);
 CREATE INDEX IF NOT EXISTS idx_coupons_status ON coupons(status);
 CREATE INDEX IF NOT EXISTS idx_coupons_tenant ON coupons(tenant_id);
 
@@ -1070,3 +1027,64 @@ CREATE TABLE IF NOT EXISTS shipping_templates (
 
 CREATE INDEX IF NOT EXISTS idx_shipping_templates_tenant ON shipping_templates(tenant_id);
 CREATE INDEX IF NOT EXISTS idx_shipping_templates_status ON shipping_templates(status);
+
+-- ============================================================
+-- Seed data
+-- ============================================================
+
+-- Default tenant
+INSERT OR IGNORE INTO tenants (id, name, domain, config, status, created_at, updated_at) VALUES
+    (10001, 'Default', NULL, '{}', 'active', strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), strftime('%Y-%m-%dT%H:%M:%SZ', 'now'));
+
+-- Default currencies
+INSERT OR IGNORE INTO currencies (id, tenant_id, code, name, decimals) VALUES
+    (10001, 'default', 'CNY', 'Chinese Yuan', 2),
+    (10002, 'default', 'USD', 'US Dollar', 2),
+    (10003, 'default', 'EUR', 'Euro', 2),
+    (10004, 'default', 'GBP', 'British Pound', 2),
+    (10005, 'default', 'JPY', 'Japanese Yen', 0);
+
+-- System roles
+INSERT OR IGNORE INTO roles (id, tenant_id, name, description, is_system, created_at, updated_at) VALUES
+    (10001, 'default', 'admin', 'Super administrator', 1, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    (10002, 'default', 'editor', 'Editor', 0, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    (10003, 'default', 'author', 'Author', 0, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    (10004, 'default', 'reader', 'Reader', 1, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), strftime('%Y-%m-%dT%H:%M:%SZ', 'now'));
+
+-- Admin global permissions
+INSERT OR IGNORE INTO permissions (id, tenant_id, role_id, action, subject, fields, conditions, created_at) VALUES
+    (10001, 'default', (SELECT id FROM roles WHERE name = 'admin'), '*', '*', '["*"]', NULL, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'));
+
+-- Editor permissions
+INSERT OR IGNORE INTO permissions (id, tenant_id, role_id, action, subject, fields, conditions, created_at) VALUES
+    (10002, 'default', (SELECT id FROM roles WHERE name = 'editor'), 'content-type::*.*', 'content-type::*', '["*"]', NULL, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'));
+
+-- Author permissions
+INSERT OR IGNORE INTO permissions (id, tenant_id, role_id, action, subject, fields, conditions, created_at) VALUES
+    (10003, 'default', (SELECT id FROM roles WHERE name = 'author'), 'content-type::post.create', 'content-type::post', '["*"]', NULL, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    (10004, 'default', (SELECT id FROM roles WHERE name = 'author'), 'content-type::post.read', 'content-type::post', '["*"]', NULL, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    (10005, 'default', (SELECT id FROM roles WHERE name = 'author'), 'content-type::post.update', 'content-type::post', '["*"]', '{"author_id":"$user.id"}', strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    (10006, 'default', (SELECT id FROM roles WHERE name = 'author'), 'content-type::post.delete', 'content-type::post', '["*"]', '{"author_id":"$user.id"}', strftime('%Y-%m-%dT%H:%M:%SZ', 'now'));
+
+-- Reader permissions
+INSERT OR IGNORE INTO permissions (id, tenant_id, role_id, action, subject, fields, conditions, created_at) VALUES
+    (10007, 'default', (SELECT id FROM roles WHERE name = 'reader'), 'content-type::post.read', 'content-type::post', '["title","slug","content","excerpt","status"]', NULL, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    (10008, 'default', (SELECT id FROM roles WHERE name = 'reader'), 'content-type::comment.create', 'content-type::comment', '["content","nickname","email"]', NULL, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'));
+
+-- Site options
+INSERT OR IGNORE INTO options (id, tenant_id, option_key, value, type, group_name, label, description, validation, is_public, autoload, sort_order, updated_at) VALUES
+    (10001, 'default', 'site_title', '"My Blog"', 'text', 'general', 'Site title', 'Displayed in browser title bar and page header', '{"max_length":100}', 1, 1, 1, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    (10002, 'default', 'site_description', '""', 'text', 'general', 'Site description', 'Brief description of the site purpose', '{"max_length":500}', 1, 1, 2, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    (10003, 'default', 'site_url', '""', 'url', 'general', 'Site URL', 'e.g. https://example.com', NULL, 1, 1, 3, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    (10004, 'default', 'admin_email', '""', 'email', 'general', 'Admin email', NULL, NULL, 0, 1, 4, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    (10005, 'default', 'timezone', '"UTC"', 'select', 'general', 'Timezone', NULL, '{"values":["UTC","Asia/Shanghai","Asia/Tokyo","US/Eastern","US/Pacific","Europe/London","Europe/Berlin"]}', 1, 1, 5, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    (10006, 'default', 'date_format', '"%Y-%m-%d"', 'select', 'general', 'Date format', NULL, '{"values":["%Y-%m-%d","%d/%m/%Y","%m/%d/%Y","%Y年%m月%d日"]}', 1, 1, 6, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    (10007, 'default', 'posts_per_page', '10', 'integer', 'reading', 'Posts per page', NULL, '{"min":1,"max":100}', 1, 1, 10, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    (10008, 'default', 'rss_items', '20', 'integer', 'reading', 'RSS item count', NULL, '{"min":1,"max":100}', 1, 1, 11, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    (10009, 'default', 'permalink_structure', '"/:year/:month/:slug"', 'select', 'reading', 'URL structure', NULL, '{"values":["/:year/:month/:slug","/:slug","/posts/:slug"]}', 1, 1, 12, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    (10010, 'default', 'comment_moderation', 'true', 'boolean', 'discussion', 'Comments require moderation', 'When enabled, new comments require admin approval', NULL, 0, 1, 20, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    (10011, 'default', 'comment_order', '"asc"', 'select', 'discussion', 'Comment order', NULL, '{"values":["asc","desc"]}', 1, 1, 21, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    (10012, 'default', 'default_role', '"reader"', 'select', 'discussion', 'Default role for new users', NULL, '{"values":["reader","author"]}', 0, 1, 22, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    (10013, 'default', 'theme', '"default"', 'select', 'appearance', 'Current theme', NULL, '{"values":["default","corporate","minimal","warm"]}', 1, 1, 30, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    (10014, 'default', 'maintenance_mode', 'false', 'boolean', 'appearance', 'Maintenance mode', 'When enabled, a maintenance page is shown to visitors', NULL, 1, 1, 31, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    (10015, 'default', 'default_currency', '"USD"', 'select', 'ecommerce', 'Default currency', 'Currency code for products and orders', '{"values":["USD","CNY","EUR","GBP","JPY","KRW","HKD","TWD","SGD","AUD","CAD"]}', 1, 1, 40, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'));

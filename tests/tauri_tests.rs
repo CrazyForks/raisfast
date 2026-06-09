@@ -277,9 +277,17 @@ async fn tauri_post_create_and_list() {
         content: "Hello world".into(),
         excerpt: None,
         cover_image: None,
+        image_ids: None,
         status: Some(raisfast::models::post::PostStatus::Published),
         category_id: None,
         tag_ids: None,
+        slug: None,
+        meta_title: None,
+        meta_description: None,
+        og_title: None,
+        og_description: None,
+        og_image: None,
+        canonical_url: None,
     };
 
     let auth = raisfast::middleware::auth::AuthUser::from_parts(
@@ -309,9 +317,17 @@ async fn tauri_post_get_by_slug() {
         content: "content".into(),
         excerpt: None,
         cover_image: None,
+        image_ids: None,
         status: Some(raisfast::models::post::PostStatus::Published),
         category_id: None,
         tag_ids: None,
+        slug: None,
+        meta_title: None,
+        meta_description: None,
+        og_title: None,
+        og_description: None,
+        og_image: None,
+        canonical_url: None,
     };
 
     let auth = raisfast::middleware::auth::AuthUser::from_parts(
@@ -606,11 +622,11 @@ async fn tauri_options_set_and_get() {
     let pool = setup_pool().await;
     let svc = options::OptionsService::new(Arc::new(pool), false).await;
 
-    svc.set("site.title", serde_json::json!("My Blog"))
+    svc.set(None, "site.title", serde_json::json!("My Blog"))
         .await
         .unwrap();
 
-    let val = svc.get("site.title").await;
+    let val = svc.get(None, "site.title").await;
     assert_eq!(val, Some(serde_json::json!("My Blog")));
 }
 
@@ -619,7 +635,7 @@ async fn tauri_options_get_nonexistent() {
     let pool = setup_pool().await;
     let svc = options::OptionsService::new(Arc::new(pool), false).await;
 
-    let val = svc.get("nonexistent.key").await;
+    let val = svc.get(None, "nonexistent.key").await;
     assert!(val.is_none());
 }
 
@@ -628,10 +644,14 @@ async fn tauri_options_overwrite() {
     let pool = setup_pool().await;
     let svc = options::OptionsService::new(Arc::new(pool), false).await;
 
-    svc.set("key1", serde_json::json!("value1")).await.unwrap();
-    svc.set("key1", serde_json::json!("value2")).await.unwrap();
+    svc.set(None, "key1", serde_json::json!("value1"))
+        .await
+        .unwrap();
+    svc.set(None, "key1", serde_json::json!("value2"))
+        .await
+        .unwrap();
 
-    let val = svc.get("key1").await;
+    let val = svc.get(None, "key1").await;
     assert_eq!(val, Some(serde_json::json!("value2")));
 }
 

@@ -124,6 +124,7 @@ fn translate_errors(errors: &ValidationErrors) -> AppResult<()> {
                     }
                 }
                 "email" => rust_i18n::t!("validation.email_invalid").to_string(),
+                "password_strength" => rust_i18n::t!("validation.password_strength").to_string(),
                 _ => rust_i18n::t!("validation.required", field = field_name).to_string(),
             };
             messages.push(msg);

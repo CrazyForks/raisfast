@@ -4,6 +4,7 @@
 -- Generated date：2026-05-07
 --
 -- MySQL notes:
+-- - All INDEX definitions are inline in CREATE TABLE for idempotent re-execution
 -- - Partial indexes with WHERE clauses are not supported, removed
 -- - BOOLEAN is actually TINYINT(1)
 -- ============================================================
@@ -15,15 +16,11 @@ CREATE TABLE IF NOT EXISTS tenants (
     id BIGINT PRIMARY KEY,
     name VARCHAR(255) NOT NULL UNIQUE,
     domain VARCHAR(255) UNIQUE,
-    config JSON NOT NULL,
+    config TEXT NOT NULL,
     status VARCHAR(50) NOT NULL DEFAULT 'active',
-    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP(3)
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
--- Default tenant
-INSERT IGNORE INTO tenants (name, domain, config, status, created_at, updated_at) VALUES
-    ('Default', NULL, '{}', 'active', NOW(), NOW());
 
 -- Users
 CREATE TABLE IF NOT EXISTS users (
@@ -39,15 +36,12 @@ CREATE TABLE IF NOT EXISTS users (
     display_name VARCHAR(100),
     slug VARCHAR(100) UNIQUE,
     locale VARCHAR(10),
-    social_links JSON,
-    metadata JSON,
-    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP(3)
+    social_links TEXT,
+    metadata TEXT,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_users_tenant (tenant_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
-CREATE INDEX idx_users_username ON users(username);
-CREATE UNIQUE INDEX idx_users_slug ON users(slug);
-CREATE INDEX idx_users_tenant ON users(tenant_id);
 
 -- User credentials
 CREATE TABLE IF NOT EXISTS user_credentials (
@@ -57,15 +51,12 @@ CREATE TABLE IF NOT EXISTS user_credentials (
     identifier VARCHAR(500) NOT NULL,
     credential_data TEXT NOT NULL,
     verified BOOLEAN NOT NULL DEFAULT FALSE,
-    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE KEY uq_credential_type_id (auth_type, identifier),
-    FOREIGN KEY (user_id) REFERENCES users(id)
+    INDEX idx_user_credentials_user (user_id),
+    INDEX idx_user_credentials_type (auth_type)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
-CREATE INDEX idx_user_credentials_user ON user_credentials(user_id);
-CREATE INDEX idx_user_credentials_type_id ON user_credentials(auth_type, identifier);
-CREATE INDEX idx_user_credentials_type ON user_credentials(auth_type);
 
 -- OAuth account bindings
 CREATE TABLE IF NOT EXISTS oauth_accounts (
@@ -80,14 +71,11 @@ CREATE TABLE IF NOT EXISTS oauth_accounts (
     refresh_token VARCHAR(1024),
     token_expires_at DATETIME,
     profile TEXT,
-    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE KEY uq_oauth_provider (provider, provider_user_id),
-    FOREIGN KEY (user_id) REFERENCES users(id)
+    INDEX idx_oauth_accounts_user (user_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
-CREATE INDEX idx_oauth_accounts_user ON oauth_accounts(user_id);
-CREATE INDEX idx_oauth_accounts_provider ON oauth_accounts(provider, provider_user_id);
 
 -- OAuth short-lived state storage (PKCE)
 CREATE TABLE IF NOT EXISTS oauth_states (
@@ -95,27 +83,26 @@ CREATE TABLE IF NOT EXISTS oauth_states (
     provider VARCHAR(50) NOT NULL,
     code_verifier VARCHAR(255) NOT NULL,
     user_id BIGINT,
-    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-    expires_at DATETIME NOT NULL
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    expires_at DATETIME NOT NULL,
+    INDEX idx_oauth_states_expires (expires_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
-CREATE INDEX idx_oauth_states_expires ON oauth_states(expires_at);
 
 -- Currency configuration
 CREATE TABLE IF NOT EXISTS currencies (
     id BIGINT PRIMARY KEY,
-    code VARCHAR(10) NOT NULL UNIQUE,
+    tenant_id VARCHAR(36) NOT NULL DEFAULT 'default',
+    code VARCHAR(10) NOT NULL,
     name VARCHAR(255) NOT NULL,
     decimals INT NOT NULL DEFAULT 0,
     is_active TINYINT(1) NOT NULL DEFAULT 1,
     version INT NOT NULL DEFAULT 1,
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uq_currencies_tenant_code (tenant_id, code),
     CONSTRAINT chk_currencies_code CHECK (code = UPPER(code) AND CHAR_LENGTH(code) BETWEEN 1 AND 10),
     CONSTRAINT chk_currencies_decimals CHECK (decimals BETWEEN 0 AND 18)
 );
-
-CREATE UNIQUE INDEX idx_currencies_code ON currencies(code);
 
 CREATE TABLE IF NOT EXISTS wallets (
     id BIGINT PRIMARY KEY,
@@ -125,15 +112,12 @@ CREATE TABLE IF NOT EXISTS wallets (
     balance BIGINT NOT NULL DEFAULT 0 CHECK(balance >= 0),
     version BIGINT NOT NULL DEFAULT 1,
     status VARCHAR(50) NOT NULL DEFAULT 'active',
-    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE KEY uq_wallets_user_currency (user_id, currency),
-    FOREIGN KEY (user_id) REFERENCES users(id)
+    INDEX idx_wallets_currency (currency),
+    INDEX idx_wallets_tenant (tenant_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
-CREATE INDEX idx_wallets_user ON wallets(user_id);
-CREATE INDEX idx_wallets_currency ON wallets(currency);
-CREATE INDEX idx_wallets_tenant ON wallets(tenant_id);
 
 CREATE TABLE IF NOT EXISTS wallet_transactions (
     id BIGINT PRIMARY KEY,
@@ -150,19 +134,13 @@ CREATE TABLE IF NOT EXISTS wallet_transactions (
     reference_type VARCHAR(100),
     reference_id VARCHAR(255),
     counterparty_wallet_id BIGINT,
-    metadata JSON,
-    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-    FOREIGN KEY (wallet_id) REFERENCES wallets(id),
-    FOREIGN KEY (user_id) REFERENCES users(id)
+    metadata TEXT,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_wallet_tx_wallet (wallet_id),
+    INDEX idx_wallet_tx_user (user_id, created_at DESC),
+    INDEX idx_wallet_tx_reference (reference_type, reference_id),
+    INDEX idx_wallet_tx_tenant_user (tenant_id, user_id, created_at DESC)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
-CREATE INDEX idx_wallet_tx_wallet ON wallet_transactions(wallet_id);
-CREATE INDEX idx_wallet_tx_user ON wallet_transactions(user_id, created_at DESC);
-CREATE INDEX idx_wallet_tx_transaction_no ON wallet_transactions(transaction_no);
-CREATE INDEX idx_wallet_tx_tx_type ON wallet_transactions(tx_type);
-CREATE INDEX idx_wallet_tx_reference ON wallet_transactions(reference_type, reference_id);
-CREATE INDEX idx_wallet_tx_created ON wallet_transactions(created_at);
-CREATE INDEX idx_wallet_transactions_tenant ON wallet_transactions(tenant_id);
 
 -- Refresh Tokens
 CREATE TABLE IF NOT EXISTS refresh_tokens (
@@ -170,13 +148,10 @@ CREATE TABLE IF NOT EXISTS refresh_tokens (
     user_id BIGINT NOT NULL,
     token VARCHAR(500) UNIQUE NOT NULL,
     expires_at DATETIME NOT NULL,
-    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-    FOREIGN KEY (user_id) REFERENCES users(id)
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_refresh_tokens_user (user_id),
+    INDEX idx_refresh_tokens_expires_at (expires_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
-CREATE INDEX idx_refresh_tokens_user ON refresh_tokens(user_id);
-CREATE INDEX idx_refresh_tokens_token ON refresh_tokens(token);
-CREATE INDEX idx_refresh_tokens_expires_at ON refresh_tokens(expires_at);
 
 -- Site options
 CREATE TABLE IF NOT EXISTS options (
@@ -188,28 +163,26 @@ CREATE TABLE IF NOT EXISTS options (
     group_name VARCHAR(100) NOT NULL DEFAULT 'general',
     label VARCHAR(255) NOT NULL DEFAULT '',
     description TEXT,
-    validation JSON,
+    validation TEXT,
     is_public BOOLEAN NOT NULL DEFAULT FALSE,
     autoload BOOLEAN NOT NULL DEFAULT TRUE,
     sort_order INT NOT NULL DEFAULT 0,
-    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-    UNIQUE KEY uq_options_option_key (`option_key`)
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY uq_options_tenant_option_key (tenant_id, `option_key`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
-CREATE INDEX idx_options_tenant_option_key ON options(tenant_id, `option_key`);
 
 -- RBAC roles
 CREATE TABLE IF NOT EXISTS roles (
     id BIGINT PRIMARY KEY,
     tenant_id VARCHAR(36) NOT NULL DEFAULT 'default',
-    name VARCHAR(100) NOT NULL UNIQUE,
+    name VARCHAR(100) NOT NULL,
     description TEXT,
     is_system BOOLEAN NOT NULL DEFAULT FALSE,
-    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP(3)
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY uq_roles_tenant_name (tenant_id, name),
+    INDEX idx_roles_tenant (tenant_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
-CREATE INDEX idx_roles_tenant ON roles(tenant_id);
 
 -- RBAC permissions
 CREATE TABLE IF NOT EXISTS permissions (
@@ -218,15 +191,12 @@ CREATE TABLE IF NOT EXISTS permissions (
     role_id BIGINT NOT NULL,
     action VARCHAR(255) NOT NULL,
     subject VARCHAR(255) NOT NULL,
-    fields JSON,
-    conditions JSON,
-    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-    FOREIGN KEY (role_id) REFERENCES roles(id)
+    fields TEXT,
+    conditions TEXT,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY idx_permissions_role_action_subject (role_id, action, subject),
+    INDEX idx_permissions_tenant (tenant_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
-CREATE UNIQUE INDEX idx_permissions_role_action_subject
-    ON permissions(role_id, action, subject);
-CREATE INDEX idx_permissions_tenant ON permissions(tenant_id);
 
 -- Audit log
 CREATE TABLE IF NOT EXISTS audit_log (
@@ -240,13 +210,11 @@ CREATE TABLE IF NOT EXISTS audit_log (
     detail TEXT,
     ip_address VARCHAR(45),
     user_agent TEXT,
-    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP(3)
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_audit_log_action (action),
+    INDEX idx_audit_log_actor (actor_id),
+    INDEX idx_audit_log_tenant_created (tenant_id, created_at DESC)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
-CREATE INDEX idx_audit_log_action ON audit_log(action);
-CREATE INDEX idx_audit_log_actor ON audit_log(actor_id);
-CREATE INDEX idx_audit_log_created ON audit_log(created_at);
-CREATE INDEX idx_audit_log_tenant ON audit_log(tenant_id);
 
 -- API Token
 CREATE TABLE IF NOT EXISTS api_tokens (
@@ -255,15 +223,12 @@ CREATE TABLE IF NOT EXISTS api_tokens (
     name VARCHAR(255) NOT NULL,
     token_hash VARCHAR(255) UNIQUE NOT NULL,
     token_prefix VARCHAR(50) NOT NULL,
-    scopes JSON NOT NULL,
+    scopes TEXT NOT NULL,
     last_used_at DATETIME,
     expires_at DATETIME,
-    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-    FOREIGN KEY (user_id) REFERENCES users(id)
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_api_tokens_user_id (user_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
-CREATE INDEX idx_api_tokens_user_id ON api_tokens(user_id);
-CREATE INDEX idx_api_tokens_token_hash ON api_tokens(token_hash);
 
 -- Webhook subscriptions
 CREATE TABLE IF NOT EXISTS webhook_subscriptions (
@@ -271,15 +236,14 @@ CREATE TABLE IF NOT EXISTS webhook_subscriptions (
     tenant_id VARCHAR(36) NOT NULL DEFAULT 'default',
     url VARCHAR(1024) NOT NULL,
     secret VARCHAR(255) NOT NULL,
-    events JSON NOT NULL,
+    events TEXT NOT NULL,
     enabled BOOLEAN NOT NULL DEFAULT TRUE,
     description TEXT,
-    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP(3)
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_webhook_subscriptions_enabled (enabled),
+    INDEX idx_webhook_subscriptions_tenant (tenant_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
-CREATE INDEX idx_webhook_subscriptions_enabled ON webhook_subscriptions(enabled);
-CREATE INDEX idx_webhook_subscriptions_tenant ON webhook_subscriptions(tenant_id);
 
 -- Plugin KV storage
 CREATE TABLE IF NOT EXISTS plugin_storage (
@@ -287,11 +251,10 @@ CREATE TABLE IF NOT EXISTS plugin_storage (
     `storage_key` VARCHAR(255) NOT NULL,
     value TEXT NOT NULL,
     expires_at DATETIME,
-    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-    PRIMARY KEY (plugin_id, `storage_key`)
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (plugin_id, `storage_key`),
+    INDEX idx_plugin_storage_plugin (plugin_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
-CREATE INDEX idx_plugin_storage_plugin ON plugin_storage(plugin_id);
 
 -- Content revision history
 CREATE TABLE IF NOT EXISTS content_revisions (
@@ -301,14 +264,10 @@ CREATE TABLE IF NOT EXISTS content_revisions (
     revision_number INT NOT NULL,
     snapshot TEXT NOT NULL,
     created_by BIGINT,
-    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-    UNIQUE KEY uq_revision (content_type, record_id, revision_number)
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY uq_revision (content_type, record_id, revision_number),
+    INDEX idx_revisions_ct_record_rev (content_type, record_id, revision_number DESC)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
-CREATE INDEX idx_revisions_ct_record
-    ON content_revisions(content_type, record_id);
-CREATE INDEX idx_revisions_ct_record_rev
-    ON content_revisions(content_type, record_id, revision_number DESC);
 
 -- Password reset tokens
 CREATE TABLE IF NOT EXISTS password_reset_tokens (
@@ -317,13 +276,10 @@ CREATE TABLE IF NOT EXISTS password_reset_tokens (
     token VARCHAR(255) NOT NULL UNIQUE,
     expires_at DATETIME NOT NULL,
     used_at DATETIME,
-    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-    FOREIGN KEY (user_id) REFERENCES users(id)
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_password_reset_tokens_user_id (user_id),
+    INDEX idx_password_reset_tokens_expires_at (expires_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
-CREATE INDEX idx_password_reset_tokens_token ON password_reset_tokens(token);
-CREATE INDEX idx_password_reset_tokens_user_id ON password_reset_tokens(user_id);
-CREATE INDEX idx_password_reset_tokens_expires_at ON password_reset_tokens(expires_at);
 
 -- SMS verification codes
 CREATE TABLE IF NOT EXISTS sms_codes (
@@ -335,11 +291,10 @@ CREATE TABLE IF NOT EXISTS sms_codes (
     verified_at DATETIME,
     attempts INT NOT NULL DEFAULT 0,
     ip_address VARCHAR(45),
-    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP(3)
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_sms_codes_phone (phone),
+    INDEX idx_sms_codes_expires (expires_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
-CREATE INDEX idx_sms_codes_phone ON sms_codes(phone);
-CREATE INDEX idx_sms_codes_expires ON sms_codes(expires_at);
 
 -- Email verification tokens
 CREATE TABLE IF NOT EXISTS email_verification_tokens (
@@ -349,13 +304,10 @@ CREATE TABLE IF NOT EXISTS email_verification_tokens (
     email VARCHAR(255) NOT NULL,
     expires_at DATETIME NOT NULL,
     verified_at DATETIME,
-    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-    FOREIGN KEY (user_id) REFERENCES users(id)
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_email_verification_tokens_user_id (user_id),
+    INDEX idx_email_verification_tokens_expires (expires_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
-CREATE INDEX idx_email_verification_tokens_token ON email_verification_tokens(token);
-CREATE INDEX idx_email_verification_tokens_user_id ON email_verification_tokens(user_id);
-CREATE INDEX idx_email_verification_tokens_expires ON email_verification_tokens(expires_at);
 
 -- Background job queue
 CREATE TABLE IF NOT EXISTS jobs (
@@ -367,13 +319,11 @@ CREATE TABLE IF NOT EXISTS jobs (
     max_attempts INT NOT NULL DEFAULT 3,
     run_after    DATETIME,
     error        TEXT,
-    created_at   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-    updated_at   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP(3)
+    created_at   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_jobs_status_run_after (status, run_after),
+    INDEX idx_jobs_type (job_type)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
-CREATE INDEX idx_jobs_status ON jobs(status);
-CREATE INDEX idx_jobs_run_after ON jobs(run_after);
-CREATE INDEX idx_jobs_type ON jobs(job_type);
 
 -- Cron job schedules
 CREATE TABLE IF NOT EXISTS cron_schedules (
@@ -386,13 +336,12 @@ CREATE TABLE IF NOT EXISTS cron_schedules (
     last_run_at  DATETIME,
     next_run_at  DATETIME NOT NULL,
     plugin_id    VARCHAR(100),
-    created_at   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-    updated_at   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP(3)
+    created_at   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_cron_enabled (enabled),
+    INDEX idx_cron_next_run (next_run_at),
+    INDEX idx_cron_plugin (plugin_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
-CREATE INDEX idx_cron_enabled ON cron_schedules(enabled);
-CREATE INDEX idx_cron_next_run ON cron_schedules(next_run_at);
-CREATE INDEX idx_cron_plugin ON cron_schedules(plugin_id);
 
 -- Cron execution log
 CREATE TABLE IF NOT EXISTS cron_execution_log (
@@ -404,12 +353,11 @@ CREATE TABLE IF NOT EXISTS cron_execution_log (
     duration_ms  INT,
     error        TEXT,
     started_at   DATETIME NOT NULL,
-    finished_at  DATETIME
+    finished_at  DATETIME,
+    INDEX idx_cron_log_schedule (schedule_id),
+    INDEX idx_cron_log_status (status),
+    INDEX idx_cron_log_started (started_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
-CREATE INDEX idx_cron_log_schedule ON cron_execution_log(schedule_id);
-CREATE INDEX idx_cron_log_status ON cron_execution_log(status);
-CREATE INDEX idx_cron_log_started ON cron_execution_log(started_at);
 
 -- ── Built-in module: Blog (BUILTIN_BLOG=true) ──────────────────
 
@@ -417,8 +365,8 @@ CREATE INDEX idx_cron_log_started ON cron_execution_log(started_at);
 CREATE TABLE IF NOT EXISTS categories (
     id BIGINT PRIMARY KEY,
     tenant_id VARCHAR(36) NOT NULL DEFAULT 'default',
-    name VARCHAR(255) UNIQUE NOT NULL,
-    slug VARCHAR(255) UNIQUE NOT NULL,
+    name VARCHAR(255) NOT NULL,
+    slug VARCHAR(255) NOT NULL,
     description TEXT,
     parent_id BIGINT,
     sort_order INT NOT NULL DEFAULT 0,
@@ -430,38 +378,43 @@ CREATE TABLE IF NOT EXISTS categories (
     og_title VARCHAR(255),
     og_description VARCHAR(500),
     og_image VARCHAR(500),
-    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-    FOREIGN KEY (parent_id) REFERENCES categories(id)
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY uq_categories_tenant_name (tenant_id, name),
+    UNIQUE KEY uq_categories_tenant_slug (tenant_id, slug),
+    INDEX idx_categories_tenant (tenant_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
-CREATE INDEX idx_categories_tenant ON categories(tenant_id);
 
 -- Product categories
 CREATE TABLE IF NOT EXISTS product_categories (
     id BIGINT PRIMARY KEY,
     tenant_id VARCHAR(36) NOT NULL DEFAULT 'default',
-    name VARCHAR(255) UNIQUE NOT NULL,
-    slug VARCHAR(255) UNIQUE NOT NULL,
+    name VARCHAR(255) NOT NULL,
+    slug VARCHAR(255) NOT NULL,
     description TEXT,
     cover_image VARCHAR(500),
     parent_id BIGINT,
     sort_order INT NOT NULL DEFAULT 0,
+    meta_title VARCHAR(255),
+    meta_description VARCHAR(500),
+    og_title VARCHAR(255),
+    og_description VARCHAR(500),
+    og_image VARCHAR(500),
     created_by BIGINT,
     updated_by BIGINT,
-    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-    FOREIGN KEY (parent_id) REFERENCES product_categories(id)
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY uq_product_categories_tenant_name (tenant_id, name),
+    UNIQUE KEY uq_product_categories_tenant_slug (tenant_id, slug),
+    INDEX idx_product_categories_tenant (tenant_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
-CREATE INDEX idx_product_categories_tenant ON product_categories(tenant_id);
 
 -- Tags
 CREATE TABLE IF NOT EXISTS tags (
     id BIGINT PRIMARY KEY,
     tenant_id VARCHAR(36) NOT NULL DEFAULT 'default',
-    name VARCHAR(255) UNIQUE NOT NULL,
-    slug VARCHAR(255) UNIQUE NOT NULL,
+    name VARCHAR(255) NOT NULL,
+    slug VARCHAR(255) NOT NULL,
     created_by BIGINT,
     updated_by BIGINT,
     description TEXT,
@@ -471,21 +424,23 @@ CREATE TABLE IF NOT EXISTS tags (
     og_title VARCHAR(255),
     og_description VARCHAR(500),
     og_image VARCHAR(500),
-    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP(3)
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY uq_tags_tenant_name (tenant_id, name),
+    UNIQUE KEY uq_tags_tenant_slug (tenant_id, slug),
+    INDEX idx_tags_tenant (tenant_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
-CREATE INDEX idx_tags_tenant ON tags(tenant_id);
 
 -- Posts
 CREATE TABLE IF NOT EXISTS posts (
     id BIGINT PRIMARY KEY,
     tenant_id VARCHAR(36) NOT NULL DEFAULT 'default',
     title VARCHAR(500) NOT NULL,
-    slug VARCHAR(255) UNIQUE NOT NULL,
+    slug VARCHAR(255) NOT NULL,
     content LONGTEXT NOT NULL,
     excerpt TEXT,
     cover_image VARCHAR(500),
+    image_ids TEXT,
     status VARCHAR(50) NOT NULL DEFAULT 'draft',
     created_by BIGINT NOT NULL,
     updated_by BIGINT,
@@ -503,36 +458,36 @@ CREATE TABLE IF NOT EXISTS posts (
     og_image VARCHAR(500),
     canonical_url VARCHAR(1024),
     reading_time INTEGER NOT NULL DEFAULT 0,
-    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     published_at DATETIME,
-    FOREIGN KEY (created_by) REFERENCES users(id),
-    FOREIGN KEY (category_id) REFERENCES categories(id)
+    INDEX idx_posts_status (status),
+    INDEX idx_posts_author (created_by),
+    INDEX idx_posts_category (category_id),
+    INDEX idx_posts_status_created (status, is_pinned DESC, created_at DESC),
+    INDEX idx_posts_status_category (status, category_id),
+    INDEX idx_posts_status_author (status, created_by),
+    INDEX idx_posts_tenant (tenant_id),
+    UNIQUE KEY uq_posts_tenant_slug (tenant_id, slug)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
-CREATE INDEX idx_posts_slug ON posts(slug);
-CREATE INDEX idx_posts_status ON posts(status);
-CREATE INDEX idx_posts_author ON posts(created_by);
-CREATE INDEX idx_posts_category ON posts(category_id);
-CREATE INDEX idx_posts_created ON posts(created_at);
-CREATE INDEX idx_posts_status_created
-    ON posts(status, is_pinned DESC, created_at DESC);
-CREATE INDEX idx_posts_status_category
-    ON posts(status, category_id);
-CREATE INDEX idx_posts_status_author
-    ON posts(status, created_by);
-CREATE INDEX idx_posts_tenant ON posts(tenant_id);
 
 -- Posts-Tags (many-to-many)
 CREATE TABLE IF NOT EXISTS posts_tags (
     post_id BIGINT NOT NULL,
     tag_id BIGINT NOT NULL,
     PRIMARY KEY (post_id, tag_id),
-    FOREIGN KEY (post_id) REFERENCES posts(id),
-    FOREIGN KEY (tag_id) REFERENCES tags(id)
+    INDEX idx_posts_tags_tag_id (tag_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
-CREATE INDEX idx_posts_tags_tag_id ON posts_tags(tag_id);
+CREATE TABLE IF NOT EXISTS taggings (
+    id BIGINT PRIMARY KEY,
+    tag_id BIGINT NOT NULL,
+    taggable_type VARCHAR(50) NOT NULL,
+    taggable_id BIGINT NOT NULL,
+    tenant_id VARCHAR(64) NOT NULL DEFAULT 'default',
+    UNIQUE KEY uq_taggings_tenant (tenant_id, tag_id, taggable_type, taggable_id),
+    INDEX idx_taggings_taggable (taggable_type, taggable_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- Comments
 CREATE TABLE IF NOT EXISTS comments (
@@ -548,20 +503,14 @@ CREATE TABLE IF NOT EXISTS comments (
     status VARCHAR(50) NOT NULL DEFAULT 'pending',
     author_ip VARCHAR(45),
     author_url VARCHAR(500),
-    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-    FOREIGN KEY (post_id) REFERENCES posts(id),
-    FOREIGN KEY (created_by) REFERENCES users(id),
-    FOREIGN KEY (parent_id) REFERENCES comments(id)
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_comments_post (post_id),
+    INDEX idx_comments_status (status),
+    INDEX idx_comments_post_status (post_id, status),
+    INDEX idx_comments_parent_id (parent_id),
+    INDEX idx_comments_tenant (tenant_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
-CREATE INDEX idx_comments_post ON comments(post_id);
-CREATE INDEX idx_comments_status ON comments(status);
-CREATE INDEX idx_comments_post_status
-    ON comments(post_id, status);
-CREATE INDEX idx_comments_parent_id
-    ON comments(parent_id);
-CREATE INDEX idx_comments_tenant ON comments(tenant_id);
 
 -- ── Built-in module: Pages (BUILTIN_PAGES=true) ────────────────
 
@@ -571,7 +520,7 @@ CREATE TABLE IF NOT EXISTS pages (
     title            VARCHAR(500) NOT NULL,
     slug             VARCHAR(255) NOT NULL UNIQUE,
     content          LONGTEXT,
-    blocks           JSON,
+    blocks           TEXT,
     meta_title       VARCHAR(255),
     meta_description VARCHAR(500),
     og_image         VARCHAR(500),
@@ -588,18 +537,14 @@ CREATE TABLE IF NOT EXISTS pages (
     og_title         VARCHAR(255),
     og_description   VARCHAR(500),
     canonical_url    VARCHAR(1024),
-    created_at       DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-    updated_at       DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-    FOREIGN KEY (created_by) REFERENCES users(id),
-    FOREIGN KEY (parent_id) REFERENCES pages(id)
+    created_at       DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at       DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_pages_status (status),
+    INDEX idx_pages_parent (parent_id),
+    INDEX idx_pages_author (created_by),
+    INDEX idx_pages_tenant_slug (tenant_id, slug),
+    INDEX idx_pages_tenant_status (tenant_id, status)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
-CREATE INDEX idx_pages_slug      ON pages(slug);
-CREATE INDEX idx_pages_status    ON pages(status);
-CREATE INDEX idx_pages_parent    ON pages(parent_id);
-CREATE INDEX idx_pages_author    ON pages(created_by);
-CREATE INDEX idx_pages_tenant_slug ON pages(tenant_id, slug);
-CREATE INDEX idx_pages_tenant_status ON pages(tenant_id, status);
 
 CREATE TABLE IF NOT EXISTS reusable_blocks (
     id          BIGINT PRIMARY KEY,
@@ -610,11 +555,10 @@ CREATE TABLE IF NOT EXISTS reusable_blocks (
     description TEXT,
     created_by  BIGINT,
     updated_by  BIGINT,
-    created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-    updated_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP(3)
+    created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_reusable_blocks_tenant (tenant_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
-CREATE INDEX idx_reusable_blocks_tenant ON reusable_blocks(tenant_id);
 
 -- ── Built-in module: Media (BUILTIN_MEDIA=true) ────────────────
 
@@ -632,14 +576,11 @@ CREATE TABLE IF NOT EXISTS media (
     alt_text VARCHAR(255),
     caption TEXT,
     description TEXT,
-    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-    FOREIGN KEY (user_id) REFERENCES users(id)
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_media_user_created (user_id, created_at DESC),
+    INDEX idx_media_tenant (tenant_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
-CREATE INDEX idx_media_user_created
-    ON media(user_id, created_at DESC);
-CREATE INDEX idx_media_tenant ON media(tenant_id);
 
 -- ── Built-in module: Workflow (BUILTIN_WORKFLOW=true) ──────────
 
@@ -647,12 +588,12 @@ CREATE TABLE IF NOT EXISTS workflow_definitions (
     id BIGINT PRIMARY KEY,
     name VARCHAR(255) NOT NULL,
     description TEXT,
-    steps JSON NOT NULL,
+    steps TEXT NOT NULL,
     initial_step VARCHAR(100) NOT NULL,
     version INT NOT NULL DEFAULT 1,
     enabled BOOLEAN NOT NULL DEFAULT TRUE,
-    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP(3)
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS workflow_instances (
@@ -660,16 +601,14 @@ CREATE TABLE IF NOT EXISTS workflow_instances (
     definition_id BIGINT NOT NULL,
     status VARCHAR(50) NOT NULL DEFAULT 'running',
     current_step VARCHAR(100),
-    context JSON NOT NULL,
+    context TEXT NOT NULL,
     triggered_by BIGINT,
-    started_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    started_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     completed_at DATETIME,
-    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-    FOREIGN KEY (definition_id) REFERENCES workflow_definitions(id)
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_wf_instances_definition (definition_id),
+    INDEX idx_wf_instances_status (status)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
-CREATE INDEX idx_wf_instances_definition ON workflow_instances(definition_id);
-CREATE INDEX idx_wf_instances_status ON workflow_instances(status);
 
 CREATE TABLE IF NOT EXISTS workflow_step_logs (
     id BIGINT PRIMARY KEY,
@@ -680,12 +619,10 @@ CREATE TABLE IF NOT EXISTS workflow_step_logs (
     input LONGTEXT,
     output LONGTEXT,
     error TEXT,
-    started_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    started_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     completed_at DATETIME,
-    FOREIGN KEY (instance_id) REFERENCES workflow_instances(id)
+    INDEX idx_wf_step_logs_instance (instance_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
-CREATE INDEX idx_wf_step_logs_instance ON workflow_step_logs(instance_id);
 
 -- Products
 CREATE TABLE IF NOT EXISTS products (
@@ -703,15 +640,15 @@ CREATE TABLE IF NOT EXISTS products (
     price BIGINT NOT NULL CHECK(price >= 0),
     currency VARCHAR(50) NOT NULL DEFAULT 'USD',
     status VARCHAR(50) NOT NULL DEFAULT 'draft',
-    attributes JSON,
+    attributes TEXT,
     sort_order INT NOT NULL DEFAULT 0,
     version INT NOT NULL DEFAULT 1,
-    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-    slug VARCHAR(255) UNIQUE,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    slug VARCHAR(255),
     content LONGTEXT,
-    image_ids JSON,
+    image_ids TEXT,
     original_price BIGINT,
-    specs JSON,
+    specs TEXT,
     unit VARCHAR(50) NOT NULL DEFAULT 'piece',
     min_purchase INT NOT NULL DEFAULT 1,
     max_purchase INT,
@@ -719,19 +656,21 @@ CREATE TABLE IF NOT EXISTS products (
     virtual_sales INT NOT NULL DEFAULT 0,
     meta_title VARCHAR(255),
     meta_description VARCHAR(500),
+    og_title VARCHAR(255),
+    og_description VARCHAR(500),
+    og_image VARCHAR(500),
     published_at DATETIME,
     stock INT NOT NULL DEFAULT 0,
     cost_price BIGINT,
     sale_price BIGINT,
     has_variants BOOLEAN NOT NULL DEFAULT FALSE,
-    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-    FOREIGN KEY (category_id) REFERENCES product_categories(id)
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_products_status (status),
+    INDEX idx_products_type (product_type),
+    INDEX idx_products_tenant (tenant_id),
+    INDEX idx_products_tenant_status (tenant_id, status),
+    UNIQUE KEY uq_products_tenant_slug (tenant_id, slug)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
-CREATE INDEX idx_products_status ON products(status);
-CREATE INDEX idx_products_type ON products(product_type);
-CREATE INDEX idx_products_slug ON products(slug);
-CREATE INDEX idx_products_tenant ON products(tenant_id);
 
 -- Product Variants
 CREATE TABLE IF NOT EXISTS product_variants (
@@ -743,19 +682,16 @@ CREATE TABLE IF NOT EXISTS product_variants (
     price BIGINT NOT NULL CHECK(price >= 0),
     original_price BIGINT,
     stock INT NOT NULL DEFAULT 0,
-    attributes JSON,
+    attributes TEXT,
     image_url VARCHAR(500),
     weight INT,
     sort_order INT NOT NULL DEFAULT 0,
     is_active BOOLEAN NOT NULL DEFAULT TRUE,
-    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-    FOREIGN KEY (product_id) REFERENCES products(id)
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_product_variants_product (product_id),
+    INDEX idx_product_variants_tenant (tenant_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
-CREATE INDEX idx_product_variants_product ON product_variants(product_id);
-CREATE INDEX idx_product_variants_sku ON product_variants(sku);
-CREATE INDEX idx_product_variants_tenant ON product_variants(tenant_id);
 
 -- User Addresses
 CREATE TABLE IF NOT EXISTS user_addresses (
@@ -774,13 +710,11 @@ CREATE TABLE IF NOT EXISTS user_addresses (
     postal_code VARCHAR(20),
     is_default BOOLEAN NOT NULL DEFAULT FALSE,
     address_type VARCHAR(20) NOT NULL DEFAULT 'shipping',
-    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-    FOREIGN KEY (user_id) REFERENCES users(id)
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_user_addresses_user (user_id),
+    INDEX idx_user_addresses_tenant (tenant_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
-CREATE INDEX idx_user_addresses_user ON user_addresses(user_id);
-CREATE INDEX idx_user_addresses_tenant ON user_addresses(tenant_id);
 
 -- Orders
 CREATE TABLE IF NOT EXISTS orders (
@@ -802,7 +736,7 @@ CREATE TABLE IF NOT EXISTS orders (
     carrier VARCHAR(100),
     remark TEXT,
     admin_remark TEXT,
-    delivery_data JSON,
+    delivery_data TEXT,
     tax_amount BIGINT NOT NULL DEFAULT 0,
     coupon_id BIGINT,
     shipping_address_id BIGINT,
@@ -813,15 +747,14 @@ CREATE TABLE IF NOT EXISTS orders (
     refunding_at DATETIME,
     refunded_at DATETIME,
     expired_at DATETIME,
-    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-    FOREIGN KEY (user_id) REFERENCES users(id)
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_orders_user (user_id),
+    INDEX idx_orders_status (status),
+    INDEX idx_orders_tenant (tenant_id),
+    INDEX idx_orders_tenant_user_status (tenant_id, user_id, status),
+    INDEX idx_orders_tenant_status_created (tenant_id, status, created_at DESC)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
-CREATE INDEX idx_orders_user ON orders(user_id);
-CREATE INDEX idx_orders_status ON orders(status);
-CREATE INDEX idx_orders_order_no ON orders(order_no);
-CREATE INDEX idx_orders_tenant ON orders(tenant_id);
 
 -- Order Items
 CREATE TABLE IF NOT EXISTS order_items (
@@ -838,15 +771,12 @@ CREATE TABLE IF NOT EXISTS order_items (
     subtotal BIGINT NOT NULL,
     tax_amount BIGINT NOT NULL DEFAULT 0,
     cover_url VARCHAR(500),
-    attributes JSON,
-    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-    FOREIGN KEY (order_id) REFERENCES orders(id),
-    FOREIGN KEY (product_id) REFERENCES products(id),
-    FOREIGN KEY (variant_id) REFERENCES product_variants(id)
+    attributes TEXT,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_order_items_order (order_id),
+    INDEX idx_order_items_product (product_id),
+    INDEX idx_order_items_tenant (tenant_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
-CREATE INDEX idx_order_items_order ON order_items(order_id);
-CREATE INDEX idx_order_items_tenant ON order_items(tenant_id);
 
 CREATE TABLE IF NOT EXISTS cart_items (
     id BIGINT PRIMARY KEY,
@@ -855,16 +785,12 @@ CREATE TABLE IF NOT EXISTS cart_items (
     product_id BIGINT NOT NULL,
     variant_id BIGINT,
     quantity INT NOT NULL DEFAULT 1,
-    attributes JSON,
-    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    attributes TEXT,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE KEY uq_cart_user_product_variant (user_id, product_id, variant_id),
-    FOREIGN KEY (user_id) REFERENCES users(id),
-    FOREIGN KEY (product_id) REFERENCES products(id),
-    FOREIGN KEY (variant_id) REFERENCES product_variants(id)
+    INDEX idx_cart_items_tenant (tenant_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
-CREATE INDEX idx_cart_items_tenant ON cart_items(tenant_id);
 
 CREATE TABLE IF NOT EXISTS payment_channels (
     id BIGINT PRIMARY KEY,
@@ -874,18 +800,17 @@ CREATE TABLE IF NOT EXISTS payment_channels (
     is_live BOOLEAN NOT NULL DEFAULT FALSE,
     credentials TEXT NOT NULL,
     webhook_secret TEXT,
-    settings JSON,
+    settings TEXT,
     is_active BOOLEAN NOT NULL DEFAULT TRUE,
     sort_order INT NOT NULL DEFAULT 0,
     version INT NOT NULL DEFAULT 1,
-    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-    UNIQUE KEY uq_channel_provider_name (provider, name)
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY uq_channel_provider_name (provider, name),
+    INDEX idx_payment_channels_provider (provider),
+    INDEX idx_payment_channels_active (is_active),
+    INDEX idx_payment_channels_tenant (tenant_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
-CREATE INDEX idx_payment_channels_provider ON payment_channels(provider);
-CREATE INDEX idx_payment_channels_active ON payment_channels(is_active);
-CREATE INDEX idx_payment_channels_tenant ON payment_channels(tenant_id);
 
 -- Payment Orders
 CREATE TABLE IF NOT EXISTS payment_orders (
@@ -906,27 +831,25 @@ CREATE TABLE IF NOT EXISTS payment_orders (
     return_url VARCHAR(500),
     idempotency_key VARCHAR(200) NOT NULL UNIQUE,
     version INT NOT NULL DEFAULT 1,
-    provider_data JSON,
+    provider_data TEXT,
     client_ip VARCHAR(45),
     client_language VARCHAR(50),
     client_country VARCHAR(2),
     client_user_agent VARCHAR(512),
     channel_selected_by VARCHAR(20),
-    metadata JSON,
+    metadata TEXT,
     paid_at DATETIME,
     cancelled_at DATETIME,
     expired_at DATETIME,
-    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-    FOREIGN KEY (user_id) REFERENCES users(id),
-    FOREIGN KEY (channel_id) REFERENCES payment_channels(id)
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_payment_orders_user (user_id),
+    INDEX idx_payment_orders_status (status),
+    INDEX idx_payment_orders_provider (provider_order_id),
+    INDEX idx_payment_orders_order_id (order_id),
+    INDEX idx_payment_orders_tenant (tenant_id),
+    INDEX idx_payment_orders_tenant_status_created (tenant_id, status, created_at DESC)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
-CREATE INDEX idx_payment_orders_user ON payment_orders(user_id);
-CREATE INDEX idx_payment_orders_status ON payment_orders(status);
-CREATE INDEX idx_payment_orders_provider ON payment_orders(provider_order_id);
-CREATE INDEX idx_payment_orders_order_id ON payment_orders(order_id);
-CREATE INDEX idx_payment_orders_tenant ON payment_orders(tenant_id);
 
 -- Payment Transactions
 CREATE TABLE IF NOT EXISTS payment_transactions (
@@ -940,15 +863,12 @@ CREATE TABLE IF NOT EXISTS payment_transactions (
     currency VARCHAR(10) NOT NULL,
     provider_tx_id VARCHAR(200) NOT NULL UNIQUE,
     status VARCHAR(50) NOT NULL DEFAULT 'pending',
-    raw_payload JSON,
-    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-    FOREIGN KEY (payment_order_id) REFERENCES payment_orders(id),
-    FOREIGN KEY (user_id) REFERENCES users(id)
+    raw_payload TEXT,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_payment_tx_order (payment_order_id),
+    INDEX idx_payment_tx_order_id (order_id),
+    INDEX idx_payment_transactions_tenant (tenant_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
-CREATE INDEX idx_payment_tx_order ON payment_transactions(payment_order_id);
-CREATE INDEX idx_payment_tx_order_id ON payment_transactions(order_id);
-CREATE INDEX idx_payment_transactions_tenant ON payment_transactions(tenant_id);
 
 -- Payment Refunds
 CREATE TABLE IF NOT EXISTS payment_refunds (
@@ -963,17 +883,13 @@ CREATE TABLE IF NOT EXISTS payment_refunds (
     provider_refund_id VARCHAR(200),
     status VARCHAR(50) NOT NULL DEFAULT 'pending',
     payment_tx_id BIGINT,
-    metadata JSON,
-    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-    FOREIGN KEY (payment_order_id) REFERENCES payment_orders(id),
-    FOREIGN KEY (user_id) REFERENCES users(id),
-    FOREIGN KEY (payment_tx_id) REFERENCES payment_transactions(id)
+    metadata TEXT,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_payment_refunds_order (payment_order_id),
+    INDEX idx_payment_refunds_order_id (order_id),
+    INDEX idx_payment_refunds_tenant (tenant_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
-CREATE INDEX idx_payment_refunds_order ON payment_refunds(payment_order_id);
-CREATE INDEX idx_payment_refunds_order_id ON payment_refunds(order_id);
-CREATE INDEX idx_payment_refunds_tenant ON payment_refunds(tenant_id);
 
 -- Wallet Outbox (ensures wallet operations are never lost)
 CREATE TABLE IF NOT EXISTS wallet_outbox (
@@ -999,10 +915,6 @@ CREATE TABLE IF NOT EXISTS wallet_outbox (
     INDEX idx_wallet_outbox_tenant (tenant_id)
 );
 
--- ============================================================
--- Seed data
--- ============================================================
-
 -- Product Comments (reviews/ratings)
 CREATE TABLE IF NOT EXISTS product_comments (
     id BIGINT PRIMARY KEY,
@@ -1020,55 +932,10 @@ CREATE TABLE IF NOT EXISTS product_comments (
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     UNIQUE INDEX idx_product_comments_unique (product_id, order_id, user_id),
-    INDEX idx_product_comments_product (product_id),
     INDEX idx_product_comments_user (user_id),
     INDEX idx_product_comments_status (status),
     INDEX idx_product_comments_tenant (tenant_id)
 );
-
--- System roles
-INSERT IGNORE INTO roles (tenant_id, name, description, is_system, created_at, updated_at) VALUES
-    ('default', 'admin', 'Super administrator', TRUE, NOW(), NOW()),
-    ('default', 'editor', 'Editor', FALSE, NOW(), NOW()),
-    ('default', 'author', 'Author', FALSE, NOW(), NOW()),
-    ('default', 'reader', 'Reader', TRUE, NOW(), NOW());
-
--- Admin global permissions
-INSERT IGNORE INTO permissions (tenant_id, role_id, action, subject, fields, conditions, created_at) VALUES
-    ('default', (SELECT id FROM roles WHERE name = 'admin'), '*', '*', '["*"]', NULL, NOW());
-
--- Editor permissions
-INSERT IGNORE INTO permissions (tenant_id, role_id, action, subject, fields, conditions, created_at) VALUES
-    ('default', (SELECT id FROM roles WHERE name = 'editor'), 'content-type::*.*', 'content-type::*', '["*"]', NULL, NOW());
-
--- Author permissions
-INSERT IGNORE INTO permissions (tenant_id, role_id, action, subject, fields, conditions, created_at) VALUES
-    ('default', (SELECT id FROM roles WHERE name = 'author'), 'content-type::post.create', 'content-type::post', '["*"]', NULL, NOW()),
-    ('default', (SELECT id FROM roles WHERE name = 'author'), 'content-type::post.read', 'content-type::post', '["*"]', NULL, NOW()),
-    ('default', (SELECT id FROM roles WHERE name = 'author'), 'content-type::post.update', 'content-type::post', '["*"]', '{"author_id":"$user.id"}', NOW()),
-    ('default', (SELECT id FROM roles WHERE name = 'author'), 'content-type::post.delete', 'content-type::post', '["*"]', '{"author_id":"$user.id"}', NOW());
-
--- Reader permissions
-INSERT IGNORE INTO permissions (tenant_id, role_id, action, subject, fields, conditions, created_at) VALUES
-    ('default', (SELECT id FROM roles WHERE name = 'reader'), 'content-type::post.read', 'content-type::post', '["title","slug","content","excerpt","status"]', NULL, NOW()),
-    ('default', (SELECT id FROM roles WHERE name = 'reader'), 'content-type::comment.create', 'content-type::comment', '["content","nickname","email"]', NULL, NOW());
-
--- Site options
-INSERT IGNORE INTO options (tenant_id, `option_key`, value, `type`, group_name, label, description, validation, is_public, autoload, sort_order, updated_at) VALUES
-    ('default', 'site_title', '"My Blog"', 'text', 'general', 'Site title', 'Displayed in browser title bar and page header', '{"max_length":100}', TRUE, TRUE, 1, NOW()),
-    ('default', 'site_description', '""', 'text', 'general', 'Site description', 'Brief description of the site purpose', '{"max_length":500}', TRUE, TRUE, 2, NOW()),
-    ('default', 'site_url', '""', 'url', 'general', 'Site URL', 'e.g. https://example.com', NULL, TRUE, TRUE, 3, NOW()),
-    ('default', 'admin_email', '""', 'email', 'general', 'Admin email', NULL, NULL, FALSE, TRUE, 4, NOW()),
-    ('default', 'timezone', '"UTC"', 'select', 'general', 'Timezone', NULL, '{"values":["UTC","Asia/Shanghai","Asia/Tokyo","US/Eastern","US/Pacific","Europe/London","Europe/Berlin"]}', TRUE, TRUE, 5, NOW()),
-    ('default', 'date_format', '"%Y-%m-%d"', 'select', 'general', 'Date format', NULL, '{"values":["%Y-%m-%d","%d/%m/%Y","%m/%d/%Y","%Y年%m月%d日"]}', TRUE, TRUE, 6, NOW()),
-    ('default', 'posts_per_page', '10', 'integer', 'reading', 'Posts per page', NULL, '{"min":1,"max":100}', TRUE, TRUE, 10, NOW()),
-    ('default', 'rss_items', '20', 'integer', 'reading', 'RSS item count', NULL, '{"min":1,"max":100}', TRUE, TRUE, 11, NOW()),
-    ('default', 'permalink_structure', '"/:year/:month/:slug"', 'select', 'reading', 'URL structure', NULL, '{"values":["/:year/:month/:slug","/:slug","/posts/:slug"]}', TRUE, TRUE, 12, NOW()),
-    ('default', 'comment_moderation', 'true', 'boolean', 'discussion', 'Comments require moderation', 'When enabled, new comments require admin approval', NULL, FALSE, TRUE, 20, NOW()),
-    ('default', 'comment_order', '"asc"', 'select', 'discussion', 'Comment order', NULL, '{"values":["asc","desc"]}', TRUE, TRUE, 21, NOW()),
-    ('default', 'default_role', '"reader"', 'select', 'discussion', 'Default role for new users', NULL, '{"values":["reader","author"]}', FALSE, TRUE, 22, NOW()),
-    ('default', 'theme', '"default"', 'select', 'appearance', 'Current theme', NULL, '{"values":["default","corporate","minimal","warm"]}', TRUE, TRUE, 30, NOW()),
-    ('default', 'maintenance_mode', 'false', 'boolean', 'appearance', 'Maintenance mode', 'When enabled, a maintenance page is shown to visitors', NULL, TRUE, TRUE, 31, NOW());
 
 -- Coupons
 CREATE TABLE IF NOT EXISTS coupons (
@@ -1087,27 +954,86 @@ CREATE TABLE IF NOT EXISTS coupons (
     status VARCHAR(32) NOT NULL DEFAULT 'active',
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    INDEX idx_coupons_code (code),
     INDEX idx_coupons_status (status),
     INDEX idx_coupons_tenant (tenant_id)
 );
 
 -- Shipping Templates
 CREATE TABLE IF NOT EXISTS shipping_templates (
-    id INTEGER PRIMARY KEY,
-    tenant_id TEXT NOT NULL DEFAULT 'default',
-    name TEXT NOT NULL,
-    type TEXT NOT NULL DEFAULT 'weight',
-    first_unit INTEGER NOT NULL DEFAULT 1,
-    first_price INTEGER NOT NULL DEFAULT 0,
-    additional_unit INTEGER NOT NULL DEFAULT 1,
-    additional_price INTEGER NOT NULL DEFAULT 0,
-    free_shipping_amount INTEGER NOT NULL DEFAULT 0,
-    regions TEXT NOT NULL DEFAULT '[]',
-    status TEXT NOT NULL DEFAULT 'active',
-    created_at TEXT NOT NULL DEFAULT (NOW()),
-    updated_at TEXT NOT NULL DEFAULT (NOW())
+    id BIGINT PRIMARY KEY,
+    tenant_id VARCHAR(36) NOT NULL DEFAULT 'default',
+    name VARCHAR(255) NOT NULL,
+    type VARCHAR(50) NOT NULL DEFAULT 'weight',
+    first_unit INT NOT NULL DEFAULT 1,
+    first_price BIGINT NOT NULL DEFAULT 0,
+    additional_unit INT NOT NULL DEFAULT 1,
+    additional_price BIGINT NOT NULL DEFAULT 0,
+    free_shipping_amount BIGINT NOT NULL DEFAULT 0,
+    regions TEXT NOT NULL,
+    status VARCHAR(50) NOT NULL DEFAULT 'active',
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_shipping_templates_tenant (tenant_id),
+    INDEX idx_shipping_templates_status (status)
 );
 
-CREATE INDEX idx_shipping_templates_tenant ON shipping_templates(tenant_id);
-CREATE INDEX idx_shipping_templates_status ON shipping_templates(status);
+-- ============================================================
+-- Seed data
+-- ============================================================
+
+-- Default tenant
+INSERT IGNORE INTO tenants (id, name, domain, config, status, created_at, updated_at) VALUES
+    (10001, 'Default', NULL, '{}', 'active', NOW(), NOW());
+
+-- Default currencies
+INSERT IGNORE INTO currencies (id, tenant_id, code, name, decimals) VALUES
+    (10001, 'default', 'CNY', 'Chinese Yuan', 2),
+    (10002, 'default', 'USD', 'US Dollar', 2),
+    (10003, 'default', 'EUR', 'Euro', 2),
+    (10004, 'default', 'GBP', 'British Pound', 2),
+    (10005, 'default', 'JPY', 'Japanese Yen', 0);
+
+-- System roles
+INSERT IGNORE INTO roles (id, tenant_id, name, description, is_system, created_at, updated_at) VALUES
+    (10001, 'default', 'admin', 'Super administrator', TRUE, NOW(), NOW()),
+    (10002, 'default', 'editor', 'Editor', FALSE, NOW(), NOW()),
+    (10003, 'default', 'author', 'Author', FALSE, NOW(), NOW()),
+    (10004, 'default', 'reader', 'Reader', TRUE, NOW(), NOW());
+
+-- Admin global permissions
+INSERT IGNORE INTO permissions (id, tenant_id, role_id, action, subject, fields, conditions, created_at) VALUES
+    (10001, 'default', (SELECT id FROM roles WHERE name = 'admin'), '*', '*', '["*"]', NULL, NOW());
+
+-- Editor permissions
+INSERT IGNORE INTO permissions (id, tenant_id, role_id, action, subject, fields, conditions, created_at) VALUES
+    (10002, 'default', (SELECT id FROM roles WHERE name = 'editor'), 'content-type::*.*', 'content-type::*', '["*"]', NULL, NOW());
+
+-- Author permissions
+INSERT IGNORE INTO permissions (id, tenant_id, role_id, action, subject, fields, conditions, created_at) VALUES
+    (10003, 'default', (SELECT id FROM roles WHERE name = 'author'), 'content-type::post.create', 'content-type::post', '["*"]', NULL, NOW()),
+    (10004, 'default', (SELECT id FROM roles WHERE name = 'author'), 'content-type::post.read', 'content-type::post', '["*"]', NULL, NOW()),
+    (10005, 'default', (SELECT id FROM roles WHERE name = 'author'), 'content-type::post.update', 'content-type::post', '["*"]', '{"author_id":"$user.id"}', NOW()),
+    (10006, 'default', (SELECT id FROM roles WHERE name = 'author'), 'content-type::post.delete', 'content-type::post', '["*"]', '{"author_id":"$user.id"}', NOW());
+
+-- Reader permissions
+INSERT IGNORE INTO permissions (id, tenant_id, role_id, action, subject, fields, conditions, created_at) VALUES
+    (10007, 'default', (SELECT id FROM roles WHERE name = 'reader'), 'content-type::post.read', 'content-type::post', '["title","slug","content","excerpt","status"]', NULL, NOW()),
+    (10008, 'default', (SELECT id FROM roles WHERE name = 'reader'), 'content-type::comment.create', 'content-type::comment', '["content","nickname","email"]', NULL, NOW());
+
+-- Site options
+INSERT IGNORE INTO options (id, tenant_id, `option_key`, value, `type`, group_name, label, description, validation, is_public, autoload, sort_order, updated_at) VALUES
+    (10001, 'default', 'site_title', '"My Blog"', 'text', 'general', 'Site title', 'Displayed in browser title bar and page header', '{"max_length":100}', TRUE, TRUE, 1, NOW()),
+    (10002, 'default', 'site_description', '""', 'text', 'general', 'Site description', 'Brief description of the site purpose', '{"max_length":500}', TRUE, TRUE, 2, NOW()),
+    (10003, 'default', 'site_url', '""', 'url', 'general', 'Site URL', 'e.g. https://example.com', NULL, TRUE, TRUE, 3, NOW()),
+    (10004, 'default', 'admin_email', '""', 'email', 'general', 'Admin email', NULL, NULL, FALSE, TRUE, 4, NOW()),
+    (10005, 'default', 'timezone', '"UTC"', 'select', 'general', 'Timezone', NULL, '{"values":["UTC","Asia/Shanghai","Asia/Tokyo","US/Eastern","US/Pacific","Europe/London","Europe/Berlin"]}', TRUE, TRUE, 5, NOW()),
+    (10006, 'default', 'date_format', '"%Y-%m-%d"', 'select', 'general', 'Date format', NULL, '{"values":["%Y-%m-%d","%d/%m/%Y","%m/%d/%Y","%Y年%m月%d日"]}', TRUE, TRUE, 6, NOW()),
+    (10007, 'default', 'posts_per_page', '10', 'integer', 'reading', 'Posts per page', NULL, '{"min":1,"max":100}', TRUE, TRUE, 10, NOW()),
+    (10008, 'default', 'rss_items', '20', 'integer', 'reading', 'RSS item count', NULL, '{"min":1,"max":100}', TRUE, TRUE, 11, NOW()),
+    (10009, 'default', 'permalink_structure', '"/:year/:month/:slug"', 'select', 'reading', 'URL structure', NULL, '{"values":["/:year/:month/:slug","/:slug","/posts/:slug"]}', TRUE, TRUE, 12, NOW()),
+    (10010, 'default', 'comment_moderation', 'true', 'boolean', 'discussion', 'Comments require moderation', 'When enabled, new comments require admin approval', NULL, FALSE, TRUE, 20, NOW()),
+    (10011, 'default', 'comment_order', '"asc"', 'select', 'discussion', 'Comment order', NULL, '{"values":["asc","desc"]}', TRUE, TRUE, 21, NOW()),
+    (10012, 'default', 'default_role', '"reader"', 'select', 'discussion', 'Default role for new users', NULL, '{"values":["reader","author"]}', FALSE, TRUE, 22, NOW()),
+    (10013, 'default', 'theme', '"default"', 'select', 'appearance', 'Current theme', NULL, '{"values":["default","corporate","minimal","warm"]}', TRUE, TRUE, 30, NOW()),
+    (10014, 'default', 'maintenance_mode', 'false', 'boolean', 'appearance', 'Maintenance mode', 'When enabled, a maintenance page is shown to visitors', NULL, TRUE, TRUE, 31, NOW()),
+    (10015, 'default', 'default_currency', '"USD"', 'select', 'ecommerce', 'Default currency', 'Currency code for products and orders', '{"values":["USD","CNY","EUR","GBP","JPY","KRW","HKD","TWD","SGD","AUD","CAD"]}', TRUE, TRUE, 40, NOW());
