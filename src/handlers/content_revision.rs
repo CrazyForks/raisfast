@@ -11,23 +11,41 @@ use serde_json::json;
 
 use crate::AppState;
 use crate::content_type::repository::ContentRepository;
+use crate::content_type::schema::ContentTypeSchema;
 use crate::errors::app_error::{AppError, AppResult};
 use crate::errors::response::ApiResponse;
 
-/// GET /admin/cms/{plural}/{id}/revisions — List all revisions of a record
+/// Resolve a content type from a catch-all plural path (e.g. `"polls"` or `"forum/polls"`).
+fn resolve_ct_by_plural(
+    state: &AppState,
+    plural_path: &str,
+) -> Result<std::sync::Arc<ContentTypeSchema>, AppError> {
+    // Try group-qualified lookup first: "forum/polls"
+    if let Some((group, plural)) = plural_path.rsplit_once('/')
+        && let Some(ct) = state
+            .content_type_registry
+            .get_by_plural_in_group(group, plural)
+    {
+        return Ok(ct);
+    }
+    // Fall back to flat lookup
+    state
+        .content_type_registry
+        .get_by_plural(plural_path)
+        .ok_or_else(|| AppError::not_found(plural_path))
+}
+
+/// GET /admin/cms/{*plural}/{id}/revisions — List all revisions of a record
 #[utoipa::path(get, path = "/admin/cms/{plural}/{id}/revisions", tag = "revisions",
     security(("bearer_auth" = [])),
-    params(("plural" = String, Path, description = "Content type plural"), ("id" = String, Path, description = "Record ID")),
+    params(("plural" = String, Path, description = "Content type plural (supports group prefix)"), ("id" = String, Path, description = "Record ID")),
     responses((status = 200, description = "Revision list"))
 )]
 pub async fn list_revisions(
     State(state): State<AppState>,
     Path((plural, id)): Path<(String, String)>,
 ) -> AppResult<ApiResponse<serde_json::Value>> {
-    let ct = state
-        .content_type_registry
-        .get_by_plural(&plural)
-        .ok_or_else(|| AppError::not_found(&plural))?;
+    let ct = resolve_ct_by_plural(&state, &plural)?;
 
     if !ct.has_revision_routes() {
         return Err(AppError::BadRequest(
@@ -37,9 +55,14 @@ pub async fn list_revisions(
 
     let int_id = crate::types::snowflake_id::parse_id(&id)?;
 
-    let (summaries, total) =
-        crate::services::content_revision::list_revisions(&state.pool, &ct.singular, int_id, 0, 0)
-            .await?;
+    let (summaries, total) = crate::services::content_revision::list_revisions(
+        &state.pool,
+        &ct.registry_key(),
+        int_id,
+        0,
+        0,
+    )
+    .await?;
 
     Ok(ApiResponse::success(json!({
         "items": summaries,
@@ -47,20 +70,17 @@ pub async fn list_revisions(
     })))
 }
 
-/// GET /admin/cms/{plural}/{id}/revisions/{revision_id} — Get a specific revision snapshot
+/// GET /admin/cms/{*plural}/{id}/revisions/{revision_id} — Get a specific revision snapshot
 #[utoipa::path(get, path = "/admin/cms/{plural}/{id}/revisions/{revision_id}", tag = "revisions",
     security(("bearer_auth" = [])),
-    params(("plural" = String, Path, description = "Content type plural"), ("id" = String, Path, description = "Record ID"), ("revision_id" = String, Path, description = "Revision ID")),
+    params(("plural" = String, Path, description = "Content type plural (supports group prefix)"), ("id" = String, Path, description = "Record ID"), ("revision_id" = String, Path, description = "Revision ID")),
     responses((status = 200, description = "Revision detail"))
 )]
 pub async fn get_revision(
     State(state): State<AppState>,
     Path((plural, id, revision_id)): Path<(String, String, String)>,
 ) -> AppResult<ApiResponse<serde_json::Value>> {
-    let ct = state
-        .content_type_registry
-        .get_by_plural(&plural)
-        .ok_or_else(|| AppError::not_found(&plural))?;
+    let ct = resolve_ct_by_plural(&state, &plural)?;
 
     if !ct.has_revision_routes() {
         return Err(AppError::BadRequest(
@@ -71,9 +91,13 @@ pub async fn get_revision(
     let rev_id = crate::types::snowflake_id::parse_id(&revision_id)?;
     let int_id = crate::types::snowflake_id::parse_id(&id)?;
 
-    let revision =
-        crate::services::content_revision::get_revision(&state.pool, &ct.singular, int_id, rev_id)
-            .await?;
+    let revision = crate::services::content_revision::get_revision(
+        &state.pool,
+        &ct.registry_key(),
+        int_id,
+        rev_id,
+    )
+    .await?;
 
     let snapshot: serde_json::Value = serde_json::from_str(&revision.snapshot)
         .map_err(|e| AppError::Internal(anyhow::anyhow!("snapshot parse: {e}")))?;
@@ -87,20 +111,17 @@ pub async fn get_revision(
     })))
 }
 
-/// POST /admin/cms/{plural}/{id}/revisions/{revision_id}/restore — Restore to a specific revision
+/// POST /admin/cms/{*plural}/{id}/revisions/{revision_id}/restore — Restore to a specific revision
 #[utoipa::path(post, path = "/admin/cms/{plural}/{id}/revisions/{revision_id}/restore", tag = "revisions",
     security(("bearer_auth" = [])),
-    params(("plural" = String, Path, description = "Content type plural"), ("id" = String, Path, description = "Record ID"), ("revision_id" = String, Path, description = "Revision ID")),
+    params(("plural" = String, Path, description = "Content type plural (supports group prefix)"), ("id" = String, Path, description = "Record ID"), ("revision_id" = String, Path, description = "Revision ID")),
     responses((status = 200, description = "Revision restored"))
 )]
 pub async fn restore_revision(
     State(state): State<AppState>,
     Path((plural, id, revision_id)): Path<(String, String, String)>,
 ) -> AppResult<ApiResponse<serde_json::Value>> {
-    let ct = state
-        .content_type_registry
-        .get_by_plural(&plural)
-        .ok_or_else(|| AppError::not_found(&plural))?;
+    let ct = resolve_ct_by_plural(&state, &plural)?;
 
     if !ct.has_revision_routes() {
         return Err(AppError::BadRequest(
@@ -113,7 +134,7 @@ pub async fn restore_revision(
 
     let snapshot = crate::services::content_revision::restore_revision(
         &state.pool,
-        &ct.singular,
+        &ct.registry_key(),
         int_id,
         rev_id,
     )
@@ -129,20 +150,17 @@ pub async fn restore_revision(
     Ok(ApiResponse::success(value))
 }
 
-/// GET /admin/cms/{plural}/{id}/revisions/{rev_a}/diff/{rev_b} — Compare two revisions
+/// GET /admin/cms/{*plural}/{id}/revisions/{rev_a}/diff/{rev_b} — Compare two revisions
 #[utoipa::path(get, path = "/admin/cms/{plural}/{id}/revisions/{rev_a}/diff/{rev_b}", tag = "revisions",
     security(("bearer_auth" = [])),
-    params(("plural" = String, Path, description = "Content type plural"), ("id" = String, Path, description = "Record ID"), ("rev_a" = String, Path, description = "Revision A"), ("rev_b" = String, Path, description = "Revision B")),
+    params(("plural" = String, Path, description = "Content type plural (supports group prefix)"), ("id" = String, Path, description = "Record ID"), ("rev_a" = String, Path, description = "Revision A"), ("rev_b" = String, Path, description = "Revision B")),
     responses((status = 200, description = "Revision diff"))
 )]
 pub async fn diff_revisions(
     State(state): State<AppState>,
     Path((plural, id, rev_a, rev_b)): Path<(String, String, String, String)>,
 ) -> AppResult<ApiResponse<serde_json::Value>> {
-    let ct = state
-        .content_type_registry
-        .get_by_plural(&plural)
-        .ok_or_else(|| AppError::not_found(&plural))?;
+    let ct = resolve_ct_by_plural(&state, &plural)?;
 
     if !ct.has_revision_routes() {
         return Err(AppError::BadRequest(
@@ -156,7 +174,7 @@ pub async fn diff_revisions(
 
     let result = crate::services::content_revision::diff_revisions(
         &state.pool,
-        &ct.singular,
+        &ct.registry_key(),
         int_id,
         *rev_a_id,
         *rev_b_id,

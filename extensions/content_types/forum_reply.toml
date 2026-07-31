@@ -1,8 +1,9 @@
 [content_type]
 name = "Forum Reply"
-singular = "forum_reply"
-plural = "forum_replies"
+singular = "reply"
+plural = "replies"
 table = "forum_replies"
+group = "forum"
 description = "论坛回复"
 implements = ["ownable", "timestampable"]
 

@@ -29,6 +29,8 @@ fn require_auth(ctx: &Context<'_>) -> Result<AuthUser> {
 #[Object]
 impl MutationRoot {
     /// Create content
+    ///
+    /// `type` — content type registry key: `"post"` (flat) or `"forum/poll"` (grouped)
     async fn create_content(
         &self,
         ctx: &Context<'_>,
@@ -68,6 +70,9 @@ impl MutationRoot {
     }
 
     /// Update content
+    /// Update content
+    ///
+    /// `type` — content type registry key: `"post"` (flat) or `"forum/poll"` (grouped)
     async fn update_content(
         &self,
         ctx: &Context<'_>,
@@ -137,6 +142,9 @@ impl MutationRoot {
     }
 
     /// Delete content
+    /// Delete content
+    ///
+    /// `type` — content type registry key: `"post"` (flat) or `"forum/poll"` (grouped)
     async fn delete_content(
         &self,
         ctx: &Context<'_>,

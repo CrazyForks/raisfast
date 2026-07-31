@@ -56,7 +56,7 @@ pub fn routes(
         r,
         registry,
         restful,
-        "/admin/content-types/{singular}",
+        "/admin/content-types/{*ct_path}",
         get,
         get_schema,
         "content type",
@@ -66,7 +66,7 @@ pub fn routes(
         r,
         registry,
         restful,
-        "/admin/content-types/{singular}",
+        "/admin/content-types/{*ct_path}",
         put,
         update_schema,
         "content type",
@@ -76,7 +76,7 @@ pub fn routes(
         r,
         registry,
         restful,
-        "/admin/content-types/{singular}",
+        "/admin/content-types/{*ct_path}",
         delete,
         delete_schema,
         "content type",
@@ -208,222 +208,278 @@ pub fn register_content_routes(
     for ct in ct_registry.all() {
         let plural = ct.plural.clone();
         let singular = ct.singular.clone();
+        let group = ct.group.clone();
+        // Registry key passed to handler closures for lookup (e.g. "poll" or "forum/poll")
+        let registry_key = ct.registry_key();
+
+        // Route prefix: "/cms/{group}/{plural}" when grouped, "/cms/{plural}" when flat
+        let cms_prefix = if group.is_empty() {
+            format!("{cms}/{plural}")
+        } else {
+            format!("{cms}/{group}/{plural}")
+        };
+        let admin_prefix = if group.is_empty() {
+            format!("{admin_cms}/{plural}")
+        } else {
+            format!("{admin_cms}/{group}/{plural}")
+        };
 
         if ct.kind == ContentKind::Single {
+            let cms_single = if group.is_empty() {
+                format!("{cms}/{singular}")
+            } else {
+                format!("{cms}/{group}/{singular}")
+            };
+            let admin_single = if group.is_empty() {
+                format!("{admin_cms}/{singular}")
+            } else {
+                format!("{admin_cms}/{group}/{singular}")
+            };
             if restful {
                 api = api.route(
-                    &format!("{cms}/{singular}"),
+                    &cms_single,
                     axum::routing::get({
-                        let singular = singular.clone();
-                        move |auth, state| single_get_handler(auth, state, singular.clone())
+                        let key = registry_key.clone();
+                        move |auth, state| single_get_handler(auth, state, key.clone())
                     })
                     .put({
-                        let singular = singular.clone();
+                        let key = registry_key.clone();
                         move |auth, state, data| {
-                            single_update_handler(auth, state, data, singular.clone())
+                            single_update_handler(auth, state, data, key.clone())
                         }
                     }),
                 );
             } else {
                 api = api
                     .route(
-                        &format!("{cms}/{singular}"),
+                        &cms_single,
                         axum::routing::get({
-                            let singular = singular.clone();
-                            move |auth, state| single_get_handler(auth, state, singular.clone())
+                            let key = registry_key.clone();
+                            move |auth, state| single_get_handler(auth, state, key.clone())
                         }),
                     )
                     .route(
-                        &format!("{cms}/{singular}/update"),
+                        &format!("{cms_single}/update"),
                         axum::routing::post({
-                            let singular = singular.clone();
+                            let key = registry_key.clone();
                             move |auth, state, data| {
-                                single_update_handler(auth, state, data, singular.clone())
+                                single_update_handler(auth, state, data, key.clone())
                             }
                         }),
                     );
             }
             api = api.route(
-                &format!("{admin_cms}/{singular}"),
+                &admin_single,
                 axum::routing::get({
-                    let singular = singular.clone();
-                    move |state| admin_single_get_handler(state, singular.clone())
+                    let key = registry_key.clone();
+                    move |state| admin_single_get_handler(state, key.clone())
                 }),
             );
         } else if restful {
             api = api
                 .route(
-                    &format!("{cms}/{plural}"),
+                    &cms_prefix,
                     axum::routing::get({
-                        let singular = singular.clone();
-                        move |auth, state, params| {
-                            list_handler(auth, state, singular.clone(), params)
-                        }
+                        let key = registry_key.clone();
+                        move |auth, state, params| list_handler(auth, state, key.clone(), params)
                     })
                     .post({
-                        let singular = singular.clone();
-                        move |auth, state, data| create_handler(auth, state, singular.clone(), data)
+                        let key = registry_key.clone();
+                        move |auth, state, data| create_handler(auth, state, key.clone(), data)
                     }),
                 )
                 .route(
-                    &format!("{cms}/{plural}/{{id}}"),
+                    &format!("{cms_prefix}/{{id}}"),
                     axum::routing::get({
-                        let singular = singular.clone();
-                        move |auth, state, path| get_handler(auth, state, path, singular.clone())
+                        let key = registry_key.clone();
+                        move |auth, state, path| get_handler(auth, state, path, key.clone())
                     })
                     .put({
-                        let singular = singular.clone();
+                        let key = registry_key.clone();
                         move |auth, state, path, data| {
-                            update_handler(auth, state, path, data, singular.clone())
+                            update_handler(auth, state, path, data, key.clone())
                         }
                     })
                     .delete({
-                        let singular = singular.clone();
-                        move |auth, state, path| delete_handler(auth, state, path, singular.clone())
+                        let key = registry_key.clone();
+                        move |auth, state, path| delete_handler(auth, state, path, key.clone())
                     }),
                 )
                 .route(
-                    &format!("{admin_cms}/{plural}"),
+                    &admin_prefix,
                     axum::routing::get({
-                        let singular = singular.clone();
+                        let key = registry_key.clone();
                         move |state, auth, params| {
-                            admin_list_handler(state, auth, singular.clone(), params)
+                            admin_list_handler(state, auth, key.clone(), params)
                         }
                     }),
                 )
                 .route(
-                    &format!("{admin_cms}/{plural}/{{id}}"),
+                    &format!("{admin_prefix}/{{id}}"),
                     axum::routing::get({
-                        let singular = singular.clone();
-                        move |state, auth, path| {
-                            admin_get_handler(state, auth, path, singular.clone())
-                        }
+                        let key = registry_key.clone();
+                        move |state, auth, path| admin_get_handler(state, auth, path, key.clone())
                     }),
                 );
         } else {
             api = api
                 .route(
-                    &format!("{cms}/{plural}"),
+                    &cms_prefix,
                     axum::routing::get({
-                        let singular = singular.clone();
-                        move |auth, state, params| {
-                            list_handler(auth, state, singular.clone(), params)
-                        }
+                        let key = registry_key.clone();
+                        move |auth, state, params| list_handler(auth, state, key.clone(), params)
                     }),
                 )
                 .route(
-                    &format!("{cms}/{plural}/create"),
+                    &format!("{cms_prefix}/create"),
                     axum::routing::post({
-                        let singular = singular.clone();
-                        move |auth, state, data| create_handler(auth, state, singular.clone(), data)
+                        let key = registry_key.clone();
+                        move |auth, state, data| create_handler(auth, state, key.clone(), data)
                     }),
                 )
                 .route(
-                    &format!("{cms}/{plural}/{{id}}"),
+                    &format!("{cms_prefix}/{{id}}"),
                     axum::routing::get({
-                        let singular = singular.clone();
-                        move |auth, state, path| get_handler(auth, state, path, singular.clone())
+                        let key = registry_key.clone();
+                        move |auth, state, path| get_handler(auth, state, path, key.clone())
                     }),
                 )
                 .route(
-                    &format!("{cms}/{plural}/{{id}}/update"),
+                    &format!("{cms_prefix}/{{id}}/update"),
                     axum::routing::post({
-                        let singular = singular.clone();
+                        let key = registry_key.clone();
                         move |auth, state, path, data| {
-                            update_handler(auth, state, path, data, singular.clone())
+                            update_handler(auth, state, path, data, key.clone())
                         }
                     }),
                 )
                 .route(
-                    &format!("{cms}/{plural}/{{id}}/delete"),
+                    &format!("{cms_prefix}/{{id}}/delete"),
                     axum::routing::post({
-                        let singular = singular.clone();
-                        move |auth, state, path| delete_handler(auth, state, path, singular.clone())
+                        let key = registry_key.clone();
+                        move |auth, state, path| delete_handler(auth, state, path, key.clone())
                     }),
                 )
                 .route(
-                    &format!("{admin_cms}/{plural}"),
+                    &admin_prefix,
                     axum::routing::get({
-                        let singular = singular.clone();
+                        let key = registry_key.clone();
                         move |state, auth, params| {
-                            admin_list_handler(state, auth, singular.clone(), params)
+                            admin_list_handler(state, auth, key.clone(), params)
                         }
                     }),
                 )
                 .route(
-                    &format!("{admin_cms}/{plural}/{{id}}"),
+                    &format!("{admin_prefix}/{{id}}"),
                     axum::routing::get({
-                        let singular = singular.clone();
-                        move |state, auth, path| {
-                            admin_get_handler(state, auth, path, singular.clone())
-                        }
+                        let key = registry_key.clone();
+                        move |state, auth, path| admin_get_handler(state, auth, path, key.clone())
                     }),
                 );
         }
 
         let protocol_names: Vec<String> =
             ct.implements.iter().map(|p| p.name().to_string()).collect();
-        api = protocol_registry.register_routes_for(&protocol_names, api, &plural, admin_cms);
+        let plural_prefix = if group.is_empty() {
+            plural.clone()
+        } else {
+            format!("{group}/{plural}")
+        };
+        api =
+            protocol_registry.register_routes_for(&protocol_names, api, &plural_prefix, admin_cms);
 
-        tracing::debug!("registered CMS routes for content type: {}", ct.singular);
+        tracing::debug!(
+            "registered CMS routes for content type: {} (group={})",
+            ct.singular,
+            if group.is_empty() {
+                "(default)"
+            } else {
+                &group
+            }
+        );
     }
 
     api
 }
 
-/// Parse catch-all path into (plural, optional id)
-fn parse_dynamic_path(path: &str) -> Option<(String, Option<String>)> {
+/// Parse catch-all path into `(group, segment, optional id)`.
+///
+/// Resolution strategy:
+/// 1. If the first segment is a known group name → `group = segments[0]`, `segment = segments[1]`, `id = segments[2]`
+/// 2. Otherwise → `group = ""`, `segment = segments[0]`, `id = segments[1]`
+fn resolve_path_segments(
+    registry: &crate::content_type::ContentTypeRegistry,
+    path: &str,
+) -> Option<(String, String, Option<String>)> {
     let segments: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
     if segments.is_empty() {
         return None;
     }
-    let first = segments[0].to_string();
-    let id = segments.get(1).map(|s| s.to_string());
-    Some((first, id))
+    if registry.has_group(segments[0]) && segments.len() >= 2 {
+        let group = segments[0].to_string();
+        let segment = segments[1].to_string();
+        let id = segments.get(2).map(|s| s.to_string());
+        Some((group, segment, id))
+    } else {
+        let segment = segments[0].to_string();
+        let id = segments.get(1).map(|s| s.to_string());
+        Some((String::new(), segment, id))
+    }
 }
 
-/// Find content type by singular or plural name
+/// Parse catch-all path into `(group, segment, optional id, optional action)` for non-restful mode.
+fn resolve_path_segments_with_action(
+    registry: &crate::content_type::ContentTypeRegistry,
+    path: &str,
+) -> Option<(String, String, Option<String>, Option<String>)> {
+    let segments: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
+    if segments.is_empty() {
+        return None;
+    }
+
+    // Determine if first segment is a group
+    let (group, rest) = if registry.has_group(segments[0]) && segments.len() >= 2 {
+        (segments[0].to_string(), &segments[1..])
+    } else {
+        (String::new(), &segments[..])
+    };
+
+    let first = rest.first()?.to_string();
+    match rest.len() {
+        1 => Some((group, first, None, None)),
+        2 => match rest[1] {
+            "create" | "update" | "delete" => Some((group, first, None, Some(rest[1].to_string()))),
+            _ => Some((group, first, Some(rest[1].to_string()), None)),
+        },
+        3 => Some((
+            group,
+            first,
+            Some(rest[1].to_string()),
+            Some(rest[2].to_string()),
+        )),
+        _ => None,
+    }
+}
+
+/// Find content type by `(group, singular_or_plural)` segment.
+///
+/// Returns `(content_type, is_single)`.
 fn resolve_content_type(
     registry: &crate::content_type::ContentTypeRegistry,
+    group: &str,
     segment: &str,
 ) -> Option<(Arc<ContentTypeSchema>, bool)> {
-    if let Some(ct) = registry.get(segment)
+    // Try single type first (by singular within group)
+    if let Some(ct) = registry.get_in_group(group, segment)
         && ct.is_single()
     {
         return Some((ct, true));
     }
-    if let Some(ct) = registry.get_by_plural(segment) {
+    // Try collection (by plural within group)
+    if let Some(ct) = registry.get_by_plural_in_group(group, segment) {
         return Some((ct, false));
     }
     None
-}
-
-/// Parse catch-all path into (segment, optional id, optional action)
-fn parse_dynamic_path_with_action(path: &str) -> Option<(String, Option<String>, Option<String>)> {
-    let segments: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
-    if segments.is_empty() {
-        return None;
-    }
-    let first = segments[0].to_string();
-    match segments.len() {
-        1 => Some((first, None, None)),
-        2 => {
-            let second = segments[1];
-            match second {
-                "create" | "update" | "delete" => Some((first, None, Some(second.to_string()))),
-                _ => Some((first, Some(second.to_string()), None)),
-            }
-        }
-        3 => {
-            let action = segments[2];
-            Some((
-                first,
-                Some(segments[1].to_string()),
-                Some(action.to_string()),
-            ))
-        }
-        _ => None,
-    }
 }
 
 /// Catch-all dynamic route handler (for content types added after startup)
@@ -452,11 +508,14 @@ async fn dynamic_cms_dispatch_restful(
     params: ListParams,
     body: Option<Json<Value>>,
 ) -> Result<axum::response::Response, AppError> {
-    let Some((segment, id)) = parse_dynamic_path(path) else {
+    let Some((group, segment, id)) = resolve_path_segments(&state.content_type_registry, path)
+    else {
         return Err(AppError::not_found("invalid cms path"));
     };
 
-    let Some((ct, is_single)) = resolve_content_type(&state.content_type_registry, &segment) else {
+    let Some((ct, is_single)) =
+        resolve_content_type(&state.content_type_registry, &group, &segment)
+    else {
         return Err(AppError::not_found(&segment));
     };
 
@@ -532,11 +591,15 @@ async fn dynamic_cms_dispatch_simple(
     params: ListParams,
     body: Option<Json<Value>>,
 ) -> Result<axum::response::Response, AppError> {
-    let Some((segment, id, action)) = parse_dynamic_path_with_action(path) else {
+    let Some((group, segment, id, action)) =
+        resolve_path_segments_with_action(&state.content_type_registry, path)
+    else {
         return Err(AppError::not_found("invalid cms path"));
     };
 
-    let Some((ct, is_single)) = resolve_content_type(&state.content_type_registry, &segment) else {
+    let Some((ct, is_single)) =
+        resolve_content_type(&state.content_type_registry, &group, &segment)
+    else {
         return Err(AppError::not_found(&segment));
     };
 
@@ -628,11 +691,14 @@ async fn dynamic_admin_cms_dispatch_restful(
     path: &str,
     params: ListParams,
 ) -> Result<axum::response::Response, AppError> {
-    let Some((segment, id)) = parse_dynamic_path(path) else {
+    let Some((group, segment, id)) = resolve_path_segments(&state.content_type_registry, path)
+    else {
         return Err(AppError::not_found("invalid admin cms path"));
     };
 
-    let Some((ct, is_single)) = resolve_content_type(&state.content_type_registry, &segment) else {
+    let Some((ct, is_single)) =
+        resolve_content_type(&state.content_type_registry, &group, &segment)
+    else {
         return Err(AppError::not_found(&segment));
     };
 
@@ -666,11 +732,15 @@ async fn dynamic_admin_cms_dispatch_simple(
     path: &str,
     params: ListParams,
 ) -> Result<axum::response::Response, AppError> {
-    let Some((segment, id, action)) = parse_dynamic_path_with_action(path) else {
+    let Some((group, segment, id, action)) =
+        resolve_path_segments_with_action(&state.content_type_registry, path)
+    else {
         return Err(AppError::not_found("invalid admin cms path"));
     };
 
-    let Some((ct, is_single)) = resolve_content_type(&state.content_type_registry, &segment) else {
+    let Some((ct, is_single)) =
+        resolve_content_type(&state.content_type_registry, &group, &segment)
+    else {
         return Err(AppError::not_found(&segment));
     };
 
@@ -724,15 +794,15 @@ pub fn cms_list_cache_key(ct: &ContentTypeSchema, query: &ContentQuery) -> Strin
         }
     }
     let h = hasher.finish();
-    format!("cms:{}:{h:x}", ct.plural)
+    format!("cms:{}:{h:x}", ct.scope())
 }
 
 pub fn cms_detail_cache_key(ct: &ContentTypeSchema, id: SnowflakeId) -> String {
-    format!("cms:{}:detail:{id}", ct.plural)
+    format!("cms:{}:detail:{id}", ct.scope())
 }
 
 fn invalidate_cms_cache(state: &AppState, ct: &ContentTypeSchema) {
-    let prefix = format!("cms:{}:", ct.plural);
+    let prefix = format!("cms:{}:", ct.scope());
     state.cms_cache.retain(|k, _| !k.starts_with(&prefix));
 }
 
@@ -742,7 +812,7 @@ pub async fn do_list(
     params: ListParams,
     auth: &AuthUser,
 ) -> Result<serde_json::Value, AppError> {
-    auth.ensure_scope(&ct.plural, TokenAction::Read)?;
+    auth.ensure_scope(&ct.scope(), TokenAction::Read)?;
     let repo = ContentRepository::new(state.pool.clone());
     let include = params.include.as_deref().map(parse_include);
 
@@ -894,7 +964,7 @@ pub async fn do_get(
     id: SnowflakeId,
     auth: &AuthUser,
 ) -> Result<serde_json::Value, AppError> {
-    auth.ensure_scope(&ct.plural, TokenAction::Read)?;
+    auth.ensure_scope(&ct.scope(), TokenAction::Read)?;
     let cache_key = cms_detail_cache_key(ct, id);
     let cache_ttl = std::time::Duration::from_secs(state.config.rule_engine.cms_cache_ttl_secs);
     if ct.api.get.cache
@@ -951,7 +1021,7 @@ pub async fn do_create(
     save_ctx: &SaveContext,
     auth: &AuthUser,
 ) -> Result<serde_json::Value, AppError> {
-    auth.ensure_scope(&ct.plural, TokenAction::Create)?;
+    auth.ensure_scope(&ct.scope(), TokenAction::Create)?;
     let hook_data = json!({
         "content_type": ct.singular,
         "data": &data,
@@ -1033,7 +1103,7 @@ pub async fn do_update(
     save_ctx: &SaveContext,
     auth: &AuthUser,
 ) -> Result<serde_json::Value, AppError> {
-    auth.ensure_scope(&ct.plural, TokenAction::Update)?;
+    auth.ensure_scope(&ct.scope(), TokenAction::Update)?;
     let repo = ContentRepository::new(state.pool.clone());
 
     let old_record_value = repo.find_by_id(ct, id, None, true).await?;
@@ -1135,7 +1205,7 @@ pub async fn do_delete(
     id: SnowflakeId,
     auth: &AuthUser,
 ) -> Result<(), AppError> {
-    auth.ensure_scope(&ct.plural, TokenAction::Delete)?;
+    auth.ensure_scope(&ct.scope(), TokenAction::Delete)?;
     let repo = ContentRepository::new(state.pool.clone());
 
     let existing = repo.find_by_id(ct, id, None, true).await?;
@@ -1321,7 +1391,7 @@ pub async fn do_single_get(
     ct: &ContentTypeSchema,
     auth: &AuthUser,
 ) -> Result<serde_json::Value, AppError> {
-    let cache_key = format!("cms:{}:single", ct.singular);
+    let cache_key = format!("cms:{}:single", ct.registry_key());
     let cache_ttl = std::time::Duration::from_secs(state.config.rule_engine.cms_cache_ttl_secs);
     if ct.api.get.cache
         && let Some(entry) = state.cms_cache.get(&cache_key)
@@ -1543,6 +1613,14 @@ async fn admin_get_handler(
 
 // ── Schema Management API ──────────────────────────────────────────
 
+/// Parse a catch-all content-type path into a registry key.
+///
+/// `"post"` → `"post"` (no group)
+/// `"forum/poll"` → `"forum/poll"` (with group)
+fn parse_ct_path(ct_path: &str) -> String {
+    ct_path.trim_start_matches('/').to_string()
+}
+
 /// GET /admin/content-types — List schema definitions of all registered content types
 pub async fn list_schemas(
     State(state): State<AppState>,
@@ -1553,17 +1631,20 @@ pub async fn list_schemas(
     Ok(Json(crate::errors::response::ApiResponse::success(schemas)))
 }
 
-/// GET /admin/content-types/:singular — Get the schema definition of a single content type
+/// GET /admin/content-types/:ct_path — Get the schema definition of a single content type
+///
+/// `ct_path` can be `"singular"` (no group) or `"group/singular"` (with group).
 pub async fn get_schema(
     State(state): State<AppState>,
     auth: AuthUser,
-    Path(singular): Path<String>,
+    Path(ct_path): Path<String>,
 ) -> Result<impl IntoResponse, AppError> {
     auth.ensure_admin()?;
+    let key = parse_ct_path(&ct_path);
     let ct = state
         .content_type_registry
-        .get(&singular)
-        .ok_or_else(|| AppError::not_found(&singular))?;
+        .get(&key)
+        .ok_or_else(|| AppError::not_found(&ct_path))?;
     Ok(Json(crate::errors::response::ApiResponse::success(ct)))
 }
 
@@ -1584,6 +1665,8 @@ pub async fn create_schema(
         singular: req.singular.clone(),
         plural: req.plural,
         table: req.table.clone(),
+        group: super::schema::ContentTypeSchema::validate_group_name(&req.group)
+            .map_err(|e| AppError::BadRequest(e.to_string()))?,
         description: req.description,
         kind: req.kind,
         slug_field: req.slug_field,
@@ -1605,14 +1688,15 @@ pub async fn create_schema(
     ) {
         return Err(AppError::BadRequest(format!(
             "table '{}' is a protected system table",
-            req.table
+            schema.table
         )));
     }
 
-    if state.content_type_registry.get(&req.singular).is_some() {
+    let registry_key = schema.registry_key();
+    if state.content_type_registry.get(&registry_key).is_some() {
         return Err(AppError::Conflict(format!(
             "content type '{}' already exists",
-            req.singular
+            registry_key
         )));
     }
 
@@ -1647,37 +1731,40 @@ pub async fn create_schema(
     ))
 }
 
-/// DELETE /admin/content-types/:singular — Delete a content type
+/// DELETE /admin/content-types/:ct_path — Delete a content type
 ///
+/// `ct_path` can be `"singular"` (no group) or `"group/singular"` (with group).
 /// Deletes the TOML file and unregisters from the in-memory registry. Does not drop the database table.
 pub async fn delete_schema(
     State(state): State<AppState>,
     auth: AuthUser,
-    Path(singular): Path<String>,
+    Path(ct_path): Path<String>,
 ) -> Result<impl IntoResponse, AppError> {
     auth.ensure_admin()?;
-    if state.content_type_registry.get(&singular).is_none() {
-        return Err(AppError::not_found(&singular));
-    }
+    let key = parse_ct_path(&ct_path);
+    let ct = state
+        .content_type_registry
+        .get(&key)
+        .ok_or_else(|| AppError::not_found(&ct_path))?;
 
-    let path =
-        std::path::Path::new(&state.config.content_type_dir).join(format!("{singular}.toml"));
+    let path = std::path::Path::new(&state.config.content_type_dir).join(ct.toml_filename());
     if path.exists() {
         std::fs::remove_file(&path)
             .map_err(|e| AppError::Internal(anyhow::anyhow!("cannot delete {:?}: {e}", path)))?;
     }
 
-    state.content_type_registry.unregister(&singular);
+    state.content_type_registry.unregister(&key);
 
-    tracing::info!("unregistered content type: {} (hot-reload)", singular);
+    tracing::info!("unregistered content type: {} (hot-reload)", key);
 
     Ok(Json(crate::errors::response::ApiResponse::success(
         serde_json::json!({"deleted": true}),
     )))
 }
 
-/// PUT /admin/content-types/:singular — Update a content type schema
+/// PUT /admin/content-types/:ct_path — Update a content type schema
 ///
+/// `ct_path` can be `"singular"` (no group) or `"group/singular"` (with group).
 /// Incremental update: only modifies fields provided in the request. If `fields` is provided,
 /// it is compared against the database and automatically `ALTER TABLE ADD COLUMN` to add missing
 /// columns (does not delete columns or change column types).
@@ -1685,14 +1772,15 @@ pub async fn delete_schema(
 pub async fn update_schema(
     State(state): State<AppState>,
     auth: AuthUser,
-    Path(singular): Path<String>,
+    Path(ct_path): Path<String>,
     Json(req): Json<super::schema::UpdateContentTypeRequest>,
 ) -> Result<impl IntoResponse, AppError> {
     auth.ensure_admin()?;
+    let key = parse_ct_path(&ct_path);
     let ct = state
         .content_type_registry
-        .get(&singular)
-        .ok_or_else(|| AppError::not_found(&singular))?;
+        .get(&key)
+        .ok_or_else(|| AppError::not_found(&ct_path))?;
 
     let mut updated = (*ct).clone();
 
@@ -1809,82 +1897,93 @@ target = "users"
         .unwrap()
     }
 
-    #[test]
-    fn parse_dynamic_path_empty() {
-        assert!(parse_dynamic_path("").is_none());
+    fn empty_registry() -> crate::content_type::ContentTypeRegistry {
+        crate::content_type::ContentTypeRegistry::new()
     }
 
     #[test]
-    fn parse_dynamic_path_plural_only() {
-        let (seg, id) = parse_dynamic_path("products").unwrap();
+    fn resolve_path_segments_empty() {
+        let reg = empty_registry();
+        assert!(resolve_path_segments(&reg, "").is_none());
+    }
+
+    #[test]
+    fn resolve_path_segments_flat_plural() {
+        let reg = empty_registry();
+        let (group, seg, id) = resolve_path_segments(&reg, "products").unwrap();
+        assert_eq!(group, "");
         assert_eq!(seg, "products");
         assert!(id.is_none());
     }
 
     #[test]
-    fn parse_dynamic_path_with_id() {
-        let (seg, id) = parse_dynamic_path("products/abc-123").unwrap();
+    fn resolve_path_segments_flat_with_id() {
+        let reg = empty_registry();
+        let (group, seg, id) = resolve_path_segments(&reg, "products/abc-123").unwrap();
+        assert_eq!(group, "");
         assert_eq!(seg, "products");
         assert_eq!(id, Some("abc-123".to_string()));
     }
 
     #[test]
-    fn parse_dynamic_path_leading_slash() {
-        let (seg, id) = parse_dynamic_path("/products/xyz").unwrap();
-        assert_eq!(seg, "products");
-        assert_eq!(id, Some("xyz".to_string()));
-    }
+    fn resolve_path_segments_grouped() {
+        let reg = crate::content_type::ContentTypeRegistry::new();
+        reg.set_protected_tables(vec![]);
+        let ct = ContentTypeSchema::parse_from_str(
+            r#"
+[content_type]
+name = "Poll"
+singular = "poll"
+plural = "polls"
+table = "forum_polls"
+group = "forum"
 
-    #[test]
-    fn parse_dynamic_path_trailing_slash() {
-        let (seg, id) = parse_dynamic_path("products/").unwrap();
-        assert_eq!(seg, "products");
+[fields.title]
+type = "text"
+"#,
+        )
+        .unwrap();
+        let preg = crate::protocols::ProtocolRegistry::new();
+        reg.register(ct, &Default::default(), &[], &[], &preg)
+            .unwrap();
+
+        let (group, seg, id) = resolve_path_segments(&reg, "forum/polls").unwrap();
+        assert_eq!(group, "forum");
+        assert_eq!(seg, "polls");
         assert!(id.is_none());
+
+        let (group, seg, id) = resolve_path_segments(&reg, "forum/polls/123").unwrap();
+        assert_eq!(group, "forum");
+        assert_eq!(seg, "polls");
+        assert_eq!(id, Some("123".to_string()));
     }
 
     #[test]
-    fn parse_dynamic_path_with_action_plural_create() {
-        let (seg, id, action) = parse_dynamic_path_with_action("products/create").unwrap();
+    fn resolve_path_segments_with_action_flat_create() {
+        let reg = empty_registry();
+        let (group, seg, id, action) =
+            resolve_path_segments_with_action(&reg, "products/create").unwrap();
+        assert_eq!(group, "");
         assert_eq!(seg, "products");
         assert!(id.is_none());
         assert_eq!(action, Some("create".to_string()));
     }
 
     #[test]
-    fn parse_dynamic_path_with_action_id_update() {
-        let (seg, id, action) = parse_dynamic_path_with_action("products/abc-123/update").unwrap();
+    fn resolve_path_segments_with_action_flat_id_update() {
+        let reg = empty_registry();
+        let (group, seg, id, action) =
+            resolve_path_segments_with_action(&reg, "products/abc-123/update").unwrap();
+        assert_eq!(group, "");
         assert_eq!(seg, "products");
         assert_eq!(id, Some("abc-123".to_string()));
         assert_eq!(action, Some("update".to_string()));
     }
 
     #[test]
-    fn parse_dynamic_path_with_action_id_delete() {
-        let (seg, id, action) = parse_dynamic_path_with_action("products/abc-123/delete").unwrap();
-        assert_eq!(seg, "products");
-        assert_eq!(id, Some("abc-123".to_string()));
-        assert_eq!(action, Some("delete".to_string()));
-    }
-
-    #[test]
-    fn parse_dynamic_path_with_action_no_action() {
-        let (seg, id, action) = parse_dynamic_path_with_action("products/abc-123").unwrap();
-        assert_eq!(seg, "products");
-        assert_eq!(id, Some("abc-123".to_string()));
-        assert!(action.is_none());
-    }
-
-    #[test]
-    fn parse_dynamic_path_with_action_empty() {
-        assert!(parse_dynamic_path_with_action("").is_none());
-    }
-
-    #[test]
-    fn parse_dynamic_path_with_action_update_no_id() {
-        let (seg, id, action) = parse_dynamic_path_with_action("setting/update").unwrap();
-        assert_eq!(seg, "setting");
-        assert!(id.is_none());
-        assert_eq!(action, Some("update".to_string()));
+    fn resolve_path_segments_with_action_empty() {
+        let reg = empty_registry();
+        assert!(resolve_path_segments_with_action(&reg, "").is_none());
     }
 
     #[test]
@@ -1906,7 +2005,7 @@ type = "text"
         .unwrap();
         let reg = crate::protocols::ProtocolRegistry::new();
         let _ = registry.register(ct, &Default::default(), &[], &[], &reg);
-        let (found, is_single) = resolve_content_type(&registry, "setting").unwrap();
+        let (found, is_single) = resolve_content_type(&registry, "", "setting").unwrap();
         assert!(is_single);
         assert_eq!(found.singular, "setting");
     }
@@ -1917,7 +2016,7 @@ type = "text"
         let ct = parse_ct();
         let reg = crate::protocols::ProtocolRegistry::new();
         let _ = registry.register(ct, &Default::default(), &[], &[], &reg);
-        let (found, is_single) = resolve_content_type(&registry, "products").unwrap();
+        let (found, is_single) = resolve_content_type(&registry, "", "products").unwrap();
         assert!(!is_single);
         assert_eq!(found.singular, "product");
     }
@@ -1925,7 +2024,35 @@ type = "text"
     #[test]
     fn resolve_content_type_not_found() {
         let registry = crate::content_type::ContentTypeRegistry::new();
-        assert!(resolve_content_type(&registry, "nothing").is_none());
+        assert!(resolve_content_type(&registry, "", "nothing").is_none());
+    }
+
+    #[test]
+    fn resolve_content_type_grouped() {
+        let registry = crate::content_type::ContentTypeRegistry::new();
+        let ct = ContentTypeSchema::parse_from_str(
+            r#"
+[content_type]
+name = "Poll"
+singular = "poll"
+plural = "polls"
+table = "forum_polls"
+group = "forum"
+
+[fields.title]
+type = "text"
+"#,
+        )
+        .unwrap();
+        let reg = crate::protocols::ProtocolRegistry::new();
+        registry
+            .register(ct, &Default::default(), &[], &[], &reg)
+            .unwrap();
+
+        let (found, is_single) = resolve_content_type(&registry, "forum", "polls").unwrap();
+        assert!(!is_single);
+        assert_eq!(found.singular, "poll");
+        assert_eq!(found.group, "forum");
     }
 
     #[test]
@@ -1994,6 +2121,28 @@ type = "text"
         let ct = parse_ct();
         let key = cms_detail_cache_key(&ct, SnowflakeId(123));
         assert_eq!(key, "cms:products:detail:123");
+    }
+
+    #[test]
+    fn cms_cache_key_group_qualified() {
+        let ct = ContentTypeSchema::parse_from_str(
+            r#"
+[content_type]
+name = "Poll"
+singular = "poll"
+plural = "polls"
+table = "forum_polls"
+group = "forum"
+
+[fields.title]
+type = "text"
+"#,
+        )
+        .unwrap();
+        // Grouped: scope = "forum/polls"
+        assert_eq!(ct.scope(), "forum/polls");
+        let key = cms_detail_cache_key(&ct, SnowflakeId(42));
+        assert_eq!(key, "cms:forum/polls:detail:42");
     }
 
     #[test]

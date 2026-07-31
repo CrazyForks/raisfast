@@ -227,10 +227,12 @@ pub trait Protocol: Send + Sync + 'static {
     ///
     /// This is the only hook that cannot be purely data-declared, because it involves
     /// async IO operations. Most protocols use the default no-op implementation.
+    ///
+    /// `content_type_key` is the registry key (`"singular"` or `"group/singular"`).
     fn on_after_delete(
         &self,
         _pool: &crate::db::pool::Pool,
-        _content_type_singular: &str,
+        _content_type_key: &str,
         _record_id: SnowflakeId,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), anyhow::Error>> + Send + '_>>
     {
@@ -374,13 +376,13 @@ impl ProtocolRegistry {
         &self,
         names: &[String],
         pool: &crate::db::pool::Pool,
-        content_type_singular: &str,
+        content_type_key: &str,
         record_id: SnowflakeId,
     ) -> Result<(), anyhow::Error> {
         for name in names {
             if let Some(protocol) = self.protocols.get(name.as_str()) {
                 protocol
-                    .on_after_delete(pool, content_type_singular, record_id)
+                    .on_after_delete(pool, content_type_key, record_id)
                     .await?;
             }
         }

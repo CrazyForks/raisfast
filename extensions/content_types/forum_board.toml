@@ -1,8 +1,9 @@
 [content_type]
 name = "Forum Board"
-singular = "forum_board"
-plural = "forum_boards"
+singular = "board"
+plural = "boards"
 table = "forum_boards"
+group = "forum"
 description = "论坛版块"
 implements = ["ownable", "timestampable"]
 slug_field = "name"

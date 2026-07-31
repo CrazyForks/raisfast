@@ -618,14 +618,14 @@ impl ContentRepository {
             && let Some(current) = self.find_by_id(ct, id, tenant_id, true).await?
             && let Err(e) = crate::models::content_revision::create_revision(
                 &self.pool,
-                &ct.singular,
+                &ct.registry_key(),
                 id,
                 &current,
                 None,
             )
             .await
         {
-            tracing::warn!("failed to create revision for {}: {e}", ct.singular);
+            tracing::warn!("failed to create revision for {}: {e}", ct.registry_key());
         }
 
         let _guard = crate::db::connection::acquire_write().await;
@@ -1116,7 +1116,7 @@ impl ContentRepository {
         let protocol_names: Vec<String> =
             ct.implements.iter().map(|p| p.name().to_string()).collect();
         let _ = protocol_registry
-            .dispatch_after_delete(&protocol_names, &self.pool, &ct.singular, id)
+            .dispatch_after_delete(&protocol_names, &self.pool, &ct.registry_key(), id)
             .await;
 
         Ok(())

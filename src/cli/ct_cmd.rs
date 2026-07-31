@@ -62,7 +62,10 @@ delete = "admin"
 
     println!("✓ content type created: {}", file_path.display());
     println!();
-    println!("  {singular}.toml");
+    println!(
+        "  {}",
+        file_path.file_name().unwrap_or_default().to_string_lossy()
+    );
     println!();
     println!("edit the file and restart the server to apply.");
 
@@ -182,7 +185,15 @@ pub fn generate_types(
         anyhow::bail!("directory not found: {}", ct_dir.display());
     }
 
-    let target_file = singular.map(|s| format!("{s}.toml"));
+    // When a singular is specified, it can be "poll" (flat) or "forum/poll" (grouped).
+    // Match against the TOML filename convention: "{singular}.toml" or "{group}_{singular}.toml".
+    let target_file = singular.map(|s| {
+        if let Some((group, singular)) = s.rsplit_once('/') {
+            format!("{group}_{singular}.toml")
+        } else {
+            format!("{s}.toml")
+        }
+    });
     let mut schemas: Vec<ContentTypeSchema> = Vec::new();
     for entry in std::fs::read_dir(&ct_dir)? {
         let entry = entry?;
@@ -201,7 +212,8 @@ pub fn generate_types(
 
     if let Some(s) = singular {
         if schemas.is_empty() {
-            anyhow::bail!("content type '{s}' not found (looked for {s}.toml)");
+            let looked_for = target_file.as_deref().unwrap_or("?");
+            anyhow::bail!("content type '{s}' not found (looked for {looked_for})");
         }
     } else if schemas.is_empty() {
         anyhow::bail!("no .toml files found in: {}", ct_dir.display());

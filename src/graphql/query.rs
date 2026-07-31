@@ -23,6 +23,8 @@ fn get_auth(ctx: &Context<'_>) -> Result<AuthUser> {
 #[Object]
 impl QueryRoot {
     /// Paginated content list query
+    ///
+    /// `type` — content type registry key: `"post"` (flat) or `"forum/poll"` (grouped)
     #[allow(clippy::too_many_arguments)]
     async fn content(
         &self,
@@ -66,6 +68,8 @@ impl QueryRoot {
     }
 
     /// Get a single content item by ID
+    ///
+    /// `type` — content type registry key: `"post"` (flat) or `"forum/poll"` (grouped)
     async fn content_by_id(
         &self,
         ctx: &Context<'_>,

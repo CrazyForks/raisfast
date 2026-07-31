@@ -79,15 +79,7 @@ pub fn routes(
         "admin"
     );
     let r = reg_route!(
-        r,
-        registry,
-        restful,
-        "/users",
-        get,
-        list_users,
-        "system",
-        "users",
-        "admin"
+        r, registry, restful, "/users", get, list_users, "system", "users", "admin"
     );
     let r = reg_route!(
         r,

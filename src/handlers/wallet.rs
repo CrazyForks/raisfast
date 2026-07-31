@@ -137,9 +137,7 @@ pub fn routes(
         "admin/wallet_transactions",
         "admin"
     )
-
 }
-
 
 #[utoipa::path(get, path = "/wallets", tag = "wallets",
     security(("bearer_auth" = [])),

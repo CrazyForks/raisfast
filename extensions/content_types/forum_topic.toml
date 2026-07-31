@@ -1,8 +1,9 @@
 [content_type]
 name = "Forum Topic"
-singular = "forum_topic"
-plural = "forum_topics"
+singular = "topic"
+plural = "topics"
 table = "forum_topics"
+group = "forum"
 description = "论坛主题"
 implements = ["ownable", "timestampable"]
 slug_field = "title"

@@ -76,8 +76,14 @@ pub struct ContentTypeSchema {
     pub singular: String,
     /// Plural identifier (e.g., "posts"), used for API paths
     pub plural: String,
-    /// Database table name
+    /// Database table name (globally unique across all content types)
     pub table: String,
+    /// Namespace group (empty = no group).
+    ///
+    /// When set, API routes become `/cms/{group}/{plural}` instead of `/cms/{plural}`.
+    /// Different groups may share the same `singular`/`plural` names; `table` remains globally unique.
+    #[serde(default)]
+    pub group: String,
     /// Kind: collection (multiple records) or single (only one record)
     #[serde(default)]
     pub kind: ContentKind,
@@ -421,6 +427,8 @@ struct ContentTypeHeader {
     plural: String,
     table: String,
     #[serde(default)]
+    group: String,
+    #[serde(default)]
     description: String,
     slug_field: Option<String>,
     #[serde(default)]
@@ -562,6 +570,7 @@ impl ContentTypeSchema {
             singular: Self::validate_identifier(&toml.content_type.singular, "singular")?,
             plural: Self::validate_identifier(&toml.content_type.plural, "plural")?,
             table: Self::validate_table_name(&toml.content_type.table)?,
+            group: Self::validate_group_name(&toml.content_type.group)?,
             description: toml.content_type.description,
             kind: toml.content_type.kind,
             fields,
@@ -682,6 +691,68 @@ impl ContentTypeSchema {
             )));
         }
         Ok(name.to_string())
+    }
+
+    /// Validate the optional group name (empty string is valid = no group)
+    pub fn validate_group_name(group: &str) -> Result<String, AppError> {
+        let group = group.trim();
+        if group.is_empty() {
+            return Ok(String::new());
+        }
+        if !group.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+            return Err(AppError::Internal(anyhow::anyhow!(
+                "group '{group}' contains invalid characters (only alphanumeric and underscore allowed)"
+            )));
+        }
+        Ok(group.to_string())
+    }
+
+    /// Build the registry key from group and singular.
+    ///
+    /// - Empty group → `singular` (e.g. `"post"`)
+    /// - Non-empty group → `"group/singular"` (e.g. `"forum/poll"`)
+    #[must_use]
+    pub fn make_key(group: &str, singular: &str) -> String {
+        if group.is_empty() {
+            singular.to_string()
+        } else {
+            format!("{group}/{singular}")
+        }
+    }
+
+    /// Registry key for this content type (`group/singular` or just `singular`)
+    #[must_use]
+    pub fn registry_key(&self) -> String {
+        Self::make_key(&self.group, &self.singular)
+    }
+
+    /// Permission scope string (`group/plural` or just `plural`).
+    ///
+    /// Used for `ensure_scope` and cache keys to avoid cross-group collisions
+    /// when two content types in different groups share the same plural.
+    #[must_use]
+    pub fn scope(&self) -> String {
+        Self::make_key(&self.group, &self.plural)
+    }
+
+    /// URL path segment for this content type (`group/plural` or just `plural`).
+    #[must_use]
+    pub fn route_segment(&self) -> String {
+        if self.is_single() {
+            self.registry_key()
+        } else {
+            self.scope()
+        }
+    }
+
+    /// TOML filename for this content type (`{singular}.toml` or `{group}_{singular}.toml`)
+    #[must_use]
+    pub fn toml_filename(&self) -> String {
+        if self.group.is_empty() {
+            format!("{}.toml", self.singular)
+        } else {
+            format!("{}_{}.toml", self.group, self.singular)
+        }
     }
 
     fn validate_indexes(mut indexes: Vec<IndexDef>) -> Result<Vec<IndexDef>, AppError> {
@@ -830,6 +901,9 @@ impl ContentTypeSchema {
         );
         header.insert("plural".into(), toml::Value::String(self.plural.clone()));
         header.insert("table".into(), toml::Value::String(self.table.clone()));
+        if !self.group.is_empty() {
+            header.insert("group".into(), toml::Value::String(self.group.clone()));
+        }
         if !self.description.is_empty() {
             header.insert(
                 "description".into(),
@@ -909,7 +983,7 @@ impl ContentTypeSchema {
         std::fs::create_dir_all(dir).map_err(|e| {
             AppError::Internal(anyhow::anyhow!("cannot create content_types dir: {e}"))
         })?;
-        let path = dir.join(format!("{}.toml", self.singular));
+        let path = dir.join(self.toml_filename());
         let content = self.to_toml()?;
         std::fs::write(&path, content)
             .map_err(|e| AppError::Internal(anyhow::anyhow!("cannot write {:?}: {e}", path)))?;
@@ -1134,6 +1208,8 @@ pub struct CreateContentTypeRequest {
     pub singular: String,
     pub plural: String,
     pub table: String,
+    #[serde(default)]
+    pub group: String,
     #[serde(default)]
     pub description: String,
     #[serde(default)]

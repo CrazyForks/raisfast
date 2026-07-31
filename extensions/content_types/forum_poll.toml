@@ -1,8 +1,9 @@
 [content_type]
 name = "Forum Poll"
-singular = "forum_poll"
-plural = "forum_polls"
+singular = "poll"
+plural = "polls"
 table = "forum_polls"
+group = "forum"
 description = "论坛投票"
 implements = ["ownable", "timestampable"]
 

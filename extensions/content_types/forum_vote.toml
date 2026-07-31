@@ -1,8 +1,9 @@
 [content_type]
 name = "Forum Vote"
-singular = "forum_vote"
-plural = "forum_votes"
+singular = "vote"
+plural = "votes"
 table = "forum_votes"
+group = "forum"
 description = "论坛投票记录"
 implements = ["ownable", "timestampable"]
 

@@ -169,6 +169,30 @@ pub async fn post_create(
 
 // ── CMS Content Types ─────────────────────────────────────────────
 
+/// Resolve a content type from a plural key that may include a group prefix
+/// (e.g. `"polls"` or `"forum/polls"`).
+fn resolve_ct_by_plural(
+    state: &AppManagedState,
+    plural_key: &str,
+) -> Result<std::sync::Arc<crate::content_type::schema::ContentTypeSchema>, String> {
+    // Try group-qualified lookup first: "forum/polls"
+    if let Some((group, plural)) = plural_key.rsplit_once('/') {
+        if let Some(ct) = state
+            .0
+            .content_type_registry
+            .get_by_plural_in_group(group, plural)
+        {
+            return Ok(ct);
+        }
+    }
+    // Fall back to flat lookup
+    state
+        .0
+        .content_type_registry
+        .get_by_plural(plural_key)
+        .ok_or_else(|| format!("content type '{}' not found", plural_key))
+}
+
 #[tauri::command]
 pub async fn cms_single_get(
     state: TauriState<'_, AppManagedState>,
@@ -214,11 +238,7 @@ pub async fn cms_list(
     page: Option<i64>,
     page_size: Option<i64>,
 ) -> Result<serde_json::Value, String> {
-    let ct = state
-        .0
-        .content_type_registry
-        .get_by_plural(&plural)
-        .ok_or_else(|| format!("content type '{}' not found", plural))?;
+    let ct = resolve_ct_by_plural(&state.0, &plural)?;
     let params = crate::content_type::handler::ListParams {
         page,
         page_size,
@@ -240,11 +260,7 @@ pub async fn cms_get(
     plural: String,
     id: String,
 ) -> Result<serde_json::Value, String> {
-    let ct = state
-        .0
-        .content_type_registry
-        .get_by_plural(&plural)
-        .ok_or_else(|| format!("content type '{}' not found", plural))?;
+    let ct = resolve_ct_by_plural(&state.0, &plural)?;
     crate::content_type::handler::do_get(&state.0, &ct, &id, None)
         .await
         .map_err(|e| e.to_string())
@@ -256,11 +272,7 @@ pub async fn cms_create(
     plural: String,
     data: serde_json::Value,
 ) -> Result<serde_json::Value, String> {
-    let ct = state
-        .0
-        .content_type_registry
-        .get_by_plural(&plural)
-        .ok_or_else(|| format!("content type '{}' not found", plural))?;
+    let ct = resolve_ct_by_plural(&state.0, &plural)?;
     let save_ctx = SaveContext::default();
     crate::content_type::handler::do_create(&state.0, &ct, data, &save_ctx)
         .await
@@ -274,11 +286,7 @@ pub async fn cms_update(
     id: String,
     data: serde_json::Value,
 ) -> Result<serde_json::Value, String> {
-    let ct = state
-        .0
-        .content_type_registry
-        .get_by_plural(&plural)
-        .ok_or_else(|| format!("content type '{}' not found", plural))?;
+    let ct = resolve_ct_by_plural(&state.0, &plural)?;
     let save_ctx = SaveContext::default();
     crate::content_type::handler::do_update(&state.0, &ct, &id, data, &save_ctx, None)
         .await
@@ -291,11 +299,7 @@ pub async fn cms_delete(
     plural: String,
     id: String,
 ) -> Result<serde_json::Value, String> {
-    let ct = state
-        .0
-        .content_type_registry
-        .get_by_plural(&plural)
-        .ok_or_else(|| format!("content type '{}' not found", plural))?;
+    let ct = resolve_ct_by_plural(&state.0, &plural)?;
     crate::content_type::handler::do_delete(&state.0, &ct, &id, None)
         .await
         .map_err(|e| e.to_string())?;
@@ -390,13 +394,13 @@ pub async fn schema_list(
 #[tauri::command]
 pub async fn schema_get(
     state: TauriState<'_, AppManagedState>,
-    singular: String,
+    key: String,
 ) -> Result<serde_json::Value, String> {
     let ct = state
         .0
         .content_type_registry
-        .get(&singular)
-        .ok_or_else(|| format!("content type '{}' not found", singular))?;
+        .get(&key)
+        .ok_or_else(|| format!("content type '{}' not found", key))?;
     Ok(serde_json::to_value(ct.as_ref()).unwrap_or_default())
 }
 
@@ -413,6 +417,8 @@ pub async fn schema_create(
         singular: req.singular.clone(),
         plural: req.plural,
         table: req.table.clone(),
+        group: crate::content_type::schema::ContentTypeSchema::validate_group_name(&req.group)
+            .map_err(|e| e.to_string())?,
         description: req.description,
         kind: req.kind,
         slug_field: req.slug_field,
@@ -438,13 +444,9 @@ pub async fn schema_create(
         ));
     }
 
-    if state
-        .0
-        .content_type_registry
-        .get(&schema.singular)
-        .is_some()
-    {
-        return Err(format!("content type '{}' already exists", schema.singular));
+    let registry_key = schema.registry_key();
+    if state.0.content_type_registry.get(&registry_key).is_some() {
+        return Err(format!("content type '{}' already exists", registry_key));
     }
 
     let dir = std::path::Path::new(&state.0.config.content_type_dir);
@@ -477,19 +479,20 @@ pub async fn schema_create(
 #[tauri::command]
 pub async fn schema_delete(
     state: TauriState<'_, AppManagedState>,
-    singular: String,
+    key: String,
 ) -> Result<serde_json::Value, String> {
-    if state.0.content_type_registry.get(&singular).is_none() {
-        return Err(format!("content type '{}' not found", singular));
-    }
+    let ct = state
+        .0
+        .content_type_registry
+        .get(&key)
+        .ok_or_else(|| format!("content type '{}' not found", key))?;
 
-    let path =
-        std::path::Path::new(&state.0.config.content_type_dir).join(format!("{singular}.toml"));
+    let path = std::path::Path::new(&state.0.config.content_type_dir).join(ct.toml_filename());
     if path.exists() {
         std::fs::remove_file(&path).map_err(|e| format!("delete failed: {e}"))?;
     }
 
-    state.0.content_type_registry.unregister(&singular);
+    state.0.content_type_registry.unregister(&key);
 
     Ok(serde_json::json!({"deleted": true}))
 }

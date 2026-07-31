@@ -45,7 +45,7 @@ export_types!(
     schema::ApiConfig,
 );
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::Arc;
 
@@ -67,9 +67,14 @@ pub struct ContentTypeRegistry {
 
 #[derive(Debug, Default)]
 struct RegistryInner {
+    /// Keyed by composite key: `"singular"` (no group) or `"group/singular"` (with group)
     types: indexmap::IndexMap<String, Arc<ContentTypeSchema>>,
+    /// table name → composite key
     by_table: HashMap<String, String>,
+    /// `"plural"` (no group) or `"group/plural"` (with group) → composite key
     by_plural: HashMap<String, String>,
+    /// Set of all non-empty group names in use
+    groups: HashSet<String>,
     protected_tables: Vec<String>,
 }
 
@@ -122,8 +127,13 @@ impl ContentTypeRegistry {
                     }
                 };
                 tracing::info!(
-                    "loaded content type: {} (table={})",
+                    "loaded content type: {} (group={}, table={})",
                     schema.name,
+                    if schema.group.is_empty() {
+                        "(default)"
+                    } else {
+                        &schema.group
+                    },
                     schema.table
                 );
                 if let Err(e) = registry.register(
@@ -145,10 +155,11 @@ impl ContentTypeRegistry {
 
     /// Register a single content type (thread-safe).
     ///
-    /// Checks global uniqueness of singular/plural/table:
-    /// - table must not conflict with system protected tables
-    /// - singular/plural/table must not conflict with other registered content types
-    /// - singular/plural must not conflict with built-in route segments (posts, categories, tags, etc.)
+    /// Checks uniqueness:
+    /// - `table` must be globally unique and not conflict with protected system tables
+    /// - `(group, singular)` and `(group, plural)` must be unique within the same group
+    /// - `singular`/`plural` must not conflict with built-in route segments (posts, categories, tags, etc.)
+    ///   when group is empty
     pub fn register(
         &self,
         schema: ContentTypeSchema,
@@ -174,51 +185,60 @@ impl ContentTypeRegistry {
             ));
         }
 
-        if reserved_segments.contains(&schema.singular.as_str()) {
-            conflicts.push(format!(
-                "singular '{}' conflicts with a built-in route",
-                schema.singular
-            ));
-        }
-        if reserved_segments.contains(&schema.plural.as_str()) {
-            conflicts.push(format!(
-                "plural '{}' conflicts with a built-in route",
-                schema.plural
-            ));
+        let key = schema.registry_key();
+        let plural_key = ContentTypeSchema::make_key(&schema.group, &schema.plural);
+
+        // Reserved segment checks only apply to flat (no group) types
+        if schema.group.is_empty() {
+            if reserved_segments.contains(&schema.singular.as_str()) {
+                conflicts.push(format!(
+                    "singular '{}' conflicts with a built-in route",
+                    schema.singular
+                ));
+            }
+            if reserved_segments.contains(&schema.plural.as_str()) {
+                conflicts.push(format!(
+                    "plural '{}' conflicts with a built-in route",
+                    schema.plural
+                ));
+            }
         }
 
         {
             let guard = self.inner.load();
 
-            if let Some(existing) = guard.types.get(&schema.singular)
+            if let Some(existing) = guard.types.get(&key)
                 && (existing.table != schema.table || existing.plural != schema.plural)
             {
-                conflicts.push(format!(
-                    "singular '{}' already used by '{}'",
-                    schema.singular, existing.name
-                ));
+                conflicts.push(format!("key '{key}' already used by '{}'", existing.name));
             }
-            if let Some(conflict_singular) = guard.by_plural.get(&schema.plural)
-                && conflict_singular != &schema.singular
+            if let Some(conflict_key) = guard.by_plural.get(&plural_key)
+                && conflict_key != &key
             {
                 let name = guard
                     .types
-                    .get(conflict_singular)
+                    .get(conflict_key)
                     .map(|ct| ct.name.as_str())
-                    .unwrap_or(conflict_singular);
+                    .unwrap_or(conflict_key);
                 conflicts.push(format!(
-                    "plural '{}' already used by '{}'",
-                    schema.plural, name
+                    "plural '{}' in group '{}' already used by '{}'",
+                    schema.plural,
+                    if schema.group.is_empty() {
+                        "(default)"
+                    } else {
+                        &schema.group
+                    },
+                    name
                 ));
             }
-            if let Some(conflict_singular) = guard.by_table.get(&schema.table)
-                && conflict_singular != &schema.singular
+            if let Some(conflict_key) = guard.by_table.get(&schema.table)
+                && conflict_key != &key
             {
                 let name = guard
                     .types
-                    .get(conflict_singular)
+                    .get(conflict_key)
                     .map(|ct| ct.name.as_str())
-                    .unwrap_or(conflict_singular);
+                    .unwrap_or(conflict_key);
                 conflicts.push(format!(
                     "table '{}' already used by '{}'",
                     schema.table, name
@@ -277,9 +297,10 @@ impl ContentTypeRegistry {
         }
 
         schema.cache_rules(rule_config);
-        let plural = schema.plural.clone();
         let table = schema.table.clone();
-        let singular = schema.singular.clone();
+        let group = schema.group.clone();
+        let key_clone = key.clone();
+        let plural_key_clone = plural_key.clone();
         let arc = Arc::new(schema);
 
         self.inner.rcu(|inner| {
@@ -287,11 +308,17 @@ impl ContentTypeRegistry {
                 types: inner.types.clone(),
                 by_table: inner.by_table.clone(),
                 by_plural: inner.by_plural.clone(),
+                groups: inner.groups.clone(),
                 protected_tables: inner.protected_tables.clone(),
             };
-            new_inner.by_table.insert(table.clone(), singular.clone());
-            new_inner.by_plural.insert(plural.clone(), singular.clone());
-            new_inner.types.insert(singular.clone(), arc.clone());
+            new_inner.by_table.insert(table.clone(), key_clone.clone());
+            new_inner
+                .by_plural
+                .insert(plural_key_clone.clone(), key_clone.clone());
+            if !group.is_empty() {
+                new_inner.groups.insert(group.clone());
+            }
+            new_inner.types.insert(key_clone.clone(), arc.clone());
             new_inner
         });
 
@@ -304,25 +331,66 @@ impl ContentTypeRegistry {
             types: inner.types.clone(),
             by_table: inner.by_table.clone(),
             by_plural: inner.by_plural.clone(),
+            groups: inner.groups.clone(),
             protected_tables: tables.clone(),
         });
     }
 
-    /// Lookup by singular name
+    /// Lookup by registry key (`"singular"` for no group, `"group/singular"` for grouped)
     #[must_use]
-    pub fn get(&self, name: &str) -> Option<Arc<ContentTypeSchema>> {
+    pub fn get(&self, key: &str) -> Option<Arc<ContentTypeSchema>> {
         let guard = self.inner.load();
-        guard.types.get(name).cloned()
+        guard.types.get(key).cloned()
     }
 
-    /// Lookup by table name
+    /// Lookup by `(group, singular)` pair
+    #[must_use]
+    pub fn get_in_group(&self, group: &str, singular: &str) -> Option<Arc<ContentTypeSchema>> {
+        let key = ContentTypeSchema::make_key(group, singular);
+        self.get(&key)
+    }
+
+    /// Lookup by table name (globally unique)
     #[must_use]
     pub fn get_by_table(&self, table: &str) -> Option<Arc<ContentTypeSchema>> {
         let guard = self.inner.load();
         guard
             .by_table
             .get(table)
-            .and_then(|singular| guard.types.get(singular).cloned())
+            .and_then(|key| guard.types.get(key).cloned())
+    }
+
+    /// Lookup by plural key (`"plural"` for no group, `"group/plural"` for grouped)
+    #[must_use]
+    pub fn get_by_plural(&self, plural_key: &str) -> Option<Arc<ContentTypeSchema>> {
+        let guard = self.inner.load();
+        guard
+            .by_plural
+            .get(plural_key)
+            .and_then(|key| guard.types.get(key).cloned())
+    }
+
+    /// Lookup by `(group, plural)` pair
+    #[must_use]
+    pub fn get_by_plural_in_group(
+        &self,
+        group: &str,
+        plural: &str,
+    ) -> Option<Arc<ContentTypeSchema>> {
+        let plural_key = ContentTypeSchema::make_key(group, plural);
+        self.get_by_plural(&plural_key)
+    }
+
+    /// Whether any content type uses the given group name
+    #[must_use]
+    pub fn has_group(&self, group: &str) -> bool {
+        self.inner.load().groups.contains(group)
+    }
+
+    /// All registered group names (excluding empty)
+    #[must_use]
+    pub fn groups(&self) -> Vec<String> {
+        self.inner.load().groups.iter().cloned().collect()
     }
 
     /// Get all registered content types
@@ -344,37 +412,38 @@ impl ContentTypeRegistry {
         self.len() == 0
     }
 
-    /// Lookup by plural name (O(1) HashMap lookup)
-    #[must_use]
-    pub fn get_by_plural(&self, plural: &str) -> Option<Arc<ContentTypeSchema>> {
-        let guard = self.inner.load();
-        guard
-            .by_plural
-            .get(plural)
-            .and_then(|singular| guard.types.get(singular).cloned())
-    }
-
-    /// Unregister a single content type (thread-safe)
-    pub fn unregister(&self, singular: &str) -> Option<Arc<ContentTypeSchema>> {
+    /// Unregister a single content type by its registry key (thread-safe)
+    pub fn unregister(&self, key: &str) -> Option<Arc<ContentTypeSchema>> {
         let removed = {
             let guard = self.inner.load();
-            guard.types.get(singular).cloned()
+            guard.types.get(key).cloned()
         };
 
         if let Some(schema) = &removed {
             let table = schema.table.clone();
-            let plural = schema.plural.clone();
-            let singular_owned = singular.to_string();
+            let group = schema.group.clone();
+            let plural_key = ContentTypeSchema::make_key(&group, &schema.plural);
+            let key_owned = key.to_string();
             self.inner.rcu(|inner| {
                 let mut new_inner = RegistryInner {
                     types: inner.types.clone(),
                     by_table: inner.by_table.clone(),
                     by_plural: inner.by_plural.clone(),
+                    groups: inner.groups.clone(),
                     protected_tables: inner.protected_tables.clone(),
                 };
-                new_inner.types.shift_remove(&singular_owned);
+                new_inner.types.shift_remove(&key_owned);
                 new_inner.by_table.remove(&table);
-                new_inner.by_plural.remove(&plural);
+                new_inner.by_plural.remove(&plural_key);
+                // Remove group from set if no other type uses it
+                if !group.is_empty()
+                    && !inner
+                        .types
+                        .values()
+                        .any(|ct| ct.group == group && ct.registry_key() != key_owned)
+                {
+                    new_inner.groups.remove(&group);
+                }
                 new_inner
             });
         }
@@ -596,5 +665,203 @@ type = "text"
             &test_protocol_registry(),
         );
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn register_grouped_same_singular_different_group() {
+        let reg = ContentTypeRegistry::new();
+        // Flat: singular=poll, table=polls
+        register_ct(&reg, "poll", "polls", "polls").unwrap();
+        // Grouped: group=forum, singular=poll, table=forum_polls — should succeed
+        let toml = r#"
+[content_type]
+name = "Forum Poll"
+singular = "poll"
+plural = "polls"
+table = "forum_polls"
+group = "forum"
+
+[fields.title]
+type = "text"
+"#;
+        let schema = schema::ContentTypeSchema::parse_from_str(toml).unwrap();
+        reg.register(
+            schema,
+            &RuleEngineConfig::default(),
+            &[],
+            &valid_protocols(),
+            &test_protocol_registry(),
+        )
+        .unwrap();
+
+        // Both should be findable
+        assert!(reg.get("poll").is_some()); // flat
+        assert!(reg.get("forum/poll").is_some()); // grouped
+        assert!(reg.get_in_group("forum", "poll").is_some());
+        assert!(reg.has_group("forum"));
+        assert!(!reg.has_group("shop"));
+    }
+
+    #[test]
+    fn register_duplicate_table_across_groups() {
+        let reg = ContentTypeRegistry::new();
+        // Group 1: group=forum, singular=poll, table=polls
+        let toml = r#"
+[content_type]
+name = "Forum Poll"
+singular = "poll"
+plural = "polls"
+table = "shared_polls"
+group = "forum"
+
+[fields.title]
+type = "text"
+"#;
+        let schema = schema::ContentTypeSchema::parse_from_str(toml).unwrap();
+        reg.register(
+            schema,
+            &RuleEngineConfig::default(),
+            &[],
+            &valid_protocols(),
+            &test_protocol_registry(),
+        )
+        .unwrap();
+
+        // Group 2: group=shop, singular=poll, table=shared_polls — table conflict
+        let toml2 = r#"
+[content_type]
+name = "Shop Poll"
+singular = "poll"
+plural = "polls"
+table = "shared_polls"
+group = "shop"
+
+[fields.title]
+type = "text"
+"#;
+        let schema2 = schema::ContentTypeSchema::parse_from_str(toml2).unwrap();
+        let result = reg.register(
+            schema2,
+            &RuleEngineConfig::default(),
+            &[],
+            &valid_protocols(),
+            &test_protocol_registry(),
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn unregister_grouped_removes_group() {
+        let reg = ContentTypeRegistry::new();
+        let toml = r#"
+[content_type]
+name = "Forum Poll"
+singular = "poll"
+plural = "polls"
+table = "forum_polls"
+group = "forum"
+
+[fields.title]
+type = "text"
+"#;
+        let schema = schema::ContentTypeSchema::parse_from_str(toml).unwrap();
+        reg.register(
+            schema,
+            &RuleEngineConfig::default(),
+            &[],
+            &valid_protocols(),
+            &test_protocol_registry(),
+        )
+        .unwrap();
+
+        assert!(reg.has_group("forum"));
+        let removed = reg.unregister("forum/poll");
+        assert!(removed.is_some());
+        assert!(!reg.has_group("forum"));
+    }
+
+    #[test]
+    fn register_same_name_different_groups() {
+        let reg = ContentTypeRegistry::new();
+        // Both use display name "Poll" but different groups/tables — should succeed
+        let toml_forum = r#"
+[content_type]
+name = "Poll"
+singular = "poll"
+plural = "polls"
+table = "forum_polls"
+group = "forum"
+
+[fields.title]
+type = "text"
+"#;
+        let toml_shop = r#"
+[content_type]
+name = "Poll"
+singular = "poll"
+plural = "polls"
+table = "shop_polls"
+group = "shop"
+
+[fields.title]
+type = "text"
+"#;
+        let schema_forum = schema::ContentTypeSchema::parse_from_str(toml_forum).unwrap();
+        let schema_shop = schema::ContentTypeSchema::parse_from_str(toml_shop).unwrap();
+        reg.register(
+            schema_forum,
+            &RuleEngineConfig::default(),
+            &[],
+            &valid_protocols(),
+            &test_protocol_registry(),
+        )
+        .unwrap();
+        reg.register(
+            schema_shop,
+            &RuleEngineConfig::default(),
+            &[],
+            &valid_protocols(),
+            &test_protocol_registry(),
+        )
+        .unwrap();
+
+        // Both registered, both have same name but different keys
+        let forum_ct = reg.get("forum/poll").unwrap();
+        let shop_ct = reg.get("shop/poll").unwrap();
+        assert_eq!(forum_ct.name, "Poll");
+        assert_eq!(shop_ct.name, "Poll");
+        assert_eq!(forum_ct.table, "forum_polls");
+        assert_eq!(shop_ct.table, "shop_polls");
+        assert_ne!(forum_ct.table, shop_ct.table);
+    }
+
+    #[test]
+    fn register_same_name_flat_and_grouped() {
+        let reg = ContentTypeRegistry::new();
+        // Flat "Poll" + grouped forum "Poll" — should coexist
+        register_ct(&reg, "poll", "polls", "polls").unwrap();
+        let toml = r#"
+[content_type]
+name = "Poll"
+singular = "poll"
+plural = "polls"
+table = "forum_polls"
+group = "forum"
+
+[fields.title]
+type = "text"
+"#;
+        let schema = schema::ContentTypeSchema::parse_from_str(toml).unwrap();
+        reg.register(
+            schema,
+            &RuleEngineConfig::default(),
+            &[],
+            &valid_protocols(),
+            &test_protocol_registry(),
+        )
+        .unwrap();
+
+        assert_eq!(reg.get("poll").unwrap().name, "poll");
+        assert_eq!(reg.get("forum/poll").unwrap().name, "Poll");
     }
 }

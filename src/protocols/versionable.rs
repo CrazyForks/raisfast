@@ -79,15 +79,15 @@ impl Protocol for VersionableProtocol {
     fn on_after_delete(
         &self,
         pool: &crate::db::pool::Pool,
-        content_type_singular: &str,
+        content_type_key: &str,
         record_id: SnowflakeId,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), anyhow::Error>> + Send + '_>>
     {
         let pool = pool.clone();
-        let singular = content_type_singular.to_string();
+        let key = content_type_key.to_string();
         let id = record_id;
         Box::pin(async move {
-            let _ = crate::models::content_revision::delete_revisions(&pool, &singular, id).await;
+            let _ = crate::models::content_revision::delete_revisions(&pool, &key, id).await;
             Ok(())
         })
     }

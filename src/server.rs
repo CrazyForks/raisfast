@@ -262,34 +262,40 @@ async fn build_app(
 
     let restful = config.api_restful;
     for ct in state.content_type_registry.all() {
-        let plural = &ct.plural;
-        let name = &ct.singular;
-        let resource = if ct.is_single() { name } else { plural };
+        // Group-aware path segments: "poll" or "forum/poll"
+        let single_segment = ct.route_segment();
+        let plural_segment = ct.scope();
+        // Resource name for scope assignment: group-aware
+        let resource = if ct.is_single() {
+            &single_segment
+        } else {
+            &plural_segment
+        };
         if ct.is_single() {
             registry.record(
                 "GET",
-                &format!("{}/{}", crate::constants::CMS_PREFIX, name),
+                &format!("{}/{}", crate::constants::CMS_PREFIX, single_segment),
                 "content_type",
                 resource,
             );
             if restful {
                 registry.record(
                     "PUT",
-                    &format!("{}/{}", crate::constants::CMS_PREFIX, name),
+                    &format!("{}/{}", crate::constants::CMS_PREFIX, single_segment),
                     "content_type",
                     resource,
                 );
             } else {
                 registry.record(
                     "POST",
-                    &format!("{}/{}/update", crate::constants::CMS_PREFIX, name),
+                    &format!("{}/{}/update", crate::constants::CMS_PREFIX, single_segment),
                     "content_type",
                     resource,
                 );
             }
             registry.record(
                 "GET",
-                &format!("{}/{}", crate::constants::CMS_ADMIN_PREFIX, name),
+                &format!("{}/{}", crate::constants::CMS_ADMIN_PREFIX, single_segment),
                 "content_type",
                 resource,
             );
@@ -303,63 +309,84 @@ async fn build_app(
             ] {
                 registry.record(
                     method,
-                    &format!("{}/{}{}", crate::constants::CMS_PREFIX, plural, suffix),
+                    &format!(
+                        "{}/{}{}",
+                        crate::constants::CMS_PREFIX,
+                        plural_segment,
+                        suffix
+                    ),
                     "content_type",
                     resource,
                 );
             }
             registry.record(
                 "GET",
-                &format!("{}/{}", crate::constants::CMS_ADMIN_PREFIX, plural),
+                &format!("{}/{}", crate::constants::CMS_ADMIN_PREFIX, plural_segment),
                 "content_type",
                 resource,
             );
             registry.record(
                 "GET",
-                &format!("{}/{}/{{id}}", crate::constants::CMS_ADMIN_PREFIX, plural),
+                &format!(
+                    "{}/{}/{{id}}",
+                    crate::constants::CMS_ADMIN_PREFIX,
+                    plural_segment
+                ),
                 "content_type",
                 resource,
             );
         } else {
             registry.record(
                 "GET",
-                &format!("{}/{}", crate::constants::CMS_PREFIX, plural),
+                &format!("{}/{}", crate::constants::CMS_PREFIX, plural_segment),
                 "content_type",
                 resource,
             );
             registry.record(
                 "POST",
-                &format!("{}/{}/create", crate::constants::CMS_PREFIX, plural),
+                &format!("{}/{}/create", crate::constants::CMS_PREFIX, plural_segment),
                 "content_type",
                 resource,
             );
             registry.record(
                 "GET",
-                &format!("{}/{}/{{id}}", crate::constants::CMS_PREFIX, plural),
+                &format!("{}/{}/{{id}}", crate::constants::CMS_PREFIX, plural_segment),
                 "content_type",
                 resource,
             );
             registry.record(
                 "POST",
-                &format!("{}/{}/{{id}}/update", crate::constants::CMS_PREFIX, plural),
+                &format!(
+                    "{}/{}/{{id}}/update",
+                    crate::constants::CMS_PREFIX,
+                    plural_segment
+                ),
                 "content_type",
                 resource,
             );
             registry.record(
                 "POST",
-                &format!("{}/{}/{{id}}/delete", crate::constants::CMS_PREFIX, plural),
+                &format!(
+                    "{}/{}/{{id}}/delete",
+                    crate::constants::CMS_PREFIX,
+                    plural_segment
+                ),
                 "content_type",
                 resource,
             );
             registry.record(
                 "GET",
-                &format!("{}/{}", crate::constants::CMS_ADMIN_PREFIX, plural),
+                &format!("{}/{}", crate::constants::CMS_ADMIN_PREFIX, plural_segment),
                 "content_type",
                 resource,
             );
             registry.record(
                 "GET",
-                &format!("{}/{}/{{id}}", crate::constants::CMS_ADMIN_PREFIX, plural),
+                &format!(
+                    "{}/{}/{{id}}",
+                    crate::constants::CMS_ADMIN_PREFIX,
+                    plural_segment
+                ),
                 "content_type",
                 resource,
             );
@@ -976,7 +1003,10 @@ async fn list_routes(State(state): State<AppState>) -> impl IntoResponse {
 async fn list_resources(
     auth: crate::middleware::auth::AuthUser,
     State(state): State<AppState>,
-) -> Result<crate::errors::response::ApiResponse<Vec<ResourceDef>>, crate::errors::app_error::AppError> {
+) -> Result<
+    crate::errors::response::ApiResponse<Vec<ResourceDef>>,
+    crate::errors::app_error::AppError,
+> {
     auth.ensure_admin()?;
 
     use std::collections::BTreeSet;
@@ -1001,14 +1031,31 @@ async fn list_resources(
     let mut resources: Vec<ResourceDef> = Vec::new();
 
     for route in state.route_registry.iter() {
-        let raw = route.source_name.strip_prefix("admin/").unwrap_or(&route.source_name);
+        let raw = route
+            .source_name
+            .strip_prefix("admin/")
+            .unwrap_or(&route.source_name);
         if SKIP.contains(&raw) {
             continue;
         }
-        let name = raw.replace('-', "_");
-        if name.is_empty() {
+
+        // Split group/name for grouped content types (e.g. "forum/polls" → group="forum", name="polls")
+        let (group, base_name) = match raw.rsplit_once('/') {
+            Some((g, n)) => (g.to_string(), n.to_string()),
+            None => (String::new(), raw.to_string()),
+        };
+        let base_name = base_name.replace('-', "_");
+        if base_name.is_empty() {
             continue;
         }
+
+        // `name` is the full scope key used by ensure_scope — must include group prefix.
+        // e.g. "forum/polls" or just "posts" (flat).
+        let name = if group.is_empty() {
+            base_name.clone()
+        } else {
+            format!("{group}/{base_name}")
+        };
 
         let category = route.source.clone();
         let key = (category.clone(), name.clone());
@@ -1016,7 +1063,8 @@ async fn list_resources(
             continue;
         }
 
-        let label = name
+        // Label is title-cased from the base name only (no group prefix)
+        let label = base_name
             .split('_')
             .map(|w| {
                 let mut chars = w.chars();
@@ -1032,13 +1080,14 @@ async fn list_resources(
             name,
             label,
             category,
-            group: String::new(),
+            group,
         });
     }
 
     resources.sort_by(|a, b| {
         a.category
             .cmp(&b.category)
+            .then_with(|| a.group.cmp(&b.group))
             .then_with(|| a.name.cmp(&b.name))
     });
     Ok(crate::errors::response::ApiResponse::success(resources))
