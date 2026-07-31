@@ -33,7 +33,7 @@ pub fn routes(
         "/admin/crons",
         get,
         self::list,
-        "system admin",
+        "system",
         "admin/crons",
         "admin"
     );
@@ -44,7 +44,7 @@ pub fn routes(
         "/admin/crons",
         create,
         self::create,
-        "system admin",
+        "system",
         "admin/crons",
         "admin"
     );
@@ -55,7 +55,7 @@ pub fn routes(
         "/admin/crons/{id}",
         get,
         self::get,
-        "system admin",
+        "system",
         "admin/crons",
         "admin"
     );
@@ -66,7 +66,7 @@ pub fn routes(
         "/admin/crons/{id}",
         put,
         update,
-        "system admin",
+        "system",
         "admin/crons",
         "admin"
     );
@@ -77,7 +77,7 @@ pub fn routes(
         "/admin/crons/{id}",
         delete,
         self::delete,
-        "system admin",
+        "system",
         "admin/crons",
         "admin"
     );
@@ -88,7 +88,7 @@ pub fn routes(
         "/admin/crons/{id}/toggle",
         post,
         toggle,
-        "system admin",
+        "system",
         "admin/crons",
         "admin"
     );
@@ -99,8 +99,8 @@ pub fn routes(
         "/admin/crons/logs",
         get,
         logs,
-        "system admin",
-        "admin/crons",
+        "system",
+        "admin/cron_execution_log",
         "admin"
     );
     let r = reg_route!(
@@ -110,8 +110,8 @@ pub fn routes(
         "/admin/crons/logs/cleanup",
         post,
         cleanup_logs,
-        "system admin",
-        "admin/crons",
+        "system",
+        "admin/cron_execution_log",
         "admin"
     );
     reg_route!(
@@ -121,7 +121,7 @@ pub fn routes(
         "/admin/crons/batch",
         post,
         admin_batch,
-        "system admin",
+        "system",
         "admin/crons",
         "admin"
     )

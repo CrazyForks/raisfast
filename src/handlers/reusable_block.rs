@@ -26,8 +26,8 @@ pub fn routes(
         "/admin/reusable-blocks",
         get,
         list_reusable,
-        "system admin",
-        "admin/pages",
+        "content",
+        "admin/reusable_blocks",
         "reusable_blocks:read"
     );
     let r = reg_route!(
@@ -37,8 +37,8 @@ pub fn routes(
         "/admin/reusable-blocks",
         create,
         create_reusable,
-        "system admin",
-        "admin/pages",
+        "content",
+        "admin/reusable_blocks",
         "reusable_blocks:create"
     );
     let r = reg_route!(
@@ -48,8 +48,8 @@ pub fn routes(
         "/admin/reusable-blocks/{id}",
         get,
         get_reusable,
-        "system admin",
-        "admin/pages",
+        "content",
+        "admin/reusable_blocks",
         "reusable_blocks:read"
     );
     let r = reg_route!(
@@ -59,8 +59,8 @@ pub fn routes(
         "/admin/reusable-blocks/{id}",
         put,
         update_reusable,
-        "system admin",
-        "admin/pages",
+        "content",
+        "admin/reusable_blocks",
         "reusable_blocks:update"
     );
     let r = reg_route!(
@@ -70,8 +70,8 @@ pub fn routes(
         "/admin/reusable-blocks/{id}",
         delete,
         delete_reusable,
-        "system admin",
-        "admin/pages",
+        "content",
+        "admin/reusable_blocks",
         "reusable_blocks:delete"
     );
     reg_route!(
@@ -81,8 +81,8 @@ pub fn routes(
         "/admin/reusable-blocks/batch",
         post,
         admin_batch,
-        "system admin",
-        "admin/pages",
+        "content",
+        "admin/reusable_blocks",
         "admin"
     )
 }

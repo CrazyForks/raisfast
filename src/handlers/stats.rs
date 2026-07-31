@@ -27,7 +27,7 @@ pub fn routes(
         "/admin/stats",
         get,
         overview,
-        "system admin",
+        "system",
         "admin/stats",
         "admin"
     );
@@ -38,7 +38,7 @@ pub fn routes(
         "/admin/stats/content/{table}",
         get,
         content_stats,
-        "system admin",
+        "system",
         "admin/stats",
         "admin"
     );
@@ -49,7 +49,7 @@ pub fn routes(
         "/admin/stats/trends",
         get,
         trends,
-        "system admin",
+        "system",
         "admin/stats",
         "admin"
     )

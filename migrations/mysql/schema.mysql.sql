@@ -1034,19 +1034,19 @@ INSERT IGNORE INTO permissions (id, tenant_id, role_id, action, subject, fields,
 
 -- Editor permissions
 INSERT IGNORE INTO permissions (id, tenant_id, role_id, action, subject, fields, conditions, created_at) VALUES
-    (10002, 'default', (SELECT id FROM roles WHERE name = 'editor'), 'content-type::*.*', 'content-type::*', '["*"]', NULL, NOW());
+    (10002, 'default', (SELECT id FROM roles WHERE name = 'editor'), '*.*', '*', '["*"]', NULL, NOW());
 
 -- Author permissions
 INSERT IGNORE INTO permissions (id, tenant_id, role_id, action, subject, fields, conditions, created_at) VALUES
-    (10003, 'default', (SELECT id FROM roles WHERE name = 'author'), 'content-type::post.create', 'content-type::post', '["*"]', NULL, NOW()),
-    (10004, 'default', (SELECT id FROM roles WHERE name = 'author'), 'content-type::post.read', 'content-type::post', '["*"]', NULL, NOW()),
-    (10005, 'default', (SELECT id FROM roles WHERE name = 'author'), 'content-type::post.update', 'content-type::post', '["*"]', '{"author_id":"$user.id"}', NOW()),
-    (10006, 'default', (SELECT id FROM roles WHERE name = 'author'), 'content-type::post.delete', 'content-type::post', '["*"]', '{"author_id":"$user.id"}', NOW());
+    (10003, 'default', (SELECT id FROM roles WHERE name = 'author'), 'posts.create', 'posts', '["*"]', NULL, NOW()),
+    (10004, 'default', (SELECT id FROM roles WHERE name = 'author'), 'posts.read', 'posts', '["*"]', NULL, NOW()),
+    (10005, 'default', (SELECT id FROM roles WHERE name = 'author'), 'posts.update', 'posts', '["*"]', '{"created_by":"$user.id"}', NOW()),
+    (10006, 'default', (SELECT id FROM roles WHERE name = 'author'), 'posts.delete', 'posts', '["*"]', '{"created_by":"$user.id"}', NOW());
 
 -- Reader permissions
 INSERT IGNORE INTO permissions (id, tenant_id, role_id, action, subject, fields, conditions, created_at) VALUES
-    (10007, 'default', (SELECT id FROM roles WHERE name = 'reader'), 'content-type::post.read', 'content-type::post', '["title","slug","content","excerpt","status"]', NULL, NOW()),
-    (10008, 'default', (SELECT id FROM roles WHERE name = 'reader'), 'content-type::comment.create', 'content-type::comment', '["content","nickname","email"]', NULL, NOW());
+    (10007, 'default', (SELECT id FROM roles WHERE name = 'reader'), 'posts.read', 'posts', '["title","slug","content","excerpt","status"]', NULL, NOW()),
+    (10008, 'default', (SELECT id FROM roles WHERE name = 'reader'), 'comments.create', 'comments', '["content","nickname","email"]', NULL, NOW());
 
 -- Site options
 INSERT IGNORE INTO options (id, tenant_id, `option_key`, value, `type`, group_name, label, description, validation, is_public, autoload, sort_order, updated_at) VALUES

@@ -21,7 +21,7 @@ pub fn routes(
         "/admin/currencies",
         get,
         list_currencies,
-        "system admin",
+        "ecommerce",
         "admin/currencies",
         "admin"
     );
@@ -32,7 +32,7 @@ pub fn routes(
         "/admin/currencies",
         create,
         create_currency,
-        "system admin",
+        "ecommerce",
         "admin/currencies",
         "admin"
     );
@@ -43,7 +43,7 @@ pub fn routes(
         "/admin/currencies/{code}",
         get,
         get_currency,
-        "system admin",
+        "ecommerce",
         "admin/currencies",
         "admin"
     );
@@ -54,7 +54,7 @@ pub fn routes(
         "/admin/currencies/{code}",
         put,
         update_currency,
-        "system admin",
+        "ecommerce",
         "admin/currencies",
         "admin"
     );
@@ -65,7 +65,7 @@ pub fn routes(
         "/admin/currencies/{code}",
         delete,
         delete_currency,
-        "system admin",
+        "ecommerce",
         "admin/currencies",
         "admin"
     )

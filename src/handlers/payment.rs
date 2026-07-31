@@ -24,7 +24,7 @@ pub fn routes(
         "/payment/channels/available",
         get,
         list_available_channels_handler,
-        "system public",
+        "finance",
         "payment",
         "public"
     );
@@ -35,7 +35,7 @@ pub fn routes(
         "/payment/orders",
         get,
         list_user_orders,
-        "system authed",
+        "finance",
         "payment",
         "payments:read"
     );
@@ -46,7 +46,7 @@ pub fn routes(
         "/payment/orders",
         create,
         create_payment_order_handler,
-        "system authed",
+        "finance",
         "payment",
         "payments:create"
     );
@@ -57,7 +57,7 @@ pub fn routes(
         "/payment/orders/{id}",
         get,
         get_payment_order_handler,
-        "system authed",
+        "finance",
         "payment",
         "payments:read"
     );
@@ -68,7 +68,7 @@ pub fn routes(
         "/payment/orders/{id}/cancel",
         post,
         cancel_payment_order_handler,
-        "system authed",
+        "finance",
         "payment",
         "payments:update"
     );
@@ -79,7 +79,7 @@ pub fn routes(
         "/payment/orders/{id}/transactions",
         get,
         list_order_transactions,
-        "system authed",
+        "finance",
         "payment",
         "payments:read"
     );
@@ -90,7 +90,7 @@ pub fn routes(
         "/payment/orders/{id}/refunds",
         get,
         list_order_refunds,
-        "system authed",
+        "finance",
         "payment",
         "payments:read"
     );
@@ -103,7 +103,7 @@ pub fn routes(
         axum::routing::post(handle_callback).layer(axum::middleware::from_fn(
             crate::middleware::rate_limit::payment_callback_rate_limit,
         )),
-        "system public",
+        "finance",
         "payment",
         "public",
         layered
@@ -115,8 +115,8 @@ pub fn routes(
         "/admin/payment/channels",
         get,
         admin_list_channels,
-        "system admin",
-        "admin/payment",
+        "finance",
+        "admin/payment_channels",
         "admin"
     );
     let r = reg_route!(
@@ -126,8 +126,8 @@ pub fn routes(
         "/admin/payment/channels",
         create,
         admin_create_channel,
-        "system admin",
-        "admin/payment",
+        "finance",
+        "admin/payment_channels",
         "admin"
     );
     let r = reg_route!(
@@ -137,8 +137,8 @@ pub fn routes(
         "/admin/payment/channels/{id}",
         get,
         admin_get_channel,
-        "system admin",
-        "admin/payment",
+        "finance",
+        "admin/payment_channels",
         "admin"
     );
     let r = reg_route!(
@@ -148,8 +148,8 @@ pub fn routes(
         "/admin/payment/channels/{id}",
         put,
         admin_update_channel,
-        "system admin",
-        "admin/payment",
+        "finance",
+        "admin/payment_channels",
         "admin"
     );
     let r = reg_route!(
@@ -159,8 +159,8 @@ pub fn routes(
         "/admin/payment/channels/{id}",
         delete,
         admin_delete_channel,
-        "system admin",
-        "admin/payment",
+        "finance",
+        "admin/payment_channels",
         "admin"
     );
     let r = reg_route!(
@@ -170,8 +170,8 @@ pub fn routes(
         "/admin/payment/orders",
         get,
         admin_list_orders,
-        "system admin",
-        "admin/payment",
+        "finance",
+        "admin/payment_orders",
         "admin"
     );
     let r = reg_route!(
@@ -181,8 +181,8 @@ pub fn routes(
         "/admin/payment/orders/{id}",
         get,
         admin_get_order,
-        "system admin",
-        "admin/payment",
+        "finance",
+        "admin/payment_orders",
         "admin"
     );
     let r = reg_route!(
@@ -192,8 +192,8 @@ pub fn routes(
         "/admin/payment/orders/{id}/refund",
         post,
         admin_refund_order,
-        "system admin",
-        "admin/payment",
+        "finance",
+        "admin/payment_orders",
         "admin"
     );
     let r = reg_route!(
@@ -203,8 +203,8 @@ pub fn routes(
         "/admin/payment/transactions",
         get,
         admin_list_transactions,
-        "system admin",
-        "admin/payment",
+        "finance",
+        "admin/payment_transactions",
         "admin"
     );
     reg_route!(
@@ -214,8 +214,8 @@ pub fn routes(
         "/admin/payment/refunds",
         get,
         admin_list_refunds,
-        "system admin",
-        "admin/payment",
+        "finance",
+        "admin/payment_refunds",
         "admin"
     )
 }

@@ -22,7 +22,7 @@ pub fn routes(
         "/products",
         get,
         list_active,
-        "system public",
+        "ecommerce",
         "products",
         "public"
     );
@@ -33,7 +33,7 @@ pub fn routes(
         "/products/{slug}",
         get,
         get_product,
-        "system public",
+        "ecommerce",
         "products",
         "public"
     );
@@ -44,7 +44,7 @@ pub fn routes(
         "/admin/products",
         get,
         admin_list,
-        "system admin",
+        "ecommerce",
         "admin/products",
         "admin"
     );
@@ -55,7 +55,7 @@ pub fn routes(
         "/admin/products",
         create,
         admin_create,
-        "system admin",
+        "ecommerce",
         "admin/products",
         "admin"
     );
@@ -66,7 +66,7 @@ pub fn routes(
         "/admin/products/batch",
         post,
         admin_batch,
-        "system admin",
+        "ecommerce",
         "admin/products",
         "admin"
     );
@@ -77,7 +77,7 @@ pub fn routes(
         "/admin/products/{id}",
         get,
         admin_get,
-        "system admin",
+        "ecommerce",
         "admin/products",
         "admin"
     );
@@ -88,7 +88,7 @@ pub fn routes(
         "/admin/products/{id}",
         put,
         admin_update,
-        "system admin",
+        "ecommerce",
         "admin/products",
         "admin"
     );
@@ -99,7 +99,7 @@ pub fn routes(
         "/admin/products/{id}",
         delete,
         admin_delete,
-        "system admin",
+        "ecommerce",
         "admin/products",
         "admin"
     )

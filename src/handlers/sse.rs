@@ -29,7 +29,7 @@ pub fn routes(
         "/events",
         get,
         subscribe,
-        "system public",
+        "system",
         "sse"
     )
 }

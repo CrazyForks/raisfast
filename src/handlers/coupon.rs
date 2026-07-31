@@ -21,7 +21,7 @@ pub fn routes(
         "/admin/coupons",
         get,
         admin_list,
-        "system admin",
+        "ecommerce",
         "admin/coupons",
         "admin"
     );
@@ -32,7 +32,7 @@ pub fn routes(
         "/admin/coupons",
         create,
         admin_create,
-        "system admin",
+        "ecommerce",
         "admin/coupons",
         "admin"
     );
@@ -43,7 +43,7 @@ pub fn routes(
         "/admin/coupons/{id}",
         put,
         admin_update,
-        "system admin",
+        "ecommerce",
         "admin/coupons",
         "admin"
     );
@@ -54,7 +54,7 @@ pub fn routes(
         "/admin/coupons/{id}",
         delete,
         admin_delete,
-        "system admin",
+        "ecommerce",
         "admin/coupons",
         "admin"
     )

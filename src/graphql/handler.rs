@@ -24,7 +24,7 @@ pub fn routes(
         "/graphql",
         get,
         graphiql_handler,
-        "system public",
+        "system",
         "graphql"
     );
     reg_route!(
@@ -34,7 +34,7 @@ pub fn routes(
         "/graphql",
         post,
         graphql_handler,
-        "system public",
+        "system",
         "graphql"
     )
 }

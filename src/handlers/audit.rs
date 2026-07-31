@@ -23,7 +23,7 @@ pub fn routes(
         "/admin/audit",
         get,
         list,
-        "system admin",
+        "system",
         "admin/audit",
         "admin"
     );
@@ -34,7 +34,7 @@ pub fn routes(
         "/admin/audit/{id}",
         get,
         self::get,
-        "system admin",
+        "system",
         "admin/audit",
         "admin"
     )

@@ -31,7 +31,7 @@ pub fn routes(
         "/pages",
         get,
         self::list,
-        "system public",
+        "content",
         "pages",
         "public"
     );
@@ -42,7 +42,7 @@ pub fn routes(
         "/pages",
         create,
         self::create,
-        "system public",
+        "content",
         "pages",
         "pages:create"
     );
@@ -53,7 +53,7 @@ pub fn routes(
         "/pages/sitemap",
         get,
         sitemap,
-        "system public",
+        "content",
         "pages",
         "public"
     );
@@ -64,7 +64,7 @@ pub fn routes(
         "/pages/{slug}",
         get,
         get_by_slug,
-        "system public",
+        "content",
         "pages",
         "public"
     );
@@ -75,7 +75,7 @@ pub fn routes(
         "/admin/pages",
         get,
         admin_list,
-        "system admin",
+        "content",
         "admin/pages",
         "pages:read"
     );
@@ -86,7 +86,7 @@ pub fn routes(
         "/admin/pages",
         create,
         self::create,
-        "system admin",
+        "content",
         "admin/pages",
         "pages:create"
     );
@@ -97,7 +97,7 @@ pub fn routes(
         "/admin/pages/{id}",
         get,
         admin_get,
-        "system admin",
+        "content",
         "admin/pages",
         "pages:read"
     );
@@ -108,7 +108,7 @@ pub fn routes(
         "/admin/pages/{id}",
         put,
         update,
-        "system admin",
+        "content",
         "admin/pages",
         "pages:update"
     );
@@ -119,7 +119,7 @@ pub fn routes(
         "/admin/pages/{id}",
         delete,
         self::delete,
-        "system admin",
+        "content",
         "admin/pages",
         "pages:delete"
     );
@@ -130,7 +130,7 @@ pub fn routes(
         "/admin/pages/{id}/status",
         put,
         update_status,
-        "system admin",
+        "content",
         "admin/pages",
         "pages:update"
     );
@@ -141,7 +141,7 @@ pub fn routes(
         "/admin/pages/reorder",
         put,
         reorder,
-        "system admin",
+        "content",
         "admin/pages",
         "pages:update"
     );
@@ -152,7 +152,7 @@ pub fn routes(
         "/admin/pages/batch",
         post,
         admin_batch,
-        "system admin",
+        "content",
         "admin/pages",
         "admin"
     )

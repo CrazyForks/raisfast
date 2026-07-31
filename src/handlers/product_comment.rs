@@ -25,7 +25,7 @@ pub fn routes(
         "/products/{product_id}/comments",
         get,
         list_by_product,
-        "system public",
+        "ecommerce",
         "product_comments",
         "public"
     );
@@ -36,7 +36,7 @@ pub fn routes(
         "/products/{product_id}/comments/stats",
         get,
         get_stats,
-        "system public",
+        "ecommerce",
         "product_comments",
         "public"
     );
@@ -47,7 +47,7 @@ pub fn routes(
         "/product_comments",
         post,
         create,
-        "system authed",
+        "ecommerce",
         "product_comments",
         "product_comments:create"
     );
@@ -58,7 +58,7 @@ pub fn routes(
         "/product_comments/{id}",
         put,
         update,
-        "system authed",
+        "ecommerce",
         "product_comments",
         "product_comments:update"
     );
@@ -69,7 +69,7 @@ pub fn routes(
         "/product_comments/{id}",
         delete,
         delete,
-        "system authed",
+        "ecommerce",
         "product_comments",
         "product_comments:delete"
     );
@@ -80,7 +80,7 @@ pub fn routes(
         "/users/{user_id}/product_comments",
         get,
         list_by_user,
-        "system authed",
+        "ecommerce",
         "product_comments",
         "product_comments:read"
     );
@@ -91,7 +91,7 @@ pub fn routes(
         "/admin/product_comments",
         get,
         admin_list,
-        "system admin",
+        "ecommerce",
         "admin/product_comments",
         "admin"
     );
@@ -102,7 +102,7 @@ pub fn routes(
         "/admin/product_comments/{id}/status",
         put,
         admin_update_status,
-        "system admin",
+        "ecommerce",
         "admin/product_comments",
         "admin"
     );
@@ -113,7 +113,7 @@ pub fn routes(
         "/admin/product_comments/{id}/reply",
         put,
         admin_reply,
-        "system admin",
+        "ecommerce",
         "admin/product_comments",
         "admin"
     );
@@ -124,7 +124,7 @@ pub fn routes(
         "/admin/product_comments/{id}",
         delete,
         admin_delete,
-        "system admin",
+        "ecommerce",
         "admin/product_comments",
         "admin"
     )

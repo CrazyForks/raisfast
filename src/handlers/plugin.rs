@@ -25,7 +25,7 @@ pub fn routes(
         "/admin/plugins",
         get,
         self::list,
-        "system admin",
+        "system",
         "admin/plugins",
         "admin"
     );
@@ -36,7 +36,7 @@ pub fn routes(
         "/admin/plugins/{id}",
         get,
         self::get,
-        "system admin",
+        "system",
         "admin/plugins",
         "admin"
     );
@@ -47,7 +47,7 @@ pub fn routes(
         "/admin/plugins/{id}",
         delete,
         remove,
-        "system admin",
+        "system",
         "admin/plugins",
         "admin"
     );
@@ -58,7 +58,7 @@ pub fn routes(
         "/admin/plugins/{id}/enable",
         post,
         enable,
-        "system admin",
+        "system",
         "admin/plugins",
         "admin"
     );
@@ -69,7 +69,7 @@ pub fn routes(
         "/admin/plugins/{id}/disable",
         post,
         disable,
-        "system admin",
+        "system",
         "admin/plugins",
         "admin"
     );
@@ -80,7 +80,7 @@ pub fn routes(
         "/admin/plugins/{id}/reload",
         post,
         reload,
-        "system admin",
+        "system",
         "admin/plugins",
         "admin"
     );
@@ -91,7 +91,7 @@ pub fn routes(
         "/admin/plugins/batch",
         post,
         admin_batch,
-        "system admin",
+        "system",
         "admin/plugins",
         "admin"
     )

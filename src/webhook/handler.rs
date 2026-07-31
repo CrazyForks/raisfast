@@ -24,7 +24,7 @@ pub fn routes(
         "/admin/webhooks",
         get,
         list,
-        "system admin",
+        "system",
         "admin/webhooks"
     );
     let r = reg_route!(
@@ -34,7 +34,7 @@ pub fn routes(
         "/admin/webhooks",
         create,
         create,
-        "system admin",
+        "system",
         "admin/webhooks"
     );
     let r = reg_route!(
@@ -44,7 +44,7 @@ pub fn routes(
         "/admin/webhooks/{id}",
         get,
         self::get,
-        "system admin",
+        "system",
         "admin/webhooks"
     );
     let r = reg_route!(
@@ -54,7 +54,7 @@ pub fn routes(
         "/admin/webhooks/{id}",
         put,
         update,
-        "system admin",
+        "system",
         "admin/webhooks"
     );
     let r = reg_route!(
@@ -64,7 +64,7 @@ pub fn routes(
         "/admin/webhooks/{id}",
         delete,
         self::delete,
-        "system admin",
+        "system",
         "admin/webhooks"
     );
     reg_route!(
@@ -74,7 +74,7 @@ pub fn routes(
         "/admin/webhooks/batch",
         post,
         admin_batch,
-        "system admin",
+        "system",
         "admin/webhooks"
     )
 }

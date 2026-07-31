@@ -26,7 +26,7 @@ pub fn routes(
         "/admin/workflows",
         get,
         list,
-        "system admin",
+        "system",
         "admin/workflows"
     );
     let r = reg_route!(
@@ -36,7 +36,7 @@ pub fn routes(
         "/admin/workflows",
         create,
         create,
-        "system admin",
+        "system",
         "admin/workflows"
     );
     let r = reg_route!(
@@ -46,7 +46,7 @@ pub fn routes(
         "/admin/workflows/{id}",
         get,
         self::get,
-        "system admin",
+        "system",
         "admin/workflows"
     );
     let r = reg_route!(
@@ -56,7 +56,7 @@ pub fn routes(
         "/admin/workflows/{id}",
         delete,
         self::delete,
-        "system admin",
+        "system",
         "admin/workflows"
     );
     let r = reg_route!(
@@ -66,7 +66,7 @@ pub fn routes(
         "/admin/workflows/{id}/start",
         post,
         start,
-        "system admin",
+        "system",
         "admin/workflows"
     );
     let r = reg_route!(
@@ -76,7 +76,7 @@ pub fn routes(
         "/admin/workflows/instances",
         get,
         list_instances,
-        "system admin",
+        "system",
         "admin/workflows"
     );
     let r = reg_route!(
@@ -86,7 +86,7 @@ pub fn routes(
         "/admin/workflows/instances/{id}",
         get,
         get_instance,
-        "system admin",
+        "system",
         "admin/workflows"
     );
     let r = reg_route!(
@@ -96,7 +96,7 @@ pub fn routes(
         "/admin/workflows/instances/{id}/execute",
         post,
         execute_step,
-        "system admin",
+        "system",
         "admin/workflows"
     );
     let r = reg_route!(
@@ -106,7 +106,7 @@ pub fn routes(
         "/admin/workflows/instances/{id}/cancel",
         post,
         cancel_instance,
-        "system admin",
+        "system",
         "admin/workflows"
     );
     reg_route!(
@@ -116,7 +116,7 @@ pub fn routes(
         "/admin/workflows/instances/{id}/logs",
         get,
         get_step_logs,
-        "system admin",
+        "system",
         "admin/workflows"
     )
 }

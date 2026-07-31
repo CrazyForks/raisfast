@@ -35,7 +35,7 @@ pub fn routes(
         "/auth/register",
         post,
         axum::routing::post(register).layer(from_fn(register_rate_limit)),
-        "system public",
+        "system",
         "auth",
         "public",
         layered
@@ -47,7 +47,7 @@ pub fn routes(
         "/auth/login",
         post,
         axum::routing::post(login).layer(from_fn(login_rate_limit)),
-        "system public",
+        "system",
         "auth",
         "public",
         layered
@@ -59,7 +59,7 @@ pub fn routes(
         "/auth/refresh",
         post,
         refresh,
-        "system public",
+        "system",
         "auth",
         "public"
     );
@@ -70,7 +70,7 @@ pub fn routes(
         "/auth/logout",
         post,
         logout,
-        "system public",
+        "system",
         "auth",
         "authed"
     );
@@ -81,7 +81,7 @@ pub fn routes(
         "/auth/forgot-password",
         post,
         forgot_password,
-        "system public",
+        "system",
         "auth",
         "public"
     );
@@ -92,7 +92,7 @@ pub fn routes(
         "/auth/reset-password",
         post,
         reset_password,
-        "system public",
+        "system",
         "auth",
         "public"
     );
@@ -103,7 +103,7 @@ pub fn routes(
         "/auth/set-password",
         post,
         set_password,
-        "system public",
+        "system",
         "auth",
         "public"
     );
@@ -114,7 +114,7 @@ pub fn routes(
         "/auth/config",
         get,
         auth_config,
-        "system public",
+        "system",
         "auth",
         "public"
     );
@@ -125,7 +125,7 @@ pub fn routes(
         "/auth/sms/send",
         post,
         send_sms_code,
-        "system public",
+        "system",
         "auth",
         "public"
     );
@@ -136,7 +136,7 @@ pub fn routes(
         "/auth/sms/verify",
         post,
         verify_sms,
-        "system public",
+        "system",
         "auth",
         "public"
     );
@@ -147,7 +147,7 @@ pub fn routes(
         "/auth/phone/bind",
         post,
         bind_phone,
-        "system public",
+        "system",
         "auth",
         "authed"
     );
@@ -158,7 +158,7 @@ pub fn routes(
         "/auth/verify-email",
         post,
         verify_email,
-        "system public",
+        "system",
         "auth",
         "public"
     );
@@ -169,7 +169,7 @@ pub fn routes(
         "/auth/resend-verification",
         post,
         resend_verification,
-        "system public",
+        "system",
         "auth",
         "authed"
     );
@@ -180,7 +180,7 @@ pub fn routes(
         "/auth/credentials/bind-email",
         post,
         bind_email_credential,
-        "system public",
+        "system",
         "auth",
         "authed"
     );
@@ -191,7 +191,7 @@ pub fn routes(
         "/auth/credentials",
         get,
         list_credentials,
-        "system public",
+        "system",
         "auth",
         "authed"
     );
@@ -202,7 +202,7 @@ pub fn routes(
         "/auth/user-device-codes",
         post,
         create_device_code,
-        "system public",
+        "system",
         "auth",
         "authed"
     );
@@ -213,7 +213,7 @@ pub fn routes(
         "/auth/user-device-codes/exchange",
         post,
         exchange_device_code,
-        "system public",
+        "system",
         "auth",
         "public"
     );
@@ -224,7 +224,7 @@ pub fn routes(
         "/auth/credentials/{id}",
         delete,
         delete_credential,
-        "system public",
+        "system",
         "auth",
         "authed"
     )

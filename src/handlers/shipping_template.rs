@@ -24,7 +24,7 @@ pub fn routes(
         "/admin/shipping-templates",
         get,
         admin_list,
-        "system admin",
+        "ecommerce",
         "admin/shipping-templates",
         "admin"
     );
@@ -35,7 +35,7 @@ pub fn routes(
         "/admin/shipping-templates",
         create,
         admin_create,
-        "system admin",
+        "ecommerce",
         "admin/shipping-templates",
         "admin"
     );
@@ -46,7 +46,7 @@ pub fn routes(
         "/admin/shipping-templates/{id}",
         put,
         admin_update,
-        "system admin",
+        "ecommerce",
         "admin/shipping-templates",
         "admin"
     );
@@ -57,7 +57,7 @@ pub fn routes(
         "/admin/shipping-templates/calculate",
         post,
         calculate_shipping,
-        "system authed",
+        "ecommerce",
         "shipping/calculate",
         "shipping_templates:read"
     );
@@ -68,7 +68,7 @@ pub fn routes(
         "/admin/shipping-templates/{id}",
         delete,
         admin_delete,
-        "system admin",
+        "ecommerce",
         "admin/shipping-templates",
         "admin"
     )

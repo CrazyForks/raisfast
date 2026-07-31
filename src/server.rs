@@ -43,6 +43,19 @@ pub struct RouteInfo {
     pub permission: Option<String>,
 }
 
+/// A selectable resource for scope/permission assignment.
+///
+/// Supports two-level classification:
+/// - `category` — top-level business domain (Blog, Ecommerce, Finance, System, Content Type)
+/// - `group` — secondary grouping within that domain
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ResourceDef {
+    pub name: String,
+    pub label: String,
+    pub category: String,
+    pub group: String,
+}
+
 /// Compile-time permission requirement for a route.
 ///
 /// Routes declare this via `reg_route!`'s optional 9th parameter:
@@ -251,33 +264,34 @@ async fn build_app(
     for ct in state.content_type_registry.all() {
         let plural = &ct.plural;
         let name = &ct.singular;
+        let resource = if ct.is_single() { name } else { plural };
         if ct.is_single() {
             registry.record(
                 "GET",
                 &format!("{}/{}", crate::constants::CMS_PREFIX, name),
                 "content_type",
-                name,
+                resource,
             );
             if restful {
                 registry.record(
                     "PUT",
                     &format!("{}/{}", crate::constants::CMS_PREFIX, name),
                     "content_type",
-                    name,
+                    resource,
                 );
             } else {
                 registry.record(
                     "POST",
                     &format!("{}/{}/update", crate::constants::CMS_PREFIX, name),
                     "content_type",
-                    name,
+                    resource,
                 );
             }
             registry.record(
                 "GET",
                 &format!("{}/{}", crate::constants::CMS_ADMIN_PREFIX, name),
                 "content_type",
-                name,
+                resource,
             );
         } else if restful {
             for (method, suffix) in [
@@ -291,69 +305,70 @@ async fn build_app(
                     method,
                     &format!("{}/{}{}", crate::constants::CMS_PREFIX, plural, suffix),
                     "content_type",
-                    name,
+                    resource,
                 );
             }
             registry.record(
                 "GET",
                 &format!("{}/{}", crate::constants::CMS_ADMIN_PREFIX, plural),
                 "content_type",
-                name,
+                resource,
             );
             registry.record(
                 "GET",
                 &format!("{}/{}/{{id}}", crate::constants::CMS_ADMIN_PREFIX, plural),
                 "content_type",
-                name,
+                resource,
             );
         } else {
             registry.record(
                 "GET",
                 &format!("{}/{}", crate::constants::CMS_PREFIX, plural),
                 "content_type",
-                name,
+                resource,
             );
             registry.record(
                 "POST",
                 &format!("{}/{}/create", crate::constants::CMS_PREFIX, plural),
                 "content_type",
-                name,
+                resource,
             );
             registry.record(
                 "GET",
                 &format!("{}/{}/{{id}}", crate::constants::CMS_PREFIX, plural),
                 "content_type",
-                name,
+                resource,
             );
             registry.record(
                 "POST",
                 &format!("{}/{}/{{id}}/update", crate::constants::CMS_PREFIX, plural),
                 "content_type",
-                name,
+                resource,
             );
             registry.record(
                 "POST",
                 &format!("{}/{}/{{id}}/delete", crate::constants::CMS_PREFIX, plural),
                 "content_type",
-                name,
+                resource,
             );
             registry.record(
                 "GET",
                 &format!("{}/{}", crate::constants::CMS_ADMIN_PREFIX, plural),
                 "content_type",
-                name,
+                resource,
             );
             registry.record(
                 "GET",
                 &format!("{}/{}/{{id}}", crate::constants::CMS_ADMIN_PREFIX, plural),
                 "content_type",
-                name,
+                resource,
             );
         }
     }
 
     api_v1 = api_v1
         .route("/routes", get(list_routes))
+        .route("/admin/resources", get(list_resources))
         .route("/health", get(health::health));
 
     registry.record(
@@ -375,6 +390,12 @@ async fn build_app(
         &format!("{}/routes", crate::constants::API_PREFIX),
         "system",
         "system",
+    );
+    registry.record(
+        "GET",
+        &format!("{}/admin/resources", crate::constants::API_PREFIX),
+        "system",
+        "resources",
     );
 
     let routes_vec = registry.into_vec();
@@ -944,6 +965,83 @@ async fn list_routes(State(state): State<AppState>) -> impl IntoResponse {
         "data": routes,
         "message": "ok"
     }))
+}
+
+/// `GET /admin/resources` — returns all scope-assignable resources, derived
+/// dynamically from the route registry (no hardcoding).
+///
+/// Each route's `source` → `category`, `source_name` → resource name.
+/// `admin/` prefixes and hyphens are normalized. Infrastructure routes
+/// (health, setup, auth, oauth, sse, ws, graphql) are skipped.
+async fn list_resources(
+    auth: crate::middleware::auth::AuthUser,
+    State(state): State<AppState>,
+) -> Result<crate::errors::response::ApiResponse<Vec<ResourceDef>>, crate::errors::app_error::AppError> {
+    auth.ensure_admin()?;
+
+    use std::collections::BTreeSet;
+
+    /// Skip these `source_name` values — infrastructure, not scope resources.
+    const SKIP: &[&str] = &[
+        "system",
+        "health",
+        "setup",
+        "auth",
+        "oauth",
+        "sse",
+        "ws",
+        "graphql",
+        "cms",
+        "resources",
+        "content-types",
+        "shipping/calculate",
+    ];
+
+    let mut seen: BTreeSet<(String, String)> = BTreeSet::new();
+    let mut resources: Vec<ResourceDef> = Vec::new();
+
+    for route in state.route_registry.iter() {
+        let raw = route.source_name.strip_prefix("admin/").unwrap_or(&route.source_name);
+        if SKIP.contains(&raw) {
+            continue;
+        }
+        let name = raw.replace('-', "_");
+        if name.is_empty() {
+            continue;
+        }
+
+        let category = route.source.clone();
+        let key = (category.clone(), name.clone());
+        if !seen.insert(key) {
+            continue;
+        }
+
+        let label = name
+            .split('_')
+            .map(|w| {
+                let mut chars = w.chars();
+                match chars.next() {
+                    Some(f) => f.to_uppercase().collect::<String>() + chars.as_str(),
+                    None => String::new(),
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(" ");
+
+        resources.push(ResourceDef {
+            name,
+            label,
+            category,
+            group: String::new(),
+        });
+    }
+
+    resources.sort_by(|a, b| {
+        a.category
+            .cmp(&b.category)
+            .then_with(|| a.name.cmp(&b.name))
+    });
+    Ok(crate::errors::response::ApiResponse::success(resources))
 }
 
 async fn powered_by_middleware(

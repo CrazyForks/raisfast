@@ -21,7 +21,7 @@ pub fn routes(
         "/products/{product_id}/variants",
         get,
         list_by_product,
-        "system public",
+        "ecommerce",
         "product_variants",
         "public"
     );
@@ -32,7 +32,7 @@ pub fn routes(
         "/admin/product-variants",
         create,
         admin_create,
-        "system admin",
+        "ecommerce",
         "admin/product_variants",
         "admin"
     );
@@ -43,7 +43,7 @@ pub fn routes(
         "/admin/product-variants/{id}",
         put,
         admin_update,
-        "system admin",
+        "ecommerce",
         "admin/product_variants",
         "admin"
     );
@@ -54,7 +54,7 @@ pub fn routes(
         "/admin/product-variants/{id}",
         delete,
         admin_delete,
-        "system admin",
+        "ecommerce",
         "admin/product_variants",
         "admin"
     )

@@ -30,7 +30,7 @@ pub fn routes(
         "/users/me",
         get,
         get_me,
-        "system authed",
+        "system",
         "users",
         "users:read"
     );
@@ -41,7 +41,7 @@ pub fn routes(
         "/users/me",
         put,
         update_me,
-        "system authed",
+        "system",
         "users",
         "users:update"
     );
@@ -52,7 +52,7 @@ pub fn routes(
         "/users/me/password",
         put,
         change_password,
-        "system authed",
+        "system",
         "users",
         "users:update"
     );
@@ -63,7 +63,7 @@ pub fn routes(
         "/users/{id}",
         get,
         get_user,
-        "system authed",
+        "system",
         "users",
         "users:read"
     );
@@ -74,7 +74,7 @@ pub fn routes(
         "/users/{id}/role",
         put,
         update_role,
-        "system admin",
+        "system",
         "admin/users",
         "admin"
     );
@@ -85,7 +85,7 @@ pub fn routes(
         "/users",
         get,
         list_users,
-        "system admin",
+        "system",
         "users",
         "admin"
     );
@@ -96,7 +96,7 @@ pub fn routes(
         "/admin/users",
         post,
         admin_create_user,
-        "system admin",
+        "system",
         "admin/users",
         "admin"
     );
@@ -107,7 +107,7 @@ pub fn routes(
         "/admin/users",
         get,
         admin_list_users,
-        "system admin",
+        "system",
         "admin/users",
         "admin"
     );
@@ -118,7 +118,7 @@ pub fn routes(
         "/admin/users/{id}",
         get,
         admin_get_user,
-        "system admin",
+        "system",
         "admin/users",
         "admin"
     );
@@ -129,7 +129,7 @@ pub fn routes(
         "/admin/users/{id}",
         put,
         admin_update_user,
-        "system admin",
+        "system",
         "admin/users",
         "admin"
     );
@@ -140,7 +140,7 @@ pub fn routes(
         "/admin/users/{id}",
         delete,
         admin_delete_user,
-        "system admin",
+        "system",
         "admin/users",
         "admin"
     );
@@ -151,7 +151,7 @@ pub fn routes(
         "/admin/users/batch",
         post,
         admin_batch_users,
-        "system admin",
+        "system",
         "admin/users",
         "admin"
     )

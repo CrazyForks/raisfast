@@ -30,7 +30,7 @@ pub fn routes(
         "/setup/status",
         get,
         setup_status,
-        "system public",
+        "system",
         "setup",
         "public"
     );
@@ -41,7 +41,7 @@ pub fn routes(
         "/setup/database/test",
         post,
         test_database,
-        "system public",
+        "system",
         "setup",
         "public"
     );
@@ -52,7 +52,7 @@ pub fn routes(
         "/setup/database",
         post,
         setup_database,
-        "system public",
+        "system",
         "setup",
         "public"
     );
@@ -63,7 +63,7 @@ pub fn routes(
         "/setup/init",
         post,
         setup_init,
-        "system public",
+        "system",
         "setup",
         "public"
     )
@@ -187,14 +187,27 @@ pub async fn setup_database(
     let db_type = detect_db_type(&state.config.database_url);
     let url = req.build_url(&db_type).map_err(AppError::BadRequest)?;
 
-    test_db_connection(&url).await?;
+    let new_pool = crate::db::connection::init_pool(&url, 1)
+        .await
+        .map_err(|e| AppError::BadRequest(format!("connection_failed: {e}")))?;
+
+    sqlx::query("SELECT 1")
+        .execute(&new_pool)
+        .await
+        .map_err(|e| AppError::BadRequest(format!("query_failed: {e}")))?;
+
+    crate::db::connection::ensure_schema(&new_pool)
+        .await
+        .map_err(|e| AppError::BadRequest(format!("schema_init_failed: {e}")))?;
+
+    drop(new_pool);
 
     persist_env_var("DATABASE_URL", &url);
 
     tracing::info!(
         old_url = mask_db_url(&state.config.database_url),
         new_url = mask_db_url(&url),
-        "DATABASE_URL updated, scheduling self-restart"
+        "DATABASE_URL updated and schema initialized, scheduling self-restart"
     );
 
     tokio::spawn(async {
@@ -202,7 +215,10 @@ pub async fn setup_database(
         let exe = std::env::current_exe().unwrap_or_else(|_| std::path::PathBuf::from("raisfast"));
         let args: Vec<String> = std::env::args().skip(1).collect();
         tracing::info!("spawning new server process and exiting...");
-        let _ = std::process::Command::new(&exe).args(&args).spawn();
+        let _ = std::process::Command::new(&exe)
+            .args(&args)
+            .env_remove("DATABASE_URL")
+            .spawn();
         std::process::exit(0);
     });
 

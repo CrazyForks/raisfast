@@ -39,7 +39,7 @@ pub fn routes(
         "/admin/content-types",
         get,
         list_schemas,
-        "system admin",
+        "content type",
         "admin/content-types"
     );
     let r = reg_route!(
@@ -49,7 +49,7 @@ pub fn routes(
         "/admin/content-types",
         create,
         create_schema,
-        "system admin",
+        "content type",
         "admin/content-types"
     );
     let r = reg_route!(
@@ -59,7 +59,7 @@ pub fn routes(
         "/admin/content-types/{singular}",
         get,
         get_schema,
-        "system admin",
+        "content type",
         "admin/content-types"
     );
     let r = reg_route!(
@@ -69,7 +69,7 @@ pub fn routes(
         "/admin/content-types/{singular}",
         put,
         update_schema,
-        "system admin",
+        "content type",
         "admin/content-types"
     );
     let r = reg_route!(
@@ -79,14 +79,14 @@ pub fn routes(
         "/admin/content-types/{singular}",
         delete,
         delete_schema,
-        "system admin",
+        "content type",
         "admin/content-types"
     );
     let r = {
         let mr = axum::routing::any(dynamic_cms_handler);
         r.route("/cms/{*path}", mr)
     };
-    registry.record("ANY", "/api/v1/cms/{*path}", "content_type public", "cms");
+    registry.record("ANY", "/api/v1/cms/{*path}", "content type", "cms");
     let r = {
         let mr = axum::routing::any(dynamic_admin_cms_handler);
         r.route("/admin/cms/{*path}", mr)
@@ -94,7 +94,7 @@ pub fn routes(
     registry.record(
         "ANY",
         "/api/v1/admin/cms/{*path}",
-        "content_type admin",
+        "content type",
         "admin/cms",
     );
     r

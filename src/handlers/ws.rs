@@ -51,7 +51,7 @@ pub fn routes(
         "/ws",
         get,
         ws_handler,
-        "system public",
+        "system",
         "ws"
     )
 }

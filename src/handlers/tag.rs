@@ -23,7 +23,7 @@ pub fn routes(
         "/tags",
         get,
         self::list,
-        "system public",
+        "blog",
         "tags",
         "public"
     );
@@ -34,7 +34,7 @@ pub fn routes(
         "/tags",
         create,
         self::create,
-        "system public",
+        "blog",
         "tags",
         "tags:create"
     );
@@ -45,7 +45,7 @@ pub fn routes(
         "/tags/{id}",
         get,
         self::get,
-        "system public",
+        "blog",
         "tags",
         "public"
     );
@@ -56,7 +56,7 @@ pub fn routes(
         "/tags/{id}",
         put,
         update,
-        "system public",
+        "blog",
         "tags",
         "tags:update"
     );
@@ -67,7 +67,7 @@ pub fn routes(
         "/tags/{id}",
         delete,
         self::delete,
-        "system public",
+        "blog",
         "tags",
         "tags:delete"
     );
@@ -78,7 +78,7 @@ pub fn routes(
         "/admin/tags",
         get,
         admin_list,
-        "system admin",
+        "blog",
         "admin/tags",
         "admin"
     );
@@ -89,7 +89,7 @@ pub fn routes(
         "/admin/tags",
         create,
         admin_create,
-        "system admin",
+        "blog",
         "admin/tags",
         "admin"
     );
@@ -100,7 +100,7 @@ pub fn routes(
         "/admin/tags/{id}",
         put,
         admin_update,
-        "system admin",
+        "blog",
         "admin/tags",
         "admin"
     );
@@ -111,7 +111,7 @@ pub fn routes(
         "/admin/tags/{id}",
         delete,
         admin_delete,
-        "system admin",
+        "blog",
         "admin/tags",
         "admin"
     );
@@ -122,7 +122,7 @@ pub fn routes(
         "/admin/tags/batch",
         post,
         admin_batch,
-        "system admin",
+        "blog",
         "admin/tags",
         "admin"
     )

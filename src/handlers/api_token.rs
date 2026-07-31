@@ -28,7 +28,7 @@ pub fn routes(
         "/tokens",
         get,
         self::list,
-        "system authed",
+        "system",
         "tokens",
         "authed"
     );
@@ -39,7 +39,7 @@ pub fn routes(
         "/tokens",
         create,
         self::create,
-        "system authed",
+        "system",
         "tokens",
         "authed"
     );
@@ -50,7 +50,7 @@ pub fn routes(
         "/tokens/{id}",
         put,
         self::update,
-        "system authed",
+        "system",
         "tokens",
         "authed"
     );
@@ -61,7 +61,7 @@ pub fn routes(
         "/tokens/{id}",
         delete,
         self::delete,
-        "system authed",
+        "system",
         "tokens",
         "authed"
     )

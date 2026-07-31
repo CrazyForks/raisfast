@@ -24,7 +24,7 @@ pub fn routes(
         "/admin/tenants",
         get,
         list_tenants,
-        "system admin",
+        "system",
         "admin/tenants",
         "admin"
     );
@@ -35,7 +35,7 @@ pub fn routes(
         "/admin/tenants",
         create,
         create_tenant,
-        "system admin",
+        "system",
         "admin/tenants",
         "admin"
     );
@@ -46,7 +46,7 @@ pub fn routes(
         "/admin/tenants/{id}",
         get,
         get_tenant,
-        "system admin",
+        "system",
         "admin/tenants",
         "admin"
     );
@@ -57,7 +57,7 @@ pub fn routes(
         "/admin/tenants/{id}",
         put,
         update_tenant,
-        "system admin",
+        "system",
         "admin/tenants",
         "admin"
     );
@@ -68,7 +68,7 @@ pub fn routes(
         "/admin/tenants/{id}",
         delete,
         delete_tenant,
-        "system admin",
+        "system",
         "admin/tenants",
         "admin"
     );
@@ -79,7 +79,7 @@ pub fn routes(
         "/admin/tenants/batch",
         post,
         admin_batch,
-        "system admin",
+        "system",
         "admin/tenants",
         "admin"
     )

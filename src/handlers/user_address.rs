@@ -22,7 +22,7 @@ pub fn routes(
         "/user/addresses",
         get,
         list_addresses,
-        "system authed",
+        "ecommerce",
         "user_addresses",
         "user_addresses:read"
     );
@@ -33,7 +33,7 @@ pub fn routes(
         "/user/addresses",
         create,
         create_address,
-        "system authed",
+        "ecommerce",
         "user_addresses",
         "user_addresses:create"
     );
@@ -44,7 +44,7 @@ pub fn routes(
         "/user/addresses/{id}",
         put,
         update_address,
-        "system authed",
+        "ecommerce",
         "user_addresses",
         "user_addresses:update"
     );
@@ -55,7 +55,7 @@ pub fn routes(
         "/user/addresses/{id}",
         delete,
         delete_address,
-        "system authed",
+        "ecommerce",
         "user_addresses",
         "user_addresses:delete"
     )

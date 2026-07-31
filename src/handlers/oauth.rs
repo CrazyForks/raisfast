@@ -24,7 +24,7 @@ pub fn routes(
         "/auth/oauth/{provider}",
         get,
         redirect_to_provider,
-        "system public",
+        "system",
         "oauth"
     );
     let r = reg_route!(
@@ -34,7 +34,7 @@ pub fn routes(
         "/auth/oauth/{provider}/callback",
         get,
         callback,
-        "system public",
+        "system",
         "oauth"
     );
     let r = reg_route!(
@@ -44,7 +44,7 @@ pub fn routes(
         "/auth/oauth/providers",
         get,
         list_providers,
-        "system public",
+        "system",
         "oauth"
     );
     let r = reg_route!(
@@ -54,7 +54,7 @@ pub fn routes(
         "/auth/oauth/bindings",
         get,
         list_bindings,
-        "system authed",
+        "system",
         "oauth"
     );
     reg_route!(
@@ -64,7 +64,7 @@ pub fn routes(
         "/auth/oauth/{provider}/unbind",
         delete,
         unbind,
-        "system authed",
+        "system",
         "oauth"
     )
 }

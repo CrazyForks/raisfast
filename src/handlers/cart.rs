@@ -21,7 +21,7 @@ pub fn routes(
         "/cart",
         create,
         add_to_cart,
-        "system authed",
+        "ecommerce",
         "cart",
         "cart_items:create"
     );
@@ -32,7 +32,7 @@ pub fn routes(
         "/cart",
         get,
         list_cart,
-        "system authed",
+        "ecommerce",
         "cart",
         "cart_items:read"
     );
@@ -43,7 +43,7 @@ pub fn routes(
         "/cart/{id}",
         put,
         update_cart_item,
-        "system authed",
+        "ecommerce",
         "cart",
         "cart_items:update"
     );
@@ -54,7 +54,7 @@ pub fn routes(
         "/cart/{id}",
         delete,
         remove_from_cart,
-        "system authed",
+        "ecommerce",
         "cart",
         "cart_items:delete"
     );
@@ -65,7 +65,7 @@ pub fn routes(
         "/cart",
         delete,
         clear_cart,
-        "system authed",
+        "ecommerce",
         "cart",
         "cart_items:delete"
     );
@@ -76,7 +76,7 @@ pub fn routes(
         "/cart/checkout",
         post,
         checkout,
-        "system authed",
+        "ecommerce",
         "cart",
         "cart_items:create"
     )

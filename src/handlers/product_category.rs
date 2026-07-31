@@ -24,7 +24,7 @@ pub fn routes(
         "/product-categories",
         get,
         self::list,
-        "system public",
+        "ecommerce",
         "product-categories",
         "public"
     );
@@ -35,7 +35,7 @@ pub fn routes(
         "/product-categories",
         create,
         self::create,
-        "system public",
+        "ecommerce",
         "product-categories",
         "product_categories:create"
     );
@@ -46,7 +46,7 @@ pub fn routes(
         "/product-categories/{id}",
         get,
         self::get,
-        "system public",
+        "ecommerce",
         "product-categories",
         "public"
     );
@@ -57,7 +57,7 @@ pub fn routes(
         "/product-categories/{id}",
         put,
         update,
-        "system public",
+        "ecommerce",
         "product-categories",
         "product_categories:update"
     );
@@ -68,7 +68,7 @@ pub fn routes(
         "/product-categories/{id}",
         delete,
         self::delete,
-        "system public",
+        "ecommerce",
         "product-categories",
         "product_categories:delete"
     );
@@ -79,7 +79,7 @@ pub fn routes(
         "/admin/product-categories",
         get,
         admin_list,
-        "system admin",
+        "ecommerce",
         "admin/product-categories",
         "admin"
     );
@@ -90,7 +90,7 @@ pub fn routes(
         "/admin/product-categories",
         create,
         admin_create,
-        "system admin",
+        "ecommerce",
         "admin/product-categories",
         "admin"
     );
@@ -101,7 +101,7 @@ pub fn routes(
         "/admin/product-categories/{id}",
         put,
         admin_update,
-        "system admin",
+        "ecommerce",
         "admin/product-categories",
         "admin"
     );
@@ -112,7 +112,7 @@ pub fn routes(
         "/admin/product-categories/{id}",
         delete,
         admin_delete,
-        "system admin",
+        "ecommerce",
         "admin/product-categories",
         "admin"
     );
@@ -123,7 +123,7 @@ pub fn routes(
         "/admin/product-categories/batch",
         post,
         admin_batch,
-        "system admin",
+        "ecommerce",
         "admin/product-categories",
         "admin"
     )

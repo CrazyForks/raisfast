@@ -25,7 +25,7 @@ pub fn routes(
         "/categories",
         get,
         self::list,
-        "system public",
+        "blog",
         "categories",
         "public"
     );
@@ -36,7 +36,7 @@ pub fn routes(
         "/categories",
         create,
         self::create,
-        "system public",
+        "blog",
         "categories",
         "categories:create"
     );
@@ -47,7 +47,7 @@ pub fn routes(
         "/categories/{id}",
         get,
         self::get,
-        "system public",
+        "blog",
         "categories",
         "public"
     );
@@ -58,7 +58,7 @@ pub fn routes(
         "/categories/{id}",
         put,
         update,
-        "system public",
+        "blog",
         "categories",
         "categories:update"
     );
@@ -69,7 +69,7 @@ pub fn routes(
         "/categories/{id}",
         delete,
         self::delete,
-        "system public",
+        "blog",
         "categories",
         "categories:delete"
     );
@@ -80,7 +80,7 @@ pub fn routes(
         "/admin/categories",
         get,
         admin_list,
-        "system admin",
+        "blog",
         "admin/categories",
         "admin"
     );
@@ -91,7 +91,7 @@ pub fn routes(
         "/admin/categories",
         create,
         admin_create,
-        "system admin",
+        "blog",
         "admin/categories",
         "admin"
     );
@@ -102,7 +102,7 @@ pub fn routes(
         "/admin/categories/{id}",
         put,
         admin_update,
-        "system admin",
+        "blog",
         "admin/categories",
         "admin"
     );
@@ -113,7 +113,7 @@ pub fn routes(
         "/admin/categories/{id}",
         delete,
         admin_delete,
-        "system admin",
+        "blog",
         "admin/categories",
         "admin"
     );
@@ -124,7 +124,7 @@ pub fn routes(
         "/admin/categories/batch",
         post,
         admin_batch,
-        "system admin",
+        "blog",
         "admin/categories",
         "admin"
     )

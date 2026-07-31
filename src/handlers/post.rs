@@ -56,7 +56,7 @@ pub fn routes(
         "/posts",
         get,
         self::list,
-        "system public",
+        "blog",
         "posts",
         "public"
     );
@@ -67,7 +67,7 @@ pub fn routes(
         "/posts",
         create,
         self::create,
-        "system public",
+        "blog",
         "posts",
         "posts:create"
     );
@@ -78,7 +78,7 @@ pub fn routes(
         "/posts/{slug}",
         get,
         self::get,
-        "system public",
+        "blog",
         "posts",
         "public"
     );
@@ -89,7 +89,7 @@ pub fn routes(
         "/posts/{slug}",
         put,
         self::update,
-        "system public",
+        "blog",
         "posts",
         "posts:update"
     );
@@ -100,7 +100,7 @@ pub fn routes(
         "/posts/{slug}",
         delete,
         self::delete,
-        "system public",
+        "blog",
         "posts",
         "posts:delete"
     );
@@ -121,7 +121,7 @@ pub fn admin_routes(
         "/admin/posts",
         get,
         self::admin_list,
-        "system admin",
+        "blog",
         "posts",
         "admin"
     );
@@ -132,7 +132,7 @@ pub fn admin_routes(
         "/admin/posts",
         post,
         self::admin_create,
-        "system admin",
+        "blog",
         "posts",
         "admin"
     );
@@ -143,7 +143,7 @@ pub fn admin_routes(
         "/admin/posts/{id}",
         get,
         self::admin_get,
-        "system admin",
+        "blog",
         "posts",
         "admin"
     );
@@ -154,7 +154,7 @@ pub fn admin_routes(
         "/admin/posts/{id}",
         put,
         self::admin_update,
-        "system admin",
+        "blog",
         "posts",
         "admin"
     );
@@ -165,7 +165,7 @@ pub fn admin_routes(
         "/admin/posts/{id}",
         delete,
         self::admin_delete,
-        "system admin",
+        "blog",
         "posts",
         "admin"
     );
@@ -176,7 +176,7 @@ pub fn admin_routes(
         "/admin/posts/batch",
         post,
         self::admin_batch,
-        "system admin",
+        "blog",
         "posts",
         "admin"
     );

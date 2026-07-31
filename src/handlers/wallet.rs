@@ -23,8 +23,8 @@ pub fn routes(
         "/wallets",
         get,
         list_wallets,
-        "system authed",
-        "wallet",
+        "finance",
+        "wallets",
         "wallets:read"
     );
     let r = reg_route!(
@@ -34,8 +34,8 @@ pub fn routes(
         "/wallets/{currency}",
         get,
         get_wallet,
-        "system authed",
-        "wallet",
+        "finance",
+        "wallets",
         "wallets:read"
     );
     let r = reg_route!(
@@ -45,8 +45,8 @@ pub fn routes(
         "/wallets/transactions",
         get,
         list_all_transactions,
-        "system authed",
-        "wallet",
+        "finance",
+        "wallet_transactions",
         "wallets:read"
     );
     let r = reg_route!(
@@ -56,8 +56,8 @@ pub fn routes(
         "/wallets/{currency}/transactions",
         get,
         list_transactions,
-        "system authed",
-        "wallet",
+        "finance",
+        "wallet_transactions",
         "wallets:read"
     );
     let r = reg_route!(
@@ -67,8 +67,8 @@ pub fn routes(
         "/admin/wallets",
         get,
         list_all_wallets,
-        "system admin",
-        "admin/wallet",
+        "finance",
+        "admin/wallets",
         "admin"
     );
     let r = reg_route!(
@@ -78,8 +78,8 @@ pub fn routes(
         "/admin/wallets/transactions",
         get,
         list_all_transactions_admin,
-        "system admin",
-        "admin/wallet",
+        "finance",
+        "admin/wallet_transactions",
         "admin"
     );
     let r = reg_route!(
@@ -89,8 +89,8 @@ pub fn routes(
         "/admin/wallets/credit",
         post,
         admin_credit,
-        "system admin",
-        "admin/wallet",
+        "finance",
+        "admin/wallets",
         "admin"
     );
     let r = reg_route!(
@@ -100,8 +100,8 @@ pub fn routes(
         "/admin/wallets/debit",
         post,
         admin_debit,
-        "system admin",
-        "admin/wallet",
+        "finance",
+        "admin/wallets",
         "admin"
     );
     let r = reg_route!(
@@ -111,8 +111,8 @@ pub fn routes(
         "/admin/wallets/{user_id}/transactions",
         get,
         list_user_all_transactions,
-        "system admin",
-        "admin/wallet",
+        "finance",
+        "admin/wallet_transactions",
         "admin"
     );
     let r = reg_route!(
@@ -122,8 +122,8 @@ pub fn routes(
         "/admin/wallets/{user_id}/{currency}/transactions",
         get,
         list_user_transactions,
-        "system admin",
-        "admin/wallet",
+        "finance",
+        "admin/wallet_transactions",
         "admin"
     );
     reg_route!(
@@ -133,11 +133,13 @@ pub fn routes(
         "/admin/wallets/{tx_id}/reversal",
         post,
         admin_reversal,
-        "system admin",
-        "admin/wallet",
+        "finance",
+        "admin/wallet_transactions",
         "admin"
     )
+
 }
+
 
 #[utoipa::path(get, path = "/wallets", tag = "wallets",
     security(("bearer_auth" = [])),

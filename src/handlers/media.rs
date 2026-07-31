@@ -26,7 +26,7 @@ pub fn routes(
         "/media/upload",
         post,
         axum::routing::post(upload).layer(RequestBodyLimitLayer::new(max_upload)),
-        "system authed",
+        "content",
         "media",
         "media:create",
         layered
@@ -38,7 +38,7 @@ pub fn routes(
         "/media",
         get,
         self::list,
-        "system authed",
+        "content",
         "media",
         "media:read"
     );
@@ -49,7 +49,7 @@ pub fn routes(
         "/media/stats",
         get,
         stats,
-        "system authed",
+        "content",
         "media",
         "media:read"
     );
@@ -60,7 +60,7 @@ pub fn routes(
         "/media/{id}",
         delete,
         self::delete,
-        "system authed",
+        "content",
         "media",
         "media:delete"
     );
@@ -71,7 +71,7 @@ pub fn routes(
         "/admin/media/upload",
         post,
         axum::routing::post(admin_upload).layer(RequestBodyLimitLayer::new(max_upload)),
-        "system admin",
+        "content",
         "admin/media",
         "admin",
         layered
@@ -83,7 +83,7 @@ pub fn routes(
         "/admin/media",
         get,
         admin_list,
-        "system admin",
+        "content",
         "admin/media",
         "admin"
     );
@@ -94,7 +94,7 @@ pub fn routes(
         "/admin/media/{id}",
         delete,
         admin_delete,
-        "system admin",
+        "content",
         "admin/media",
         "admin"
     );
@@ -105,7 +105,7 @@ pub fn routes(
         "/admin/media/batch",
         post,
         admin_batch,
-        "system admin",
+        "content",
         "admin/media",
         "admin"
     )

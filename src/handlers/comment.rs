@@ -33,7 +33,7 @@ pub fn routes(
         "/posts/{slug}/comments",
         get,
         self::list,
-        "system public",
+        "blog",
         "comments",
         "public"
     );
@@ -44,7 +44,7 @@ pub fn routes(
         "/posts/{slug}/comments",
         post,
         axum::routing::post(create_guest).layer(from_fn(comment_rate_limit)),
-        "system public",
+        "blog",
         "comments",
         "public",
         layered
@@ -56,7 +56,7 @@ pub fn routes(
         "/posts/{slug}/comments/authed",
         post,
         create,
-        "system authed",
+        "blog",
         "comments",
         "comments:create"
     );
@@ -67,7 +67,7 @@ pub fn routes(
         "/comments/{id}",
         delete,
         self::delete,
-        "system authed",
+        "blog",
         "comments",
         "comments:delete"
     );
@@ -78,7 +78,7 @@ pub fn routes(
         "/comments/{id}/status",
         put,
         update_status,
-        "system authed",
+        "blog",
         "comments",
         "admin"
     );
@@ -89,7 +89,7 @@ pub fn routes(
         "/comments",
         get,
         list_all,
-        "system admin",
+        "blog",
         "comments",
         "admin"
     );
@@ -100,7 +100,7 @@ pub fn routes(
         "/admin/comments",
         get,
         admin_list,
-        "system admin",
+        "blog",
         "admin/comments",
         "admin"
     );
@@ -111,7 +111,7 @@ pub fn routes(
         "/admin/comments/{id}/status",
         put,
         admin_update_status,
-        "system admin",
+        "blog",
         "admin/comments",
         "admin"
     );
@@ -122,7 +122,7 @@ pub fn routes(
         "/admin/comments/{id}",
         delete,
         admin_delete,
-        "system admin",
+        "blog",
         "admin/comments",
         "admin"
     );
@@ -133,7 +133,7 @@ pub fn routes(
         "/admin/comments/batch",
         post,
         admin_batch,
-        "system admin",
+        "blog",
         "admin/comments",
         "admin"
     )

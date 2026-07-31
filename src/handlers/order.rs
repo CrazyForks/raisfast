@@ -25,7 +25,7 @@ pub fn routes(
         "/orders",
         get,
         list_orders,
-        "system authed",
+        "ecommerce",
         "orders",
         "orders:read"
     );
@@ -36,7 +36,7 @@ pub fn routes(
         "/orders",
         create,
         create_order,
-        "system authed",
+        "ecommerce",
         "orders",
         "orders:create"
     );
@@ -47,7 +47,7 @@ pub fn routes(
         "/orders/{id}",
         get,
         get_order,
-        "system authed",
+        "ecommerce",
         "orders",
         "orders:read"
     );
@@ -58,7 +58,7 @@ pub fn routes(
         "/orders/{id}",
         put,
         cancel_order_handler,
-        "system authed",
+        "ecommerce",
         "orders",
         "orders:update"
     );
@@ -69,7 +69,7 @@ pub fn routes(
         "/orders/{id}/confirm",
         post,
         confirm_receipt,
-        "system authed",
+        "ecommerce",
         "orders",
         "orders:update"
     );
@@ -80,7 +80,7 @@ pub fn routes(
         "/admin/orders",
         get,
         admin_list,
-        "system admin",
+        "ecommerce",
         "admin/orders",
         "admin"
     );
@@ -91,7 +91,7 @@ pub fn routes(
         "/admin/orders/{id}",
         get,
         admin_get,
-        "system admin",
+        "ecommerce",
         "admin/orders",
         "admin"
     );
@@ -102,7 +102,7 @@ pub fn routes(
         "/admin/orders/{id}/pay",
         post,
         admin_pay,
-        "system admin",
+        "ecommerce",
         "admin/orders",
         "admin"
     );
@@ -113,7 +113,7 @@ pub fn routes(
         "/admin/orders/{id}/ship",
         post,
         admin_ship,
-        "system admin",
+        "ecommerce",
         "admin/orders",
         "admin"
     );
@@ -124,7 +124,7 @@ pub fn routes(
         "/admin/orders/{id}/cancel",
         post,
         admin_cancel,
-        "system admin",
+        "ecommerce",
         "admin/orders",
         "admin"
     );
@@ -135,7 +135,7 @@ pub fn routes(
         "/admin/orders/{id}/refund",
         post,
         admin_refund,
-        "system admin",
+        "ecommerce",
         "admin/orders",
         "admin"
     );
@@ -146,7 +146,7 @@ pub fn routes(
         "/admin/orders/{id}/remark",
         put,
         admin_update_remark,
-        "system admin",
+        "ecommerce",
         "admin/orders",
         "admin"
     );
@@ -157,7 +157,7 @@ pub fn routes(
         "/admin/orders/stats",
         get,
         admin_stats,
-        "system admin",
+        "ecommerce",
         "admin/orders",
         "admin"
     )

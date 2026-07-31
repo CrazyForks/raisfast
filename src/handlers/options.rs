@@ -23,7 +23,7 @@ pub fn routes(
         "/options/public",
         get,
         get_public_options,
-        "system public",
+        "system",
         "options",
         "public"
     );
@@ -34,7 +34,7 @@ pub fn routes(
         "/admin/options",
         get,
         list_options,
-        "system admin",
+        "system",
         "admin/options",
         "admin"
     );
@@ -45,7 +45,7 @@ pub fn routes(
         "/admin/options",
         put,
         update_options,
-        "system admin",
+        "system",
         "admin/options",
         "admin"
     );
@@ -56,7 +56,7 @@ pub fn routes(
         "/admin/options/{key}",
         get,
         get_option,
-        "system admin",
+        "system",
         "admin/options",
         "admin"
     );
@@ -67,7 +67,7 @@ pub fn routes(
         "/admin/options/{key}",
         put,
         set_option,
-        "system admin",
+        "system",
         "admin/options",
         "admin"
     );
@@ -78,7 +78,7 @@ pub fn routes(
         "/admin/options/{key}",
         delete,
         delete_option,
-        "system admin",
+        "system",
         "admin/options",
         "admin"
     )
