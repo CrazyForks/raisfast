@@ -15,7 +15,7 @@ use crate::dto::{
 use crate::errors::app_error::AppResult;
 use crate::errors::response::{ApiResponse, PaginatedData};
 use crate::errors::validation;
-use crate::middleware::auth::{AuthUser, TokenAction};
+use crate::middleware::auth::AuthUser;
 use crate::utils::pagination::PaginationParams;
 
 fn post_list_cache_key(
@@ -57,7 +57,8 @@ pub fn routes(
         get,
         self::list,
         "system public",
-        "posts"
+        "posts",
+        "public"
     );
     let r = reg_route!(
         r,
@@ -67,7 +68,8 @@ pub fn routes(
         create,
         self::create,
         "system public",
-        "posts"
+        "posts",
+        "posts:create"
     );
     let r = reg_route!(
         r,
@@ -77,7 +79,8 @@ pub fn routes(
         get,
         self::get,
         "system public",
-        "posts"
+        "posts",
+        "public"
     );
     let r = reg_route!(
         r,
@@ -87,7 +90,8 @@ pub fn routes(
         put,
         self::update,
         "system public",
-        "posts"
+        "posts",
+        "posts:update"
     );
     let r = reg_route!(
         r,
@@ -97,7 +101,8 @@ pub fn routes(
         delete,
         self::delete,
         "system public",
-        "posts"
+        "posts",
+        "posts:delete"
     );
     r
 }
@@ -117,7 +122,8 @@ pub fn admin_routes(
         get,
         self::admin_list,
         "system admin",
-        "posts"
+        "posts",
+        "admin"
     );
     let r = reg_route!(
         r,
@@ -127,7 +133,8 @@ pub fn admin_routes(
         post,
         self::admin_create,
         "system admin",
-        "posts"
+        "posts",
+        "admin"
     );
     let r = reg_route!(
         r,
@@ -137,7 +144,8 @@ pub fn admin_routes(
         get,
         self::admin_get,
         "system admin",
-        "posts"
+        "posts",
+        "admin"
     );
     let r = reg_route!(
         r,
@@ -147,7 +155,8 @@ pub fn admin_routes(
         put,
         self::admin_update,
         "system admin",
-        "posts"
+        "posts",
+        "admin"
     );
     let r = reg_route!(
         r,
@@ -157,7 +166,8 @@ pub fn admin_routes(
         delete,
         self::admin_delete,
         "system admin",
-        "posts"
+        "posts",
+        "admin"
     );
     let r = reg_route!(
         r,
@@ -167,7 +177,8 @@ pub fn admin_routes(
         post,
         self::admin_batch,
         "system admin",
-        "posts"
+        "posts",
+        "admin"
     );
     r
 }
@@ -275,7 +286,6 @@ pub async fn create(
     State(state): State<crate::AppState>,
     Json(req): Json<CreatePostRequest>,
 ) -> AppResult<ApiResponse<PostResponse>> {
-    auth.ensure_scope("posts", TokenAction::Create)?;
     validation::validate(&req)?;
     let post = state.post_service.create(&auth, req).await?;
     invalidate_post_cache(&state);
@@ -301,7 +311,6 @@ pub async fn update(
     Path(slug): Path<String>,
     Json(req): Json<UpdatePostRequest>,
 ) -> AppResult<ApiResponse<PostResponse>> {
-    auth.ensure_scope("posts", TokenAction::Update)?;
     validation::validate(&req)?;
     let post = state.post_service.update(&auth, &slug, req).await?;
     invalidate_post_cache(&state);
@@ -324,7 +333,6 @@ pub async fn delete(
     State(state): State<crate::AppState>,
     Path(slug): Path<String>,
 ) -> AppResult<ApiResponse<()>> {
-    auth.ensure_scope("posts", TokenAction::Delete)?;
     state.post_service.delete(&auth, &slug).await?;
     invalidate_post_cache(&state);
     Ok(ApiResponse::success(()))
@@ -338,8 +346,6 @@ pub async fn admin_create(
     State(state): State<crate::AppState>,
     Json(req): Json<CreatePostRequest>,
 ) -> AppResult<ApiResponse<PostResponse>> {
-    auth.ensure_admin()?;
-    auth.ensure_scope("posts", TokenAction::Create)?;
     validation::validate(&req)?;
     let post = state.post_service.create(&auth, req).await?;
     invalidate_post_cache(&state);
@@ -353,8 +359,6 @@ pub async fn admin_update(
     Path(id): Path<String>,
     Json(req): Json<UpdatePostRequest>,
 ) -> AppResult<ApiResponse<PostResponse>> {
-    auth.ensure_admin()?;
-    auth.ensure_scope("posts", TokenAction::Update)?;
     validation::validate(&req)?;
     let id = crate::types::snowflake_id::parse_id(&id)?;
     let post = state.post_service.admin_update(&auth, id, req).await?;
@@ -368,8 +372,6 @@ pub async fn admin_delete(
     State(state): State<crate::AppState>,
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<()>> {
-    auth.ensure_admin()?;
-    auth.ensure_scope("posts", TokenAction::Delete)?;
     let id = crate::types::snowflake_id::parse_id(&id)?;
     state.post_service.admin_delete(&auth, id).await?;
     invalidate_post_cache(&state);
@@ -387,8 +389,6 @@ pub async fn admin_get(
     State(state): State<crate::AppState>,
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<PostResponse>> {
-    auth.ensure_admin()?;
-    auth.ensure_scope("posts", TokenAction::Read)?;
     let id = crate::types::snowflake_id::parse_id(&id)?;
     let post = state.post_service.admin_get_by_id(&auth, id).await?;
     Ok(ApiResponse::success(post))
@@ -405,8 +405,6 @@ pub async fn admin_list(
     State(state): State<crate::AppState>,
     Query(query): Query<AdminPostListQuery>,
 ) -> AppResult<ApiResponse<PaginatedData<PostResponse>>> {
-    auth.ensure_admin()?;
-    auth.ensure_scope("posts", TokenAction::Read)?;
     let pagination = PaginationParams::from_options(query.page, query.page_size);
 
     let (posts, total) = state
@@ -429,8 +427,6 @@ pub async fn admin_batch(
     State(state): State<crate::AppState>,
     Json(req): Json<BatchRequest>,
 ) -> AppResult<ApiResponse<BatchResponse>> {
-    auth.ensure_admin()?;
-    auth.ensure_scope("posts", TokenAction::Delete)?;
     validation::validate(&req)?;
     let affected = state
         .post_service

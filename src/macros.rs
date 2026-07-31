@@ -3,33 +3,128 @@
 /// # Syntax
 ///
 /// ```ignore
+/// // Without permission (backward compatible):
 /// reg_route!(router, registry, restful, "/path", method, handler, "source", "name");
+///
+/// // With permission declaration:
+/// reg_route!(router, registry, restful, "/path", method, handler, "source", "name", "admin");
+///
+/// // With custom middleware (MethodRouter with .layer()):
+/// reg_route!(router, registry, restful, "/path", post, post(handler).layer(mw), "source", "name", "public", layered);
 /// ```
 ///
 /// - `restful`: bool (typically `config.api_restful`)
 /// - `method`: `get`, `post`, `create`, `put`, or `delete`
-/// - `handler`: handler function or `axum::routing::MethodRouter` expression
+/// - `handler`: handler function, or `MethodRouter` expression when `layered` is used
+/// - `permission` (optional): `"public"`, `"admin"`, `"authed"`, or `"resource:action"`
+/// - `layered` (optional, must come after permission): treat `$handler` as a pre-built `MethodRouter`
 /// - When `restful=false`:
 ///   - `create` → `POST /path/create`
 ///   - `put`    → `POST /path/update`
 ///   - `delete` → `POST /path/delete`
 /// - When `restful=true`: no extra routes generated
-///
-/// # Examples
-///
-/// ```ignore
-/// reg_route!(r, reg, restful, "/pages", get, list, "public", "pages");
-/// reg_route!(r, reg, restful, "/pages", create, create_page, "public", "pages");
-/// reg_route!(r, reg, restful, "/pages/{id}", put, update, "admin", "pages");
-/// reg_route!(r, reg, restful, "/pages/{id}", delete, remove, "admin", "pages");
-/// // Non-CRUD POST (login, batch, callback — always POST /path):
-/// reg_route!(r, reg, restful, "/auth/login", post, login, "public", "auth");
-/// // With middleware:
-/// reg_route!(r, reg, restful, "/auth/login", post, post(login).layer(mw), "public", "auth");
-/// ```
 #[macro_export]
 macro_rules! reg_route {
-    // ── GET ──────────────────────────────────────────────────────
+    // ═══════════════════════════════════════════════════════════════
+    // Layered arms: accept a pre-built MethodRouter (with .layer() applied).
+    // Requires permission (9 params + `layered`).
+    // ═══════════════════════════════════════════════════════════════
+    ($router:expr, $registry:expr, $restful:expr, $path:literal, $method:tt, $router_expr:expr, $source:expr, $name:expr, $perm:expr, layered $(,)?) => {{
+        let r = $router.route($path, $router_expr);
+        $registry.record_perm(
+            stringify!($method),
+            concat!("/api/v1", $path),
+            $source,
+            $name,
+            $perm,
+        );
+        r
+    }};
+
+    // ═══════════════════════════════════════════════════════════════
+    // Arms WITH permission declaration (9 parameters)
+    // ═══════════════════════════════════════════════════════════════
+
+    // ── GET + perm ──
+    ($router:expr, $registry:expr, $restful:expr, $path:literal, get, $handler:expr, $source:expr, $name:expr, $perm:expr $(,)?) => {{
+        let r = $router.route($path, axum::routing::get($handler));
+        $registry.record_perm("GET", concat!("/api/v1", $path), $source, $name, $perm);
+        r
+    }};
+
+    // ── POST + perm ──
+    ($router:expr, $registry:expr, $restful:expr, $path:literal, post, $handler:expr, $source:expr, $name:expr, $perm:expr $(,)?) => {{
+        let r = $router.route($path, axum::routing::post($handler));
+        $registry.record_perm("POST", concat!("/api/v1", $path), $source, $name, $perm);
+        r
+    }};
+
+    // ── CREATE + perm ──
+    ($router:expr, $registry:expr, $restful:expr, $path:literal, create, $handler:expr, $source:expr, $name:expr, $perm:expr $(,)?) => {{
+        let r = if $restful {
+            let r = $router.route($path, axum::routing::post($handler));
+            $registry.record_perm("POST", concat!("/api/v1", $path), $source, $name, $perm);
+            r
+        } else {
+            let __compat_path = concat!($path, "/create");
+            let r = $router.route(__compat_path, axum::routing::post($handler));
+            $registry.record_perm(
+                "POST",
+                concat!("/api/v1", $path, "/create"),
+                $source,
+                $name,
+                $perm,
+            );
+            r
+        };
+        r
+    }};
+
+    // ── PUT + perm ──
+    ($router:expr, $registry:expr, $restful:expr, $path:literal, put, $handler:expr, $source:expr, $name:expr, $perm:expr $(,)?) => {{
+        let r = if $restful {
+            let r = $router.route($path, axum::routing::put($handler));
+            $registry.record_perm("PUT", concat!("/api/v1", $path), $source, $name, $perm);
+            r
+        } else {
+            let __compat_path = concat!($path, "/update");
+            let r = $router.route(__compat_path, axum::routing::post($handler));
+            $registry.record_perm(
+                "POST",
+                concat!("/api/v1", $path, "/update"),
+                $source,
+                $name,
+                $perm,
+            );
+            r
+        };
+        r
+    }};
+
+    // ── DELETE + perm ──
+    ($router:expr, $registry:expr, $restful:expr, $path:literal, delete, $handler:expr, $source:expr, $name:expr, $perm:expr $(,)?) => {{
+        let r = if $restful {
+            let r = $router.route($path, axum::routing::delete($handler));
+            $registry.record_perm("DELETE", concat!("/api/v1", $path), $source, $name, $perm);
+            r
+        } else {
+            let __compat_path = concat!($path, "/delete");
+            let r = $router.route(__compat_path, axum::routing::post($handler));
+            $registry.record_perm(
+                "POST",
+                concat!("/api/v1", $path, "/delete"),
+                $source,
+                $name,
+                $perm,
+            );
+            r
+        };
+        r
+    }};
+
+    // ═══════════════════════════════════════════════════════════════
+    // Arms WITHOUT permission (backward compatible, 8 parameters)
+    // ═══════════════════════════════════════════════════════════════
     ($router:expr, $registry:expr, $restful:expr, $path:literal, get, $handler:expr, $source:expr, $name:expr $(,)?) => {{
         let r = $router.route($path, axum::routing::get($handler));
         $registry.record("GET", concat!("/api/v1", $path), $source, $name);

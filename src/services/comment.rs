@@ -13,7 +13,7 @@ use crate::errors::app_error::{AppError, AppResult};
 use crate::event::Event;
 use crate::middleware::auth::AuthUser;
 use crate::models::comment::{self, AdminCommentRow, CommentResponse, CommentStatus};
-use crate::policy::Policy;
+use crate::policy::check_owner_opt;
 use crate::types::snowflake_id::SnowflakeId;
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -76,7 +76,7 @@ impl CommentServiceImpl {
         auth: &AuthUser,
         existing: &crate::models::comment::Comment,
     ) -> AppResult<crate::aspects::Dispatched> {
-        crate::policy::CommentPolicy::can_delete(auth, existing)?;
+        check_owner_opt(auth, existing.created_by, existing.tenant_id.as_deref())?;
         self.aspect_engine
             .before_delete("comments", auth, existing)
             .await

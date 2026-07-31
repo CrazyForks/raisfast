@@ -20,7 +20,11 @@ async fn overview_empty() {
 #[tokio::test]
 async fn content_stats() {
     let (mut app, tok) = setup_admin().await;
-    let (status, body) = send(&mut app, get_auth("/api/v1/admin/stats/content/posts", &tok)).await;
+    let (status, body) = send(
+        &mut app,
+        get_auth("/api/v1/admin/stats/content/posts", &tok),
+    )
+    .await;
     assert!(status.is_success(), "content stats: {status} {body:?}");
     assert_eq!(body["code"], 0);
 }

@@ -6,7 +6,7 @@ use crate::dto::order::{OrderItemResponse, OrderResponse};
 use crate::errors::app_error::AppResult;
 use crate::errors::response::ApiResponse;
 use crate::errors::validation;
-use crate::middleware::auth::{AuthUser, TokenAction};
+use crate::middleware::auth::AuthUser;
 
 pub fn routes(
     registry: &mut crate::server::RouteRegistry,
@@ -22,7 +22,8 @@ pub fn routes(
         create,
         add_to_cart,
         "system authed",
-        "cart"
+        "cart",
+        "cart_items:create"
     );
     let r = reg_route!(
         r,
@@ -32,7 +33,8 @@ pub fn routes(
         get,
         list_cart,
         "system authed",
-        "cart"
+        "cart",
+        "cart_items:read"
     );
     let r = reg_route!(
         r,
@@ -42,7 +44,8 @@ pub fn routes(
         put,
         update_cart_item,
         "system authed",
-        "cart"
+        "cart",
+        "cart_items:update"
     );
     let r = reg_route!(
         r,
@@ -52,7 +55,8 @@ pub fn routes(
         delete,
         remove_from_cart,
         "system authed",
-        "cart"
+        "cart",
+        "cart_items:delete"
     );
     let r = reg_route!(
         r,
@@ -62,7 +66,8 @@ pub fn routes(
         delete,
         clear_cart,
         "system authed",
-        "cart"
+        "cart",
+        "cart_items:delete"
     );
     reg_route!(
         r,
@@ -72,7 +77,8 @@ pub fn routes(
         post,
         checkout,
         "system authed",
-        "cart"
+        "cart",
+        "cart_items:create"
     )
 }
 
@@ -118,7 +124,6 @@ pub async fn add_to_cart(
     Json(req): Json<AddToCartRequest>,
 ) -> AppResult<ApiResponse<()>> {
     let user_id = auth.ensure_snowflake_user_id()?;
-    auth.ensure_scope("cart_items", TokenAction::Create)?;
     validation::validate(&req)?;
     state
         .cart_service
@@ -143,7 +148,6 @@ pub async fn list_cart(
     State(state): State<crate::AppState>,
 ) -> AppResult<ApiResponse<CartResponse>> {
     let user_id = auth.ensure_snowflake_user_id()?;
-    auth.ensure_scope("cart_items", TokenAction::Read)?;
     let cart = state.cart_service.list_items(&auth, user_id).await?;
     Ok(ApiResponse::success(cart))
 }
@@ -161,7 +165,6 @@ pub async fn update_cart_item(
     Json(req): Json<UpdateCartItemRequest>,
 ) -> AppResult<ApiResponse<()>> {
     let user_id = auth.ensure_snowflake_user_id()?;
-    auth.ensure_scope("cart_items", TokenAction::Update)?;
     validation::validate(&req)?;
     let id = crate::types::snowflake_id::parse_id(&id)?;
     state
@@ -182,7 +185,6 @@ pub async fn remove_from_cart(
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<()>> {
     let user_id = auth.ensure_snowflake_user_id()?;
-    auth.ensure_scope("cart_items", TokenAction::Delete)?;
     let id = crate::types::snowflake_id::parse_id(&id)?;
     state.cart_service.remove_item(&auth, id, user_id).await?;
     Ok(ApiResponse::success(()))
@@ -197,7 +199,6 @@ pub async fn clear_cart(
     State(state): State<crate::AppState>,
 ) -> AppResult<ApiResponse<()>> {
     let user_id = auth.ensure_snowflake_user_id()?;
-    auth.ensure_scope("cart_items", TokenAction::Delete)?;
     state.cart_service.clear_cart(&auth, user_id).await?;
     Ok(ApiResponse::success(()))
 }
@@ -211,7 +212,6 @@ pub async fn checkout(
     State(state): State<crate::AppState>,
 ) -> AppResult<ApiResponse<OrderResponse>> {
     let user_id = auth.ensure_snowflake_user_id()?;
-    auth.ensure_scope("cart_items", TokenAction::Create)?;
     let (order, items) = state.cart_service.checkout(&auth, user_id).await?;
     Ok(ApiResponse::success(to_order_response(order, items)))
 }

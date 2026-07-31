@@ -10,6 +10,7 @@ use crate::dto::{CreateProductCategoryRequest, UpdateProductCategoryRequest};
 use crate::errors::app_error::AppResult;
 use crate::middleware::auth::AuthUser;
 use crate::models::product_category::ProductCategory;
+use crate::policy::check_owner_opt;
 use crate::types::snowflake_id::SnowflakeId;
 
 #[async_trait]
@@ -85,6 +86,7 @@ impl ProductCategoryService for ProductCategoryServiceImpl {
     ) -> AppResult<ProductCategory> {
         let existing =
             crate::models::product_category::find_by_id(&self.pool, id, auth.tenant_id()).await?;
+        check_owner_opt(auth, existing.created_by, existing.tenant_id.as_deref())?;
         let (req, _d) = self.before_update(auth, &existing, req).await?;
         let new_slug = req
             .name
@@ -120,6 +122,7 @@ impl ProductCategoryService for ProductCategoryServiceImpl {
     async fn delete(&self, id: SnowflakeId, auth: &AuthUser) -> AppResult<()> {
         let existing =
             crate::models::product_category::find_by_id(&self.pool, id, auth.tenant_id()).await?;
+        check_owner_opt(auth, existing.created_by, existing.tenant_id.as_deref())?;
         self.before_delete(auth, &existing).await?;
         crate::models::product_category::ensure_safe_to_delete(
             &self.pool,

@@ -11,7 +11,7 @@
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
-use axum::middleware::from_fn;
+use axum::middleware::{from_fn, from_fn_with_state};
 use axum::routing::{delete, get, post as http_post, put};
 use http_body_util::BodyExt;
 use raisfast::AppState;
@@ -209,6 +209,11 @@ async fn build_test_app(pool: raisfast::db::Pool) -> (axum::Router, AppState) {
         email_sender: raisfast::notifier::build_email_sender(&config),
         sms_sender: raisfast::notifier::build_sms_sender(&config),
         route_registry: Arc::new(Vec::new()),
+        route_perms: Arc::new(
+            raisfast::middleware::permission_guard::RoutePermissionMap::from_routes(
+                &test_route_permissions(),
+            ),
+        ),
         services: raisfast::app::ServiceRegistry::new(),
     };
     let max_upload = state.config.max_upload_size;
@@ -551,6 +556,10 @@ async fn build_test_app(pool: raisfast::db::Pool) -> (axum::Router, AppState) {
             "/user/addresses/{id}",
             delete(h_user_address::delete_address),
         )
+        .layer(from_fn_with_state(
+            state.clone(),
+            raisfast::middleware::permission_guard::permission_guard,
+        ))
         .layer(from_fn(global_rate_limit))
         .layer(axum::Extension(RateLimiterSet::new_default()));
 
@@ -776,6 +785,8 @@ mod order;
 mod page;
 #[path = "api/payment.rs"]
 mod payment;
+#[path = "api/permissions.rs"]
+mod permissions;
 #[path = "api/plugin.rs"]
 mod plugin;
 #[path = "api/post.rs"]
@@ -812,3 +823,208 @@ mod wallet;
 mod webhook;
 #[path = "api/workflow.rs"]
 mod workflow;
+
+/// Build route permission declarations matching the test app's routes.
+///
+/// Mirrors the permissions declared in the production handler `routes()` functions
+/// so the `permission_guard` middleware enforces the same access control in tests.
+fn test_route_permissions() -> Vec<raisfast::server::RouteInfo> {
+    use raisfast::server::RouteInfo;
+
+    fn r(method: &str, path: &str, perm: &str) -> RouteInfo {
+        RouteInfo {
+            method: method.to_string(),
+            path: path.to_string(),
+            source: "test".to_string(),
+            source_name: "test".to_string(),
+            permission: Some(perm.to_string()),
+        }
+    }
+
+    vec![
+        // ── Auth (public) ──
+        r("POST", "/api/v1/auth/register", "public"),
+        r("POST", "/api/v1/auth/login", "public"),
+        r("POST", "/api/v1/auth/refresh", "public"),
+        r("POST", "/api/v1/auth/logout", "authed"),
+        // ── Tokens ──
+        r("GET", "/api/v1/tokens", "authed"),
+        r("POST", "/api/v1/tokens", "authed"),
+        r("DELETE", "/api/v1/tokens/{id}", "authed"),
+        // ── Users ──
+        r("GET", "/api/v1/users/me", "authed"),
+        r("PUT", "/api/v1/users/me", "authed"),
+        r("PUT", "/api/v1/users/me/password", "authed"),
+        r("GET", "/api/v1/users/{id}", "public"),
+        r("PUT", "/api/v1/users/{id}/role", "admin"),
+        r("GET", "/api/v1/users", "admin"),
+        // ── Categories ──
+        r("GET", "/api/v1/categories", "public"),
+        r("POST", "/api/v1/categories", "categories:create"),
+        r("PUT", "/api/v1/categories/{id}", "categories:update"),
+        r("DELETE", "/api/v1/categories/{id}", "categories:delete"),
+        // ── Tags ──
+        r("GET", "/api/v1/tags", "public"),
+        r("POST", "/api/v1/tags", "tags:create"),
+        r("DELETE", "/api/v1/tags/{id}", "tags:delete"),
+        // ── Posts ──
+        r("GET", "/api/v1/posts", "public"),
+        r("POST", "/api/v1/posts", "posts:create"),
+        r("GET", "/api/v1/posts/{slug}", "public"),
+        r("PUT", "/api/v1/posts/{slug}", "posts:update"),
+        r("DELETE", "/api/v1/posts/{slug}", "posts:delete"),
+        // ── Comments ──
+        r("GET", "/api/v1/posts/{slug}/comments", "public"),
+        r("POST", "/api/v1/posts/{slug}/comments", "public"),
+        r(
+            "POST",
+            "/api/v1/posts/{slug}/comments/authed",
+            "comments:create",
+        ),
+        r("DELETE", "/api/v1/comments/{id}", "comments:delete"),
+        r("PUT", "/api/v1/comments/{id}/status", "admin"),
+        // ── Media ──
+        r("POST", "/api/v1/media/upload", "media:create"),
+        r("GET", "/api/v1/media", "media:read"),
+        r("DELETE", "/api/v1/media/{id}", "media:delete"),
+        // ── Pages ──
+        r("GET", "/api/v1/pages", "public"),
+        r("POST", "/api/v1/pages", "pages:create"),
+        r("GET", "/api/v1/pages/{slug}", "public"),
+        r("PUT", "/api/v1/pages/{slug}", "pages:update"),
+        r("DELETE", "/api/v1/pages/{slug}", "pages:delete"),
+        r("GET", "/api/v1/admin/pages", "pages:read"),
+        r("GET", "/api/v1/admin/pages/{id}", "pages:read"),
+        r("PUT", "/api/v1/admin/pages/{id}", "pages:update"),
+        r("DELETE", "/api/v1/admin/pages/{id}", "pages:delete"),
+        r("PUT", "/api/v1/admin/pages/{id}/status", "pages:update"),
+        // ── Reusable Blocks ──
+        r(
+            "GET",
+            "/api/v1/admin/reusable-blocks",
+            "reusable_blocks:read",
+        ),
+        r(
+            "POST",
+            "/api/v1/admin/reusable-blocks",
+            "reusable_blocks:create",
+        ),
+        r(
+            "GET",
+            "/api/v1/admin/reusable-blocks/{id}",
+            "reusable_blocks:read",
+        ),
+        r(
+            "PUT",
+            "/api/v1/admin/reusable-blocks/{id}",
+            "reusable_blocks:update",
+        ),
+        r(
+            "DELETE",
+            "/api/v1/admin/reusable-blocks/{id}",
+            "reusable_blocks:delete",
+        ),
+        // ── Products ──
+        r("GET", "/api/v1/products", "public"),
+        r("GET", "/api/v1/products/{slug}", "public"),
+        r("GET", "/api/v1/admin/products", "admin"),
+        r("POST", "/api/v1/admin/products", "admin"),
+        r("POST", "/api/v1/admin/products/batch", "admin"),
+        r("GET", "/api/v1/admin/products/{id}", "admin"),
+        r("PUT", "/api/v1/admin/products/{id}", "admin"),
+        r("DELETE", "/api/v1/admin/products/{id}", "admin"),
+        // ── Product Categories ──
+        r("GET", "/api/v1/product-categories", "public"),
+        r(
+            "POST",
+            "/api/v1/product-categories",
+            "product_categories:create",
+        ),
+        r("GET", "/api/v1/product-categories/{id}", "public"),
+        r(
+            "PUT",
+            "/api/v1/product-categories/{id}",
+            "product_categories:update",
+        ),
+        r(
+            "DELETE",
+            "/api/v1/product-categories/{id}",
+            "product_categories:delete",
+        ),
+        // ── Orders ──
+        r("GET", "/api/v1/orders", "orders:read"),
+        r("POST", "/api/v1/orders", "orders:create"),
+        r("GET", "/api/v1/orders/{id}", "orders:read"),
+        r("PUT", "/api/v1/orders/{id}/cancel", "orders:update"),
+        r("PUT", "/api/v1/admin/orders/{id}/remark", "admin"),
+        r("GET", "/api/v1/admin/orders/stats", "admin"),
+        // ── Wallets ──
+        r("GET", "/api/v1/wallets", "wallet:read"),
+        r("GET", "/api/v1/wallets/{currency}", "wallet:read"),
+        r("GET", "/api/v1/wallets/transactions", "wallet:read"),
+        r(
+            "GET",
+            "/api/v1/wallets/{currency}/transactions",
+            "wallet:read",
+        ),
+        r("GET", "/api/v1/admin/wallets", "admin"),
+        r("GET", "/api/v1/admin/wallets/transactions", "admin"),
+        r("POST", "/api/v1/admin/wallets/credit", "admin"),
+        r("POST", "/api/v1/admin/wallets/debit", "admin"),
+        r(
+            "GET",
+            "/api/v1/admin/wallets/{user_id}/transactions",
+            "admin",
+        ),
+        r(
+            "GET",
+            "/api/v1/admin/wallets/{user_id}/{currency}/transactions",
+            "admin",
+        ),
+        r("POST", "/api/v1/admin/wallets/{tx_id}/reversal", "admin"),
+        // ── Payment ──
+        r("GET", "/api/v1/payment/channels/available", "public"),
+        r("GET", "/api/v1/payment/orders", "payment:read"),
+        r("POST", "/api/v1/payment/orders", "payment:create"),
+        r("GET", "/api/v1/payment/orders/{id}", "payment:read"),
+        r(
+            "POST",
+            "/api/v1/payment/orders/{id}/cancel",
+            "payment:update",
+        ),
+        r(
+            "GET",
+            "/api/v1/payment/orders/{id}/transactions",
+            "payment:read",
+        ),
+        r("GET", "/api/v1/payment/orders/{id}/refunds", "payment:read"),
+        r("POST", "/api/v1/payment/callback/{channel_id}", "public"),
+        // ── Cart ──
+        r("POST", "/api/v1/cart", "cart_items:create"),
+        r("GET", "/api/v1/cart", "cart_items:read"),
+        r("PUT", "/api/v1/cart/{id}", "cart_items:update"),
+        r("DELETE", "/api/v1/cart/{id}", "cart_items:delete"),
+        r("DELETE", "/api/v1/cart", "cart_items:delete"),
+        r("POST", "/api/v1/cart/checkout", "cart_items:create"),
+        // ── Product Variants ──
+        r("GET", "/api/v1/products/{product_id}/variants", "public"),
+        r("POST", "/api/v1/admin/product-variants", "admin"),
+        r("PUT", "/api/v1/admin/product-variants/{id}", "admin"),
+        r("DELETE", "/api/v1/admin/product-variants/{id}", "admin"),
+        // ── User Addresses ──
+        r("GET", "/api/v1/user/addresses", "user_addresses:read"),
+        r("POST", "/api/v1/user/addresses", "user_addresses:create"),
+        r(
+            "PUT",
+            "/api/v1/user/addresses/{id}",
+            "user_addresses:update",
+        ),
+        r(
+            "DELETE",
+            "/api/v1/user/addresses/{id}",
+            "user_addresses:delete",
+        ),
+        // ── Admin (heuristic covers these, but explicit for clarity) ──
+        // All /admin/ routes without explicit permission above are caught by heuristic
+    ]
+}

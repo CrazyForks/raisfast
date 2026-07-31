@@ -28,7 +28,8 @@ pub fn routes(
         get,
         list_roles,
         "system admin",
-        "admin/rbac"
+        "admin/rbac",
+        "admin"
     );
     let r = reg_route!(
         r,
@@ -38,7 +39,8 @@ pub fn routes(
         create,
         create_role,
         "system admin",
-        "admin/rbac"
+        "admin/rbac",
+        "admin"
     );
     let r = reg_route!(
         r,
@@ -48,7 +50,8 @@ pub fn routes(
         put,
         update_role,
         "system admin",
-        "admin/rbac"
+        "admin/rbac",
+        "admin"
     );
     let r = reg_route!(
         r,
@@ -58,7 +61,8 @@ pub fn routes(
         delete,
         delete_role,
         "system admin",
-        "admin/rbac"
+        "admin/rbac",
+        "admin"
     );
     let r = reg_route!(
         r,
@@ -68,7 +72,8 @@ pub fn routes(
         get,
         get_permissions,
         "system admin",
-        "admin/rbac"
+        "admin/rbac",
+        "admin"
     );
     let r = reg_route!(
         r,
@@ -78,7 +83,8 @@ pub fn routes(
         put,
         set_permissions,
         "system admin",
-        "admin/rbac"
+        "admin/rbac",
+        "admin"
     );
     reg_route!(
         r,
@@ -88,7 +94,8 @@ pub fn routes(
         post,
         admin_batch,
         "system admin",
-        "admin/rbac"
+        "admin/rbac",
+        "admin"
     )
 }
 

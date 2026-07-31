@@ -10,9 +10,9 @@ mod doctor_cmd;
 mod plugin_cmd;
 mod route_cmd;
 mod server_cmd;
-mod user_cmd;
 #[cfg(feature = "tunnel")]
 mod tunnel_cmd;
+mod user_cmd;
 
 use raisfast::config::app::AppConfig;
 

@@ -38,7 +38,11 @@ async fn create_requires_scope() {
     let (mut app, _, tok) = setup().await;
     let (_, body): (StatusCode, Value) = send(
         &mut app,
-        post_json_auth("/api/v1/tokens", json!({"name": "RO", "scopes": ["categories:read"]}), &tok),
+        post_json_auth(
+            "/api/v1/tokens",
+            json!({"name": "RO", "scopes": ["categories:read"]}),
+            &tok,
+        ),
     )
     .await;
     let api_token = body["data"]["token"].as_str().unwrap();

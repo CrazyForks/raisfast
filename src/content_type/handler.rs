@@ -16,7 +16,9 @@ use std::sync::Arc;
 
 use super::repository::{ContentQuery, ContentRepository, SaveContext};
 use super::rule_engine::compile_rule_sql;
-use super::schema::{ApiAccess, ContentKind, ContentTypeSchema, FieldType, RelationType, check_api_access};
+use super::schema::{
+    ApiAccess, ContentKind, ContentTypeSchema, FieldType, RelationType, check_api_access,
+};
 use crate::AppState;
 use crate::constants::*;
 use crate::db::DbDriver;
@@ -284,14 +286,18 @@ pub fn register_content_routes(
                     &format!("{admin_cms}/{plural}"),
                     axum::routing::get({
                         let singular = singular.clone();
-                        move |state, auth, params| admin_list_handler(state, auth, singular.clone(), params)
+                        move |state, auth, params| {
+                            admin_list_handler(state, auth, singular.clone(), params)
+                        }
                     }),
                 )
                 .route(
                     &format!("{admin_cms}/{plural}/{{id}}"),
                     axum::routing::get({
                         let singular = singular.clone();
-                        move |state, auth, path| admin_get_handler(state, auth, path, singular.clone())
+                        move |state, auth, path| {
+                            admin_get_handler(state, auth, path, singular.clone())
+                        }
                     }),
                 );
         } else {
@@ -339,14 +345,18 @@ pub fn register_content_routes(
                     &format!("{admin_cms}/{plural}"),
                     axum::routing::get({
                         let singular = singular.clone();
-                        move |state, auth, params| admin_list_handler(state, auth, singular.clone(), params)
+                        move |state, auth, params| {
+                            admin_list_handler(state, auth, singular.clone(), params)
+                        }
                     }),
                 )
                 .route(
                     &format!("{admin_cms}/{plural}/{{id}}"),
                     axum::routing::get({
                         let singular = singular.clone();
-                        move |state, auth, path| admin_get_handler(state, auth, path, singular.clone())
+                        move |state, auth, path| {
+                            admin_get_handler(state, auth, path, singular.clone())
+                        }
                     }),
                 );
         }
@@ -595,7 +605,7 @@ async fn dynamic_cms_dispatch_simple(
 }
 
 /// Catch-all admin dynamic route handler
- pub async fn dynamic_admin_cms_handler(
+pub async fn dynamic_admin_cms_handler(
     State(state): State<AppState>,
     auth: AuthUser,
     method: axum::http::Method,
@@ -1528,7 +1538,10 @@ async fn admin_get_handler(
 // ── Schema Management API ──────────────────────────────────────────
 
 /// GET /admin/content-types — List schema definitions of all registered content types
- pub async fn list_schemas(State(state): State<AppState>, auth: AuthUser) -> Result<impl IntoResponse, AppError> {
+pub async fn list_schemas(
+    State(state): State<AppState>,
+    auth: AuthUser,
+) -> Result<impl IntoResponse, AppError> {
     auth.ensure_admin()?;
     let schemas = state.content_type_registry.all();
     Ok(Json(crate::errors::response::ApiResponse::success(schemas)))
@@ -1631,7 +1644,7 @@ pub async fn create_schema(
 /// DELETE /admin/content-types/:singular — Delete a content type
 ///
 /// Deletes the TOML file and unregisters from the in-memory registry. Does not drop the database table.
- pub async fn delete_schema(
+pub async fn delete_schema(
     State(state): State<AppState>,
     auth: AuthUser,
     Path(singular): Path<String>,
@@ -1663,7 +1676,7 @@ pub async fn create_schema(
 /// it is compared against the database and automatically `ALTER TABLE ADD COLUMN` to add missing
 /// columns (does not delete columns or change column types).
 /// The updated schema is synced to the in-memory registry (takes effect immediately, no restart required).
- pub async fn update_schema(
+pub async fn update_schema(
     State(state): State<AppState>,
     auth: AuthUser,
     Path(singular): Path<String>,

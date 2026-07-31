@@ -13,7 +13,7 @@ use crate::dto::{
 use crate::errors::app_error::{AppError, AppResult};
 use crate::errors::response::{ApiResponse, PaginatedData};
 use crate::errors::validation;
-use crate::middleware::auth::{AuthUser, TokenAction};
+use crate::middleware::auth::AuthUser;
 use crate::models::comment::CommentStatus;
 use crate::utils::pagination::PaginationParams;
 
@@ -34,17 +34,20 @@ pub fn routes(
         get,
         self::list,
         "system public",
-        "comments"
+        "comments",
+        "public"
     );
-    let r = {
-        let mr = axum::routing::post(create_guest).layer(from_fn(comment_rate_limit));
-        r.route("/posts/{slug}/comments", mr)
-    };
-    registry.record(
-        "POST",
-        "/api/v1/posts/{slug}/comments",
+    let r = reg_route!(
+        r,
+        registry,
+        restful,
+        "/posts/{slug}/comments",
+        post,
+        axum::routing::post(create_guest).layer(from_fn(comment_rate_limit)),
         "system public",
         "comments",
+        "public",
+        layered
     );
     let r = reg_route!(
         r,
@@ -54,7 +57,8 @@ pub fn routes(
         post,
         create,
         "system authed",
-        "comments"
+        "comments",
+        "comments:create"
     );
     let r = reg_route!(
         r,
@@ -64,7 +68,8 @@ pub fn routes(
         delete,
         self::delete,
         "system authed",
-        "comments"
+        "comments",
+        "comments:delete"
     );
     let r = reg_route!(
         r,
@@ -74,7 +79,8 @@ pub fn routes(
         put,
         update_status,
         "system authed",
-        "comments"
+        "comments",
+        "admin"
     );
     let r = reg_route!(
         r,
@@ -84,7 +90,8 @@ pub fn routes(
         get,
         list_all,
         "system admin",
-        "comments"
+        "comments",
+        "admin"
     );
     let r = reg_route!(
         r,
@@ -94,7 +101,8 @@ pub fn routes(
         get,
         admin_list,
         "system admin",
-        "admin/comments"
+        "admin/comments",
+        "admin"
     );
     let r = reg_route!(
         r,
@@ -104,7 +112,8 @@ pub fn routes(
         put,
         admin_update_status,
         "system admin",
-        "admin/comments"
+        "admin/comments",
+        "admin"
     );
     let r = reg_route!(
         r,
@@ -114,7 +123,8 @@ pub fn routes(
         delete,
         admin_delete,
         "system admin",
-        "admin/comments"
+        "admin/comments",
+        "admin"
     );
     reg_route!(
         r,
@@ -124,7 +134,8 @@ pub fn routes(
         post,
         admin_batch,
         "system admin",
-        "admin/comments"
+        "admin/comments",
+        "admin"
     )
 }
 
@@ -160,8 +171,6 @@ pub async fn list_all(
     State(state): State<crate::AppState>,
     axum::extract::Query(params): axum::extract::Query<PaginationParams>,
 ) -> AppResult<ApiResponse<PaginatedData<crate::models::comment::AdminCommentRow>>> {
-    auth.ensure_admin()?;
-    auth.ensure_scope("comments", TokenAction::Read)?;
     let mut p = params;
     p.sanitize();
     let (comments, total) = state
@@ -184,8 +193,6 @@ pub async fn create(
     Path(slug): Path<String>,
     Json(req): Json<CreateCommentRequest>,
 ) -> AppResult<ApiResponse<crate::models::comment::CommentResponse>> {
-    auth.ensure_authenticated()?;
-    auth.ensure_scope("comments", TokenAction::Create)?;
     validation::validate(&req)?;
 
     let comment = state
@@ -248,8 +255,6 @@ pub async fn delete(
     State(state): State<crate::AppState>,
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<()>> {
-    auth.ensure_authenticated()?;
-    auth.ensure_scope("comments", TokenAction::Delete)?;
     let id = crate::types::snowflake_id::parse_id(&id)?;
     state.comment_service.delete(id, &auth).await?;
     Ok(ApiResponse::success(()))
@@ -268,8 +273,6 @@ pub async fn update_status(
     Path(id): Path<String>,
     Json(req): Json<UpdateCommentStatusRequest>,
 ) -> AppResult<ApiResponse<()>> {
-    auth.ensure_admin()?;
-    auth.ensure_scope("comments", TokenAction::Update)?;
     validation::validate(&req)?;
     let id = crate::types::snowflake_id::parse_id(&id)?;
     state
@@ -290,8 +293,6 @@ pub async fn admin_list(
     State(state): State<crate::AppState>,
     Query(query): Query<AdminCommentListQuery>,
 ) -> AppResult<ApiResponse<PaginatedData<crate::models::comment::AdminCommentRow>>> {
-    auth.ensure_admin()?;
-    auth.ensure_scope("comments", TokenAction::Read)?;
     let pagination = PaginationParams::from_options(query.page, query.page_size);
     let (comments, total) = state
         .comment_service
@@ -312,8 +313,6 @@ pub async fn admin_update_status(
     Path(id): Path<String>,
     Json(req): Json<UpdateCommentStatusRequest>,
 ) -> AppResult<ApiResponse<()>> {
-    auth.ensure_admin()?;
-    auth.ensure_scope("comments", TokenAction::Update)?;
     validation::validate(&req)?;
     let id = crate::types::snowflake_id::parse_id(&id)?;
     state
@@ -333,8 +332,6 @@ pub async fn admin_delete(
     State(state): State<crate::AppState>,
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<()>> {
-    auth.ensure_admin()?;
-    auth.ensure_scope("comments", TokenAction::Delete)?;
     let id = crate::types::snowflake_id::parse_id(&id)?;
     state.comment_service.delete(id, &auth).await?;
     Ok(ApiResponse::success(()))
@@ -350,8 +347,6 @@ pub async fn admin_batch(
     State(state): State<crate::AppState>,
     Json(req): Json<BatchRequest>,
 ) -> AppResult<ApiResponse<BatchResponse>> {
-    auth.ensure_admin()?;
-    auth.ensure_scope("comments", TokenAction::Delete)?;
     validation::validate(&req)?;
     let mut affected = 0usize;
     for raw_id in &req.ids {

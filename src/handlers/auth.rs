@@ -28,16 +28,30 @@ pub fn routes(
 
     let restful = config.api_restful;
     let r = axum::Router::new();
-    let r = {
-        let mr = axum::routing::post(register).layer(from_fn(register_rate_limit));
-        r.route("/auth/register", mr)
-    };
-    registry.record("POST", "/api/v1/auth/register", "system public", "auth");
-    let r = {
-        let mr = axum::routing::post(login).layer(from_fn(login_rate_limit));
-        r.route("/auth/login", mr)
-    };
-    registry.record("POST", "/api/v1/auth/login", "system public", "auth");
+    let r = reg_route!(
+        r,
+        registry,
+        restful,
+        "/auth/register",
+        post,
+        axum::routing::post(register).layer(from_fn(register_rate_limit)),
+        "system public",
+        "auth",
+        "public",
+        layered
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        restful,
+        "/auth/login",
+        post,
+        axum::routing::post(login).layer(from_fn(login_rate_limit)),
+        "system public",
+        "auth",
+        "public",
+        layered
+    );
     let r = reg_route!(
         r,
         registry,
@@ -46,7 +60,8 @@ pub fn routes(
         post,
         refresh,
         "system public",
-        "auth"
+        "auth",
+        "public"
     );
     let r = reg_route!(
         r,
@@ -56,7 +71,8 @@ pub fn routes(
         post,
         logout,
         "system public",
-        "auth"
+        "auth",
+        "authed"
     );
     let r = reg_route!(
         r,
@@ -66,7 +82,8 @@ pub fn routes(
         post,
         forgot_password,
         "system public",
-        "auth"
+        "auth",
+        "public"
     );
     let r = reg_route!(
         r,
@@ -76,7 +93,8 @@ pub fn routes(
         post,
         reset_password,
         "system public",
-        "auth"
+        "auth",
+        "public"
     );
     let r = reg_route!(
         r,
@@ -86,7 +104,8 @@ pub fn routes(
         post,
         set_password,
         "system public",
-        "auth"
+        "auth",
+        "public"
     );
     let r = reg_route!(
         r,
@@ -96,7 +115,8 @@ pub fn routes(
         get,
         auth_config,
         "system public",
-        "auth"
+        "auth",
+        "public"
     );
     let r = reg_route!(
         r,
@@ -106,7 +126,8 @@ pub fn routes(
         post,
         send_sms_code,
         "system public",
-        "auth"
+        "auth",
+        "public"
     );
     let r = reg_route!(
         r,
@@ -116,7 +137,8 @@ pub fn routes(
         post,
         verify_sms,
         "system public",
-        "auth"
+        "auth",
+        "public"
     );
     let r = reg_route!(
         r,
@@ -126,7 +148,8 @@ pub fn routes(
         post,
         bind_phone,
         "system public",
-        "auth"
+        "auth",
+        "authed"
     );
     let r = reg_route!(
         r,
@@ -136,7 +159,8 @@ pub fn routes(
         post,
         verify_email,
         "system public",
-        "auth"
+        "auth",
+        "public"
     );
     let r = reg_route!(
         r,
@@ -146,7 +170,8 @@ pub fn routes(
         post,
         resend_verification,
         "system public",
-        "auth"
+        "auth",
+        "authed"
     );
     let r = reg_route!(
         r,
@@ -156,7 +181,8 @@ pub fn routes(
         post,
         bind_email_credential,
         "system public",
-        "auth"
+        "auth",
+        "authed"
     );
     let r = reg_route!(
         r,
@@ -166,7 +192,8 @@ pub fn routes(
         get,
         list_credentials,
         "system public",
-        "auth"
+        "auth",
+        "authed"
     );
     let r = reg_route!(
         r,
@@ -176,7 +203,8 @@ pub fn routes(
         post,
         create_device_code,
         "system public",
-        "auth"
+        "auth",
+        "authed"
     );
     let r = reg_route!(
         r,
@@ -186,7 +214,8 @@ pub fn routes(
         post,
         exchange_device_code,
         "system public",
-        "auth"
+        "auth",
+        "public"
     );
     reg_route!(
         r,
@@ -196,7 +225,8 @@ pub fn routes(
         delete,
         delete_credential,
         "system public",
-        "auth"
+        "auth",
+        "authed"
     )
 }
 
@@ -415,7 +445,6 @@ pub async fn bind_phone(
     State(state): State<crate::AppState>,
     Json(req): Json<BindPhoneRequest>,
 ) -> AppResult<ApiResponse<()>> {
-    auth.ensure_authenticated()?;
     validation::validate(&req)?;
     sms::bind_phone(&state.pool, &auth, &req.phone, &req.code).await?;
     Ok(ApiResponse::success(()))
@@ -427,7 +456,6 @@ pub async fn bind_email_credential(
     State(state): State<crate::AppState>,
     Json(req): Json<BindEmailRequest>,
 ) -> AppResult<ApiResponse<()>> {
-    auth.ensure_authenticated()?;
     validation::validate(&req)?;
     auth::bind_email_credential(&state.pool, &auth, &req.email, &req.password).await?;
     Ok(ApiResponse::success(()))
@@ -438,7 +466,6 @@ pub async fn list_credentials(
     auth: AuthUser,
     State(state): State<crate::AppState>,
 ) -> AppResult<ApiResponse<Vec<CredentialResponse>>> {
-    auth.ensure_authenticated()?;
     let creds = auth::list_credentials(&state.pool, &auth).await?;
     let responses: AppResult<Vec<CredentialResponse>> = creds
         .into_iter()
@@ -453,7 +480,6 @@ pub async fn delete_credential(
     State(state): State<crate::AppState>,
     axum::extract::Path(id): axum::extract::Path<i64>,
 ) -> AppResult<ApiResponse<()>> {
-    auth.ensure_authenticated()?;
     auth::delete_credential(&state.pool, &auth, SnowflakeId(id)).await?;
     Ok(ApiResponse::success(()))
 }
@@ -464,13 +490,18 @@ pub async fn create_device_code(
     State(state): State<crate::AppState>,
     Json(req): Json<CreateDeviceCodeRequest>,
 ) -> AppResult<ApiResponse<crate::dto::DeviceCodeResponse>> {
-    auth.ensure_authenticated()?;
     validation::validate(&req)?;
     let uid = auth.ensure_snowflake_user_id()?;
-    let code =
-        user_device_code::create_device_code(&state.pool, uid, &req.access_token, &req.refresh_token)
-            .await?;
-    Ok(ApiResponse::success(crate::dto::DeviceCodeResponse { code }))
+    let code = user_device_code::create_device_code(
+        &state.pool,
+        uid,
+        &req.access_token,
+        &req.refresh_token,
+    )
+    .await?;
+    Ok(ApiResponse::success(crate::dto::DeviceCodeResponse {
+        code,
+    }))
 }
 
 /// Exchange a device code for authentication tokens

@@ -4,7 +4,7 @@ use crate::dto::{
 use crate::errors::app_error::AppResult;
 use crate::errors::response::ApiResponse;
 use crate::errors::validation;
-use crate::middleware::auth::{AuthUser, TokenAction};
+use crate::middleware::auth::AuthUser;
 use crate::utils::pagination::PaginationParams;
 use axum::Json;
 use axum::extract::{Path, Query, State};
@@ -23,7 +23,8 @@ pub fn routes(
         get,
         list_active,
         "system public",
-        "products"
+        "products",
+        "public"
     );
     let r = reg_route!(
         r,
@@ -33,7 +34,8 @@ pub fn routes(
         get,
         get_product,
         "system public",
-        "products"
+        "products",
+        "public"
     );
     let r = reg_route!(
         r,
@@ -43,7 +45,8 @@ pub fn routes(
         get,
         admin_list,
         "system admin",
-        "admin/products"
+        "admin/products",
+        "admin"
     );
     let r = reg_route!(
         r,
@@ -53,7 +56,8 @@ pub fn routes(
         create,
         admin_create,
         "system admin",
-        "admin/products"
+        "admin/products",
+        "admin"
     );
     let r = reg_route!(
         r,
@@ -63,7 +67,8 @@ pub fn routes(
         post,
         admin_batch,
         "system admin",
-        "admin/products"
+        "admin/products",
+        "admin"
     );
     let r = reg_route!(
         r,
@@ -73,7 +78,8 @@ pub fn routes(
         get,
         admin_get,
         "system admin",
-        "admin/products"
+        "admin/products",
+        "admin"
     );
     let r = reg_route!(
         r,
@@ -83,7 +89,8 @@ pub fn routes(
         put,
         admin_update,
         "system admin",
-        "admin/products"
+        "admin/products",
+        "admin"
     );
     reg_route!(
         r,
@@ -93,7 +100,8 @@ pub fn routes(
         delete,
         admin_delete,
         "system admin",
-        "admin/products"
+        "admin/products",
+        "admin"
     )
 }
 
@@ -143,8 +151,6 @@ pub async fn admin_list(
     State(state): State<crate::AppState>,
     Query(query): Query<crate::dto::product::AdminProductListQuery>,
 ) -> AppResult<ApiResponse<crate::errors::response::PaginatedData<ProductResponse>>> {
-    auth.ensure_admin()?;
-    auth.ensure_scope("products", TokenAction::Read)?;
     let params = PaginationParams::from_options(query.page, query.page_size);
     let (items, total) = state
         .product_service
@@ -171,8 +177,6 @@ pub async fn admin_get(
     State(state): State<crate::AppState>,
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<ProductResponse>> {
-    auth.ensure_admin()?;
-    auth.ensure_scope("products", TokenAction::Read)?;
     let id = crate::types::snowflake_id::parse_id(&id)?;
     let p = state.product_service.get(id, &auth).await?;
     let mut resp = ProductResponse::from(p);
@@ -190,8 +194,6 @@ pub async fn admin_create(
     State(state): State<crate::AppState>,
     Json(req): Json<CreateProductRequest>,
 ) -> AppResult<ApiResponse<ProductResponse>> {
-    auth.ensure_admin()?;
-    auth.ensure_scope("products", TokenAction::Create)?;
     validation::validate(&req)?;
     let p = state.product_service.create(&auth, req).await?;
     Ok(ApiResponse::success(ProductResponse::from(p)))
@@ -209,8 +211,6 @@ pub async fn admin_update(
     Path(id): Path<String>,
     Json(req): Json<UpdateProductRequest>,
 ) -> AppResult<ApiResponse<ProductResponse>> {
-    auth.ensure_admin()?;
-    auth.ensure_scope("products", TokenAction::Update)?;
     validation::validate(&req)?;
     let id = crate::types::snowflake_id::parse_id(&id)?;
     let p = state.product_service.update(&auth, id, req).await?;
@@ -227,8 +227,6 @@ pub async fn admin_delete(
     State(state): State<crate::AppState>,
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<()>> {
-    auth.ensure_admin()?;
-    auth.ensure_scope("products", TokenAction::Delete)?;
     let id = crate::types::snowflake_id::parse_id(&id)?;
     state.product_service.delete(id, &auth).await?;
     Ok(ApiResponse::success(()))
@@ -239,8 +237,6 @@ pub async fn admin_batch(
     State(state): State<crate::AppState>,
     Json(req): Json<BatchRequest>,
 ) -> AppResult<ApiResponse<BatchResponse>> {
-    auth.ensure_admin()?;
-    auth.ensure_scope("products", TokenAction::Delete)?;
     validation::validate(&req)?;
     let affected = state
         .product_service

@@ -12,7 +12,7 @@ use crate::dto::{
 };
 use crate::errors::app_error::{AppError, AppResult};
 use crate::errors::response::ApiResponse;
-use crate::middleware::auth::{AuthUser, TokenAction};
+use crate::middleware::auth::AuthUser;
 use crate::types::snowflake_id::SnowflakeId;
 use crate::utils::pagination::PaginationParams;
 use crate::worker::{
@@ -34,7 +34,8 @@ pub fn routes(
         get,
         self::list,
         "system admin",
-        "admin/crons"
+        "admin/crons",
+        "admin"
     );
     let r = reg_route!(
         r,
@@ -44,7 +45,8 @@ pub fn routes(
         create,
         self::create,
         "system admin",
-        "admin/crons"
+        "admin/crons",
+        "admin"
     );
     let r = reg_route!(
         r,
@@ -54,7 +56,8 @@ pub fn routes(
         get,
         self::get,
         "system admin",
-        "admin/crons"
+        "admin/crons",
+        "admin"
     );
     let r = reg_route!(
         r,
@@ -64,7 +67,8 @@ pub fn routes(
         put,
         update,
         "system admin",
-        "admin/crons"
+        "admin/crons",
+        "admin"
     );
     let r = reg_route!(
         r,
@@ -74,7 +78,8 @@ pub fn routes(
         delete,
         self::delete,
         "system admin",
-        "admin/crons"
+        "admin/crons",
+        "admin"
     );
     let r = reg_route!(
         r,
@@ -84,7 +89,8 @@ pub fn routes(
         post,
         toggle,
         "system admin",
-        "admin/crons"
+        "admin/crons",
+        "admin"
     );
     let r = reg_route!(
         r,
@@ -94,7 +100,8 @@ pub fn routes(
         get,
         logs,
         "system admin",
-        "admin/crons"
+        "admin/crons",
+        "admin"
     );
     let r = reg_route!(
         r,
@@ -104,7 +111,8 @@ pub fn routes(
         post,
         cleanup_logs,
         "system admin",
-        "admin/crons"
+        "admin/crons",
+        "admin"
     );
     reg_route!(
         r,
@@ -114,7 +122,8 @@ pub fn routes(
         post,
         admin_batch,
         "system admin",
-        "admin/crons"
+        "admin/crons",
+        "admin"
     )
 }
 
@@ -124,12 +133,10 @@ pub fn routes(
     responses((status = 200, description = "List cron schedules"))
 )]
 pub async fn list(
-    auth: AuthUser,
+    _auth: AuthUser,
     State(state): State<AppState>,
     Query(mut params): Query<PaginationParams>,
 ) -> AppResult<ApiResponse<crate::errors::response::PaginatedData<CronSchedule>>> {
-    auth.ensure_admin()?;
-    auth.ensure_scope("cron_schedules", TokenAction::Read)?;
     params.sanitize();
     let all = list_schedules(&state.pool).await?;
     let total = all.len() as i64;
@@ -149,12 +156,10 @@ pub async fn list(
     responses((status = 200, description = "Schedule detail"))
 )]
 pub async fn get(
-    auth: AuthUser,
+    _auth: AuthUser,
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<CronSchedule>> {
-    auth.ensure_admin()?;
-    auth.ensure_scope("cron_schedules", TokenAction::Read)?;
     let id = crate::types::snowflake_id::parse_id(&id)?;
     let schedule = find_by_id(&state.pool, id)
         .await?
@@ -169,12 +174,10 @@ pub async fn get(
     responses((status = 200, description = "Schedule created"))
 )]
 pub async fn create(
-    auth: AuthUser,
+    _auth: AuthUser,
     State(state): State<AppState>,
     Json(req): Json<CreateCronRequest>,
 ) -> AppResult<ApiResponse<CronSchedule>> {
-    auth.ensure_admin()?;
-    auth.ensure_scope("cron_schedules", TokenAction::Create)?;
     crate::errors::validation::validate(&req)?;
     let schedule = create_schedule(
         &state.pool,
@@ -196,13 +199,11 @@ pub async fn create(
     responses((status = 200, description = "Schedule updated"))
 )]
 pub async fn update(
-    auth: AuthUser,
+    _auth: AuthUser,
     State(state): State<AppState>,
     Path(id): Path<String>,
     Json(req): Json<UpdateCronRequest>,
 ) -> AppResult<ApiResponse<CronSchedule>> {
-    auth.ensure_admin()?;
-    auth.ensure_scope("cron_schedules", TokenAction::Update)?;
     crate::errors::validation::validate(&req)?;
     let id = crate::types::snowflake_id::parse_id(&id)?;
     let updated = update_schedule(
@@ -226,13 +227,11 @@ pub async fn update(
     responses((status = 200, description = "Schedule toggled"))
 )]
 pub async fn toggle(
-    auth: AuthUser,
+    _auth: AuthUser,
     State(state): State<AppState>,
     Path(id): Path<String>,
     Json(body): Json<ToggleBody>,
 ) -> AppResult<ApiResponse<()>> {
-    auth.ensure_admin()?;
-    auth.ensure_scope("cron_schedules", TokenAction::Update)?;
     let id = crate::types::snowflake_id::parse_id(&id)?;
     toggle_schedule(&state.pool, id, body.enabled).await?;
     Ok(ApiResponse::success(()))
@@ -245,12 +244,10 @@ pub async fn toggle(
     responses((status = 200, description = "Schedule deleted"))
 )]
 pub async fn delete(
-    auth: AuthUser,
+    _auth: AuthUser,
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<()>> {
-    auth.ensure_admin()?;
-    auth.ensure_scope("cron_schedules", TokenAction::Delete)?;
     let id = crate::types::snowflake_id::parse_id(&id)?;
     delete_schedule(&state.pool, id).await?;
     Ok(ApiResponse::success(()))
@@ -266,12 +263,10 @@ pub async fn delete(
     responses((status = 200, description = "Execution logs"))
 )]
 pub async fn logs(
-    auth: AuthUser,
+    _auth: AuthUser,
     State(state): State<AppState>,
     Query(params): Query<LogQueryParams>,
 ) -> AppResult<ApiResponse<Vec<crate::worker::CronExecutionLog>>> {
-    auth.ensure_admin()?;
-    auth.ensure_scope("cron_schedules", TokenAction::Read)?;
     let limit = params.limit.clamp(1, 100);
     let logs = if let Some(ref schedule_id) = params.schedule_id {
         let sid = crate::types::snowflake_id::parse_id(schedule_id)?;
@@ -288,11 +283,9 @@ pub async fn logs(
     responses((status = 200, description = "Expired logs cleaned up"))
 )]
 pub async fn cleanup_logs(
-    auth: AuthUser,
+    _auth: AuthUser,
     State(state): State<AppState>,
 ) -> AppResult<ApiResponse<u64>> {
-    auth.ensure_admin()?;
-    auth.ensure_scope("cron_schedules", TokenAction::Delete)?;
     let days = state.config.cron_log_retention_days;
     let count = cleanup_execution_logs(&state.pool, days).await?;
     Ok(ApiResponse::success(count))
@@ -304,12 +297,10 @@ pub async fn cleanup_logs(
     responses((status = 200, description = "Batch operation completed"))
 )]
 pub async fn admin_batch(
-    auth: AuthUser,
+    _auth: AuthUser,
     State(state): State<AppState>,
     Json(req): Json<BatchRequest>,
 ) -> AppResult<ApiResponse<BatchResponse>> {
-    auth.ensure_admin()?;
-    auth.ensure_scope("cron_schedules", TokenAction::Delete)?;
     crate::errors::validation::validate(&req)?;
     let mut affected = 0usize;
     for id_str in &req.ids {

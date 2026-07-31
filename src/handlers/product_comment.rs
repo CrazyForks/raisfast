@@ -8,7 +8,7 @@ use crate::dto::product_comment::{
 use crate::errors::app_error::AppResult;
 use crate::errors::response::{ApiResponse, PaginatedData};
 use crate::errors::validation;
-use crate::middleware::auth::{AuthUser, TokenAction};
+use crate::middleware::auth::AuthUser;
 use crate::models::product_comment::ProductCommentStats;
 use crate::utils::pagination::PaginationParams;
 
@@ -26,7 +26,8 @@ pub fn routes(
         get,
         list_by_product,
         "system public",
-        "product_comments"
+        "product_comments",
+        "public"
     );
     let r = reg_route!(
         r,
@@ -36,7 +37,8 @@ pub fn routes(
         get,
         get_stats,
         "system public",
-        "product_comments"
+        "product_comments",
+        "public"
     );
     let r = reg_route!(
         r,
@@ -46,7 +48,8 @@ pub fn routes(
         post,
         create,
         "system authed",
-        "product_comments"
+        "product_comments",
+        "product_comments:create"
     );
     let r = reg_route!(
         r,
@@ -56,7 +59,8 @@ pub fn routes(
         put,
         update,
         "system authed",
-        "product_comments"
+        "product_comments",
+        "product_comments:update"
     );
     let r = reg_route!(
         r,
@@ -66,7 +70,8 @@ pub fn routes(
         delete,
         delete,
         "system authed",
-        "product_comments"
+        "product_comments",
+        "product_comments:delete"
     );
     let r = reg_route!(
         r,
@@ -76,7 +81,8 @@ pub fn routes(
         get,
         list_by_user,
         "system authed",
-        "product_comments"
+        "product_comments",
+        "product_comments:read"
     );
     let r = reg_route!(
         r,
@@ -86,7 +92,8 @@ pub fn routes(
         get,
         admin_list,
         "system admin",
-        "admin/product_comments"
+        "admin/product_comments",
+        "admin"
     );
     let r = reg_route!(
         r,
@@ -96,7 +103,8 @@ pub fn routes(
         put,
         admin_update_status,
         "system admin",
-        "admin/product_comments"
+        "admin/product_comments",
+        "admin"
     );
     let r = reg_route!(
         r,
@@ -106,7 +114,8 @@ pub fn routes(
         put,
         admin_reply,
         "system admin",
-        "admin/product_comments"
+        "admin/product_comments",
+        "admin"
     );
     reg_route!(
         r,
@@ -116,7 +125,8 @@ pub fn routes(
         delete,
         admin_delete,
         "system admin",
-        "admin/product_comments"
+        "admin/product_comments",
+        "admin"
     )
 }
 
@@ -165,8 +175,6 @@ pub async fn create(
     State(state): State<crate::AppState>,
     Json(req): Json<CreateProductCommentRequest>,
 ) -> AppResult<ApiResponse<ProductCommentResponse>> {
-    auth.ensure_authenticated()?;
-    auth.ensure_scope("product_comments", TokenAction::Create)?;
     validation::validate(&req)?;
     let comment = state.product_comment_service.create(&auth, req).await?;
     Ok(ApiResponse::success(ProductCommentResponse::from(comment)))
@@ -184,8 +192,6 @@ pub async fn update(
     Path(id): Path<String>,
     Json(req): Json<UpdateProductCommentRequest>,
 ) -> AppResult<ApiResponse<ProductCommentResponse>> {
-    auth.ensure_authenticated()?;
-    auth.ensure_scope("product_comments", TokenAction::Update)?;
     validation::validate(&req)?;
     let id = crate::types::snowflake_id::parse_id(&id)?;
     let comment = state.product_comment_service.update(&auth, id, req).await?;
@@ -202,8 +208,6 @@ pub async fn delete(
     State(state): State<crate::AppState>,
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<()>> {
-    auth.ensure_authenticated()?;
-    auth.ensure_scope("product_comments", TokenAction::Delete)?;
     let id = crate::types::snowflake_id::parse_id(&id)?;
     state.product_comment_service.delete(&auth, id).await?;
     Ok(ApiResponse::success(()))
@@ -220,8 +224,6 @@ pub async fn list_by_user(
     Path(user_id): Path<String>,
     axum::extract::Query(params): axum::extract::Query<PaginationParams>,
 ) -> AppResult<ApiResponse<PaginatedData<ProductCommentResponse>>> {
-    auth.ensure_authenticated()?;
-    auth.ensure_scope("product_comments", TokenAction::Read)?;
     let mut p = params;
     p.sanitize();
     let uid = crate::types::snowflake_id::parse_id(&user_id)?;
@@ -241,8 +243,6 @@ pub async fn admin_list(
     State(state): State<crate::AppState>,
     Query(query): Query<AdminProductCommentListQuery>,
 ) -> AppResult<ApiResponse<PaginatedData<ProductCommentResponse>>> {
-    auth.ensure_admin()?;
-    auth.ensure_scope("product_comments", TokenAction::Read)?;
     let (items, total) = state
         .product_comment_service
         .admin_list(&auth, &query)
@@ -269,8 +269,6 @@ pub async fn admin_update_status(
     Path(id): Path<String>,
     Json(req): Json<UpdateProductCommentStatusRequest>,
 ) -> AppResult<ApiResponse<()>> {
-    auth.ensure_admin()?;
-    auth.ensure_scope("product_comments", TokenAction::Update)?;
     validation::validate(&req)?;
     let id = crate::types::snowflake_id::parse_id(&id)?;
     state
@@ -292,8 +290,6 @@ pub async fn admin_reply(
     Path(id): Path<String>,
     Json(req): Json<AdminReplyRequest>,
 ) -> AppResult<ApiResponse<()>> {
-    auth.ensure_admin()?;
-    auth.ensure_scope("product_comments", TokenAction::Update)?;
     let id = crate::types::snowflake_id::parse_id(&id)?;
     state
         .product_comment_service
@@ -312,8 +308,6 @@ pub async fn admin_delete(
     State(state): State<crate::AppState>,
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<()>> {
-    auth.ensure_admin()?;
-    auth.ensure_scope("product_comments", TokenAction::Delete)?;
     let id = crate::types::snowflake_id::parse_id(&id)?;
     state
         .product_comment_service

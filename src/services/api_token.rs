@@ -36,24 +36,19 @@ struct CachedTokenAuth {
 /// "测试密钥" → `ceshimiyao`, "CI/CD Pipeline" → `cicdpipeline`.
 /// Truncated to 6 chars; empty results fall back to "tk".
 fn name_slug(name: &str) -> String {
-    let slug: String =     slug::slugify(name).chars().filter(|c| c.is_ascii_alphanumeric()).take(6).collect();
-    if slug.is_empty() {
-        "tk".into()
-    } else {
-        slug
-    }
+    let slug: String = slug::slugify(name)
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .take(6)
+        .collect();
+    if slug.is_empty() { "tk".into() } else { slug }
 }
 
 /// Generate a plaintext token (`rf_{name_slug}_{code}`) and its SHA-256 hash
 fn generate_token(name: &str) -> (String, String) {
     let slug = name_slug(name);
     let raw = crate::utils::id::random_hex(24);
-    let plain = format!(
-        "{}{}_{}",
-        crate::constants::API_TOKEN_PREFIX,
-        slug,
-        raw
-    );
+    let plain = format!("{}{}_{}", crate::constants::API_TOKEN_PREFIX, slug, raw);
     let hash = sha256_hex(plain.as_bytes());
     (plain, hash)
 }
@@ -304,7 +299,9 @@ pub async fn update_token(
         tracing::warn!("api_token cache delete on update: {e}");
     }
 
-    let _ = cache.delete(&format!("{CACHE_PREFIX}{}", token.token_hash)).await;
+    let _ = cache
+        .delete(&format!("{CACHE_PREFIX}{}", token.token_hash))
+        .await;
 
     Ok(api_token::ApiTokenListItem {
         id: token.id,
@@ -364,7 +361,14 @@ pub async fn verify_api_token(
 
     // Token inherits the user's real DB role; scopes only restrict which resources
     let role = user.role.to_string();
-    let scopes: Vec<String> = serde_json::from_str(&token.scopes).unwrap_or_default();
+    // Fail-closed: malformed scopes → deny (Unauthorized), never grant full access
+    let scopes: Vec<String> = serde_json::from_str(&token.scopes).map_err(|e| {
+        tracing::error!(
+            "api_token {} scopes parse error (fail-closed): {e}",
+            token.id
+        );
+        AppError::Unauthorized
+    })?;
 
     if let Err(e) = api_token::touch_last_used(pool, token.id).await {
         tracing::debug!("api_token touch_last_used: {e}");
@@ -472,10 +476,18 @@ mod tests {
             crate::models::user::UserRole::Author,
             "default",
         );
-        let msg = create_token(&pool, &crate::config::app::AppConfig::test_defaults(), &auth, "   ", "", vec!["posts:read".into()], None)
-            .await
-            .unwrap_err()
-            .to_string();
+        let msg = create_token(
+            &pool,
+            &crate::config::app::AppConfig::test_defaults(),
+            &auth,
+            "   ",
+            "",
+            vec!["posts:read".into()],
+            None,
+        )
+        .await
+        .unwrap_err()
+        .to_string();
         assert!(msg.contains("name is required"));
     }
 
@@ -487,10 +499,18 @@ mod tests {
             crate::models::user::UserRole::Author,
             "default",
         );
-        let msg = create_token(&pool, &crate::config::app::AppConfig::test_defaults(), &auth, "Test", "", vec![], None)
-            .await
-            .unwrap_err()
-            .to_string();
+        let msg = create_token(
+            &pool,
+            &crate::config::app::AppConfig::test_defaults(),
+            &auth,
+            "Test",
+            "",
+            vec![],
+            None,
+        )
+        .await
+        .unwrap_err()
+        .to_string();
         assert!(msg.contains("scope"));
     }
 
@@ -502,10 +522,18 @@ mod tests {
             crate::models::user::UserRole::Author,
             "default",
         );
-        let msg = create_token(&pool, &crate::config::app::AppConfig::test_defaults(), &auth, "Test", "", vec!["superuser".into()], None)
-            .await
-            .unwrap_err()
-            .to_string();
+        let msg = create_token(
+            &pool,
+            &crate::config::app::AppConfig::test_defaults(),
+            &auth,
+            "Test",
+            "",
+            vec!["superuser".into()],
+            None,
+        )
+        .await
+        .unwrap_err()
+        .to_string();
         assert!(msg.contains("invalid scope"));
     }
 
@@ -608,7 +636,8 @@ mod tests {
         .await
         .unwrap();
         let cache = test_cache();
-        let (uid, role, _scopes, tenant_id) = verify_api_token(&pool, &*cache, plain).await.unwrap();
+        let (uid, role, _scopes, tenant_id) =
+            verify_api_token(&pool, &*cache, plain).await.unwrap();
         assert_eq!(uid, *user.id);
         assert_eq!(role, "admin");
         assert_eq!(tenant_id, Some("default".to_string()));

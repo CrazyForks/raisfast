@@ -7,7 +7,7 @@ use crate::dto::{BatchRequest, BatchResponse, CreateTagRequest, TagResponse, Upd
 use crate::errors::app_error::AppResult;
 use crate::errors::response::{ApiResponse, PaginatedData};
 use crate::errors::validation;
-use crate::middleware::auth::{AuthUser, TokenAction};
+use crate::middleware::auth::AuthUser;
 use crate::utils::pagination::PaginationParams;
 
 pub fn routes(
@@ -24,7 +24,8 @@ pub fn routes(
         get,
         self::list,
         "system public",
-        "tags"
+        "tags",
+        "public"
     );
     let r = reg_route!(
         r,
@@ -34,7 +35,8 @@ pub fn routes(
         create,
         self::create,
         "system public",
-        "tags"
+        "tags",
+        "tags:create"
     );
     let r = reg_route!(
         r,
@@ -44,7 +46,8 @@ pub fn routes(
         get,
         self::get,
         "system public",
-        "tags"
+        "tags",
+        "public"
     );
     let r = reg_route!(
         r,
@@ -54,7 +57,8 @@ pub fn routes(
         put,
         update,
         "system public",
-        "tags"
+        "tags",
+        "tags:update"
     );
     let r = reg_route!(
         r,
@@ -64,7 +68,8 @@ pub fn routes(
         delete,
         self::delete,
         "system public",
-        "tags"
+        "tags",
+        "tags:delete"
     );
     let r = reg_route!(
         r,
@@ -74,7 +79,8 @@ pub fn routes(
         get,
         admin_list,
         "system admin",
-        "admin/tags"
+        "admin/tags",
+        "admin"
     );
     let r = reg_route!(
         r,
@@ -84,7 +90,8 @@ pub fn routes(
         create,
         admin_create,
         "system admin",
-        "admin/tags"
+        "admin/tags",
+        "admin"
     );
     let r = reg_route!(
         r,
@@ -94,7 +101,8 @@ pub fn routes(
         put,
         admin_update,
         "system admin",
-        "admin/tags"
+        "admin/tags",
+        "admin"
     );
     let r = reg_route!(
         r,
@@ -104,7 +112,8 @@ pub fn routes(
         delete,
         admin_delete,
         "system admin",
-        "admin/tags"
+        "admin/tags",
+        "admin"
     );
     reg_route!(
         r,
@@ -114,7 +123,8 @@ pub fn routes(
         post,
         admin_batch,
         "system admin",
-        "admin/tags"
+        "admin/tags",
+        "admin"
     )
 }
 
@@ -162,7 +172,6 @@ pub async fn create(
     State(state): State<crate::AppState>,
     Json(req): Json<CreateTagRequest>,
 ) -> AppResult<ApiResponse<TagResponse>> {
-    auth.ensure_scope("tags", TokenAction::Create)?;
     validation::validate(&req)?;
     let t = state.tag_service.create(&auth, req).await?;
     Ok(ApiResponse::success(TagResponse::from_tag(t)))
@@ -179,7 +188,6 @@ pub async fn delete(
     State(state): State<crate::AppState>,
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<()>> {
-    auth.ensure_scope("tags", TokenAction::Delete)?;
     let id = crate::types::snowflake_id::parse_id(&id)?;
     state.tag_service.delete(id, &auth).await?;
     Ok(ApiResponse::success(()))
@@ -198,7 +206,6 @@ pub async fn update(
     Path(id): Path<String>,
     Json(req): Json<UpdateTagRequest>,
 ) -> AppResult<ApiResponse<TagResponse>> {
-    auth.ensure_scope("tags", TokenAction::Update)?;
     validation::validate(&req)?;
     let slug = crate::services::tag::generate_slug(&req.name);
     let id = crate::types::snowflake_id::parse_id(&id)?;
@@ -216,8 +223,6 @@ pub async fn admin_list(
     State(state): State<crate::AppState>,
     Query(mut params): Query<PaginationParams>,
 ) -> AppResult<ApiResponse<PaginatedData<TagResponse>>> {
-    auth.ensure_admin()?;
-    auth.ensure_scope("tags", TokenAction::Read)?;
     params.sanitize();
     let (items, total) = state
         .tag_service
@@ -232,8 +237,6 @@ pub async fn admin_create(
     State(state): State<crate::AppState>,
     Json(req): Json<CreateTagRequest>,
 ) -> AppResult<ApiResponse<TagResponse>> {
-    auth.ensure_admin()?;
-    auth.ensure_scope("tags", TokenAction::Create)?;
     validation::validate(&req)?;
     let t = state.tag_service.create(&auth, req).await?;
     Ok(ApiResponse::success(TagResponse::from_tag(t)))
@@ -245,8 +248,6 @@ pub async fn admin_update(
     Path(id): Path<String>,
     Json(req): Json<UpdateTagRequest>,
 ) -> AppResult<ApiResponse<TagResponse>> {
-    auth.ensure_admin()?;
-    auth.ensure_scope("tags", TokenAction::Update)?;
     validation::validate(&req)?;
     let slug = crate::services::tag::generate_slug(&req.name);
     let id = crate::types::snowflake_id::parse_id(&id)?;
@@ -262,8 +263,6 @@ pub async fn admin_delete(
     State(state): State<crate::AppState>,
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<()>> {
-    auth.ensure_admin()?;
-    auth.ensure_scope("tags", TokenAction::Delete)?;
     let id = crate::types::snowflake_id::parse_id(&id)?;
     state.tag_service.delete(id, &auth).await?;
     Ok(ApiResponse::success(()))
@@ -274,8 +273,6 @@ pub async fn admin_batch(
     State(state): State<crate::AppState>,
     Json(req): Json<BatchRequest>,
 ) -> AppResult<ApiResponse<BatchResponse>> {
-    auth.ensure_admin()?;
-    auth.ensure_scope("tags", TokenAction::Delete)?;
     validation::validate(&req)?;
     let mut affected = 0usize;
     if req.action == "delete" {

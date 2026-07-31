@@ -14,14 +14,9 @@ pub async fn run(
 
     println!("Connecting to {}...", server);
 
-    let client = bore_cli::client::Client::new(
-        local_host,
-        local_port,
-        server,
-        port.unwrap_or(0),
-        secret,
-    )
-    .await?;
+    let client =
+        bore_cli::client::Client::new(local_host, local_port, server, port.unwrap_or(0), secret)
+            .await?;
 
     let remote_port = client.remote_port();
 

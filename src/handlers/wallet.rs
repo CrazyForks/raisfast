@@ -5,7 +5,7 @@ use crate::dto;
 use crate::errors::app_error::AppError;
 use crate::errors::response::ApiResponse;
 use crate::errors::validation;
-use crate::middleware::auth::{AuthUser, TokenAction};
+use crate::middleware::auth::AuthUser;
 use crate::models::wallet_transaction::{WalletReferenceType, WalletTxType};
 use crate::types::snowflake_id::parse_id;
 use crate::utils::pagination::PaginationParams;
@@ -24,7 +24,8 @@ pub fn routes(
         get,
         list_wallets,
         "system authed",
-        "wallet"
+        "wallet",
+        "wallets:read"
     );
     let r = reg_route!(
         r,
@@ -34,7 +35,8 @@ pub fn routes(
         get,
         get_wallet,
         "system authed",
-        "wallet"
+        "wallet",
+        "wallets:read"
     );
     let r = reg_route!(
         r,
@@ -44,7 +46,8 @@ pub fn routes(
         get,
         list_all_transactions,
         "system authed",
-        "wallet"
+        "wallet",
+        "wallets:read"
     );
     let r = reg_route!(
         r,
@@ -54,7 +57,8 @@ pub fn routes(
         get,
         list_transactions,
         "system authed",
-        "wallet"
+        "wallet",
+        "wallets:read"
     );
     let r = reg_route!(
         r,
@@ -64,7 +68,8 @@ pub fn routes(
         get,
         list_all_wallets,
         "system admin",
-        "admin/wallet"
+        "admin/wallet",
+        "admin"
     );
     let r = reg_route!(
         r,
@@ -74,7 +79,8 @@ pub fn routes(
         get,
         list_all_transactions_admin,
         "system admin",
-        "admin/wallet"
+        "admin/wallet",
+        "admin"
     );
     let r = reg_route!(
         r,
@@ -84,7 +90,8 @@ pub fn routes(
         post,
         admin_credit,
         "system admin",
-        "admin/wallet"
+        "admin/wallet",
+        "admin"
     );
     let r = reg_route!(
         r,
@@ -94,7 +101,8 @@ pub fn routes(
         post,
         admin_debit,
         "system admin",
-        "admin/wallet"
+        "admin/wallet",
+        "admin"
     );
     let r = reg_route!(
         r,
@@ -104,7 +112,8 @@ pub fn routes(
         get,
         list_user_all_transactions,
         "system admin",
-        "admin/wallet"
+        "admin/wallet",
+        "admin"
     );
     let r = reg_route!(
         r,
@@ -114,7 +123,8 @@ pub fn routes(
         get,
         list_user_transactions,
         "system admin",
-        "admin/wallet"
+        "admin/wallet",
+        "admin"
     );
     reg_route!(
         r,
@@ -124,7 +134,8 @@ pub fn routes(
         post,
         admin_reversal,
         "system admin",
-        "admin/wallet"
+        "admin/wallet",
+        "admin"
     )
 }
 
@@ -137,7 +148,6 @@ pub async fn list_wallets(
     State(state): State<crate::AppState>,
 ) -> Result<ApiResponse<Vec<dto::WalletResponse>>, AppError> {
     let user_id = auth.ensure_snowflake_user_id()?;
-    auth.ensure_scope("wallets", TokenAction::Read)?;
     let wallets = state
         .wallet_service
         .list_wallets_by_user(user_id, auth.tenant_id())
@@ -160,7 +170,6 @@ pub async fn get_wallet(
     Path(currency): Path<String>,
 ) -> Result<ApiResponse<dto::WalletResponse>, AppError> {
     let user_id = auth.ensure_snowflake_user_id()?;
-    auth.ensure_scope("wallets", TokenAction::Read)?;
     let w = state
         .wallet_service
         .get_wallet_by_currency(user_id, &currency, auth.tenant_id())
@@ -183,7 +192,6 @@ pub async fn list_transactions(
     AppError,
 > {
     let user_id = auth.ensure_snowflake_user_id()?;
-    auth.ensure_scope("wallets", TokenAction::Read)?;
     let (rows, total) = state
         .wallet_service
         .list_transactions_by_wallet(
@@ -211,7 +219,6 @@ pub async fn list_all_transactions(
     AppError,
 > {
     let user_id = auth.ensure_snowflake_user_id()?;
-    auth.ensure_scope("wallets", TokenAction::Read)?;
     let (rows, total) = state
         .wallet_service
         .list_transactions_by_user(user_id, params.page, params.page_size, auth.tenant_id())
@@ -229,8 +236,6 @@ pub async fn list_all_wallets(
     State(state): State<crate::AppState>,
     Query(params): Query<PaginationParams>,
 ) -> Result<ApiResponse<crate::errors::response::PaginatedData<dto::WalletResponse>>, AppError> {
-    auth.ensure_admin()?;
-    auth.ensure_scope("wallets", TokenAction::Read)?;
     let (rows, total) = state
         .wallet_service
         .list_all_wallets(params.page, params.page_size, auth.tenant_id())
@@ -254,8 +259,6 @@ pub async fn list_all_transactions_admin(
     ApiResponse<crate::errors::response::PaginatedData<dto::WalletTransactionResponse>>,
     AppError,
 > {
-    auth.ensure_admin()?;
-    auth.ensure_scope("wallets", TokenAction::Read)?;
     let (rows, total) = state
         .wallet_service
         .list_all_transactions(params.page, params.page_size, auth.tenant_id())
@@ -274,8 +277,6 @@ pub async fn admin_credit(
     State(state): State<crate::AppState>,
     Json(req): Json<dto::AdminWalletOperationRequest>,
 ) -> Result<ApiResponse<dto::WalletTransactionResponse>, AppError> {
-    auth.ensure_admin()?;
-    auth.ensure_scope("wallets", TokenAction::Create)?;
     validation::validate(&req)?;
     let user_id = parse_id(&req.user_id)?;
     let target_auth = AuthUser::from_parts(
@@ -312,8 +313,6 @@ pub async fn admin_debit(
     State(state): State<crate::AppState>,
     Json(req): Json<dto::AdminWalletOperationRequest>,
 ) -> Result<ApiResponse<dto::WalletTransactionResponse>, AppError> {
-    auth.ensure_admin()?;
-    auth.ensure_scope("wallets", TokenAction::Create)?;
     validation::validate(&req)?;
     let user_id = parse_id(&req.user_id)?;
     let target_auth = AuthUser::from_parts(
@@ -354,8 +353,6 @@ pub async fn list_user_transactions(
     ApiResponse<crate::errors::response::PaginatedData<dto::WalletTransactionResponse>>,
     AppError,
 > {
-    auth.ensure_admin()?;
-    auth.ensure_scope("wallets", TokenAction::Read)?;
     let user_id = parse_id(&user_id)?;
     let (rows, total) = state
         .wallet_service
@@ -386,8 +383,6 @@ pub async fn list_user_all_transactions(
     ApiResponse<crate::errors::response::PaginatedData<dto::WalletTransactionResponse>>,
     AppError,
 > {
-    auth.ensure_admin()?;
-    auth.ensure_scope("wallets", TokenAction::Read)?;
     let user_id = parse_id(&user_id)?;
     let (rows, total) = state
         .wallet_service
@@ -410,8 +405,6 @@ pub async fn admin_reversal(
     Path(tx_id): Path<String>,
     Json(req): Json<dto::ReversalRequest>,
 ) -> Result<ApiResponse<dto::WalletTransactionResponse>, AppError> {
-    auth.ensure_admin()?;
-    auth.ensure_scope("wallets", TokenAction::Update)?;
     validation::validate(&req)?;
 
     let original = state

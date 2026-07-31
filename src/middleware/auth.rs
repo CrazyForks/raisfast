@@ -62,11 +62,12 @@ impl TokenAction {
     }
 }
 
-struct Claims {
-    user_id: SnowflakeId,
-    role: UserRole,
-    tenant_id: String,
-    scopes: Vec<String>,
+#[derive(Debug, Clone)]
+pub(crate) struct Claims {
+    pub user_id: SnowflakeId,
+    pub role: UserRole,
+    pub tenant_id: String,
+    pub scopes: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -241,7 +242,12 @@ impl AuthUser {
         })
     }
 
-    pub fn new_test_with_scopes(user_id: i64, role: UserRole, tenant_id: &str, scopes: Vec<String>) -> Self {
+    pub fn new_test_with_scopes(
+        user_id: i64,
+        role: UserRole,
+        tenant_id: &str,
+        scopes: Vec<String>,
+    ) -> Self {
         let mut auth = Self::new_test(user_id, role, tenant_id);
         auth.0.scopes = scopes;
         auth
@@ -265,9 +271,11 @@ fn extract_bearer_token(parts: &Parts) -> Option<&str> {
         .and_then(|v| v.strip_prefix(crate::constants::AUTH_BEARER_PREFIX))
 }
 
-async fn extract_claims(parts: &Parts, state: &AppState) -> Option<Claims> {
-    let token = extract_bearer_token(parts)?;
-
+/// Resolve a bearer token string to identity [`Claims`].
+///
+/// Handles both API tokens (`rf_*` prefix) and JWT tokens.
+/// Returns `None` if the token is invalid or expired.
+pub(crate) async fn resolve_bearer(token: &str, state: &AppState) -> Option<Claims> {
     if crate::services::api_token::is_api_token(token) {
         let (user_id, role, scopes, tenant_id) =
             crate::services::api_token::verify_api_token(&state.pool, &*state.cache, token)
@@ -281,14 +289,24 @@ async fn extract_claims(parts: &Parts, state: &AppState) -> Option<Claims> {
             scopes,
         })
     } else {
-        let claims = crate::services::auth::verify_token(token, &state.jwt_decoding_key).ok()?;
+        let jwt_claims =
+            crate::services::auth::verify_token(token, &state.jwt_decoding_key).ok()?;
         Some(Claims {
-            user_id: claims.sub.parse().ok()?,
-            role: claims.role,
-            tenant_id: claims.tenant_id,
+            user_id: jwt_claims.sub.parse().ok()?,
+            role: jwt_claims.role,
+            tenant_id: jwt_claims.tenant_id,
             scopes: Vec::new(),
         })
     }
+}
+
+async fn extract_claims(parts: &Parts, state: &AppState) -> Option<Claims> {
+    // Reuse identity resolved by permission_guard middleware if available
+    if let Some(cached) = parts.extensions.get::<Claims>() {
+        return Some(cached.clone());
+    }
+    let token = extract_bearer_token(parts)?;
+    resolve_bearer(token, state).await
 }
 
 impl FromRequestParts<AppState> for AuthUser {

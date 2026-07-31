@@ -142,6 +142,7 @@ pub struct AppState {
     pub email_sender: Arc<dyn EmailSender>,
     pub sms_sender: Arc<dyn SmsSender>,
     pub route_registry: Arc<Vec<crate::server::RouteInfo>>,
+    pub route_perms: Arc<crate::middleware::permission_guard::RoutePermissionMap>,
     pub services: ServiceRegistry,
 }
 
@@ -372,6 +373,9 @@ pub async fn build_app_state(
         email_sender: crate::notifier::build_email_sender(config),
         sms_sender: crate::notifier::build_sms_sender(config),
         route_registry: Arc::new(Vec::new()),
+        route_perms: Arc::new(
+            crate::middleware::permission_guard::RoutePermissionMap::from_routes(&[]),
+        ),
         services,
     };
 

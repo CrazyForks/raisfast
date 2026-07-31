@@ -29,7 +29,8 @@ pub fn routes(
         get,
         self::list,
         "system authed",
-        "tokens"
+        "tokens",
+        "authed"
     );
     let r = reg_route!(
         r,
@@ -39,7 +40,8 @@ pub fn routes(
         create,
         self::create,
         "system authed",
-        "tokens"
+        "tokens",
+        "authed"
     );
     let r = reg_route!(
         r,
@@ -49,7 +51,8 @@ pub fn routes(
         put,
         self::update,
         "system authed",
-        "tokens"
+        "tokens",
+        "authed"
     );
     reg_route!(
         r,
@@ -59,7 +62,8 @@ pub fn routes(
         delete,
         self::delete,
         "system authed",
-        "tokens"
+        "tokens",
+        "authed"
     )
 }
 
@@ -121,7 +125,16 @@ pub async fn update(
 ) -> AppResult<impl IntoResponse> {
     auth.ensure_authenticated()?;
     crate::errors::validation::validate(&body)?;
-    let result = api_token::update_token(&state.pool, &*state.cache, &id, &auth, &body.name, body.description.as_deref().unwrap_or(""), body.scopes).await?;
+    let result = api_token::update_token(
+        &state.pool,
+        &*state.cache,
+        &id,
+        &auth,
+        &body.name,
+        body.description.as_deref().unwrap_or(""),
+        body.scopes,
+    )
+    .await?;
     Ok(Json(ApiResponse::success(result)))
 }
 

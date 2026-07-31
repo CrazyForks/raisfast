@@ -22,23 +22,51 @@ pub fn routes(
     registry: &mut crate::server::RouteRegistry,
     _config: &crate::config::app::AppConfig,
 ) -> axum::Router<crate::AppState> {
-    let r = axum::Router::new()
-        .route("/setup/status", axum::routing::get(setup_status))
-        .route("/setup/database/test", axum::routing::post(test_database))
-        .route("/setup/database", axum::routing::post(setup_database))
-        .route("/setup/init", axum::routing::post(setup_init));
-
-    registry.record("GET", "/api/v1/setup/status", "system public", "setup");
-    registry.record(
-        "POST",
-        "/api/v1/setup/database/test",
+    let r = axum::Router::new();
+    let r = reg_route!(
+        r,
+        registry,
+        true,
+        "/setup/status",
+        get,
+        setup_status,
         "system public",
         "setup",
+        "public"
     );
-    registry.record("POST", "/api/v1/setup/database", "system public", "setup");
-    registry.record("POST", "/api/v1/setup/init", "system public", "setup");
-
-    r
+    let r = reg_route!(
+        r,
+        registry,
+        true,
+        "/setup/database/test",
+        post,
+        test_database,
+        "system public",
+        "setup",
+        "public"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        true,
+        "/setup/database",
+        post,
+        setup_database,
+        "system public",
+        "setup",
+        "public"
+    );
+    reg_route!(
+        r,
+        registry,
+        true,
+        "/setup/init",
+        post,
+        setup_init,
+        "system public",
+        "setup",
+        "public"
+    )
 }
 
 async fn ensure_no_admin(pool: &crate::db::Pool) -> AppResult<()> {

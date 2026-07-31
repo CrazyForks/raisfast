@@ -39,8 +39,20 @@ pub struct RouteInfo {
     pub path: String,
     pub source: String,
     pub source_name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub permission: Option<String>,
 }
 
+/// Compile-time permission requirement for a route.
+///
+/// Routes declare this via `reg_route!`'s optional 9th parameter:
+/// - `"public"` — no authentication required
+/// - `"admin"` — admin role required
+/// - `"authed"` — any authenticated user
+/// - `"resource:action"` — API token scope check; JWT users must be authenticated
+///
+/// When omitted (`None`), the middleware applies path-based heuristics
+/// (e.g. `/admin/*` → admin) as a fallback.
 #[derive(Debug, Clone, Default)]
 pub struct RouteRegistry {
     routes: Vec<RouteInfo>,
@@ -53,6 +65,24 @@ impl RouteRegistry {
             path: path.to_string(),
             source: source.to_string(),
             source_name: source_name.to_string(),
+            permission: None,
+        });
+    }
+
+    pub fn record_perm(
+        &mut self,
+        method: &str,
+        path: &str,
+        source: &str,
+        source_name: &str,
+        permission: &str,
+    ) {
+        self.routes.push(RouteInfo {
+            method: method.to_string(),
+            path: path.to_string(),
+            source: source.to_string(),
+            source_name: source_name.to_string(),
+            permission: Some(permission.to_string()),
         });
     }
 
@@ -199,6 +229,14 @@ async fn build_app(
 
     api_v1 = api_v1
         .layer(from_fn(global_rate_limit))
+        .layer(from_fn_with_state(
+            state.clone(),
+            crate::middleware::permission_guard::permission_guard,
+        ))
+        .layer(from_fn_with_state(
+            state.clone(),
+            crate::middleware::audit_denied::audit_denied_layer,
+        ))
         .layer(Extension(limiters.clone()))
         .layer(RequestBodyLimitLayer::new(2 * 1024 * 1024));
 
@@ -340,7 +378,9 @@ async fn build_app(
     );
 
     let routes_vec = registry.into_vec();
-    state.route_registry = Arc::new(routes_vec);
+    state.route_registry = Arc::new(routes_vec.clone());
+    state.route_perms =
+        Arc::new(crate::middleware::permission_guard::RoutePermissionMap::from_routes(&routes_vec));
 
     let app = axum::Router::new()
         .route("/health", get(health::health))

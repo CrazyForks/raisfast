@@ -24,7 +24,8 @@ pub fn routes(
         get,
         get_public_options,
         "system public",
-        "options"
+        "options",
+        "public"
     );
     let r = reg_route!(
         r,
@@ -34,7 +35,8 @@ pub fn routes(
         get,
         list_options,
         "system admin",
-        "admin/options"
+        "admin/options",
+        "admin"
     );
     let r = reg_route!(
         r,
@@ -44,7 +46,8 @@ pub fn routes(
         put,
         update_options,
         "system admin",
-        "admin/options"
+        "admin/options",
+        "admin"
     );
     let r = reg_route!(
         r,
@@ -54,7 +57,8 @@ pub fn routes(
         get,
         get_option,
         "system admin",
-        "admin/options"
+        "admin/options",
+        "admin"
     );
     let r = reg_route!(
         r,
@@ -64,7 +68,8 @@ pub fn routes(
         put,
         set_option,
         "system admin",
-        "admin/options"
+        "admin/options",
+        "admin"
     );
     reg_route!(
         r,
@@ -74,7 +79,8 @@ pub fn routes(
         delete,
         delete_option,
         "system admin",
-        "admin/options"
+        "admin/options",
+        "admin"
     )
 }
 
@@ -101,7 +107,6 @@ pub async fn list_options(
     auth: AuthUser,
     State(state): State<AppState>,
 ) -> AppResult<ApiResponse<Vec<crate::services::options::OptionGroup>>> {
-    auth.ensure_admin()?;
     let groups = state.options.get_grouped(auth.tenant_id()).await?;
     Ok(ApiResponse::success(groups))
 }
@@ -116,7 +121,6 @@ pub async fn get_option(
     State(state): State<AppState>,
     Path(key): Path<String>,
 ) -> AppResult<ApiResponse<serde_json::Value>> {
-    auth.ensure_admin()?;
     let entry = state
         .options
         .get_entry(auth.tenant_id(), &key)
@@ -136,7 +140,6 @@ pub async fn update_options(
     State(state): State<AppState>,
     Json(body): Json<UpdateOptionsRequest>,
 ) -> AppResult<ApiResponse<Vec<crate::services::options::OptionGroup>>> {
-    auth.ensure_admin()?;
     state
         .options
         .set_batch(auth.tenant_id(), body.options)
@@ -156,7 +159,6 @@ pub async fn set_option(
     Path(key): Path<String>,
     Json(body): Json<UpdateOptionRequest>,
 ) -> AppResult<ApiResponse<serde_json::Value>> {
-    auth.ensure_admin()?;
     state
         .options
         .set(auth.tenant_id(), &key, body.value)
@@ -177,7 +179,6 @@ pub async fn delete_option(
     State(state): State<AppState>,
     Path(key): Path<String>,
 ) -> AppResult<ApiResponse<serde_json::Value>> {
-    auth.ensure_admin()?;
     state.options.delete(auth.tenant_id(), &key).await?;
     Ok(ApiResponse::success(serde_json::json!({
         "option_key": key,

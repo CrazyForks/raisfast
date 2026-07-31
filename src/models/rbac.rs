@@ -154,6 +154,15 @@ pub async fn delete_permissions_by_role_id(
     Ok(())
 }
 
+/// Delete all permissions for a role (transaction variant)
+pub async fn tx_delete_permissions_by_role_id(
+    tx: &mut crate::db::pool::DbConnection,
+    role_id: SnowflakeId,
+) -> AppResult<()> {
+    raisfast_derive::crud_delete!(&mut *tx, "permissions", where: ("role_id", role_id))?;
+    Ok(())
+}
+
 /// Insert a single permission
 pub async fn insert_permission(pool: &crate::db::Pool, cmd: &CreatePermissionCmd) -> AppResult<()> {
     let (id, now) = (
@@ -161,6 +170,27 @@ pub async fn insert_permission(pool: &crate::db::Pool, cmd: &CreatePermissionCmd
         crate::utils::tz::now_utc(),
     );
     raisfast_derive::crud_insert!(pool, "permissions", [
+        "id" => id,
+        "role_id" => cmd.role_id,
+        "action" => &cmd.action,
+        "subject" => &cmd.subject,
+        "fields" => cmd.fields.clone(),
+        "conditions" => cmd.conditions.clone(),
+        "created_at" => now,
+    ])?;
+    Ok(())
+}
+
+/// Insert a single permission (transaction variant)
+pub async fn tx_insert_permission(
+    tx: &mut crate::db::pool::DbConnection,
+    cmd: &CreatePermissionCmd,
+) -> AppResult<()> {
+    let (id, now) = (
+        crate::utils::id::new_snowflake_id(),
+        crate::utils::tz::now_utc(),
+    );
+    raisfast_derive::crud_insert!(&mut *tx, "permissions", [
         "id" => id,
         "role_id" => cmd.role_id,
         "action" => &cmd.action,

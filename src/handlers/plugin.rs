@@ -8,7 +8,7 @@ use crate::AppState;
 use crate::dto::{BatchRequest, BatchResponse};
 use crate::errors::app_error::{AppError, AppResult};
 use crate::errors::response::ApiResponse;
-use crate::middleware::auth::{AuthUser, TokenAction};
+use crate::middleware::auth::AuthUser;
 use crate::plugins::PluginInfoResponse;
 use crate::utils::pagination::PaginationParams;
 
@@ -26,7 +26,8 @@ pub fn routes(
         get,
         self::list,
         "system admin",
-        "admin/plugins"
+        "admin/plugins",
+        "admin"
     );
     let r = reg_route!(
         r,
@@ -36,7 +37,8 @@ pub fn routes(
         get,
         self::get,
         "system admin",
-        "admin/plugins"
+        "admin/plugins",
+        "admin"
     );
     let r = reg_route!(
         r,
@@ -46,7 +48,8 @@ pub fn routes(
         delete,
         remove,
         "system admin",
-        "admin/plugins"
+        "admin/plugins",
+        "admin"
     );
     let r = reg_route!(
         r,
@@ -56,7 +59,8 @@ pub fn routes(
         post,
         enable,
         "system admin",
-        "admin/plugins"
+        "admin/plugins",
+        "admin"
     );
     let r = reg_route!(
         r,
@@ -66,7 +70,8 @@ pub fn routes(
         post,
         disable,
         "system admin",
-        "admin/plugins"
+        "admin/plugins",
+        "admin"
     );
     let r = reg_route!(
         r,
@@ -76,7 +81,8 @@ pub fn routes(
         post,
         reload,
         "system admin",
-        "admin/plugins"
+        "admin/plugins",
+        "admin"
     );
     reg_route!(
         r,
@@ -86,7 +92,8 @@ pub fn routes(
         post,
         admin_batch,
         "system admin",
-        "admin/plugins"
+        "admin/plugins",
+        "admin"
     )
 }
 
@@ -96,12 +103,10 @@ pub fn routes(
     responses((status = 200, description = "Plugin list"))
 )]
 pub async fn list(
-    auth: AuthUser,
+    _auth: AuthUser,
     State(state): State<AppState>,
     Query(mut params): Query<PaginationParams>,
 ) -> AppResult<ApiResponse<crate::errors::response::PaginatedData<PluginInfoResponse>>> {
-    auth.ensure_admin()?;
-    auth.ensure_scope("plugins", TokenAction::Read)?;
     params.sanitize();
     let all = state.plugins.list_plugins_detail().await;
     Ok(params.paginate_in_memory(all))
@@ -114,12 +119,10 @@ pub async fn list(
     responses((status = 200, description = "Plugin detail"))
 )]
 pub async fn get(
-    auth: AuthUser,
+    _auth: AuthUser,
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<PluginInfoResponse>> {
-    auth.ensure_admin()?;
-    auth.ensure_scope("plugins", TokenAction::Read)?;
     let detail = state
         .plugins
         .get_plugin_detail(&id)
@@ -135,12 +138,10 @@ pub async fn get(
     responses((status = 200, description = "Plugin enabled"))
 )]
 pub async fn enable(
-    auth: AuthUser,
+    _auth: AuthUser,
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<()>> {
-    auth.ensure_admin()?;
-    auth.ensure_scope("plugins", TokenAction::Update)?;
     state.plugins.enable_plugin(&id).await?;
     Ok(ApiResponse::success(()))
 }
@@ -152,12 +153,10 @@ pub async fn enable(
     responses((status = 200, description = "Plugin disabled"))
 )]
 pub async fn disable(
-    auth: AuthUser,
+    _auth: AuthUser,
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<()>> {
-    auth.ensure_admin()?;
-    auth.ensure_scope("plugins", TokenAction::Update)?;
     state.plugins.disable_plugin(&id).await?;
     Ok(ApiResponse::success(()))
 }
@@ -169,12 +168,10 @@ pub async fn disable(
     responses((status = 200, description = "Plugin reloaded"))
 )]
 pub async fn reload(
-    auth: AuthUser,
+    _auth: AuthUser,
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<()>> {
-    auth.ensure_admin()?;
-    auth.ensure_scope("plugins", TokenAction::Update)?;
     let plugin_dir = match &state.config.plugin_dir {
         Some(d) => std::path::PathBuf::from(d).join(&id),
         None => return Err(AppError::not_found("plugin")),
@@ -193,12 +190,10 @@ pub async fn reload(
     responses((status = 200, description = "Plugin removed"))
 )]
 pub async fn remove(
-    auth: AuthUser,
+    _auth: AuthUser,
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<()>> {
-    auth.ensure_admin()?;
-    auth.ensure_scope("plugins", TokenAction::Delete)?;
     state.plugins.unload_plugin(&id).await;
     Ok(ApiResponse::success(()))
 }
@@ -209,12 +204,10 @@ pub async fn remove(
     responses((status = 200, description = "Batch operation completed"))
 )]
 pub async fn admin_batch(
-    auth: AuthUser,
+    _auth: AuthUser,
     State(state): State<AppState>,
     axum::Json(req): axum::Json<BatchRequest>,
 ) -> AppResult<ApiResponse<BatchResponse>> {
-    auth.ensure_admin()?;
-    auth.ensure_scope("plugins", TokenAction::Update)?;
     crate::errors::validation::validate(&req)?;
     let mut affected = 0usize;
     for id in &req.ids {

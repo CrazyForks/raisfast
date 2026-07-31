@@ -9,7 +9,7 @@ use crate::dto::{
 use crate::errors::app_error::AppResult;
 use crate::errors::response::{ApiResponse, PaginatedData};
 use crate::errors::validation;
-use crate::middleware::auth::{AuthUser, TokenAction};
+use crate::middleware::auth::AuthUser;
 use crate::utils::pagination::PaginationParams;
 
 pub fn routes(
@@ -26,7 +26,8 @@ pub fn routes(
         get,
         self::list,
         "system public",
-        "categories"
+        "categories",
+        "public"
     );
     let r = reg_route!(
         r,
@@ -36,7 +37,8 @@ pub fn routes(
         create,
         self::create,
         "system public",
-        "categories"
+        "categories",
+        "categories:create"
     );
     let r = reg_route!(
         r,
@@ -46,7 +48,8 @@ pub fn routes(
         get,
         self::get,
         "system public",
-        "categories"
+        "categories",
+        "public"
     );
     let r = reg_route!(
         r,
@@ -56,7 +59,8 @@ pub fn routes(
         put,
         update,
         "system public",
-        "categories"
+        "categories",
+        "categories:update"
     );
     let r = reg_route!(
         r,
@@ -66,7 +70,8 @@ pub fn routes(
         delete,
         self::delete,
         "system public",
-        "categories"
+        "categories",
+        "categories:delete"
     );
     let r = reg_route!(
         r,
@@ -76,7 +81,8 @@ pub fn routes(
         get,
         admin_list,
         "system admin",
-        "admin/categories"
+        "admin/categories",
+        "admin"
     );
     let r = reg_route!(
         r,
@@ -86,7 +92,8 @@ pub fn routes(
         create,
         admin_create,
         "system admin",
-        "admin/categories"
+        "admin/categories",
+        "admin"
     );
     let r = reg_route!(
         r,
@@ -96,7 +103,8 @@ pub fn routes(
         put,
         admin_update,
         "system admin",
-        "admin/categories"
+        "admin/categories",
+        "admin"
     );
     let r = reg_route!(
         r,
@@ -106,7 +114,8 @@ pub fn routes(
         delete,
         admin_delete,
         "system admin",
-        "admin/categories"
+        "admin/categories",
+        "admin"
     );
     reg_route!(
         r,
@@ -116,7 +125,8 @@ pub fn routes(
         post,
         admin_batch,
         "system admin",
-        "admin/categories"
+        "admin/categories",
+        "admin"
     )
 }
 
@@ -167,7 +177,6 @@ pub async fn create(
     State(state): State<crate::AppState>,
     Json(req): Json<CreateCategoryRequest>,
 ) -> AppResult<ApiResponse<CategoryResponse>> {
-    auth.ensure_scope("categories", TokenAction::Create)?;
     validation::validate(&req)?;
     let cat = state.category_service.create(&auth, req).await?;
     Ok(ApiResponse::success(CategoryResponse::from_category(cat)))
@@ -186,7 +195,6 @@ pub async fn update(
     Path(id): Path<String>,
     Json(req): Json<UpdateCategoryRequest>,
 ) -> AppResult<ApiResponse<CategoryResponse>> {
-    auth.ensure_scope("categories", TokenAction::Update)?;
     validation::validate(&req)?;
     let id = crate::types::snowflake_id::parse_id(&id)?;
     let cat = state.category_service.update(&auth, id, req).await?;
@@ -204,7 +212,6 @@ pub async fn delete(
     State(state): State<crate::AppState>,
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<()>> {
-    auth.ensure_scope("categories", TokenAction::Delete)?;
     let id = crate::types::snowflake_id::parse_id(&id)?;
     state.category_service.delete(id, &auth).await?;
     Ok(ApiResponse::success(()))
@@ -217,8 +224,6 @@ pub async fn admin_list(
     State(state): State<crate::AppState>,
     Query(mut params): Query<PaginationParams>,
 ) -> AppResult<ApiResponse<PaginatedData<CategoryResponse>>> {
-    auth.ensure_admin()?;
-    auth.ensure_scope("categories", TokenAction::Read)?;
     params.sanitize();
     let (items, total) = state
         .category_service
@@ -236,8 +241,6 @@ pub async fn admin_create(
     State(state): State<crate::AppState>,
     Json(req): Json<CreateCategoryRequest>,
 ) -> AppResult<ApiResponse<CategoryResponse>> {
-    auth.ensure_admin()?;
-    auth.ensure_scope("categories", TokenAction::Create)?;
     validation::validate(&req)?;
     let cat = state.category_service.create(&auth, req).await?;
     Ok(ApiResponse::success(CategoryResponse::from_category(cat)))
@@ -249,8 +252,6 @@ pub async fn admin_update(
     Path(id): Path<String>,
     Json(req): Json<UpdateCategoryRequest>,
 ) -> AppResult<ApiResponse<CategoryResponse>> {
-    auth.ensure_admin()?;
-    auth.ensure_scope("categories", TokenAction::Update)?;
     validation::validate(&req)?;
     let id = crate::types::snowflake_id::parse_id(&id)?;
     let cat = state.category_service.update(&auth, id, req).await?;
@@ -262,8 +263,6 @@ pub async fn admin_delete(
     State(state): State<crate::AppState>,
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<()>> {
-    auth.ensure_admin()?;
-    auth.ensure_scope("categories", TokenAction::Delete)?;
     let id = crate::types::snowflake_id::parse_id(&id)?;
     state.category_service.delete(id, &auth).await?;
     Ok(ApiResponse::success(()))
@@ -274,8 +273,6 @@ pub async fn admin_batch(
     State(state): State<crate::AppState>,
     Json(req): Json<BatchRequest>,
 ) -> AppResult<ApiResponse<BatchResponse>> {
-    auth.ensure_admin()?;
-    auth.ensure_scope("categories", TokenAction::Delete)?;
     validation::validate(&req)?;
     let mut affected = 0usize;
     if req.action == "delete" {

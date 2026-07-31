@@ -145,11 +145,7 @@ async fn api_token_read_scope_cannot_create_post() {
 
     // Built-in endpoints will enforce scopes in phase 2.
     // For now, verify the token works for read but the scope is correctly stored.
-    let (status, body) = send(
-        &mut app,
-        get_auth("/api/v1/tokens", api_token),
-    )
-    .await;
+    let (status, body) = send(&mut app, get_auth("/api/v1/tokens", api_token)).await;
     assert!(status.is_success());
     let scopes = body["data"][0]["scopes"].as_array().unwrap();
     assert!(scopes.iter().any(|s| s == "posts:read"));
@@ -274,11 +270,7 @@ async fn create_token_validation_empty_name() {
     let (mut app, tok, _) = setup().await;
     let (status, body) = send(
         &mut app,
-        post_json_auth(
-            "/api/v1/tokens",
-            json!({"name": "", "scopes": ["*"]}),
-            &tok,
-        ),
+        post_json_auth("/api/v1/tokens", json!({"name": "", "scopes": ["*"]}), &tok),
     )
     .await;
     assert!(
@@ -422,7 +414,10 @@ async fn list_tokens_sanitized_fields() {
     assert!(obj.contains_key("created_at"));
     assert!(obj.contains_key("token"));
     assert!(!obj.contains_key("token_hash"), "hash must not appear");
-    assert!(!obj.contains_key("token_prefix"), "token_prefix must not appear");
+    assert!(
+        !obj.contains_key("token_prefix"),
+        "token_prefix must not appear"
+    );
     assert!(!obj.contains_key("user_id"), "user_id must not appear");
 }
 

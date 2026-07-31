@@ -20,7 +20,7 @@ use crate::errors::app_error::{AppError, AppResult};
 use crate::event::*;
 use crate::middleware::auth::AuthUser;
 use crate::models::post::{PostJoinedRow, PostStatus};
-use crate::policy::Policy;
+use crate::policy::check_owner;
 use crate::search::SearchEngine;
 use crate::types::snowflake_id::SnowflakeId;
 
@@ -106,7 +106,7 @@ impl PostServiceImpl {
         existing: &crate::models::post::Post,
         req: UpdatePostRequest,
     ) -> AppResult<(UpdatePostRequest, crate::aspects::Dispatched)> {
-        crate::policy::PostPolicy::can_update(auth, existing)?;
+        check_owner(auth, existing.created_by, existing.tenant_id.as_deref())?;
         self.aspect_engine
             .before_update("posts", auth, existing, req)
             .await
@@ -117,7 +117,7 @@ impl PostServiceImpl {
         auth: &AuthUser,
         existing: &crate::models::post::Post,
     ) -> AppResult<crate::aspects::Dispatched> {
-        crate::policy::PostPolicy::can_delete(auth, existing)?;
+        check_owner(auth, existing.created_by, existing.tenant_id.as_deref())?;
         self.aspect_engine
             .before_delete("posts", auth, existing)
             .await

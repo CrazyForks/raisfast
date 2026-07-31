@@ -12,6 +12,7 @@ use crate::commands::{CreatePageCmd, UpdatePageCmd};
 use crate::errors::app_error::{AppError, AppResult};
 use crate::middleware::auth::AuthUser;
 use crate::models::page::{self, Page, PageStatus};
+use crate::policy::check_owner;
 use crate::types::snowflake_id::SnowflakeId;
 
 /// Page business logic trait.
@@ -117,6 +118,7 @@ impl PageService for PageServiceImpl {
             .await?
             .ok_or_else(|| AppError::not_found("page"))?;
 
+        check_owner(auth, existing.created_by, existing.tenant_id.as_deref())?;
         cmd.id = existing.id;
         let (cmd, _d) = self.before_update(auth, &existing, cmd).await?;
         if let Some(ref blocks) = cmd.blocks {
@@ -131,6 +133,7 @@ impl PageService for PageServiceImpl {
         let p = page::find_by_id(&self.pool, id, auth.tenant_id())
             .await?
             .ok_or_else(|| AppError::not_found("page"))?;
+        check_owner(auth, p.created_by, p.tenant_id.as_deref())?;
         self.before_delete(auth, &p).await?;
         page::delete(&self.pool, p.id, auth.tenant_id()).await?;
         self.after_deleted(&p);
@@ -146,6 +149,7 @@ impl PageService for PageServiceImpl {
         let p = page::find_by_id(&self.pool, id, auth.tenant_id())
             .await?
             .ok_or_else(|| AppError::not_found("page"))?;
+        check_owner(auth, p.created_by, p.tenant_id.as_deref())?;
         self.aspect_engine
             .before_update("pages", auth, &p, status)
             .await?;

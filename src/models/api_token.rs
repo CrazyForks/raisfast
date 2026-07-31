@@ -245,7 +245,12 @@ mod tests {
         create(
             &pool,
             SnowflakeId(user_id),
-            "First", "", "h1", "enc_a", "[\"read\"]", None,
+            "First",
+            "",
+            "h1",
+            "enc_a",
+            "[\"read\"]",
+            None,
         )
         .await
         .unwrap();
@@ -253,7 +258,12 @@ mod tests {
         create(
             &pool,
             SnowflakeId(user_id),
-            "Second", "", "h2", "enc_b", "[\"write\"]", None,
+            "Second",
+            "",
+            "h2",
+            "enc_b",
+            "[\"write\"]",
+            None,
         )
         .await
         .unwrap();
@@ -278,7 +288,12 @@ mod tests {
         let row = create(
             &pool,
             SnowflakeId(user_id),
-            "Del", "", "h3", "enc_c", "[\"read\"]", None,
+            "Del",
+            "",
+            "h3",
+            "enc_c",
+            "[\"read\"]",
+            None,
         )
         .await
         .unwrap();
@@ -294,7 +309,12 @@ mod tests {
         let row = create(
             &pool,
             SnowflakeId(user_id),
-            "Touch", "", "h4", "enc_d", "[\"read\"]", None,
+            "Touch",
+            "",
+            "h4",
+            "enc_d",
+            "[\"read\"]",
+            None,
         )
         .await
         .unwrap();
@@ -312,7 +332,11 @@ mod tests {
         let row = create(
             &pool,
             SnowflakeId(user_id),
-            "Expiring", "", "h5", "enc_e", "[\"admin\"]",
+            "Expiring",
+            "",
+            "h5",
+            "enc_e",
+            "[\"admin\"]",
             Some("2099-12-31T00:00:00+00:00"),
         )
         .await
@@ -330,7 +354,12 @@ mod tests {
         create(
             &pool,
             SnowflakeId(user_id),
-            "Safe", "", "secret_hash", "enc_f", "[\"read\"]", None,
+            "Safe",
+            "",
+            "secret_hash",
+            "enc_f",
+            "[\"read\"]",
+            None,
         )
         .await
         .unwrap();

@@ -10,6 +10,7 @@ use crate::dto::CreateTagRequest;
 use crate::errors::app_error::AppResult;
 use crate::middleware::auth::AuthUser;
 use crate::models::tag::Tag;
+use crate::policy::check_owner_opt;
 use crate::types::snowflake_id::SnowflakeId;
 
 pub fn generate_slug(name: &str) -> String {
@@ -69,6 +70,7 @@ impl TagService for TagServiceImpl {
         slug: String,
     ) -> AppResult<Tag> {
         let tag = crate::models::tag::find_by_id(&self.pool, id, auth.tenant_id()).await?;
+        check_owner_opt(auth, tag.created_by, tag.tenant_id.as_deref())?;
         let ((name, slug), _d) = self.before_update(auth, &tag, (name, slug)).await?;
         let updated =
             crate::models::tag::update(&self.pool, tag.id, &name, &slug, auth.tenant_id()).await?;
@@ -78,6 +80,7 @@ impl TagService for TagServiceImpl {
 
     async fn delete(&self, id: SnowflakeId, auth: &AuthUser) -> AppResult<()> {
         let tag = crate::models::tag::find_by_id(&self.pool, id, auth.tenant_id()).await?;
+        check_owner_opt(auth, tag.created_by, tag.tenant_id.as_deref())?;
         self.before_delete(auth, &tag).await?;
         crate::models::tag::delete(&self.pool, tag.id, auth.tenant_id()).await?;
         self.after_deleted(&tag);

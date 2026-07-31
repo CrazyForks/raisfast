@@ -6,7 +6,7 @@ use axum::extract::{Multipart, Path, Query, State};
 use crate::dto::{BatchRequest, BatchResponse};
 use crate::errors::app_error::{AppError, AppResult};
 use crate::errors::response::{ApiResponse, PaginatedData};
-use crate::middleware::auth::{AuthUser, TokenAction};
+use crate::middleware::auth::AuthUser;
 use crate::services::media as media_service;
 use crate::utils::pagination::PaginationParams;
 
@@ -19,11 +19,18 @@ pub fn routes(
 
     let restful = config.api_restful;
     let r = axum::Router::new();
-    let r = {
-        let mr = axum::routing::post(upload).layer(RequestBodyLimitLayer::new(max_upload));
-        r.route("/media/upload", mr)
-    };
-    registry.record("POST", "/api/v1/media/upload", "system authed", "media");
+    let r = reg_route!(
+        r,
+        registry,
+        restful,
+        "/media/upload",
+        post,
+        axum::routing::post(upload).layer(RequestBodyLimitLayer::new(max_upload)),
+        "system authed",
+        "media",
+        "media:create",
+        layered
+    );
     let r = reg_route!(
         r,
         registry,
@@ -32,7 +39,8 @@ pub fn routes(
         get,
         self::list,
         "system authed",
-        "media"
+        "media",
+        "media:read"
     );
     let r = reg_route!(
         r,
@@ -42,7 +50,8 @@ pub fn routes(
         get,
         stats,
         "system authed",
-        "media"
+        "media",
+        "media:read"
     );
     let r = reg_route!(
         r,
@@ -52,17 +61,20 @@ pub fn routes(
         delete,
         self::delete,
         "system authed",
-        "media"
+        "media",
+        "media:delete"
     );
-    let r = {
-        let mr = axum::routing::post(admin_upload).layer(RequestBodyLimitLayer::new(max_upload));
-        r.route("/admin/media/upload", mr)
-    };
-    registry.record(
-        "POST",
-        "/api/v1/admin/media/upload",
+    let r = reg_route!(
+        r,
+        registry,
+        restful,
+        "/admin/media/upload",
+        post,
+        axum::routing::post(admin_upload).layer(RequestBodyLimitLayer::new(max_upload)),
         "system admin",
         "admin/media",
+        "admin",
+        layered
     );
     let r = reg_route!(
         r,
@@ -72,7 +84,8 @@ pub fn routes(
         get,
         admin_list,
         "system admin",
-        "admin/media"
+        "admin/media",
+        "admin"
     );
     let r = reg_route!(
         r,
@@ -82,7 +95,8 @@ pub fn routes(
         delete,
         admin_delete,
         "system admin",
-        "admin/media"
+        "admin/media",
+        "admin"
     );
     reg_route!(
         r,
@@ -92,7 +106,8 @@ pub fn routes(
         post,
         admin_batch,
         "system admin",
-        "admin/media"
+        "admin/media",
+        "admin"
     )
 }
 
@@ -106,8 +121,6 @@ pub async fn upload(
     State(state): State<crate::AppState>,
     mut multipart: Multipart,
 ) -> AppResult<ApiResponse<crate::dto::MediaResponse>> {
-    auth.ensure_authenticated()?;
-    auth.ensure_scope("media", TokenAction::Create)?;
     let field = multipart
         .next_field()
         .await
@@ -154,8 +167,6 @@ pub async fn list(
     State(state): State<crate::AppState>,
     Query(mut params): Query<PaginationParams>,
 ) -> AppResult<ApiResponse<crate::errors::response::PaginatedData<crate::dto::MediaResponse>>> {
-    auth.ensure_authenticated()?;
-    auth.ensure_scope("media", TokenAction::Read)?;
     params.sanitize();
     let (items, total) =
         media_service::list(&state.pool, &auth, params.page, params.page_size).await?;
@@ -181,8 +192,6 @@ pub async fn delete(
     State(state): State<crate::AppState>,
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<()>> {
-    auth.ensure_authenticated()?;
-    auth.ensure_scope("media", TokenAction::Delete)?;
     media_service::delete_media(state.storage.as_ref(), &state.pool, &id, &auth).await?;
     Ok(ApiResponse::success(()))
 }
@@ -195,8 +204,6 @@ pub async fn stats(
     auth: AuthUser,
     State(state): State<crate::AppState>,
 ) -> AppResult<ApiResponse<crate::dto::MediaStatsResponse>> {
-    auth.ensure_authenticated()?;
-    auth.ensure_scope("media", TokenAction::Read)?;
     let s = media_service::stats(&state.pool, &auth).await?;
     Ok(ApiResponse::success(crate::dto::stats_to_response(&s)))
 }
@@ -212,8 +219,6 @@ pub async fn admin_upload(
     State(state): State<crate::AppState>,
     mut multipart: Multipart,
 ) -> AppResult<ApiResponse<crate::dto::MediaResponse>> {
-    auth.ensure_admin()?;
-    auth.ensure_scope("media", TokenAction::Create)?;
     let field = multipart
         .next_field()
         .await
@@ -257,8 +262,6 @@ pub async fn admin_list(
     State(state): State<crate::AppState>,
     Query(mut params): Query<PaginationParams>,
 ) -> AppResult<ApiResponse<PaginatedData<crate::dto::MediaResponse>>> {
-    auth.ensure_admin()?;
-    auth.ensure_scope("media", TokenAction::Read)?;
     params.sanitize();
     let (items, total) =
         media_service::admin_list(&state.pool, params.page, params.page_size, &auth).await?;
@@ -283,8 +286,6 @@ pub async fn admin_delete(
     State(state): State<crate::AppState>,
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<()>> {
-    auth.ensure_admin()?;
-    auth.ensure_scope("media", TokenAction::Delete)?;
     media_service::admin_delete_media(state.storage.as_ref(), &state.pool, &id, &auth).await?;
     Ok(ApiResponse::success(()))
 }
@@ -299,8 +300,6 @@ pub async fn admin_batch(
     State(state): State<crate::AppState>,
     Json(req): Json<BatchRequest>,
 ) -> AppResult<ApiResponse<BatchResponse>> {
-    auth.ensure_admin()?;
-    auth.ensure_scope("media", TokenAction::Delete)?;
     crate::errors::validation::validate(&req)?;
     let mut affected = 0usize;
     if req.action == "delete" {

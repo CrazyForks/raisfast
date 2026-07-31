@@ -135,30 +135,35 @@ impl RbacService {
         let role = crate::models::rbac::find_role_by_id(&self.pool, rid)
             .await?
             .ok_or_else(|| AppError::not_found(&format!("role/{role_id}")))?;
-        crate::models::rbac::delete_permissions_by_role_id(&self.pool, role.id).await?;
 
-        for entry in entries {
-            let fields_json = entry
-                .fields
-                .as_ref()
-                .map(|f| serde_json::to_string(f).unwrap_or_default());
-            let conditions_json = entry
-                .conditions
-                .as_ref()
-                .map(|c| serde_json::to_string(c).unwrap_or_default());
+        crate::in_transaction!(&self.pool, tx, {
+            crate::models::rbac::tx_delete_permissions_by_role_id(&mut tx, role.id).await?;
 
-            crate::models::rbac::insert_permission(
-                &self.pool,
-                &CreatePermissionCmd {
-                    role_id: role.id,
-                    action: entry.action.clone(),
-                    subject: entry.subject.clone(),
-                    fields: fields_json,
-                    conditions: conditions_json,
-                },
-            )
-            .await?;
-        }
+            for entry in entries {
+                let fields_json = entry
+                    .fields
+                    .as_ref()
+                    .map(|f| serde_json::to_string(f).unwrap_or_default());
+                let conditions_json = entry
+                    .conditions
+                    .as_ref()
+                    .map(|c| serde_json::to_string(c).unwrap_or_default());
+
+                crate::models::rbac::tx_insert_permission(
+                    &mut tx,
+                    &CreatePermissionCmd {
+                        role_id: role.id,
+                        action: entry.action.clone(),
+                        subject: entry.subject.clone(),
+                        fields: fields_json,
+                        conditions: conditions_json,
+                    },
+                )
+                .await?;
+            }
+            Ok(())
+        })?;
+
         self.get_permissions(role_id).await
     }
 

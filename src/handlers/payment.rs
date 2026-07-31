@@ -7,7 +7,7 @@ use crate::dto::payment::*;
 use crate::errors::app_error::AppResult;
 use crate::errors::response::ApiResponse;
 use crate::errors::validation;
-use crate::middleware::auth::{AuthUser, TokenAction};
+use crate::middleware::auth::AuthUser;
 use crate::types::snowflake_id::SnowflakeId;
 use crate::utils::pagination::PaginationParams;
 
@@ -25,7 +25,8 @@ pub fn routes(
         get,
         list_available_channels_handler,
         "system public",
-        "payment"
+        "payment",
+        "public"
     );
     let r = reg_route!(
         r,
@@ -35,7 +36,8 @@ pub fn routes(
         get,
         list_user_orders,
         "system authed",
-        "payment"
+        "payment",
+        "payments:read"
     );
     let r = reg_route!(
         r,
@@ -45,7 +47,8 @@ pub fn routes(
         create,
         create_payment_order_handler,
         "system authed",
-        "payment"
+        "payment",
+        "payments:create"
     );
     let r = reg_route!(
         r,
@@ -55,7 +58,8 @@ pub fn routes(
         get,
         get_payment_order_handler,
         "system authed",
-        "payment"
+        "payment",
+        "payments:read"
     );
     let r = reg_route!(
         r,
@@ -65,7 +69,8 @@ pub fn routes(
         post,
         cancel_payment_order_handler,
         "system authed",
-        "payment"
+        "payment",
+        "payments:update"
     );
     let r = reg_route!(
         r,
@@ -75,7 +80,8 @@ pub fn routes(
         get,
         list_order_transactions,
         "system authed",
-        "payment"
+        "payment",
+        "payments:read"
     );
     let r = reg_route!(
         r,
@@ -85,19 +91,22 @@ pub fn routes(
         get,
         list_order_refunds,
         "system authed",
-        "payment"
+        "payment",
+        "payments:read"
     );
-    let r = {
-        let mr = axum::routing::post(handle_callback).layer(axum::middleware::from_fn(
+    let r = reg_route!(
+        r,
+        registry,
+        restful,
+        "/payment/callback/{channel_id}",
+        post,
+        axum::routing::post(handle_callback).layer(axum::middleware::from_fn(
             crate::middleware::rate_limit::payment_callback_rate_limit,
-        ));
-        r.route("/payment/callback/{channel_id}", mr)
-    };
-    registry.record(
-        "POST",
-        "/api/v1/payment/callback/{channel_id}",
+        )),
         "system public",
         "payment",
+        "public",
+        layered
     );
     let r = reg_route!(
         r,
@@ -107,7 +116,8 @@ pub fn routes(
         get,
         admin_list_channels,
         "system admin",
-        "admin/payment"
+        "admin/payment",
+        "admin"
     );
     let r = reg_route!(
         r,
@@ -117,7 +127,8 @@ pub fn routes(
         create,
         admin_create_channel,
         "system admin",
-        "admin/payment"
+        "admin/payment",
+        "admin"
     );
     let r = reg_route!(
         r,
@@ -127,7 +138,8 @@ pub fn routes(
         get,
         admin_get_channel,
         "system admin",
-        "admin/payment"
+        "admin/payment",
+        "admin"
     );
     let r = reg_route!(
         r,
@@ -137,7 +149,8 @@ pub fn routes(
         put,
         admin_update_channel,
         "system admin",
-        "admin/payment"
+        "admin/payment",
+        "admin"
     );
     let r = reg_route!(
         r,
@@ -147,7 +160,8 @@ pub fn routes(
         delete,
         admin_delete_channel,
         "system admin",
-        "admin/payment"
+        "admin/payment",
+        "admin"
     );
     let r = reg_route!(
         r,
@@ -157,7 +171,8 @@ pub fn routes(
         get,
         admin_list_orders,
         "system admin",
-        "admin/payment"
+        "admin/payment",
+        "admin"
     );
     let r = reg_route!(
         r,
@@ -167,7 +182,8 @@ pub fn routes(
         get,
         admin_get_order,
         "system admin",
-        "admin/payment"
+        "admin/payment",
+        "admin"
     );
     let r = reg_route!(
         r,
@@ -177,7 +193,8 @@ pub fn routes(
         post,
         admin_refund_order,
         "system admin",
-        "admin/payment"
+        "admin/payment",
+        "admin"
     );
     let r = reg_route!(
         r,
@@ -187,7 +204,8 @@ pub fn routes(
         get,
         admin_list_transactions,
         "system admin",
-        "admin/payment"
+        "admin/payment",
+        "admin"
     );
     reg_route!(
         r,
@@ -197,7 +215,8 @@ pub fn routes(
         get,
         admin_list_refunds,
         "system admin",
-        "admin/payment"
+        "admin/payment",
+        "admin"
     )
 }
 
@@ -257,7 +276,6 @@ pub async fn create_payment_order_handler(
     Json(req): Json<CreatePaymentOrderRequest>,
 ) -> AppResult<ApiResponse<PaymentOrderResponse>> {
     let user_id = auth.ensure_snowflake_user_id()?;
-    auth.ensure_scope("payments", TokenAction::Create)?;
     validation::validate(&req)?;
     let client_ip = extract_client_ip(&headers);
     let client_language = extract_accept_language(&headers);
@@ -289,7 +307,6 @@ pub async fn list_user_orders(
     Query(mut params): Query<PaginationParams>,
 ) -> AppResult<ApiResponse<crate::errors::response::PaginatedData<PaymentOrderResponse>>> {
     let user_id = auth.ensure_snowflake_user_id()?;
-    auth.ensure_scope("payments", TokenAction::Read)?;
     params.sanitize();
     let (orders, total) = state
         .payment_service
@@ -310,7 +327,6 @@ pub async fn get_payment_order_handler(
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<PaymentOrderResponse>> {
     let user_id = auth.ensure_snowflake_user_id()?;
-    auth.ensure_scope("payments", TokenAction::Read)?;
     let id = crate::types::snowflake_id::parse_id(&id)?;
     let order = state
         .payment_service
@@ -330,7 +346,6 @@ pub async fn cancel_payment_order_handler(
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<()>> {
     let user_id = auth.ensure_snowflake_user_id()?;
-    auth.ensure_scope("payments", TokenAction::Update)?;
     let id = crate::types::snowflake_id::parse_id(&id)?;
     state
         .payment_service
@@ -350,7 +365,6 @@ pub async fn list_order_transactions(
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<Vec<PaymentTransactionResponse>>> {
     let user_id = auth.ensure_snowflake_user_id()?;
-    auth.ensure_scope("payments", TokenAction::Read)?;
     let id = crate::types::snowflake_id::parse_id(&id)?;
     let txs = state
         .payment_service
@@ -371,7 +385,6 @@ pub async fn list_order_refunds(
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<Vec<PaymentRefundResponse>>> {
     let user_id = auth.ensure_snowflake_user_id()?;
-    auth.ensure_scope("payments", TokenAction::Read)?;
     let id = crate::types::snowflake_id::parse_id(&id)?;
     let refunds = state
         .payment_service
@@ -458,8 +471,6 @@ pub async fn admin_list_channels(
     State(state): State<crate::AppState>,
     Query(mut params): Query<PaginationParams>,
 ) -> AppResult<ApiResponse<crate::errors::response::PaginatedData<PaymentChannelResponse>>> {
-    auth.ensure_admin()?;
-    auth.ensure_scope("payments", TokenAction::Read)?;
     params.sanitize();
     let (channels, total) = state
         .payment_service
@@ -479,8 +490,6 @@ pub async fn admin_create_channel(
     State(state): State<crate::AppState>,
     Json(req): Json<CreatePaymentChannelRequest>,
 ) -> AppResult<ApiResponse<PaymentChannelResponse>> {
-    auth.ensure_admin()?;
-    auth.ensure_scope("payments", TokenAction::Create)?;
     validation::validate(&req)?;
     let channel = state.payment_service.create_channel(&auth, req).await?;
     Ok(ApiResponse::success(PaymentChannelResponse::from(channel)))
@@ -496,8 +505,6 @@ pub async fn admin_get_channel(
     State(state): State<crate::AppState>,
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<PaymentChannelResponse>> {
-    auth.ensure_admin()?;
-    auth.ensure_scope("payments", TokenAction::Read)?;
     let id = crate::types::snowflake_id::parse_id(&id)?;
     let channel = state.payment_service.get_channel(&auth, id).await?;
     Ok(ApiResponse::success(PaymentChannelResponse::from(channel)))
@@ -515,8 +522,6 @@ pub async fn admin_update_channel(
     Path(id): Path<String>,
     Json(req): Json<UpdatePaymentChannelRequest>,
 ) -> AppResult<ApiResponse<PaymentChannelResponse>> {
-    auth.ensure_admin()?;
-    auth.ensure_scope("payments", TokenAction::Update)?;
     validation::validate(&req)?;
     let id = crate::types::snowflake_id::parse_id(&id)?;
     let channel = state.payment_service.update_channel(&auth, id, req).await?;
@@ -533,8 +538,6 @@ pub async fn admin_delete_channel(
     State(state): State<crate::AppState>,
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<()>> {
-    auth.ensure_admin()?;
-    auth.ensure_scope("payments", TokenAction::Delete)?;
     let id = crate::types::snowflake_id::parse_id(&id)?;
     state.payment_service.delete_channel(&auth, id).await?;
     Ok(ApiResponse::success(()))
@@ -549,8 +552,6 @@ pub async fn admin_list_orders(
     State(state): State<crate::AppState>,
     Query(mut params): Query<PaginationParams>,
 ) -> AppResult<ApiResponse<crate::errors::response::PaginatedData<PaymentOrderResponse>>> {
-    auth.ensure_admin()?;
-    auth.ensure_scope("payments", TokenAction::Read)?;
     params.sanitize();
     let (orders, total) = state
         .payment_service
@@ -570,8 +571,6 @@ pub async fn admin_get_order(
     State(state): State<crate::AppState>,
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<PaymentOrderResponse>> {
-    auth.ensure_admin()?;
-    auth.ensure_scope("payments", TokenAction::Read)?;
     let id = crate::types::snowflake_id::parse_id(&id)?;
     let order = state
         .payment_service
@@ -592,8 +591,6 @@ pub async fn admin_refund_order(
     Path(id): Path<String>,
     Json(req): Json<CreateRefundRequest>,
 ) -> AppResult<ApiResponse<PaymentRefundResponse>> {
-    auth.ensure_admin()?;
-    auth.ensure_scope("payments", TokenAction::Create)?;
     validation::validate(&req)?;
     let id = crate::types::snowflake_id::parse_id(&id)?;
     let refund = state
@@ -612,8 +609,6 @@ pub async fn admin_list_transactions(
     State(state): State<crate::AppState>,
     Query(mut params): Query<PaginationParams>,
 ) -> AppResult<ApiResponse<crate::errors::response::PaginatedData<PaymentTransactionResponse>>> {
-    auth.ensure_admin()?;
-    auth.ensure_scope("payments", TokenAction::Read)?;
     params.sanitize();
     let (txs, total) = state
         .payment_service
@@ -632,8 +627,6 @@ pub async fn admin_list_refunds(
     State(state): State<crate::AppState>,
     Query(mut params): Query<PaginationParams>,
 ) -> AppResult<ApiResponse<crate::errors::response::PaginatedData<PaymentRefundResponse>>> {
-    auth.ensure_admin()?;
-    auth.ensure_scope("payments", TokenAction::Read)?;
     params.sanitize();
     let (refunds, total) = state
         .payment_service

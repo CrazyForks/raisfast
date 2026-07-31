@@ -10,10 +10,12 @@
 //! - **AOP HTTP**: Request/response interception, connecting AspectEngine HTTP Layer
 
 pub mod aop_http;
+pub mod audit_denied;
 pub mod auth;
 pub mod locale;
 pub mod metrics;
 pub mod permission;
+pub mod permission_guard;
 pub mod rate_limit;
 pub mod request_id;
 pub mod security_headers;

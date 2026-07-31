@@ -8,7 +8,7 @@ use crate::dto::shipping_template::{
 use crate::errors::app_error::AppResult;
 use crate::errors::response::{ApiResponse, PaginatedData};
 use crate::errors::validation;
-use crate::middleware::auth::{AuthUser, TokenAction};
+use crate::middleware::auth::AuthUser;
 use crate::utils::pagination::PaginationParams;
 
 pub fn routes(
@@ -25,7 +25,8 @@ pub fn routes(
         get,
         admin_list,
         "system admin",
-        "admin/shipping-templates"
+        "admin/shipping-templates",
+        "admin"
     );
     let r = reg_route!(
         r,
@@ -35,7 +36,8 @@ pub fn routes(
         create,
         admin_create,
         "system admin",
-        "admin/shipping-templates"
+        "admin/shipping-templates",
+        "admin"
     );
     let r = reg_route!(
         r,
@@ -45,7 +47,8 @@ pub fn routes(
         put,
         admin_update,
         "system admin",
-        "admin/shipping-templates"
+        "admin/shipping-templates",
+        "admin"
     );
     let r = reg_route!(
         r,
@@ -55,7 +58,8 @@ pub fn routes(
         post,
         calculate_shipping,
         "system authed",
-        "shipping/calculate"
+        "shipping/calculate",
+        "shipping_templates:read"
     );
     reg_route!(
         r,
@@ -65,7 +69,8 @@ pub fn routes(
         delete,
         admin_delete,
         "system admin",
-        "admin/shipping-templates"
+        "admin/shipping-templates",
+        "admin"
     )
 }
 
@@ -78,8 +83,6 @@ pub async fn admin_list(
     State(state): State<crate::AppState>,
     axum::extract::Query(params): axum::extract::Query<PaginationParams>,
 ) -> AppResult<ApiResponse<PaginatedData<ShippingTemplateResponse>>> {
-    auth.ensure_admin()?;
-    auth.ensure_scope("shipping_templates", TokenAction::Read)?;
     let mut p = params;
     p.sanitize();
     let (items, total) = state
@@ -99,8 +102,6 @@ pub async fn admin_create(
     State(state): State<crate::AppState>,
     Json(req): Json<CreateShippingTemplateRequest>,
 ) -> AppResult<ApiResponse<ShippingTemplateResponse>> {
-    auth.ensure_admin()?;
-    auth.ensure_scope("shipping_templates", TokenAction::Create)?;
     validation::validate(&req)?;
     let tmpl = state.shipping_template_service.create(&auth, req).await?;
     Ok(ApiResponse::success(ShippingTemplateResponse::from(tmpl)))
@@ -118,8 +119,6 @@ pub async fn admin_update(
     Path(id): Path<String>,
     Json(req): Json<UpdateShippingTemplateRequest>,
 ) -> AppResult<ApiResponse<ShippingTemplateResponse>> {
-    auth.ensure_admin()?;
-    auth.ensure_scope("shipping_templates", TokenAction::Update)?;
     let id = crate::types::snowflake_id::parse_id(&id)?;
     let tmpl = state
         .shipping_template_service
@@ -138,8 +137,6 @@ pub async fn admin_delete(
     State(state): State<crate::AppState>,
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<()>> {
-    auth.ensure_admin()?;
-    auth.ensure_scope("shipping_templates", TokenAction::Delete)?;
     let id = crate::types::snowflake_id::parse_id(&id)?;
     state.shipping_template_service.delete(&auth, id).await?;
     Ok(ApiResponse::success(()))
@@ -155,7 +152,6 @@ pub async fn calculate_shipping(
     State(state): State<crate::AppState>,
     Json(req): Json<CalculateShippingRequest>,
 ) -> AppResult<ApiResponse<CalculateShippingResponse>> {
-    auth.ensure_scope("shipping_templates", TokenAction::Read)?;
     let mut product_weights = Vec::new();
     for item in &req.items {
         let product_id = crate::types::snowflake_id::parse_id(&item.product_id)?;

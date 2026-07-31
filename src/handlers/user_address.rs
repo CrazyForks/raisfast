@@ -4,7 +4,7 @@ use crate::dto::user_address::{
 use crate::errors::app_error::AppResult;
 use crate::errors::response::ApiResponse;
 use crate::errors::validation;
-use crate::middleware::auth::{AuthUser, TokenAction};
+use crate::middleware::auth::AuthUser;
 
 use axum::Json;
 use axum::extract::{Path, State};
@@ -23,7 +23,8 @@ pub fn routes(
         get,
         list_addresses,
         "system authed",
-        "user_addresses"
+        "user_addresses",
+        "user_addresses:read"
     );
     let r = reg_route!(
         r,
@@ -33,7 +34,8 @@ pub fn routes(
         create,
         create_address,
         "system authed",
-        "user_addresses"
+        "user_addresses",
+        "user_addresses:create"
     );
     let r = reg_route!(
         r,
@@ -43,7 +45,8 @@ pub fn routes(
         put,
         update_address,
         "system authed",
-        "user_addresses"
+        "user_addresses",
+        "user_addresses:update"
     );
     reg_route!(
         r,
@@ -53,7 +56,8 @@ pub fn routes(
         delete,
         delete_address,
         "system authed",
-        "user_addresses"
+        "user_addresses",
+        "user_addresses:delete"
     )
 }
 
@@ -62,7 +66,6 @@ pub async fn list_addresses(
     State(state): State<crate::AppState>,
 ) -> AppResult<ApiResponse<Vec<UserAddressResponse>>> {
     let user_id = auth.ensure_snowflake_user_id()?;
-    auth.ensure_scope("user_addresses", TokenAction::Read)?;
     let addrs = state.user_address_service.list(&auth, user_id).await?;
     let resp: Vec<UserAddressResponse> = addrs.into_iter().map(Into::into).collect();
     Ok(ApiResponse::success(resp))
@@ -74,7 +77,6 @@ pub async fn create_address(
     Json(req): Json<CreateUserAddressRequest>,
 ) -> AppResult<ApiResponse<UserAddressResponse>> {
     let user_id = auth.ensure_snowflake_user_id()?;
-    auth.ensure_scope("user_addresses", TokenAction::Create)?;
     validation::validate(&req)?;
     let addr = state
         .user_address_service
@@ -90,7 +92,6 @@ pub async fn update_address(
     Json(req): Json<UpdateUserAddressRequest>,
 ) -> AppResult<ApiResponse<UserAddressResponse>> {
     let user_id = auth.ensure_snowflake_user_id()?;
-    auth.ensure_scope("user_addresses", TokenAction::Update)?;
     validation::validate(&req)?;
     let id = crate::types::snowflake_id::parse_id(&id)?;
     let addr = state
@@ -106,7 +107,6 @@ pub async fn delete_address(
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<()>> {
     let user_id = auth.ensure_snowflake_user_id()?;
-    auth.ensure_scope("user_addresses", TokenAction::Delete)?;
     let id = crate::types::snowflake_id::parse_id(&id)?;
     state
         .user_address_service

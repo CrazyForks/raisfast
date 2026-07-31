@@ -49,11 +49,11 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 
-use arc_swap::ArcSwap;
-use schema::ContentTypeSchema;
 use crate::constants::COL_CREATED_BY;
 use crate::errors::app_error::AppError;
+use arc_swap::ArcSwap;
 use schema::ApiAccess as ContentTypeApiAccess;
+use schema::ContentTypeSchema;
 
 /// Content type registry
 ///

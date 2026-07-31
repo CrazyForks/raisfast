@@ -5,6 +5,7 @@ use crate::errors::app_error::{AppError, AppResult};
 use crate::middleware::auth::AuthUser;
 use crate::models::page;
 use crate::models::reusable_block;
+use crate::policy::check_owner_opt;
 use crate::types::snowflake_id::SnowflakeId;
 
 fn validate_blocks_json(blocks: &str) -> AppResult<Vec<page::PageBlock>> {
@@ -66,6 +67,7 @@ pub async fn update_reusable(
     let block = reusable_block::find_reusable_by_id(pool, id, auth.tenant_id())
         .await?
         .ok_or_else(|| AppError::not_found("reusable_block"))?;
+    check_owner_opt(auth, block.created_by, block.tenant_id.as_deref())?;
     reusable_block::update_reusable(
         pool,
         &UpdateReusableBlockCmd {
@@ -89,6 +91,7 @@ pub async fn delete_reusable(
     let block = reusable_block::find_reusable_by_id(pool, id, auth.tenant_id())
         .await?
         .ok_or_else(|| AppError::not_found("reusable_block"))?;
+    check_owner_opt(auth, block.created_by, block.tenant_id.as_deref())?;
     reusable_block::delete_reusable(pool, block.id, auth.tenant_id()).await
 }
 

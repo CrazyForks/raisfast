@@ -28,7 +28,8 @@ pub fn routes(
         get,
         overview,
         "system admin",
-        "admin/stats"
+        "admin/stats",
+        "admin"
     );
     let r = reg_route!(
         r,
@@ -38,7 +39,8 @@ pub fn routes(
         get,
         content_stats,
         "system admin",
-        "admin/stats"
+        "admin/stats",
+        "admin"
     );
     reg_route!(
         r,
@@ -48,7 +50,8 @@ pub fn routes(
         get,
         trends,
         "system admin",
-        "admin/stats"
+        "admin/stats",
+        "admin"
     )
 }
 
@@ -61,9 +64,8 @@ pub fn routes(
 )]
 pub async fn overview(
     State(state): State<AppState>,
-    auth: AuthUser,
+    _auth: AuthUser,
 ) -> AppResult<ApiResponse<serde_json::Value>> {
-    auth.ensure_admin()?;
     let svc = StatsService::new(state.pool.clone());
     let data = svc.overview(None).await?;
     Ok(ApiResponse::success(data))
@@ -79,10 +81,9 @@ pub async fn overview(
 )]
 pub async fn content_stats(
     State(state): State<AppState>,
-    auth: AuthUser,
+    _auth: AuthUser,
     Path(table): Path<String>,
 ) -> AppResult<ApiResponse<serde_json::Value>> {
-    auth.ensure_admin()?;
     let svc = StatsService::new(state.pool.clone());
     let data = svc.content_stats(&table, None).await?;
     Ok(ApiResponse::success(data))
@@ -97,10 +98,9 @@ pub async fn content_stats(
 )]
 pub async fn trends(
     State(state): State<AppState>,
-    auth: AuthUser,
+    _auth: AuthUser,
     Query(query): Query<TrendsQuery>,
 ) -> AppResult<ApiResponse<serde_json::Value>> {
-    auth.ensure_admin()?;
     let table = query.table.as_deref().unwrap_or("posts");
     let days = query.days.unwrap_or(30);
 

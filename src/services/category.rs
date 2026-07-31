@@ -12,6 +12,7 @@ use crate::dto::{CreateCategoryRequest, UpdateCategoryRequest};
 use crate::errors::app_error::AppResult;
 use crate::middleware::auth::AuthUser;
 use crate::models::category::Category;
+use crate::policy::check_owner_opt;
 use crate::types::snowflake_id::SnowflakeId;
 
 /// Category business logic trait.
@@ -87,6 +88,7 @@ impl CategoryService for CategoryServiceImpl {
     ) -> AppResult<Category> {
         let existing =
             crate::models::category::find_by_id(&self.pool, id, auth.tenant_id()).await?;
+        check_owner_opt(auth, existing.created_by, existing.tenant_id.as_deref())?;
         let (req, _d) = self.before_update(auth, &existing, req).await?;
         let new_slug = if let Some(ref slug_val) = req.slug {
             if slug_val.is_empty() {
@@ -136,6 +138,7 @@ impl CategoryService for CategoryServiceImpl {
     async fn delete(&self, id: SnowflakeId, auth: &AuthUser) -> AppResult<()> {
         let existing =
             crate::models::category::find_by_id(&self.pool, id, auth.tenant_id()).await?;
+        check_owner_opt(auth, existing.created_by, existing.tenant_id.as_deref())?;
         self.before_delete(auth, &existing).await?;
         crate::models::category::ensure_safe_to_delete(&self.pool, existing.id, auth.tenant_id())
             .await?;

@@ -46,19 +46,12 @@ pub async fn create(
     Ok(())
 }
 
-pub async fn find_by_code(
-    pool: &crate::db::Pool,
-    code: &str,
-) -> AppResult<Option<UserDeviceCode>> {
-    let result: Option<UserDeviceCode> =
-        raisfast_derive::crud_find!(pool, "user_device_codes", UserDeviceCode, where: ("code", code))?;
+pub async fn find_by_code(pool: &crate::db::Pool, code: &str) -> AppResult<Option<UserDeviceCode>> {
+    let result: Option<UserDeviceCode> = raisfast_derive::crud_find!(pool, "user_device_codes", UserDeviceCode, where: ("code", code))?;
     Ok(result)
 }
 
-pub async fn mark_used(
-    pool: &crate::db::Pool,
-    id: SnowflakeId,
-) -> AppResult<()> {
+pub async fn mark_used(pool: &crate::db::Pool, id: SnowflakeId) -> AppResult<()> {
     let now = crate::utils::tz::now_utc();
     raisfast_derive::crud_update!(pool, "user_device_codes",
         bind: ["used_at" => now],
@@ -74,8 +67,15 @@ pub async fn delete_expired(pool: &crate::db::Pool) -> AppResult<u64> {
         "DELETE FROM user_device_codes WHERE expires_at < {} AND used_at IS NULL",
         Driver::ph(1),
     );
-    let result = sqlx::query(&sql).bind(now).execute(pool).await
-        .map_err(|e| crate::errors::app_error::AppError::Internal(anyhow::anyhow!("failed to delete expired device codes: {e}")))?;
+    let result = sqlx::query(&sql)
+        .bind(now)
+        .execute(pool)
+        .await
+        .map_err(|e| {
+            crate::errors::app_error::AppError::Internal(anyhow::anyhow!(
+                "failed to delete expired device codes: {e}"
+            ))
+        })?;
     Ok(result.rows_affected())
 }
 
@@ -83,8 +83,7 @@ pub async fn tx_find_by_code(
     tx: &mut crate::db::pool::DbConnection,
     code: &str,
 ) -> AppResult<Option<UserDeviceCode>> {
-    let result: Option<UserDeviceCode> =
-        raisfast_derive::crud_find!(&mut *tx, "user_device_codes", UserDeviceCode, where: ("code", code))?;
+    let result: Option<UserDeviceCode> = raisfast_derive::crud_find!(&mut *tx, "user_device_codes", UserDeviceCode, where: ("code", code))?;
     Ok(result)
 }
 
