@@ -7,7 +7,7 @@ use crate::dto::payment::*;
 use crate::errors::app_error::AppResult;
 use crate::errors::response::ApiResponse;
 use crate::errors::validation;
-use crate::middleware::auth::AuthUser;
+use crate::middleware::auth::{AuthUser, TokenAction};
 use crate::types::snowflake_id::SnowflakeId;
 use crate::utils::pagination::PaginationParams;
 
@@ -257,6 +257,7 @@ pub async fn create_payment_order_handler(
     Json(req): Json<CreatePaymentOrderRequest>,
 ) -> AppResult<ApiResponse<PaymentOrderResponse>> {
     let user_id = auth.ensure_snowflake_user_id()?;
+    auth.ensure_scope("payments", TokenAction::Create)?;
     validation::validate(&req)?;
     let client_ip = extract_client_ip(&headers);
     let client_language = extract_accept_language(&headers);
@@ -288,6 +289,7 @@ pub async fn list_user_orders(
     Query(mut params): Query<PaginationParams>,
 ) -> AppResult<ApiResponse<crate::errors::response::PaginatedData<PaymentOrderResponse>>> {
     let user_id = auth.ensure_snowflake_user_id()?;
+    auth.ensure_scope("payments", TokenAction::Read)?;
     params.sanitize();
     let (orders, total) = state
         .payment_service
@@ -308,6 +310,7 @@ pub async fn get_payment_order_handler(
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<PaymentOrderResponse>> {
     let user_id = auth.ensure_snowflake_user_id()?;
+    auth.ensure_scope("payments", TokenAction::Read)?;
     let id = crate::types::snowflake_id::parse_id(&id)?;
     let order = state
         .payment_service
@@ -327,6 +330,7 @@ pub async fn cancel_payment_order_handler(
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<()>> {
     let user_id = auth.ensure_snowflake_user_id()?;
+    auth.ensure_scope("payments", TokenAction::Update)?;
     let id = crate::types::snowflake_id::parse_id(&id)?;
     state
         .payment_service
@@ -346,6 +350,7 @@ pub async fn list_order_transactions(
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<Vec<PaymentTransactionResponse>>> {
     let user_id = auth.ensure_snowflake_user_id()?;
+    auth.ensure_scope("payments", TokenAction::Read)?;
     let id = crate::types::snowflake_id::parse_id(&id)?;
     let txs = state
         .payment_service
@@ -366,6 +371,7 @@ pub async fn list_order_refunds(
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<Vec<PaymentRefundResponse>>> {
     let user_id = auth.ensure_snowflake_user_id()?;
+    auth.ensure_scope("payments", TokenAction::Read)?;
     let id = crate::types::snowflake_id::parse_id(&id)?;
     let refunds = state
         .payment_service
@@ -453,6 +459,7 @@ pub async fn admin_list_channels(
     Query(mut params): Query<PaginationParams>,
 ) -> AppResult<ApiResponse<crate::errors::response::PaginatedData<PaymentChannelResponse>>> {
     auth.ensure_admin()?;
+    auth.ensure_scope("payments", TokenAction::Read)?;
     params.sanitize();
     let (channels, total) = state
         .payment_service
@@ -473,6 +480,7 @@ pub async fn admin_create_channel(
     Json(req): Json<CreatePaymentChannelRequest>,
 ) -> AppResult<ApiResponse<PaymentChannelResponse>> {
     auth.ensure_admin()?;
+    auth.ensure_scope("payments", TokenAction::Create)?;
     validation::validate(&req)?;
     let channel = state.payment_service.create_channel(&auth, req).await?;
     Ok(ApiResponse::success(PaymentChannelResponse::from(channel)))
@@ -489,6 +497,7 @@ pub async fn admin_get_channel(
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<PaymentChannelResponse>> {
     auth.ensure_admin()?;
+    auth.ensure_scope("payments", TokenAction::Read)?;
     let id = crate::types::snowflake_id::parse_id(&id)?;
     let channel = state.payment_service.get_channel(&auth, id).await?;
     Ok(ApiResponse::success(PaymentChannelResponse::from(channel)))
@@ -507,6 +516,7 @@ pub async fn admin_update_channel(
     Json(req): Json<UpdatePaymentChannelRequest>,
 ) -> AppResult<ApiResponse<PaymentChannelResponse>> {
     auth.ensure_admin()?;
+    auth.ensure_scope("payments", TokenAction::Update)?;
     validation::validate(&req)?;
     let id = crate::types::snowflake_id::parse_id(&id)?;
     let channel = state.payment_service.update_channel(&auth, id, req).await?;
@@ -524,6 +534,7 @@ pub async fn admin_delete_channel(
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<()>> {
     auth.ensure_admin()?;
+    auth.ensure_scope("payments", TokenAction::Delete)?;
     let id = crate::types::snowflake_id::parse_id(&id)?;
     state.payment_service.delete_channel(&auth, id).await?;
     Ok(ApiResponse::success(()))
@@ -539,6 +550,7 @@ pub async fn admin_list_orders(
     Query(mut params): Query<PaginationParams>,
 ) -> AppResult<ApiResponse<crate::errors::response::PaginatedData<PaymentOrderResponse>>> {
     auth.ensure_admin()?;
+    auth.ensure_scope("payments", TokenAction::Read)?;
     params.sanitize();
     let (orders, total) = state
         .payment_service
@@ -559,6 +571,7 @@ pub async fn admin_get_order(
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<PaymentOrderResponse>> {
     auth.ensure_admin()?;
+    auth.ensure_scope("payments", TokenAction::Read)?;
     let id = crate::types::snowflake_id::parse_id(&id)?;
     let order = state
         .payment_service
@@ -580,6 +593,7 @@ pub async fn admin_refund_order(
     Json(req): Json<CreateRefundRequest>,
 ) -> AppResult<ApiResponse<PaymentRefundResponse>> {
     auth.ensure_admin()?;
+    auth.ensure_scope("payments", TokenAction::Create)?;
     validation::validate(&req)?;
     let id = crate::types::snowflake_id::parse_id(&id)?;
     let refund = state
@@ -599,6 +613,7 @@ pub async fn admin_list_transactions(
     Query(mut params): Query<PaginationParams>,
 ) -> AppResult<ApiResponse<crate::errors::response::PaginatedData<PaymentTransactionResponse>>> {
     auth.ensure_admin()?;
+    auth.ensure_scope("payments", TokenAction::Read)?;
     params.sanitize();
     let (txs, total) = state
         .payment_service
@@ -618,6 +633,7 @@ pub async fn admin_list_refunds(
     Query(mut params): Query<PaginationParams>,
 ) -> AppResult<ApiResponse<crate::errors::response::PaginatedData<PaymentRefundResponse>>> {
     auth.ensure_admin()?;
+    auth.ensure_scope("payments", TokenAction::Read)?;
     params.sanitize();
     let (refunds, total) = state
         .payment_service

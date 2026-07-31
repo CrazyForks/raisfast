@@ -10,7 +10,7 @@ use crate::dto::{
 use crate::errors::app_error::{AppError, AppResult};
 use crate::errors::response::ApiResponse;
 use crate::errors::validation;
-use crate::middleware::auth::AuthUser;
+use crate::middleware::auth::{AuthUser, TokenAction};
 use crate::services::reusable_block as reusable_service;
 
 pub fn routes(
@@ -89,7 +89,7 @@ pub async fn list_reusable(
     auth: AuthUser,
     State(state): State<crate::AppState>,
 ) -> AppResult<ApiResponse<Vec<ReusableBlockResponse>>> {
-    auth.ensure_author()?;
+    auth.ensure_scope("reusable_blocks", TokenAction::Read)?;
     let items = reusable_service::list_reusable(&state.pool, &auth).await?;
     let items: Vec<ReusableBlockResponse> = items
         .into_iter()
@@ -108,7 +108,7 @@ pub async fn get_reusable(
     State(state): State<crate::AppState>,
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<ReusableBlockResponse>> {
-    auth.ensure_author()?;
+    auth.ensure_scope("reusable_blocks", TokenAction::Read)?;
     let id = crate::types::snowflake_id::parse_id(&id)?;
     let block = reusable_service::get_reusable(&state.pool, id, &auth)
         .await?
@@ -127,7 +127,7 @@ pub async fn create_reusable(
     State(state): State<crate::AppState>,
     Json(req): Json<CreateReusableRequest>,
 ) -> AppResult<ApiResponse<ReusableBlockResponse>> {
-    auth.ensure_author()?;
+    auth.ensure_scope("reusable_blocks", TokenAction::Create)?;
     validation::validate(&req)?;
     let block = reusable_service::create_reusable(
         &state.pool,
@@ -154,7 +154,7 @@ pub async fn update_reusable(
     Path(id): Path<String>,
     Json(req): Json<UpdateReusableRequest>,
 ) -> AppResult<ApiResponse<ReusableBlockResponse>> {
-    auth.ensure_author()?;
+    auth.ensure_scope("reusable_blocks", TokenAction::Update)?;
     validation::validate(&req)?;
     let id = crate::types::snowflake_id::parse_id(&id)?;
     let block = reusable_service::update_reusable(
@@ -182,7 +182,7 @@ pub async fn delete_reusable(
     State(state): State<crate::AppState>,
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<()>> {
-    auth.ensure_author()?;
+    auth.ensure_scope("reusable_blocks", TokenAction::Delete)?;
     let id = crate::types::snowflake_id::parse_id(&id)?;
     reusable_service::delete_reusable(&state.pool, id, &auth).await?;
     Ok(ApiResponse::success(()))
@@ -199,6 +199,7 @@ pub async fn admin_batch(
     Json(req): Json<BatchRequest>,
 ) -> AppResult<ApiResponse<BatchResponse>> {
     auth.ensure_admin()?;
+    auth.ensure_scope("reusable_blocks", TokenAction::Delete)?;
     validation::validate(&req)?;
     let mut affected = 0usize;
     if req.action == "delete" {

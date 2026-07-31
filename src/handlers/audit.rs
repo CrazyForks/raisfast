@@ -6,7 +6,7 @@ use crate::AppState;
 use crate::dto::AuditFilter;
 use crate::errors::app_error::AppResult;
 use crate::errors::response::ApiResponse;
-use crate::middleware::auth::AuthUser;
+use crate::middleware::auth::{AuthUser, TokenAction};
 use crate::types::snowflake_id::SnowflakeId;
 use crate::utils::pagination::PaginationParams;
 
@@ -48,6 +48,7 @@ pub async fn list(
     ApiResponse<crate::errors::response::PaginatedData<crate::models::audit_log::AuditEntry>>,
 > {
     auth.ensure_admin()?;
+    auth.ensure_scope("audit_logs", TokenAction::Read)?;
     params.sanitize();
     let (items, total) = state
         .audit
@@ -69,6 +70,7 @@ pub async fn get(
     Path(id): Path<i64>,
 ) -> AppResult<ApiResponse<crate::models::audit_log::AuditEntry>> {
     auth.ensure_admin()?;
+    auth.ensure_scope("audit_logs", TokenAction::Read)?;
     let entry = state.audit.get(SnowflakeId(id)).await?;
     Ok(ApiResponse::success(entry))
 }

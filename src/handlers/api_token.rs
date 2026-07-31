@@ -9,6 +9,7 @@ use axum::response::IntoResponse;
 
 use crate::AppState;
 use crate::dto::CreateTokenRequest;
+use crate::dto::UpdateTokenRequest;
 use crate::errors::app_error::AppResult;
 use crate::errors::response::ApiResponse;
 use crate::middleware::auth::AuthUser;
@@ -37,6 +38,16 @@ pub fn routes(
         "/tokens",
         create,
         self::create,
+        "system authed",
+        "tokens"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        restful,
+        "/tokens/{id}",
+        put,
+        self::update,
         "system authed",
         "tokens"
     );
@@ -69,6 +80,7 @@ pub async fn create(
     crate::errors::validation::validate(&body)?;
     let result = api_token::create_token(
         &state.pool,
+        &state.config,
         &auth,
         &body.name,
         body.scopes,
@@ -87,8 +99,29 @@ pub async fn create(
 )]
 pub async fn list(auth: AuthUser, State(state): State<AppState>) -> AppResult<impl IntoResponse> {
     auth.ensure_authenticated()?;
-    let tokens = api_token::list_tokens(&state.pool, &auth).await?;
+    let tokens = api_token::list_tokens(&state.pool, &state.config, &auth).await?;
     Ok(Json(ApiResponse::success(tokens)))
+}
+
+/// Update API Token (name + scopes)
+///
+/// `PUT /api/v1/tokens/:id`
+#[utoipa::path(put, path = "/tokens/{id}", tag = "tokens",
+    security(("bearer_auth" = [])),
+    params(("id" = String, Path, description = "Token ID")),
+    request_body = UpdateTokenRequest,
+    responses((status = 200, description = "Token updated"))
+)]
+pub async fn update(
+    auth: AuthUser,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(body): Json<UpdateTokenRequest>,
+) -> AppResult<impl IntoResponse> {
+    auth.ensure_authenticated()?;
+    crate::errors::validation::validate(&body)?;
+    let result = api_token::update_token(&state.pool, &*state.cache, &id, &auth, &body.name, body.description.as_deref().unwrap_or(""), body.scopes).await?;
+    Ok(Json(ApiResponse::success(result)))
 }
 
 /// Delete API Token

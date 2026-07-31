@@ -8,7 +8,7 @@ use crate::AppState;
 use crate::dto::{BatchRequest, BatchResponse};
 use crate::errors::app_error::{AppError, AppResult};
 use crate::errors::response::ApiResponse;
-use crate::middleware::auth::AuthUser;
+use crate::middleware::auth::{AuthUser, TokenAction};
 use crate::plugins::PluginInfoResponse;
 use crate::utils::pagination::PaginationParams;
 
@@ -101,6 +101,7 @@ pub async fn list(
     Query(mut params): Query<PaginationParams>,
 ) -> AppResult<ApiResponse<crate::errors::response::PaginatedData<PluginInfoResponse>>> {
     auth.ensure_admin()?;
+    auth.ensure_scope("plugins", TokenAction::Read)?;
     params.sanitize();
     let all = state.plugins.list_plugins_detail().await;
     Ok(params.paginate_in_memory(all))
@@ -118,6 +119,7 @@ pub async fn get(
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<PluginInfoResponse>> {
     auth.ensure_admin()?;
+    auth.ensure_scope("plugins", TokenAction::Read)?;
     let detail = state
         .plugins
         .get_plugin_detail(&id)
@@ -138,6 +140,7 @@ pub async fn enable(
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<()>> {
     auth.ensure_admin()?;
+    auth.ensure_scope("plugins", TokenAction::Update)?;
     state.plugins.enable_plugin(&id).await?;
     Ok(ApiResponse::success(()))
 }
@@ -154,6 +157,7 @@ pub async fn disable(
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<()>> {
     auth.ensure_admin()?;
+    auth.ensure_scope("plugins", TokenAction::Update)?;
     state.plugins.disable_plugin(&id).await?;
     Ok(ApiResponse::success(()))
 }
@@ -170,6 +174,7 @@ pub async fn reload(
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<()>> {
     auth.ensure_admin()?;
+    auth.ensure_scope("plugins", TokenAction::Update)?;
     let plugin_dir = match &state.config.plugin_dir {
         Some(d) => std::path::PathBuf::from(d).join(&id),
         None => return Err(AppError::not_found("plugin")),
@@ -193,6 +198,7 @@ pub async fn remove(
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<()>> {
     auth.ensure_admin()?;
+    auth.ensure_scope("plugins", TokenAction::Delete)?;
     state.plugins.unload_plugin(&id).await;
     Ok(ApiResponse::success(()))
 }
@@ -208,6 +214,7 @@ pub async fn admin_batch(
     axum::Json(req): axum::Json<BatchRequest>,
 ) -> AppResult<ApiResponse<BatchResponse>> {
     auth.ensure_admin()?;
+    auth.ensure_scope("plugins", TokenAction::Update)?;
     crate::errors::validation::validate(&req)?;
     let mut affected = 0usize;
     for id in &req.ids {

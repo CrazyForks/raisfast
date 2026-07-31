@@ -8,7 +8,7 @@ use crate::dto::{
 use crate::errors::app_error::AppResult;
 use crate::errors::response::ApiResponse;
 use crate::errors::validation;
-use crate::middleware::auth::AuthUser;
+use crate::middleware::auth::{AuthUser, TokenAction};
 
 use crate::utils::pagination::PaginationParams;
 
@@ -192,6 +192,7 @@ pub async fn create_order(
     Json(req): Json<CreateOrderRequest>,
 ) -> AppResult<ApiResponse<OrderResponse>> {
     let user_id = auth.ensure_snowflake_user_id()?;
+    auth.ensure_scope("orders", TokenAction::Create)?;
     validation::validate(&req).map_err(|e| {
         tracing::error!("order create validation failed: {e}");
         e
@@ -217,6 +218,7 @@ pub async fn list_orders(
     Query(mut params): Query<PaginationParams>,
 ) -> AppResult<ApiResponse<crate::errors::response::PaginatedData<OrderResponse>>> {
     let user_id = auth.ensure_snowflake_user_id()?;
+    auth.ensure_scope("orders", TokenAction::Read)?;
     params.sanitize();
     let (orders, total) = state
         .order_service
@@ -240,6 +242,7 @@ pub async fn get_order(
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<OrderResponse>> {
     auth.ensure_authenticated()?;
+    auth.ensure_scope("orders", TokenAction::Read)?;
     let id = crate::types::snowflake_id::parse_id(&id)?;
     let (o, items) = state.order_service.get(&auth, id).await?;
     Ok(ApiResponse::success(to_order_response(o, items)))
@@ -258,6 +261,7 @@ pub async fn cancel_order_handler(
     Json(_req): Json<CancelOrderRequest>,
 ) -> AppResult<ApiResponse<()>> {
     let user_id = auth.ensure_snowflake_user_id()?;
+    auth.ensure_scope("orders", TokenAction::Update)?;
     let id = crate::types::snowflake_id::parse_id(&id)?;
     state.order_service.cancel(&auth, id, user_id).await?;
     Ok(ApiResponse::success(()))
@@ -274,6 +278,7 @@ pub async fn confirm_receipt(
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<()>> {
     let user_id = auth.ensure_snowflake_user_id()?;
+    auth.ensure_scope("orders", TokenAction::Update)?;
     let id = crate::types::snowflake_id::parse_id(&id)?;
     state
         .order_service
@@ -292,6 +297,7 @@ pub async fn admin_list(
     Query(query): Query<crate::dto::order::AdminOrderListQuery>,
 ) -> AppResult<ApiResponse<crate::errors::response::PaginatedData<OrderResponse>>> {
     auth.ensure_admin()?;
+    auth.ensure_scope("orders", TokenAction::Read)?;
     let params = PaginationParams::from_options(query.page, query.page_size);
     let (orders, total) = state
         .order_service
@@ -321,6 +327,7 @@ pub async fn admin_get(
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<OrderResponse>> {
     auth.ensure_admin()?;
+    auth.ensure_scope("orders", TokenAction::Read)?;
     let id = crate::types::snowflake_id::parse_id(&id)?;
     let (o, items) = state.order_service.get(&auth, id).await?;
     Ok(ApiResponse::success(to_order_response(o, items)))
@@ -339,6 +346,7 @@ pub async fn admin_ship(
     Json(req): Json<ShipOrderRequest>,
 ) -> AppResult<ApiResponse<()>> {
     auth.ensure_admin()?;
+    auth.ensure_scope("orders", TokenAction::Update)?;
     let id = crate::types::snowflake_id::parse_id(&id)?;
     state.order_service.ship(&auth, id, &req).await?;
     Ok(ApiResponse::success(()))
@@ -355,6 +363,7 @@ pub async fn admin_cancel(
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<()>> {
     auth.ensure_admin()?;
+    auth.ensure_scope("orders", TokenAction::Update)?;
     let id = crate::types::snowflake_id::parse_id(&id)?;
     state.order_service.admin_cancel(&auth, id).await?;
     Ok(ApiResponse::success(()))
@@ -371,6 +380,7 @@ pub async fn admin_pay(
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<()>> {
     auth.ensure_admin()?;
+    auth.ensure_scope("orders", TokenAction::Update)?;
     let id = crate::types::snowflake_id::parse_id(&id)?;
     state.order_service.mark_paid(&auth, id).await?;
     Ok(ApiResponse::success(()))
@@ -387,6 +397,7 @@ pub async fn admin_refund(
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<()>> {
     auth.ensure_admin()?;
+    auth.ensure_scope("orders", TokenAction::Update)?;
     let id = crate::types::snowflake_id::parse_id(&id)?;
     state.order_service.refund(&auth, id).await?;
     Ok(ApiResponse::success(()))
@@ -405,6 +416,7 @@ pub async fn admin_update_remark(
     Json(req): Json<UpdateAdminRemarkRequest>,
 ) -> AppResult<ApiResponse<()>> {
     auth.ensure_admin()?;
+    auth.ensure_scope("orders", TokenAction::Update)?;
     let id = crate::types::snowflake_id::parse_id(&id)?;
     state
         .order_service
@@ -422,6 +434,7 @@ pub async fn admin_stats(
     State(state): State<crate::AppState>,
 ) -> AppResult<ApiResponse<OrderStatsResponse>> {
     auth.ensure_admin()?;
+    auth.ensure_scope("orders", TokenAction::Read)?;
     let stats = state.order_service.get_stats(&auth).await?;
     Ok(ApiResponse::success(stats))
 }

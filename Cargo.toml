@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "raisfast-derive", "3rd/bore", "extra/chat-server"]
+members = [".", "raisfast-derive", "3rd/bore"]
 resolver = "3"
 
 [package]

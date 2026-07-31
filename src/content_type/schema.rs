@@ -274,6 +274,8 @@ pub enum ApiAccess {
     Public,
     /// Requires login (any role)
     Member,
+    /// Requires login; only the record's creator (`created_by`) may access
+    Owner,
     /// Requires admin role
     Admin,
 }
@@ -380,7 +382,7 @@ pub fn check_api_access(
     match access {
         ApiAccess::None => Err(crate::errors::app_error::AppError::Forbidden),
         ApiAccess::Public => Ok(()),
-        ApiAccess::Member => {
+        ApiAccess::Member | ApiAccess::Owner => {
             if auth.is_authenticated() {
                 Ok(())
             } else {

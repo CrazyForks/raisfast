@@ -6,7 +6,7 @@ use axum::extract::{Multipart, Path, Query, State};
 use crate::dto::{BatchRequest, BatchResponse};
 use crate::errors::app_error::{AppError, AppResult};
 use crate::errors::response::{ApiResponse, PaginatedData};
-use crate::middleware::auth::AuthUser;
+use crate::middleware::auth::{AuthUser, TokenAction};
 use crate::services::media as media_service;
 use crate::utils::pagination::PaginationParams;
 
@@ -107,6 +107,7 @@ pub async fn upload(
     mut multipart: Multipart,
 ) -> AppResult<ApiResponse<crate::dto::MediaResponse>> {
     auth.ensure_authenticated()?;
+    auth.ensure_scope("media", TokenAction::Create)?;
     let field = multipart
         .next_field()
         .await
@@ -154,6 +155,7 @@ pub async fn list(
     Query(mut params): Query<PaginationParams>,
 ) -> AppResult<ApiResponse<crate::errors::response::PaginatedData<crate::dto::MediaResponse>>> {
     auth.ensure_authenticated()?;
+    auth.ensure_scope("media", TokenAction::Read)?;
     params.sanitize();
     let (items, total) =
         media_service::list(&state.pool, &auth, params.page, params.page_size).await?;
@@ -180,6 +182,7 @@ pub async fn delete(
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<()>> {
     auth.ensure_authenticated()?;
+    auth.ensure_scope("media", TokenAction::Delete)?;
     media_service::delete_media(state.storage.as_ref(), &state.pool, &id, &auth).await?;
     Ok(ApiResponse::success(()))
 }
@@ -193,6 +196,7 @@ pub async fn stats(
     State(state): State<crate::AppState>,
 ) -> AppResult<ApiResponse<crate::dto::MediaStatsResponse>> {
     auth.ensure_authenticated()?;
+    auth.ensure_scope("media", TokenAction::Read)?;
     let s = media_service::stats(&state.pool, &auth).await?;
     Ok(ApiResponse::success(crate::dto::stats_to_response(&s)))
 }
@@ -209,6 +213,7 @@ pub async fn admin_upload(
     mut multipart: Multipart,
 ) -> AppResult<ApiResponse<crate::dto::MediaResponse>> {
     auth.ensure_admin()?;
+    auth.ensure_scope("media", TokenAction::Create)?;
     let field = multipart
         .next_field()
         .await
@@ -253,6 +258,7 @@ pub async fn admin_list(
     Query(mut params): Query<PaginationParams>,
 ) -> AppResult<ApiResponse<PaginatedData<crate::dto::MediaResponse>>> {
     auth.ensure_admin()?;
+    auth.ensure_scope("media", TokenAction::Read)?;
     params.sanitize();
     let (items, total) =
         media_service::admin_list(&state.pool, params.page, params.page_size, &auth).await?;
@@ -278,6 +284,7 @@ pub async fn admin_delete(
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<()>> {
     auth.ensure_admin()?;
+    auth.ensure_scope("media", TokenAction::Delete)?;
     media_service::admin_delete_media(state.storage.as_ref(), &state.pool, &id, &auth).await?;
     Ok(ApiResponse::success(()))
 }
@@ -293,6 +300,7 @@ pub async fn admin_batch(
     Json(req): Json<BatchRequest>,
 ) -> AppResult<ApiResponse<BatchResponse>> {
     auth.ensure_admin()?;
+    auth.ensure_scope("media", TokenAction::Delete)?;
     crate::errors::validation::validate(&req)?;
     let mut affected = 0usize;
     if req.action == "delete" {

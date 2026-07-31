@@ -42,10 +42,31 @@ use crate::AppState;
 use crate::errors::app_error::{AppError, AppResult};
 use crate::models::user::UserRole;
 
+/// Fine-grained token scope actions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TokenAction {
+    Read,
+    Create,
+    Update,
+    Delete,
+}
+
+impl TokenAction {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Read => "read",
+            Self::Create => "create",
+            Self::Update => "update",
+            Self::Delete => "delete",
+        }
+    }
+}
+
 struct Claims {
     user_id: SnowflakeId,
     role: UserRole,
     tenant_id: String,
+    scopes: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -55,6 +76,8 @@ struct RequestIdentity {
     tenant_id: Option<String>,
     is_super_admin: bool,
     token_present_but_invalid: bool,
+    /// API-token scopes; empty = no restriction (JWT or no token).
+    scopes: Vec<String>,
 }
 
 /// Unified identity extractor.
@@ -91,6 +114,46 @@ impl AuthUser {
 
     pub fn is_super_admin(&self) -> bool {
         self.0.is_super_admin
+    }
+
+    /// API-token scopes (empty for JWT login = unrestricted).
+    pub fn scopes(&self) -> &[String] {
+        &self.0.scopes
+    }
+
+    /// Check whether the current token grants access to `resource:action`.
+    ///
+    /// Empty scopes (JWT login, or no token) → always allowed (role-based gate applies instead).
+    /// Supported wildcard patterns:
+    /// - `*` → all resources, all actions
+    /// - `resource:*` → all actions on a specific resource
+    /// - `*:read` → all resources, specific action
+    /// - `resource:read` → exact match
+    pub fn has_scope(&self, resource: &str, action: TokenAction) -> bool {
+        if self.0.scopes.is_empty() {
+            return true;
+        }
+        let act = action.as_str();
+        self.0.scopes.iter().any(|s| {
+            s == "*"
+                || s == &format!("{resource}:*")
+                || s == &format!("*:{act}")
+                || s == &format!("{resource}:{act}")
+        })
+    }
+
+    /// Guard: ensure the token scope grants `resource:action`.
+    pub fn ensure_scope(&self, resource: &str, action: TokenAction) -> AppResult<()> {
+        if self.0.token_present_but_invalid {
+            return Err(AppError::Unauthorized);
+        }
+        if !self.is_authenticated() {
+            return Err(AppError::Unauthorized);
+        }
+        if !self.has_scope(resource, action) {
+            return Err(AppError::Forbidden);
+        }
+        Ok(())
     }
 
     pub fn ensure_authenticated(&self) -> AppResult<i64> {
@@ -139,6 +202,7 @@ impl AuthUser {
             tenant_id,
             is_super_admin: false,
             token_present_but_invalid: false,
+            scopes: Vec::new(),
         })
     }
 }
@@ -157,6 +221,7 @@ impl AuthUser {
             },
             is_super_admin: false,
             token_present_but_invalid: false,
+            scopes: Vec::new(),
         })
     }
 
@@ -172,7 +237,14 @@ impl AuthUser {
             },
             is_super_admin: true,
             token_present_but_invalid: false,
+            scopes: Vec::new(),
         })
+    }
+
+    pub fn new_test_with_scopes(user_id: i64, role: UserRole, tenant_id: &str, scopes: Vec<String>) -> Self {
+        let mut auth = Self::new_test(user_id, role, tenant_id);
+        auth.0.scopes = scopes;
+        auth
     }
 }
 
@@ -197,7 +269,7 @@ async fn extract_claims(parts: &Parts, state: &AppState) -> Option<Claims> {
     let token = extract_bearer_token(parts)?;
 
     if crate::services::api_token::is_api_token(token) {
-        let (user_id, role, tenant_id) =
+        let (user_id, role, scopes, tenant_id) =
             crate::services::api_token::verify_api_token(&state.pool, &*state.cache, token)
                 .await
                 .ok()?;
@@ -206,6 +278,7 @@ async fn extract_claims(parts: &Parts, state: &AppState) -> Option<Claims> {
             user_id: SnowflakeId(user_id),
             role,
             tenant_id: tenant_id.unwrap_or_else(|| crate::constants::DEFAULT_TENANT.to_string()),
+            scopes,
         })
     } else {
         let claims = crate::services::auth::verify_token(token, &state.jwt_decoding_key).ok()?;
@@ -213,6 +286,7 @@ async fn extract_claims(parts: &Parts, state: &AppState) -> Option<Claims> {
             user_id: claims.sub.parse().ok()?,
             role: claims.role,
             tenant_id: claims.tenant_id,
+            scopes: Vec::new(),
         })
     }
 }
@@ -240,6 +314,7 @@ impl FromRequestParts<AppState> for AuthUser {
                     tenant_id: if no_tenant { None } else { Some(ht) },
                     is_super_admin: true,
                     token_present_but_invalid: false,
+                    scopes: c.scopes,
                 },
                 (Some(c), None) if c.role == UserRole::Admin => RequestIdentity {
                     user_id: Some(*c.user_id),
@@ -247,6 +322,7 @@ impl FromRequestParts<AppState> for AuthUser {
                     tenant_id: None,
                     is_super_admin: true,
                     token_present_but_invalid: false,
+                    scopes: c.scopes,
                 },
                 (Some(c), _) => RequestIdentity {
                     user_id: Some(*c.user_id),
@@ -254,6 +330,7 @@ impl FromRequestParts<AppState> for AuthUser {
                     tenant_id: if no_tenant { None } else { Some(c.tenant_id) },
                     is_super_admin: false,
                     token_present_but_invalid: false,
+                    scopes: c.scopes,
                 },
                 (None, Some(ht)) => RequestIdentity {
                     user_id: None,
@@ -261,6 +338,7 @@ impl FromRequestParts<AppState> for AuthUser {
                     tenant_id: if no_tenant { None } else { Some(ht) },
                     is_super_admin: false,
                     token_present_but_invalid: token_invalid,
+                    scopes: Vec::new(),
                 },
                 (None, None) => RequestIdentity {
                     user_id: None,
@@ -272,6 +350,7 @@ impl FromRequestParts<AppState> for AuthUser {
                     },
                     is_super_admin: false,
                     token_present_but_invalid: token_invalid,
+                    scopes: Vec::new(),
                 },
             };
 

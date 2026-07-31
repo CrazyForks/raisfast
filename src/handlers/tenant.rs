@@ -7,6 +7,7 @@ use crate::AppState;
 use crate::dto::{BatchRequest, BatchResponse, TenantResponse};
 use crate::errors::app_error::{AppError, AppResult};
 use crate::errors::response::ApiResponse;
+use crate::middleware::auth::AuthUser;
 use crate::services::tenant::{CreateTenantRequest, UpdateTenantRequest};
 use crate::utils::pagination::PaginationParams;
 
@@ -85,8 +86,10 @@ pub fn routes(
 )]
 pub async fn list_tenants(
     State(state): State<AppState>,
+    auth: AuthUser,
     Query(mut params): Query<PaginationParams>,
 ) -> AppResult<ApiResponse<crate::errors::response::PaginatedData<TenantResponse>>> {
+    auth.ensure_admin()?;
     params.sanitize();
     let all = state.tenant.list().await?;
     let all: Vec<TenantResponse> = all.into_iter().map(TenantResponse::from_tenant).collect();
@@ -101,8 +104,10 @@ pub async fn list_tenants(
 )]
 pub async fn get_tenant(
     State(state): State<AppState>,
+    auth: AuthUser,
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<TenantResponse>> {
+    auth.ensure_admin()?;
     let id = crate::types::snowflake_id::parse_id(&id)?;
     let tenant = state
         .tenant
@@ -119,8 +124,10 @@ pub async fn get_tenant(
 )]
 pub async fn create_tenant(
     State(state): State<AppState>,
+    auth: AuthUser,
     Json(req): Json<CreateTenantRequest>,
 ) -> AppResult<ApiResponse<TenantResponse>> {
+    auth.ensure_admin()?;
     let tenant = state.tenant.create(&req).await?;
     Ok(ApiResponse::success(TenantResponse::from_tenant(tenant)))
 }
@@ -133,9 +140,11 @@ pub async fn create_tenant(
 )]
 pub async fn update_tenant(
     State(state): State<AppState>,
+    auth: AuthUser,
     Path(id): Path<String>,
     Json(req): Json<UpdateTenantRequest>,
 ) -> AppResult<ApiResponse<TenantResponse>> {
+    auth.ensure_admin()?;
     let id = crate::types::snowflake_id::parse_id(&id)?;
     let tenant = state.tenant.update(id, &req).await?;
     Ok(ApiResponse::success(TenantResponse::from_tenant(tenant)))
@@ -149,8 +158,10 @@ pub async fn update_tenant(
 )]
 pub async fn delete_tenant(
     State(state): State<AppState>,
+    auth: AuthUser,
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<serde_json::Value>> {
+    auth.ensure_admin()?;
     let id = crate::types::snowflake_id::parse_id(&id)?;
     state.tenant.delete(id).await?;
     Ok(ApiResponse::success(serde_json::json!({
@@ -165,8 +176,10 @@ pub async fn delete_tenant(
 )]
 pub async fn admin_batch(
     State(state): State<AppState>,
+    auth: AuthUser,
     Json(req): Json<BatchRequest>,
 ) -> AppResult<ApiResponse<BatchResponse>> {
+    auth.ensure_admin()?;
     crate::errors::validation::validate(&req)?;
     let mut affected = 0usize;
     for raw_id in &req.ids {

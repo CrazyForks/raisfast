@@ -73,3 +73,10 @@ All DB operations use the Where DSL macro system (`raisfast-derive`):
 - `cargo fmt` and `cargo clippy` are authoritative.
 - Public items require `///` doc comments.
 - Handler → Service → Model layering enforced.
+
+## Frontend Rules
+
+- **Always use official shadcn (Base UI) components first. Never hand-build components with the same name as shadcn.**
+  - Install: `npx shadcn@latest add <component>` (run in `frontend/admin/`)
+  - For custom styling, pass `className` at the call site — never modify official source in `components/ui/`
+  - If the official component doesn't fit, create a new component with a different name — never overwrite the official file

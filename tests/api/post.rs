@@ -201,12 +201,18 @@ async fn create_with_category_name() {
 }
 
 #[tokio::test]
-async fn create_requires_author() {
-    let (mut app, _) = test_app().await;
-    let (tok, _) = register_and_login(&mut app, "pr@test.com", "pruser", "Password123").await;
+ async fn create_requires_author() {
+    let mut c = setup().await;
+    // Create an API token with read-only scope — it should NOT be able to create
+    let (_, body): (StatusCode, Value) = send(
+        &mut c.app.clone(),
+        post_json_auth("/api/v1/tokens", json!({"name": "RO", "scopes": ["posts:read"]}), &c.tok),
+    )
+    .await;
+    let api_token = body["data"]["token"].as_str().unwrap();
     let (status, _): (StatusCode, Value) = send(
-        &mut app,
-        post_json_auth("/api/v1/posts", json!({"title": "T", "content": "C"}), &tok),
+        &mut c.app,
+        post_json_auth("/api/v1/posts", json!({"title": "T", "content": "C"}), api_token),
     )
     .await;
     assert_eq!(status, StatusCode::FORBIDDEN);

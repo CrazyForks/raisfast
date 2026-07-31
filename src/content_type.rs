@@ -51,8 +51,9 @@ use std::sync::Arc;
 
 use arc_swap::ArcSwap;
 use schema::ContentTypeSchema;
-
+use crate::constants::COL_CREATED_BY;
 use crate::errors::app_error::AppError;
+use schema::ApiAccess as ContentTypeApiAccess;
 
 /// Content type registry
 ///
@@ -255,6 +256,27 @@ impl ContentTypeRegistry {
         let mut schema = schema;
         schema.cache_protocol_columns(protocol_registry);
         schema.cache_select_columns();
+
+        // Validate: `owner` access requires a `created_by` column
+        let needs_owner = [
+            schema.api.list.access,
+            schema.api.get.access,
+            schema.api.create.access,
+            schema.api.update.access,
+            schema.api.delete.access,
+        ]
+        .iter()
+        .any(|a| *a == ContentTypeApiAccess::Owner);
+        if needs_owner
+            && !schema.is_protocol_column(COL_CREATED_BY)
+            && schema.get_field(COL_CREATED_BY).is_none()
+        {
+            return Err(AppError::BadRequest(format!(
+                "content type '{}' uses `access = \"owner\"` but has no `created_by` column; add `implements = [\"ownable\"]` or `\"timestampable\"`",
+                schema.name
+            )));
+        }
+
         schema.cache_rules(rule_config);
         let plural = schema.plural.clone();
         let table = schema.table.clone();

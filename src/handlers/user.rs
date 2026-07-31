@@ -12,7 +12,7 @@ use crate::dto::{
 use crate::errors::app_error::AppResult;
 use crate::errors::response::{ApiResponse, PaginatedData};
 use crate::errors::validation;
-use crate::middleware::auth::AuthUser;
+use crate::middleware::auth::{AuthUser, TokenAction};
 use crate::models::user::UserRole;
 use crate::services::{auth, user};
 use crate::utils::pagination::PaginationParams;
@@ -155,6 +155,7 @@ pub async fn get_me(
     State(state): State<crate::AppState>,
 ) -> AppResult<ApiResponse<UserResponse>> {
     auth.ensure_authenticated()?;
+    auth.ensure_scope("users", TokenAction::Read)?;
     let u = user::get_me(&state.pool, &auth).await?;
     Ok(ApiResponse::success(u))
 }
@@ -172,6 +173,7 @@ pub async fn update_me(
 ) -> AppResult<ApiResponse<UserResponse>> {
     validation::validate(&req)?;
     auth.ensure_authenticated()?;
+    auth.ensure_scope("users", TokenAction::Update)?;
     let u = user::update_me(&state.pool, &auth, req).await?;
     Ok(ApiResponse::success(u))
 }
@@ -189,6 +191,7 @@ pub async fn change_password(
 ) -> AppResult<ApiResponse<()>> {
     validation::validate(&req)?;
     auth.ensure_authenticated()?;
+    auth.ensure_scope("users", TokenAction::Update)?;
     auth::change_password(&state.pool, &auth, req).await?;
     Ok(ApiResponse::success(()))
 }
@@ -205,6 +208,7 @@ pub async fn get_user(
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<UserResponse>> {
     auth.ensure_authenticated()?;
+    auth.ensure_scope("users", TokenAction::Read)?;
     let id = crate::types::snowflake_id::parse_id(&id)?;
     let u = user::get_public_user(&state.pool, id, auth.tenant_id()).await?;
     Ok(ApiResponse::success(u))
@@ -221,6 +225,7 @@ pub async fn list_users(
     Query(mut params): Query<PaginationParams>,
 ) -> AppResult<ApiResponse<PaginatedData<UserResponse>>> {
     auth.ensure_admin()?;
+    auth.ensure_scope("users", TokenAction::Read)?;
     params.sanitize();
     let (users, total) =
         user::list_users(&state.pool, params.page, params.page_size, auth.tenant_id()).await?;
@@ -241,6 +246,7 @@ pub async fn update_role(
     Json(req): Json<UpdateRoleRequest>,
 ) -> AppResult<ApiResponse<UserResponse>> {
     auth.ensure_admin()?;
+    auth.ensure_scope("users", TokenAction::Update)?;
 
     let u = state
         .user_service
@@ -259,6 +265,7 @@ pub async fn admin_create_user(
     Json(req): Json<AdminCreateUserRequest>,
 ) -> AppResult<ApiResponse<UserResponse>> {
     auth.ensure_admin()?;
+    auth.ensure_scope("users", TokenAction::Create)?;
     validation::validate(&req)?;
     let user = crate::services::auth::admin_create_user(
         &state.aspect_engine,
@@ -276,6 +283,7 @@ pub async fn admin_list_users(
     Query(mut params): Query<PaginationParams>,
 ) -> AppResult<ApiResponse<PaginatedData<UserResponse>>> {
     auth.ensure_admin()?;
+    auth.ensure_scope("users", TokenAction::Read)?;
     params.sanitize();
     let (users, total) =
         user::list_users(&state.pool, params.page, params.page_size, auth.tenant_id()).await?;
@@ -288,6 +296,7 @@ pub async fn admin_get_user(
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<UserResponse>> {
     auth.ensure_admin()?;
+    auth.ensure_scope("users", TokenAction::Read)?;
     let id = crate::types::snowflake_id::parse_id(&id)?;
     let u = user::get_public_user(&state.pool, id, auth.tenant_id()).await?;
     Ok(ApiResponse::success(u))
@@ -300,6 +309,7 @@ pub async fn admin_update_user(
     Json(req): Json<UpdateUserRequest>,
 ) -> AppResult<ApiResponse<UserResponse>> {
     auth.ensure_admin()?;
+    auth.ensure_scope("users", TokenAction::Update)?;
     validation::validate(&req)?;
     let u = state
         .user_service
@@ -316,6 +326,7 @@ pub async fn admin_delete_user(
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<()>> {
     auth.ensure_admin()?;
+    auth.ensure_scope("users", TokenAction::Delete)?;
     state
         .user_service
         .delete_user(&id, auth.tenant_id())
@@ -329,6 +340,7 @@ pub async fn admin_batch_users(
     Json(req): Json<BatchRequestWithRole>,
 ) -> AppResult<ApiResponse<crate::dto::BatchResponse>> {
     auth.ensure_admin()?;
+    auth.ensure_scope("users", TokenAction::Delete)?;
     validation::validate(&req)?;
     let mut affected = 0usize;
     for uid in &req.ids {

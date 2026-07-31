@@ -5,7 +5,7 @@ use crate::dto::coupon::{CouponResponse, CreateCouponRequest, UpdateCouponReques
 use crate::errors::app_error::AppResult;
 use crate::errors::response::{ApiResponse, PaginatedData};
 use crate::errors::validation;
-use crate::middleware::auth::AuthUser;
+use crate::middleware::auth::{AuthUser, TokenAction};
 use crate::utils::pagination::PaginationParams;
 
 pub fn routes(
@@ -65,6 +65,8 @@ pub async fn admin_list(
     State(state): State<crate::AppState>,
     axum::extract::Query(params): axum::extract::Query<PaginationParams>,
 ) -> AppResult<ApiResponse<PaginatedData<CouponResponse>>> {
+    auth.ensure_admin()?;
+    auth.ensure_scope("coupons", TokenAction::Read)?;
     let mut p = params;
     p.sanitize();
     let (items, total) = state
@@ -84,6 +86,8 @@ pub async fn admin_create(
     State(state): State<crate::AppState>,
     Json(req): Json<CreateCouponRequest>,
 ) -> AppResult<ApiResponse<CouponResponse>> {
+    auth.ensure_admin()?;
+    auth.ensure_scope("coupons", TokenAction::Create)?;
     validation::validate(&req)?;
     let coupon = state.coupon_service.create(&auth, req).await?;
     Ok(ApiResponse::success(CouponResponse::from(coupon)))
@@ -101,6 +105,8 @@ pub async fn admin_update(
     Path(id): Path<String>,
     Json(req): Json<UpdateCouponRequest>,
 ) -> AppResult<ApiResponse<CouponResponse>> {
+    auth.ensure_admin()?;
+    auth.ensure_scope("coupons", TokenAction::Update)?;
     let id = crate::types::snowflake_id::parse_id(&id)?;
     let coupon = state.coupon_service.update(&auth, id, req).await?;
     Ok(ApiResponse::success(CouponResponse::from(coupon)))
@@ -116,6 +122,8 @@ pub async fn admin_delete(
     State(state): State<crate::AppState>,
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<()>> {
+    auth.ensure_admin()?;
+    auth.ensure_scope("coupons", TokenAction::Delete)?;
     let id = crate::types::snowflake_id::parse_id(&id)?;
     state.coupon_service.delete(&auth, id).await?;
     Ok(ApiResponse::success(()))

@@ -13,7 +13,7 @@ use crate::dto::{
 use crate::errors::app_error::{AppError, AppResult};
 use crate::errors::response::{ApiResponse, PaginatedData};
 use crate::errors::validation;
-use crate::middleware::auth::AuthUser;
+use crate::middleware::auth::{AuthUser, TokenAction};
 use crate::models::page::PageStatus;
 use crate::types::snowflake_id::SnowflakeId;
 use crate::utils::pagination::PaginationParams;
@@ -219,7 +219,7 @@ pub async fn admin_list(
     State(state): State<crate::AppState>,
     Query(query): Query<AdminPageListQuery>,
 ) -> AppResult<ApiResponse<PaginatedData<PageResponse>>> {
-    auth.ensure_author()?;
+    auth.ensure_scope("pages", TokenAction::Read)?;
     let pagination = PaginationParams::from_options(query.page, query.page_size);
 
     let (items, total) = state
@@ -241,7 +241,7 @@ pub async fn admin_get(
     State(state): State<crate::AppState>,
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<PageResponse>> {
-    auth.ensure_author()?;
+    auth.ensure_scope("pages", TokenAction::Read)?;
     let id = crate::types::snowflake_id::parse_id(&id)?;
     let page = state.page_service.get_by_id(id, &auth).await?;
     Ok(ApiResponse::success(PageResponse::from_page(page)))
@@ -256,7 +256,7 @@ pub async fn create(
     State(state): State<crate::AppState>,
     Json(req): Json<CreatePageRequest>,
 ) -> AppResult<ApiResponse<PageResponse>> {
-    auth.ensure_author()?;
+    auth.ensure_scope("pages", TokenAction::Create)?;
     validation::validate(&req)?;
 
     let slug = req
@@ -298,7 +298,7 @@ pub async fn update(
     Path(id): Path<String>,
     Json(req): Json<UpdatePageRequest>,
 ) -> AppResult<ApiResponse<PageResponse>> {
-    auth.ensure_author()?;
+    auth.ensure_scope("pages", TokenAction::Update)?;
     validation::validate(&req)?;
 
     let resolved_parent_id = resolve_page_parent_id(&state.pool, req.parent_id.flatten()).await?;
@@ -334,7 +334,7 @@ pub async fn delete(
     State(state): State<crate::AppState>,
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<()>> {
-    auth.ensure_author()?;
+    auth.ensure_scope("pages", TokenAction::Delete)?;
     let id = crate::types::snowflake_id::parse_id(&id)?;
     state.page_service.delete_page(id, &auth).await?;
     Ok(ApiResponse::success(()))
@@ -351,7 +351,7 @@ pub async fn update_status(
     Path(id): Path<String>,
     Json(req): Json<UpdateStatusRequest>,
 ) -> AppResult<ApiResponse<PageResponse>> {
-    auth.ensure_author()?;
+    auth.ensure_scope("pages", TokenAction::Update)?;
     let id = crate::types::snowflake_id::parse_id(&id)?;
     let page = state
         .page_service
@@ -369,7 +369,7 @@ pub async fn reorder(
     State(state): State<crate::AppState>,
     Json(req): Json<ReorderRequest>,
 ) -> AppResult<ApiResponse<()>> {
-    auth.ensure_author()?;
+    auth.ensure_scope("pages", TokenAction::Update)?;
     let items: Vec<(String, i64)> = req
         .items
         .into_iter()
@@ -390,6 +390,7 @@ pub async fn admin_batch(
     Json(req): Json<BatchRequest>,
 ) -> AppResult<ApiResponse<BatchResponse>> {
     auth.ensure_admin()?;
+    auth.ensure_scope("pages", TokenAction::Delete)?;
     validation::validate(&req)?;
     let mut affected = 0usize;
     for raw_id in &req.ids {

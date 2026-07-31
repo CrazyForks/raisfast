@@ -309,7 +309,7 @@ pub fn extract_api_token_prefix(req: &Request) -> Option<String> {
         .to_str()
         .ok()?;
     let token = auth.strip_prefix(crate::constants::AUTH_BEARER_PREFIX)?;
-    if token.starts_with("rblog_") {
+    if token.starts_with(crate::constants::API_TOKEN_PREFIX) {
         token.get(..12).map(|s| s.to_string())
     } else {
         None

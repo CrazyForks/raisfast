@@ -8,7 +8,7 @@ use crate::dto::product_comment::{
 use crate::errors::app_error::AppResult;
 use crate::errors::response::{ApiResponse, PaginatedData};
 use crate::errors::validation;
-use crate::middleware::auth::AuthUser;
+use crate::middleware::auth::{AuthUser, TokenAction};
 use crate::models::product_comment::ProductCommentStats;
 use crate::utils::pagination::PaginationParams;
 
@@ -166,6 +166,7 @@ pub async fn create(
     Json(req): Json<CreateProductCommentRequest>,
 ) -> AppResult<ApiResponse<ProductCommentResponse>> {
     auth.ensure_authenticated()?;
+    auth.ensure_scope("product_comments", TokenAction::Create)?;
     validation::validate(&req)?;
     let comment = state.product_comment_service.create(&auth, req).await?;
     Ok(ApiResponse::success(ProductCommentResponse::from(comment)))
@@ -184,6 +185,7 @@ pub async fn update(
     Json(req): Json<UpdateProductCommentRequest>,
 ) -> AppResult<ApiResponse<ProductCommentResponse>> {
     auth.ensure_authenticated()?;
+    auth.ensure_scope("product_comments", TokenAction::Update)?;
     validation::validate(&req)?;
     let id = crate::types::snowflake_id::parse_id(&id)?;
     let comment = state.product_comment_service.update(&auth, id, req).await?;
@@ -201,6 +203,7 @@ pub async fn delete(
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<()>> {
     auth.ensure_authenticated()?;
+    auth.ensure_scope("product_comments", TokenAction::Delete)?;
     let id = crate::types::snowflake_id::parse_id(&id)?;
     state.product_comment_service.delete(&auth, id).await?;
     Ok(ApiResponse::success(()))
@@ -218,6 +221,7 @@ pub async fn list_by_user(
     axum::extract::Query(params): axum::extract::Query<PaginationParams>,
 ) -> AppResult<ApiResponse<PaginatedData<ProductCommentResponse>>> {
     auth.ensure_authenticated()?;
+    auth.ensure_scope("product_comments", TokenAction::Read)?;
     let mut p = params;
     p.sanitize();
     let uid = crate::types::snowflake_id::parse_id(&user_id)?;
@@ -238,6 +242,7 @@ pub async fn admin_list(
     Query(query): Query<AdminProductCommentListQuery>,
 ) -> AppResult<ApiResponse<PaginatedData<ProductCommentResponse>>> {
     auth.ensure_admin()?;
+    auth.ensure_scope("product_comments", TokenAction::Read)?;
     let (items, total) = state
         .product_comment_service
         .admin_list(&auth, &query)
@@ -265,6 +270,7 @@ pub async fn admin_update_status(
     Json(req): Json<UpdateProductCommentStatusRequest>,
 ) -> AppResult<ApiResponse<()>> {
     auth.ensure_admin()?;
+    auth.ensure_scope("product_comments", TokenAction::Update)?;
     validation::validate(&req)?;
     let id = crate::types::snowflake_id::parse_id(&id)?;
     state
@@ -287,6 +293,7 @@ pub async fn admin_reply(
     Json(req): Json<AdminReplyRequest>,
 ) -> AppResult<ApiResponse<()>> {
     auth.ensure_admin()?;
+    auth.ensure_scope("product_comments", TokenAction::Update)?;
     let id = crate::types::snowflake_id::parse_id(&id)?;
     state
         .product_comment_service
@@ -306,6 +313,7 @@ pub async fn admin_delete(
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<()>> {
     auth.ensure_admin()?;
+    auth.ensure_scope("product_comments", TokenAction::Delete)?;
     let id = crate::types::snowflake_id::parse_id(&id)?;
     state
         .product_comment_service

@@ -13,7 +13,7 @@ use crate::dto::{
 use crate::errors::app_error::{AppError, AppResult};
 use crate::errors::response::{ApiResponse, PaginatedData};
 use crate::errors::validation;
-use crate::middleware::auth::AuthUser;
+use crate::middleware::auth::{AuthUser, TokenAction};
 use crate::models::comment::CommentStatus;
 use crate::utils::pagination::PaginationParams;
 
@@ -161,6 +161,7 @@ pub async fn list_all(
     axum::extract::Query(params): axum::extract::Query<PaginationParams>,
 ) -> AppResult<ApiResponse<PaginatedData<crate::models::comment::AdminCommentRow>>> {
     auth.ensure_admin()?;
+    auth.ensure_scope("comments", TokenAction::Read)?;
     let mut p = params;
     p.sanitize();
     let (comments, total) = state
@@ -184,6 +185,7 @@ pub async fn create(
     Json(req): Json<CreateCommentRequest>,
 ) -> AppResult<ApiResponse<crate::models::comment::CommentResponse>> {
     auth.ensure_authenticated()?;
+    auth.ensure_scope("comments", TokenAction::Create)?;
     validation::validate(&req)?;
 
     let comment = state
@@ -247,6 +249,7 @@ pub async fn delete(
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<()>> {
     auth.ensure_authenticated()?;
+    auth.ensure_scope("comments", TokenAction::Delete)?;
     let id = crate::types::snowflake_id::parse_id(&id)?;
     state.comment_service.delete(id, &auth).await?;
     Ok(ApiResponse::success(()))
@@ -266,6 +269,7 @@ pub async fn update_status(
     Json(req): Json<UpdateCommentStatusRequest>,
 ) -> AppResult<ApiResponse<()>> {
     auth.ensure_admin()?;
+    auth.ensure_scope("comments", TokenAction::Update)?;
     validation::validate(&req)?;
     let id = crate::types::snowflake_id::parse_id(&id)?;
     state
@@ -287,6 +291,7 @@ pub async fn admin_list(
     Query(query): Query<AdminCommentListQuery>,
 ) -> AppResult<ApiResponse<PaginatedData<crate::models::comment::AdminCommentRow>>> {
     auth.ensure_admin()?;
+    auth.ensure_scope("comments", TokenAction::Read)?;
     let pagination = PaginationParams::from_options(query.page, query.page_size);
     let (comments, total) = state
         .comment_service
@@ -308,6 +313,7 @@ pub async fn admin_update_status(
     Json(req): Json<UpdateCommentStatusRequest>,
 ) -> AppResult<ApiResponse<()>> {
     auth.ensure_admin()?;
+    auth.ensure_scope("comments", TokenAction::Update)?;
     validation::validate(&req)?;
     let id = crate::types::snowflake_id::parse_id(&id)?;
     state
@@ -328,6 +334,7 @@ pub async fn admin_delete(
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<()>> {
     auth.ensure_admin()?;
+    auth.ensure_scope("comments", TokenAction::Delete)?;
     let id = crate::types::snowflake_id::parse_id(&id)?;
     state.comment_service.delete(id, &auth).await?;
     Ok(ApiResponse::success(()))
@@ -344,6 +351,7 @@ pub async fn admin_batch(
     Json(req): Json<BatchRequest>,
 ) -> AppResult<ApiResponse<BatchResponse>> {
     auth.ensure_admin()?;
+    auth.ensure_scope("comments", TokenAction::Delete)?;
     validation::validate(&req)?;
     let mut affected = 0usize;
     for raw_id in &req.ids {

@@ -11,6 +11,7 @@ use crate::AppState;
 use crate::dto::TrendsQuery;
 use crate::errors::app_error::AppResult;
 use crate::errors::response::ApiResponse;
+use crate::middleware::auth::AuthUser;
 use crate::services::stats::StatsService;
 
 pub fn routes(
@@ -58,7 +59,11 @@ pub fn routes(
     security(("bearer_auth" = [])),
     responses((status = 200, description = "Overview statistics"))
 )]
-pub async fn overview(State(state): State<AppState>) -> AppResult<ApiResponse<serde_json::Value>> {
+pub async fn overview(
+    State(state): State<AppState>,
+    auth: AuthUser,
+) -> AppResult<ApiResponse<serde_json::Value>> {
+    auth.ensure_admin()?;
     let svc = StatsService::new(state.pool.clone());
     let data = svc.overview(None).await?;
     Ok(ApiResponse::success(data))
@@ -74,8 +79,10 @@ pub async fn overview(State(state): State<AppState>) -> AppResult<ApiResponse<se
 )]
 pub async fn content_stats(
     State(state): State<AppState>,
+    auth: AuthUser,
     Path(table): Path<String>,
 ) -> AppResult<ApiResponse<serde_json::Value>> {
+    auth.ensure_admin()?;
     let svc = StatsService::new(state.pool.clone());
     let data = svc.content_stats(&table, None).await?;
     Ok(ApiResponse::success(data))
@@ -90,8 +97,10 @@ pub async fn content_stats(
 )]
 pub async fn trends(
     State(state): State<AppState>,
+    auth: AuthUser,
     Query(query): Query<TrendsQuery>,
 ) -> AppResult<ApiResponse<serde_json::Value>> {
+    auth.ensure_admin()?;
     let table = query.table.as_deref().unwrap_or("posts");
     let days = query.days.unwrap_or(30);
 

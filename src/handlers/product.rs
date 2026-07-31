@@ -4,7 +4,7 @@ use crate::dto::{
 use crate::errors::app_error::AppResult;
 use crate::errors::response::ApiResponse;
 use crate::errors::validation;
-use crate::middleware::auth::AuthUser;
+use crate::middleware::auth::{AuthUser, TokenAction};
 use crate::utils::pagination::PaginationParams;
 use axum::Json;
 use axum::extract::{Path, Query, State};
@@ -144,6 +144,7 @@ pub async fn admin_list(
     Query(query): Query<crate::dto::product::AdminProductListQuery>,
 ) -> AppResult<ApiResponse<crate::errors::response::PaginatedData<ProductResponse>>> {
     auth.ensure_admin()?;
+    auth.ensure_scope("products", TokenAction::Read)?;
     let params = PaginationParams::from_options(query.page, query.page_size);
     let (items, total) = state
         .product_service
@@ -171,6 +172,7 @@ pub async fn admin_get(
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<ProductResponse>> {
     auth.ensure_admin()?;
+    auth.ensure_scope("products", TokenAction::Read)?;
     let id = crate::types::snowflake_id::parse_id(&id)?;
     let p = state.product_service.get(id, &auth).await?;
     let mut resp = ProductResponse::from(p);
@@ -189,6 +191,7 @@ pub async fn admin_create(
     Json(req): Json<CreateProductRequest>,
 ) -> AppResult<ApiResponse<ProductResponse>> {
     auth.ensure_admin()?;
+    auth.ensure_scope("products", TokenAction::Create)?;
     validation::validate(&req)?;
     let p = state.product_service.create(&auth, req).await?;
     Ok(ApiResponse::success(ProductResponse::from(p)))
@@ -207,6 +210,7 @@ pub async fn admin_update(
     Json(req): Json<UpdateProductRequest>,
 ) -> AppResult<ApiResponse<ProductResponse>> {
     auth.ensure_admin()?;
+    auth.ensure_scope("products", TokenAction::Update)?;
     validation::validate(&req)?;
     let id = crate::types::snowflake_id::parse_id(&id)?;
     let p = state.product_service.update(&auth, id, req).await?;
@@ -224,6 +228,7 @@ pub async fn admin_delete(
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<()>> {
     auth.ensure_admin()?;
+    auth.ensure_scope("products", TokenAction::Delete)?;
     let id = crate::types::snowflake_id::parse_id(&id)?;
     state.product_service.delete(id, &auth).await?;
     Ok(ApiResponse::success(()))
@@ -235,6 +240,7 @@ pub async fn admin_batch(
     Json(req): Json<BatchRequest>,
 ) -> AppResult<ApiResponse<BatchResponse>> {
     auth.ensure_admin()?;
+    auth.ensure_scope("products", TokenAction::Delete)?;
     validation::validate(&req)?;
     let affected = state
         .product_service

@@ -5,7 +5,7 @@ use crate::dto::currencies::{CreateCurrencyRequest, CurrencyResponse, UpdateCurr
 use crate::errors::app_error::AppError;
 use crate::errors::response::ApiResponse;
 use crate::errors::validation;
-use crate::middleware::auth::AuthUser;
+use crate::middleware::auth::{AuthUser, TokenAction};
 use crate::services::currencies as svc;
 
 pub fn routes(
@@ -75,6 +75,7 @@ pub async fn list_currencies(
     State(state): State<crate::AppState>,
 ) -> Result<ApiResponse<Vec<CurrencyResponse>>, AppError> {
     auth.ensure_admin()?;
+    auth.ensure_scope("currencies", TokenAction::Read)?;
     let rows = svc::list(&state.pool, auth.tenant_id()).await?;
     Ok(ApiResponse::success(
         rows.into_iter().map(CurrencyResponse::from).collect(),
@@ -92,6 +93,7 @@ pub async fn get_currency(
     Path(code): Path<String>,
 ) -> Result<ApiResponse<CurrencyResponse>, AppError> {
     auth.ensure_admin()?;
+    auth.ensure_scope("currencies", TokenAction::Read)?;
     let c = svc::get_by_code(&state.pool, &code, auth.tenant_id()).await?;
     Ok(ApiResponse::success(CurrencyResponse::from(c)))
 }
@@ -107,6 +109,7 @@ pub async fn create_currency(
     Json(req): Json<CreateCurrencyRequest>,
 ) -> Result<ApiResponse<CurrencyResponse>, AppError> {
     auth.ensure_admin()?;
+    auth.ensure_scope("currencies", TokenAction::Create)?;
     validation::validate(&req)?;
     let tenant_id = auth.tenant_id().unwrap_or(crate::constants::DEFAULT_TENANT);
     let decimals = req.decimals.unwrap_or(2);
@@ -127,6 +130,7 @@ pub async fn update_currency(
     Json(req): Json<UpdateCurrencyRequest>,
 ) -> Result<ApiResponse<CurrencyResponse>, AppError> {
     auth.ensure_admin()?;
+    auth.ensure_scope("currencies", TokenAction::Update)?;
     validation::validate(&req)?;
     svc::update(
         &state.pool,
@@ -151,6 +155,7 @@ pub async fn delete_currency(
     Path(code): Path<String>,
 ) -> Result<ApiResponse<serde_json::Value>, AppError> {
     auth.ensure_admin()?;
+    auth.ensure_scope("currencies", TokenAction::Delete)?;
     svc::delete(&state.pool, &code, auth.tenant_id()).await?;
     Ok(ApiResponse::success(serde_json::json!({
         "code": code,

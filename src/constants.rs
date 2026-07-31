@@ -50,6 +50,9 @@ pub const HEADER_AUTHORIZATION: &str = "authorization";
 pub const HEADER_TENANT_ID: &str = "x-tenant-id";
 pub const HEADER_API_TOKEN: &str = "x-api-token";
 pub const AUTH_BEARER_PREFIX: &str = "Bearer ";
+/// API Token prefix used to discriminate API tokens from JWTs in the Bearer header.
+/// NOTE: relies on JWT's mandatory `eyJ` prefix being mutually exclusive with this value.
+pub const API_TOKEN_PREFIX: &str = "rf_";
 
 // ─── API Route Prefixes ───
 

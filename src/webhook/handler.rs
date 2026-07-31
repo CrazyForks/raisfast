@@ -6,7 +6,7 @@ use crate::AppState;
 use crate::dto::{BatchRequest, BatchResponse};
 use crate::errors::app_error::AppResult;
 use crate::errors::response::ApiResponse;
-use crate::middleware::auth::AuthUser;
+use crate::middleware::auth::{AuthUser, TokenAction};
 use crate::types::snowflake_id::SnowflakeId;
 use crate::utils::pagination::PaginationParams;
 use crate::webhook::model::{CreateWebhookRequest, UpdateWebhookRequest};
@@ -88,6 +88,7 @@ pub async fn list(
     ApiResponse<crate::errors::response::PaginatedData<crate::webhook::model::WebhookSubscription>>,
 > {
     auth.ensure_admin()?;
+    auth.ensure_scope("webhooks", TokenAction::Read)?;
     params.sanitize();
     let (items, total) = state
         .webhook
@@ -103,6 +104,7 @@ pub async fn get(
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<crate::webhook::model::WebhookSubscription>> {
     auth.ensure_admin()?;
+    auth.ensure_scope("webhooks", TokenAction::Read)?;
     let sub = state
         .webhook
         .get(crate::types::snowflake_id::parse_id(&id)?)
@@ -117,6 +119,7 @@ pub async fn create(
     axum::Json(req): axum::Json<CreateWebhookRequest>,
 ) -> AppResult<ApiResponse<crate::webhook::model::WebhookSubscription>> {
     auth.ensure_admin()?;
+    auth.ensure_scope("webhooks", TokenAction::Create)?;
     if req.url.is_empty() {
         return Err(crate::errors::app_error::AppError::BadRequest(
             "url is required".into(),
@@ -150,6 +153,7 @@ pub async fn update(
     axum::Json(req): axum::Json<UpdateWebhookRequest>,
 ) -> AppResult<ApiResponse<crate::webhook::model::WebhookSubscription>> {
     auth.ensure_admin()?;
+    auth.ensure_scope("webhooks", TokenAction::Update)?;
     let sub = state
         .webhook
         .update(
@@ -170,6 +174,7 @@ pub async fn delete(
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<()>> {
     auth.ensure_admin()?;
+    auth.ensure_scope("webhooks", TokenAction::Delete)?;
     state
         .webhook
         .delete(crate::types::snowflake_id::parse_id(&id)?)
@@ -183,6 +188,7 @@ pub async fn admin_batch(
     axum::Json(req): axum::Json<BatchRequest>,
 ) -> AppResult<ApiResponse<BatchResponse>> {
     auth.ensure_admin()?;
+    auth.ensure_scope("webhooks", TokenAction::Delete)?;
     crate::errors::validation::validate(&req)?;
     let mut affected = 0usize;
     for raw_id in &req.ids {

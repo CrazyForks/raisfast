@@ -30,12 +30,17 @@ async fn create_success() {
 }
 
 #[tokio::test]
-async fn create_requires_author() {
-    let (mut app, _) = test_app().await;
-    let (tok, _) = register_and_login(&mut app, "tagr@test.com", "tagr", "Password123").await;
+async fn create_requires_scope() {
+    let (mut app, _, tok) = setup().await;
+    let (_, body): (StatusCode, Value) = send(
+        &mut app,
+        post_json_auth("/api/v1/tokens", json!({"name": "RO", "scopes": ["tags:read"]}), &tok),
+    )
+    .await;
+    let api_token = body["data"]["token"].as_str().unwrap();
     let (status, _): (StatusCode, Value) = send(
         &mut app,
-        post_json_auth("/api/v1/tags", json!({"name": "t"}), &tok),
+        post_json_auth("/api/v1/tags", json!({"name": "t"}), api_token),
     )
     .await;
     assert_eq!(status, StatusCode::FORBIDDEN);

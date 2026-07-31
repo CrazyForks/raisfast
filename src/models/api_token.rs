@@ -2,7 +2,8 @@
 //!
 //! Defines the data structure for API Tokens (long-lived access tokens) and
 //! create, find, delete operations on the `api_tokens` table. Tokens are stored
-//! as SHA-256 hashes; the plaintext is returned only once at creation time.
+//! as SHA-256 hashes for lookup and AES-256-GCM encrypted ciphertext for
+//! post-creation retrieval.
 
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
@@ -20,8 +21,9 @@ pub struct ApiToken {
     pub id: SnowflakeId,
     pub user_id: SnowflakeId,
     pub name: String,
+    pub description: String,
     pub token_hash: String,
-    pub token_prefix: String,
+    pub token_encrypted: String,
     pub scopes: String,
     pub last_used_at: Option<Timestamp>,
     pub expires_at: Option<Timestamp>,
@@ -30,15 +32,29 @@ pub struct ApiToken {
 
 /// API Token list item (sanitized, without token_hash)
 #[cfg_attr(feature = "export-types", derive(TS))]
-#[derive(Debug, FromRow, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct ApiTokenListItem {
     pub id: SnowflakeId,
     pub name: String,
-    pub token_prefix: String,
-    pub scopes: String,
+    pub description: String,
+    pub token: String,
+    pub scopes: Vec<String>,
     pub last_used_at: Option<Timestamp>,
     pub expires_at: Option<Timestamp>,
     pub created_at: Timestamp,
+}
+
+/// Internal DB row for `list_by_user` (scopes stored as JSON text in the column)
+#[derive(Debug, FromRow)]
+struct ApiTokenRow {
+    id: SnowflakeId,
+    name: String,
+    description: String,
+    token_encrypted: String,
+    scopes: String,
+    last_used_at: Option<Timestamp>,
+    expires_at: Option<Timestamp>,
+    created_at: Timestamp,
 }
 
 /// Create a new API Token record
@@ -46,8 +62,9 @@ pub async fn create(
     pool: &crate::db::Pool,
     user_id: SnowflakeId,
     name: &str,
+    description: &str,
     token_hash: &str,
-    token_prefix: &str,
+    token_encrypted: &str,
     scopes: &str,
     expires_at: Option<&str>,
 ) -> AppResult<ApiToken> {
@@ -59,8 +76,9 @@ pub async fn create(
         "id" => id,
         "user_id" => user_id,
         "name" => name,
+        "description" => description,
         "token_hash" => token_hash,
-        "token_prefix" => token_prefix,
+        "token_encrypted" => token_encrypted,
         "scopes" => scopes,
         "expires_at" => expires_at,
         "created_at" => now
@@ -87,7 +105,8 @@ pub async fn list_by_user(
         "api_tokens",
         "id",
         "name",
-        "token_prefix",
+        "description",
+        "token_encrypted",
         "scopes",
         "last_used_at",
         "expires_at",
@@ -95,14 +114,27 @@ pub async fn list_by_user(
         "user_id"
     );
     let sql = format!(
-        "SELECT id, name, token_prefix, scopes, last_used_at, expires_at, created_at FROM api_tokens WHERE user_id = {} ORDER BY created_at DESC",
+        "SELECT id, name, description, token_encrypted, scopes, last_used_at, expires_at, created_at FROM api_tokens WHERE user_id = {} ORDER BY created_at DESC",
         Driver::ph(1)
     );
-    let rows = sqlx::query_as::<_, ApiTokenListItem>(&sql)
+    let rows = sqlx::query_as::<_, ApiTokenRow>(&sql)
         .bind(user_id)
         .fetch_all(pool)
         .await?;
-    Ok(rows)
+    let items = rows
+        .into_iter()
+        .map(|r| ApiTokenListItem {
+            id: r.id,
+            name: r.name,
+            description: r.description,
+            token: r.token_encrypted,
+            scopes: serde_json::from_str(&r.scopes).unwrap_or_default(),
+            last_used_at: r.last_used_at,
+            expires_at: r.expires_at,
+            created_at: r.created_at,
+        })
+        .collect();
+    Ok(items)
 }
 
 /// Find API Token by id
@@ -113,6 +145,21 @@ pub async fn find_by_id(pool: &crate::db::Pool, id: SnowflakeId) -> AppResult<Op
 /// Delete API Token by id
 pub async fn delete_by_id(pool: &crate::db::Pool, id: SnowflakeId) -> AppResult<()> {
     raisfast_derive::crud_delete!(pool, "api_tokens", where: ("id", id))?;
+    Ok(())
+}
+
+/// Update name, description and scopes by id
+pub async fn update_name_desc_scopes(
+    pool: &crate::db::Pool,
+    id: SnowflakeId,
+    name: &str,
+    description: &str,
+    scopes: &str,
+) -> AppResult<()> {
+    raisfast_derive::crud_update!(pool, "api_tokens",
+        bind: ["name" => name, "description" => description, "scopes" => scopes],
+        where: ("id", id)
+    )?;
     Ok(())
 }
 
@@ -158,8 +205,9 @@ mod tests {
             &pool,
             SnowflakeId(user_id),
             "Test",
+            "",
             "hash123",
-            "rblog_ab",
+            "enc_ab",
             "[\"read\"]",
             None,
         )
@@ -167,7 +215,7 @@ mod tests {
         .unwrap();
         assert_eq!(row.name, "Test");
         assert_eq!(row.token_hash, "hash123");
-        assert_eq!(row.token_prefix, "rblog_ab");
+        assert_eq!(row.token_encrypted, "enc_ab");
         assert_eq!(row.scopes, "[\"read\"]");
         assert!(row.expires_at.is_none());
 
@@ -196,11 +244,7 @@ mod tests {
         create(
             &pool,
             SnowflakeId(user_id),
-            "First",
-            "h1",
-            "rblog_a",
-            "[\"read\"]",
-            None,
+            "First", "", "h1", "enc_a", "[\"read\"]", None,
         )
         .await
         .unwrap();
@@ -208,11 +252,7 @@ mod tests {
         create(
             &pool,
             SnowflakeId(user_id),
-            "Second",
-            "h2",
-            "rblog_b",
-            "[\"write\"]",
-            None,
+            "Second", "", "h2", "enc_b", "[\"write\"]", None,
         )
         .await
         .unwrap();
@@ -237,11 +277,7 @@ mod tests {
         let row = create(
             &pool,
             SnowflakeId(user_id),
-            "Del",
-            "h3",
-            "rblog_c",
-            "[\"read\"]",
-            None,
+            "Del", "", "h3", "enc_c", "[\"read\"]", None,
         )
         .await
         .unwrap();
@@ -257,11 +293,7 @@ mod tests {
         let row = create(
             &pool,
             SnowflakeId(user_id),
-            "Touch",
-            "h4",
-            "rblog_d",
-            "[\"read\"]",
-            None,
+            "Touch", "", "h4", "enc_d", "[\"read\"]", None,
         )
         .await
         .unwrap();
@@ -279,10 +311,7 @@ mod tests {
         let row = create(
             &pool,
             SnowflakeId(user_id),
-            "Expiring",
-            "h5",
-            "rblog_e",
-            "[\"admin\"]",
+            "Expiring", "", "h5", "enc_e", "[\"admin\"]",
             Some("2099-12-31T00:00:00+00:00"),
         )
         .await
@@ -300,11 +329,7 @@ mod tests {
         create(
             &pool,
             SnowflakeId(user_id),
-            "Safe",
-            "secret_hash",
-            "rblog_f",
-            "[\"read\"]",
-            None,
+            "Safe", "", "secret_hash", "enc_f", "[\"read\"]", None,
         )
         .await
         .unwrap();

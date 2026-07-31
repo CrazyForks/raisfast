@@ -1151,7 +1151,7 @@ impl AppConfig {
             sms_twilio_account_sid: None,
             sms_twilio_auth_token: None,
             sms_twilio_from: None,
-            app_key: None,
+            app_key: Some("8Z/G4qNkqbuIzqSCpkfOwjsEsjIgfVawB+hYgERkqlw=".into()),
             started_at: None,
         }
     }

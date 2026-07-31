@@ -16,12 +16,13 @@ use std::sync::Arc;
 
 use super::repository::{ContentQuery, ContentRepository, SaveContext};
 use super::rule_engine::compile_rule_sql;
-use super::schema::{ContentKind, ContentTypeSchema, FieldType, RelationType, check_api_access};
+use super::schema::{ApiAccess, ContentKind, ContentTypeSchema, FieldType, RelationType, check_api_access};
 use crate::AppState;
 use crate::constants::*;
+use crate::db::DbDriver;
 use crate::errors::app_error::AppError;
 use crate::event::Event;
-use crate::middleware::auth::AuthUser;
+use crate::middleware::auth::{AuthUser, TokenAction};
 
 pub fn routes(
     registry: &mut crate::server::RouteRegistry,
@@ -133,6 +134,18 @@ fn make_base_ctx_anon(state: &AppState) -> crate::aspects::BaseContext {
 /// If the user is authenticated and has `filter_auth`, generates `filter OR filter_auth`;
 /// otherwise uses only `filter`.
 /// Returns None if the rule requires authentication but the user is not logged in (caller should reject the request).
+/// Check if the authenticated user is the creator of the given record.
+fn is_owner(record: &serde_json::Value, auth: &AuthUser) -> bool {
+    let Some(uid) = auth.user_id() else {
+        return false;
+    };
+    match record.get(COL_CREATED_BY) {
+        Some(serde_json::Value::Number(n)) => n.as_i64().is_some_and(|v| v == uid),
+        Some(serde_json::Value::String(s)) => s.parse::<i64>().is_ok_and(|v| v == uid),
+        _ => false,
+    }
+}
+
 fn build_rule_sql(
     endpoint: &super::schema::CachedEndpointRules,
     auth: &AuthUser,
@@ -271,14 +284,14 @@ pub fn register_content_routes(
                     &format!("{admin_cms}/{plural}"),
                     axum::routing::get({
                         let singular = singular.clone();
-                        move |state, params| admin_list_handler(state, singular.clone(), params)
+                        move |state, auth, params| admin_list_handler(state, auth, singular.clone(), params)
                     }),
                 )
                 .route(
                     &format!("{admin_cms}/{plural}/{{id}}"),
                     axum::routing::get({
                         let singular = singular.clone();
-                        move |state, path| admin_get_handler(state, path, singular.clone())
+                        move |state, auth, path| admin_get_handler(state, auth, path, singular.clone())
                     }),
                 );
         } else {
@@ -326,14 +339,14 @@ pub fn register_content_routes(
                     &format!("{admin_cms}/{plural}"),
                     axum::routing::get({
                         let singular = singular.clone();
-                        move |state, params| admin_list_handler(state, singular.clone(), params)
+                        move |state, auth, params| admin_list_handler(state, auth, singular.clone(), params)
                     }),
                 )
                 .route(
                     &format!("{admin_cms}/{plural}/{{id}}"),
                     axum::routing::get({
                         let singular = singular.clone();
-                        move |state, path| admin_get_handler(state, path, singular.clone())
+                        move |state, auth, path| admin_get_handler(state, auth, path, singular.clone())
                     }),
                 );
         }
@@ -466,7 +479,7 @@ async fn dynamic_cms_dispatch_restful(
                 check_api_access(ct.api.create.access, &auth)?;
                 let Json(data) =
                     body.ok_or_else(|| AppError::BadRequest("body required".into()))?;
-                let result = do_create(state, &ct, data, &save_ctx).await?;
+                let result = do_create(state, &ct, data, &save_ctx, &auth).await?;
                 Ok((
                     StatusCode::CREATED,
                     Json(crate::errors::response::ApiResponse::success(result)),
@@ -546,7 +559,7 @@ async fn dynamic_cms_dispatch_simple(
                 check_api_access(ct.api.create.access, &auth)?;
                 let Json(data) =
                     body.ok_or_else(|| AppError::BadRequest("body required".into()))?;
-                let result = do_create(state, &ct, data, &save_ctx).await?;
+                let result = do_create(state, &ct, data, &save_ctx, &auth).await?;
                 Ok((
                     StatusCode::CREATED,
                     Json(crate::errors::response::ApiResponse::success(result)),
@@ -582,12 +595,14 @@ async fn dynamic_cms_dispatch_simple(
 }
 
 /// Catch-all admin dynamic route handler
-pub async fn dynamic_admin_cms_handler(
+ pub async fn dynamic_admin_cms_handler(
     State(state): State<AppState>,
+    auth: AuthUser,
     method: axum::http::Method,
     Path(path): Path<String>,
     Query(params): Query<ListParams>,
 ) -> Result<axum::response::Response, AppError> {
+    auth.ensure_admin()?;
     let restful = state.config.api_restful;
 
     if restful {
@@ -717,15 +732,28 @@ pub async fn do_list(
     params: ListParams,
     auth: &AuthUser,
 ) -> Result<serde_json::Value, AppError> {
+    auth.ensure_scope(&ct.singular, TokenAction::Read)?;
     let repo = ContentRepository::new(state.pool.clone());
     let include = params.include.as_deref().map(parse_include);
 
-    let (rule_where, rule_params) = ct
+    let (mut rule_where, mut rule_params) = ct
         .cached_rules
         .as_ref()
         .and_then(|r| build_rule_sql(&r.list, auth, &state.config.rule_engine))
         .map(|(w, p)| (Some(w), p))
         .unwrap_or_default();
+
+    // Owner access: auto-inject `created_by = <auth_id>`
+    if ct.api.list.access == ApiAccess::Owner {
+        let uid = auth.user_id().unwrap_or(0);
+        let col = COL_CREATED_BY;
+        let cond = format!("{col} = {}", crate::db::Driver::ph(1 + rule_params.len()));
+        rule_where = Some(match rule_where {
+            Some(w) => format!("({w}) AND ({cond})"),
+            None => cond,
+        });
+        rule_params.push(uid.to_string());
+    }
 
     let mut meta_filters: Vec<(String, String)> = Vec::new();
     let meta_prefix = format!("{COL_META}.");
@@ -856,6 +884,7 @@ pub async fn do_get(
     id: SnowflakeId,
     auth: &AuthUser,
 ) -> Result<serde_json::Value, AppError> {
+    auth.ensure_scope(&ct.singular, TokenAction::Read)?;
     let cache_key = cms_detail_cache_key(ct, id);
     let cache_ttl = std::time::Duration::from_secs(state.config.rule_engine.cms_cache_ttl_secs);
     if ct.api.get.cache
@@ -876,6 +905,11 @@ pub async fn do_get(
         if !rule.evaluate(&result, &ctx, &state.config.rule_engine) {
             return Err(AppError::not_found(&format!("{}/{}", ct.name, id)));
         }
+    }
+
+    // Owner access: only the creator may view
+    if ct.api.get.access == ApiAccess::Owner && !is_owner(&result, auth) {
+        return Err(AppError::not_found(&format!("{}/{}", ct.name, id)));
     }
 
     state
@@ -905,7 +939,9 @@ pub async fn do_create(
     ct: &ContentTypeSchema,
     data: Value,
     save_ctx: &SaveContext,
+    auth: &AuthUser,
 ) -> Result<serde_json::Value, AppError> {
+    auth.ensure_scope(&ct.singular, TokenAction::Create)?;
     let hook_data = json!({
         "content_type": ct.singular,
         "data": &data,
@@ -987,21 +1023,19 @@ pub async fn do_update(
     save_ctx: &SaveContext,
     auth: &AuthUser,
 ) -> Result<serde_json::Value, AppError> {
+    auth.ensure_scope(&ct.singular, TokenAction::Update)?;
     let repo = ContentRepository::new(state.pool.clone());
 
-    if let Some(rules) = ct.cached_rules.as_ref()
-        && let Some(rule) = rules.update.filter.as_ref()
-    {
-        let existing = repo.find_by_id(ct, id, None, true).await?;
-        if let Some(record) = existing {
-            let ctx = super::rule_engine::RuleContext::from_auth(auth);
-            if !rule.evaluate(&record, &ctx, &state.config.rule_engine) {
-                return Err(AppError::Forbidden);
-            }
+    let old_record_value = repo.find_by_id(ct, id, None, true).await?;
+
+    if ct.api.update.access == ApiAccess::Owner {
+        let rec = old_record_value
+            .as_ref()
+            .ok_or_else(|| AppError::not_found(&format!("{}/{}", ct.name, id)))?;
+        if !is_owner(rec, auth) {
+            return Err(AppError::Forbidden);
         }
     }
-
-    let old_record_value = repo.find_by_id(ct, id, None, true).await?;
 
     if let Some(rules) = ct.cached_rules.as_ref()
         && let Some(rule) = rules.update.filter.as_ref()
@@ -1087,10 +1121,16 @@ pub async fn do_delete(
     id: SnowflakeId,
     auth: &AuthUser,
 ) -> Result<(), AppError> {
+    auth.ensure_scope(&ct.singular, TokenAction::Delete)?;
     let repo = ContentRepository::new(state.pool.clone());
 
     let existing = repo.find_by_id(ct, id, None, true).await?;
     let value = existing.ok_or_else(|| AppError::not_found(&ct.singular))?;
+
+    // Owner access: only the creator may delete
+    if ct.api.delete.access == ApiAccess::Owner && !is_owner(&value, auth) {
+        return Err(AppError::Forbidden);
+    }
 
     let record: crate::aspects::Record = match value.as_object() {
         Some(map) => map.clone(),
@@ -1411,7 +1451,7 @@ async fn create_handler(
         .ok_or_else(|| AppError::not_found(&type_name))?;
     check_api_access(ct.api.create.access, &auth)?;
     let save_ctx = SaveContext::from_auth(&auth);
-    let result = do_create(&state, &ct, data, &save_ctx).await?;
+    let result = do_create(&state, &ct, data, &save_ctx, &auth).await?;
     Ok((
         StatusCode::CREATED,
         Json(crate::errors::response::ApiResponse::success(result)),
@@ -1456,9 +1496,11 @@ async fn delete_handler(
 
 async fn admin_list_handler(
     State(state): State<AppState>,
+    auth: AuthUser,
     type_name: String,
     Query(params): Query<ListParams>,
 ) -> Result<impl IntoResponse, AppError> {
+    auth.ensure_admin()?;
     let ct = state
         .content_type_registry
         .get(&type_name)
@@ -1469,9 +1511,11 @@ async fn admin_list_handler(
 
 async fn admin_get_handler(
     State(state): State<AppState>,
+    auth: AuthUser,
     Path(id): Path<String>,
     type_name: String,
 ) -> Result<impl IntoResponse, AppError> {
+    auth.ensure_admin()?;
     let ct = state
         .content_type_registry
         .get(&type_name)
@@ -1484,7 +1528,8 @@ async fn admin_get_handler(
 // ── Schema Management API ──────────────────────────────────────────
 
 /// GET /admin/content-types — List schema definitions of all registered content types
-pub async fn list_schemas(State(state): State<AppState>) -> Result<impl IntoResponse, AppError> {
+ pub async fn list_schemas(State(state): State<AppState>, auth: AuthUser) -> Result<impl IntoResponse, AppError> {
+    auth.ensure_admin()?;
     let schemas = state.content_type_registry.all();
     Ok(Json(crate::errors::response::ApiResponse::success(schemas)))
 }
@@ -1492,8 +1537,10 @@ pub async fn list_schemas(State(state): State<AppState>) -> Result<impl IntoResp
 /// GET /admin/content-types/:singular — Get the schema definition of a single content type
 pub async fn get_schema(
     State(state): State<AppState>,
+    auth: AuthUser,
     Path(singular): Path<String>,
 ) -> Result<impl IntoResponse, AppError> {
+    auth.ensure_admin()?;
     let ct = state
         .content_type_registry
         .get(&singular)
@@ -1509,8 +1556,10 @@ pub async fn get_schema(
 /// 4. Register in memory ContentTypeRegistry (takes effect immediately, no restart required)
 pub async fn create_schema(
     State(state): State<AppState>,
+    auth: AuthUser,
     Json(req): Json<super::schema::CreateContentTypeRequest>,
 ) -> Result<impl IntoResponse, AppError> {
+    auth.ensure_admin()?;
     let schema = super::schema::ContentTypeSchema {
         name: req.name,
         singular: req.singular.clone(),
@@ -1582,10 +1631,12 @@ pub async fn create_schema(
 /// DELETE /admin/content-types/:singular — Delete a content type
 ///
 /// Deletes the TOML file and unregisters from the in-memory registry. Does not drop the database table.
-pub async fn delete_schema(
+ pub async fn delete_schema(
     State(state): State<AppState>,
+    auth: AuthUser,
     Path(singular): Path<String>,
 ) -> Result<impl IntoResponse, AppError> {
+    auth.ensure_admin()?;
     if state.content_type_registry.get(&singular).is_none() {
         return Err(AppError::not_found(&singular));
     }
@@ -1612,11 +1663,13 @@ pub async fn delete_schema(
 /// it is compared against the database and automatically `ALTER TABLE ADD COLUMN` to add missing
 /// columns (does not delete columns or change column types).
 /// The updated schema is synced to the in-memory registry (takes effect immediately, no restart required).
-pub async fn update_schema(
+ pub async fn update_schema(
     State(state): State<AppState>,
+    auth: AuthUser,
     Path(singular): Path<String>,
     Json(req): Json<super::schema::UpdateContentTypeRequest>,
 ) -> Result<impl IntoResponse, AppError> {
+    auth.ensure_admin()?;
     let ct = state
         .content_type_registry
         .get(&singular)

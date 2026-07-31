@@ -1,9 +1,11 @@
 //! API Token business logic
 //!
 //! Provides services for creating, listing, deleting, and verifying API tokens.
-//! Token format is `rblog_` + 64 hex characters; the plaintext is returned only once at creation time.
+//! Token format is `rf_` + 64 hex characters. Full plaintext is stored
+//! AES-256-GCM encrypted for post-creation retrieval.
 
 use crate::cache::CacheStore;
+use crate::config::app::AppConfig;
 use crate::errors::app_error::{AppError, AppResult};
 use crate::middleware::auth::AuthUser;
 use crate::models::api_token;
@@ -12,40 +14,46 @@ use crate::utils::tz::Timestamp;
 #[cfg(feature = "export-types")]
 use ts_rs::TS;
 
-/// API Token prefix
-const TOKEN_PREFIX: &str = "rblog_";
-
 /// Cache key prefix
 const CACHE_PREFIX: &str = "api_token:";
 
 /// Cache TTL (seconds)
 const CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(300);
 
-/// scope → role mapping
-fn scope_to_role(scopes: &[String]) -> String {
-    use crate::models::user::UserRole;
-    if scopes.iter().any(|s| s == "admin") {
-        UserRole::Admin.to_string()
-    } else if scopes.iter().any(|s| s == "write") {
-        UserRole::Author.to_string()
-    } else {
-        UserRole::Reader.to_string()
-    }
-}
-
 /// Cached token authentication result
 #[derive(serde::Serialize, serde::Deserialize)]
 struct CachedTokenAuth {
     user_id: SnowflakeId,
     role: String,
+    scopes: Vec<String>,
     tenant_id: Option<String>,
     expires_at: Option<Timestamp>,
 }
 
-/// Generate a plaintext token and its SHA-256 hash
-fn generate_token() -> (String, String) {
-    let raw = crate::utils::id::random_hex(32);
-    let plain = format!("{TOKEN_PREFIX}{raw}");
+/// Normalize a token name into a short slug for the token string.
+///
+/// Uses `slugify` (deunicode under the hood) so non-ASCII names like
+/// "测试密钥" → `ceshimiyao`, "CI/CD Pipeline" → `cicdpipeline`.
+/// Truncated to 6 chars; empty results fall back to "tk".
+fn name_slug(name: &str) -> String {
+    let slug: String =     slug::slugify(name).chars().filter(|c| c.is_ascii_alphanumeric()).take(6).collect();
+    if slug.is_empty() {
+        "tk".into()
+    } else {
+        slug
+    }
+}
+
+/// Generate a plaintext token (`rf_{name_slug}_{code}`) and its SHA-256 hash
+fn generate_token(name: &str) -> (String, String) {
+    let slug = name_slug(name);
+    let raw = crate::utils::id::random_hex(24);
+    let plain = format!(
+        "{}{}_{}",
+        crate::constants::API_TOKEN_PREFIX,
+        slug,
+        raw
+    );
     let hash = sha256_hex(plain.as_bytes());
     (plain, hash)
 }
@@ -66,9 +74,42 @@ pub fn hash_token(plain: &str) -> String {
     sha256_hex(plain.as_bytes())
 }
 
-/// Check whether a string is an API token (starts with `rblog_`)
+/// Check whether a string is an API token (starts with the API token prefix)
 pub fn is_api_token(token: &str) -> bool {
-    token.starts_with(TOKEN_PREFIX)
+    token.starts_with(crate::constants::API_TOKEN_PREFIX)
+}
+
+/// Derive the AES-256 key from `APP_KEY` config
+fn get_encrypt_key(config: &AppConfig) -> AppResult<[u8; 32]> {
+    use base64::Engine;
+    let key_str = config
+        .app_key
+        .as_deref()
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("APP_KEY not configured")))?;
+    let decoded = base64::engine::general_purpose::STANDARD
+        .decode(key_str)
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("APP_KEY base64 decode: {e}")))?;
+    if decoded.len() != 32 {
+        return Err(AppError::Internal(anyhow::anyhow!(
+            "APP_KEY must be 32 bytes, got {}",
+            decoded.len()
+        )));
+    }
+    let mut arr = [0u8; 32];
+    arr.copy_from_slice(&decoded);
+    Ok(arr)
+}
+
+/// Encrypt a plaintext token for storage
+fn encrypt_token(plain: &str, config: &AppConfig) -> AppResult<String> {
+    let key = get_encrypt_key(config)?;
+    crate::payment::crypto::aes256gcm_encrypt(plain, &key)
+}
+
+/// Decrypt a stored token ciphertext
+fn decrypt_token(enc: &str, config: &AppConfig) -> AppResult<String> {
+    let key = get_encrypt_key(config)?;
+    crate::payment::crypto::aes256gcm_decrypt(enc, &key)
 }
 
 /// Result returned when creating an API token
@@ -78,7 +119,6 @@ pub struct CreateTokenResult {
     pub id: String,
     pub name: String,
     pub token: String,
-    pub token_prefix: String,
     pub scopes: Vec<String>,
     pub expires_at: Option<Timestamp>,
     pub created_at: Timestamp,
@@ -87,6 +127,7 @@ pub struct CreateTokenResult {
 /// Create an API token
 pub async fn create_token(
     pool: &crate::db::Pool,
+    config: &AppConfig,
     auth: &AuthUser,
     name: &str,
     scopes: Vec<String>,
@@ -98,17 +139,33 @@ pub async fn create_token(
     }
     if scopes.is_empty() {
         return Err(AppError::BadRequest(
-            "at least one scope is required".into(),
+            "at least one scope is required (use \"*\" for full access)".into(),
         ));
     }
+    const VALID_ACTIONS: &[&str] = &["read", "create", "update", "delete"];
     for s in &scopes {
-        if !["read", "write", "admin"].contains(&s.as_str()) {
-            return Err(AppError::BadRequest(format!("invalid scope: {s}")));
+        if s == "*" {
+            continue;
+        }
+        let Some((resource, action)) = s.split_once(':') else {
+            return Err(AppError::BadRequest(format!(
+                "invalid scope '{s}': expected '{{resource}}:{{action}}' or '*'"
+            )));
+        };
+        if resource.is_empty() {
+            return Err(AppError::BadRequest(format!(
+                "invalid scope '{s}': resource name is empty"
+            )));
+        }
+        if action != "*" && !VALID_ACTIONS.contains(&action) {
+            return Err(AppError::BadRequest(format!(
+                "invalid scope '{s}': action must be one of read, create, update, delete, *"
+            )));
         }
     }
 
-    let (plain, hash) = generate_token();
-    let prefix = &plain[..8];
+    let (plain, hash) = generate_token(name.trim());
+    let encrypted = encrypt_token(&plain, config)?;
     let scopes_json = serde_json::to_string(&scopes).unwrap_or_default();
 
     let user_id = auth.ensure_snowflake_user_id()?;
@@ -117,8 +174,9 @@ pub async fn create_token(
         pool,
         user_id,
         name.trim(),
+        "",
         &hash,
-        prefix,
+        &encrypted,
         &scopes_json,
         expires_at,
     )
@@ -128,7 +186,6 @@ pub async fn create_token(
         id: row.id.to_string(),
         name: row.name,
         token: plain,
-        token_prefix: row.token_prefix,
         scopes,
         expires_at: row.expires_at,
         created_at: row.created_at,
@@ -138,13 +195,22 @@ pub async fn create_token(
 /// List API tokens for the given user (masked)
 pub async fn list_tokens(
     pool: &crate::db::Pool,
+    config: &AppConfig,
     auth: &AuthUser,
 ) -> AppResult<Vec<api_token::ApiTokenListItem>> {
     let user_id = auth.ensure_snowflake_user_id()?;
     let user = crate::models::user::find_by_id(pool, user_id, None)
         .await?
         .ok_or(AppError::Unauthorized)?;
-    api_token::list_by_user(pool, user.id).await
+    let mut tokens = api_token::list_by_user(pool, user.id).await?;
+    for t in &mut tokens {
+        let plain = decrypt_token(&t.token, config).map_err(|e| {
+            tracing::warn!("failed to decrypt token {}: {e}", t.id);
+            e
+        })?;
+        t.token = plain;
+    }
+    Ok(tokens)
 }
 
 /// Delete an API token (only the owner or an admin can do this)
@@ -174,6 +240,81 @@ pub async fn delete_token(
     api_token::delete_by_id(pool, parse_id(token_id)?).await
 }
 
+/// Update an API token's name and scopes
+pub async fn update_token(
+    pool: &crate::db::Pool,
+    cache: &dyn CacheStore,
+    token_id: &str,
+    auth: &AuthUser,
+    name: &str,
+    description: &str,
+    scopes: Vec<String>,
+) -> AppResult<api_token::ApiTokenListItem> {
+    let user_id = auth.ensure_snowflake_user_id()?;
+    let is_admin = auth.is_admin();
+    let id = parse_id(token_id)?;
+    let token = api_token::find_by_id(pool, id)
+        .await?
+        .ok_or_else(|| AppError::NotFound("api_token".into()))?;
+    let user = crate::models::user::find_by_id(pool, user_id, None)
+        .await?
+        .ok_or(AppError::Unauthorized)?;
+    if !is_admin && token.user_id != user.id {
+        return Err(AppError::Forbidden);
+    }
+
+    if scopes.is_empty() {
+        return Err(AppError::BadRequest(
+            "at least one scope is required (use \"*\" for full access)".into(),
+        ));
+    }
+    const VALID_ACTIONS: &[&str] = &["read", "create", "update", "delete"];
+    for s in &scopes {
+        if s == "*" {
+            continue;
+        }
+        let Some((resource, action)) = s.split_once(':') else {
+            return Err(AppError::BadRequest(format!(
+                "invalid scope '{s}': expected '{{resource}}:{{action}}' or '*'"
+            )));
+        };
+        if resource.is_empty() {
+            return Err(AppError::BadRequest(format!(
+                "invalid scope '{s}': resource name is empty"
+            )));
+        }
+        if action != "*" && !VALID_ACTIONS.contains(&action) {
+            return Err(AppError::BadRequest(format!(
+                "invalid scope '{s}': action must be one of read, create, update, delete, *"
+            )));
+        }
+    }
+
+    let scopes_json = serde_json::to_string(&scopes).unwrap_or_default();
+    api_token::update_name_desc_scopes(pool, id, name.trim(), description, &scopes_json).await?;
+
+    // Invalidate cache
+    if let Err(e) = cache
+        .delete(&format!("{CACHE_PREFIX}{}", token.token_hash))
+        .await
+    {
+        tracing::warn!("api_token cache delete on update: {e}");
+    }
+
+    let _ = cache.delete(&format!("{CACHE_PREFIX}{}", token.token_hash)).await;
+
+    Ok(api_token::ApiTokenListItem {
+        id: token.id,
+        name: name.trim().to_string(),
+        description: description.to_string(),
+        token: String::new(), // Not returned on update
+        scopes,
+        last_used_at: token.last_used_at,
+        expires_at: token.expires_at,
+        created_at: token.created_at,
+    })
+}
+
 /// Verify an API token and return (user_id, role, tenant_id)
 ///
 /// Uses a cache-aside pattern: when the cache hits, all 3 DB operations are skipped.
@@ -182,7 +323,7 @@ pub async fn verify_api_token(
     pool: &crate::db::Pool,
     cache: &dyn CacheStore,
     plain: &str,
-) -> AppResult<(i64, String, Option<String>)> {
+) -> AppResult<(i64, String, Vec<String>, Option<String>)> {
     let hash = hash_token(plain);
     let cache_key = format!("{CACHE_PREFIX}{hash}");
 
@@ -195,7 +336,7 @@ pub async fn verify_api_token(
             let _ = cache.delete(&cache_key).await;
             return Err(AppError::Unauthorized);
         }
-        return Ok((*auth.user_id, auth.role, auth.tenant_id));
+        return Ok((*auth.user_id, auth.role, auth.scopes, auth.tenant_id));
     }
 
     let token = api_token::find_by_hash(pool, &hash)
@@ -218,8 +359,9 @@ pub async fn verify_api_token(
         .await?
         .ok_or(AppError::Unauthorized)?;
 
+    // Token inherits the user's real DB role; scopes only restrict which resources
+    let role = user.role.to_string();
     let scopes: Vec<String> = serde_json::from_str(&token.scopes).unwrap_or_default();
-    let role = scope_to_role(&scopes);
 
     if let Err(e) = api_token::touch_last_used(pool, token.id).await {
         tracing::debug!("api_token touch_last_used: {e}");
@@ -228,6 +370,7 @@ pub async fn verify_api_token(
     let cached_auth = CachedTokenAuth {
         user_id: user.id,
         role: role.clone(),
+        scopes: scopes.clone(),
         tenant_id: user.tenant_id.clone(),
         expires_at: token.expires_at,
     };
@@ -237,7 +380,7 @@ pub async fn verify_api_token(
         tracing::debug!("api_token cache set: {e}");
     }
 
-    Ok((*user.id, role, user.tenant_id))
+    Ok((*user.id, role, scopes, user.tenant_id))
 }
 
 #[cfg(test)]
@@ -274,64 +417,48 @@ mod tests {
 
     #[test]
     fn is_api_token_detects_prefix() {
-        assert!(is_api_token("rblog_abc123"));
-        assert!(is_api_token("rblog_"));
-        assert!(!is_api_token("Bearer rblog_abc"));
+        assert!(is_api_token("rf_abc123"));
+        assert!(is_api_token("rf_"));
+        assert!(!is_api_token("Bearer rf_abc"));
         assert!(!is_api_token("eyJhbGciOiJIUzI1NiJ9.xxx"));
         assert!(!is_api_token(""));
     }
 
     #[test]
     fn hash_token_is_deterministic() {
-        let h1 = hash_token("rblog_test123");
-        let h2 = hash_token("rblog_test123");
+        let h1 = hash_token("rf_test123");
+        let h2 = hash_token("rf_test123");
         assert_eq!(h1, h2);
         assert_eq!(h1.len(), 64);
     }
 
     #[test]
     fn hash_token_differs_for_different_inputs() {
-        assert_ne!(hash_token("rblog_aaa"), hash_token("rblog_bbb"));
+        assert_ne!(hash_token("rf_aaa"), hash_token("rf_bbb"));
     }
 
     #[test]
     fn generate_token_format() {
-        let (plain, hash) = generate_token();
-        assert!(plain.starts_with("rblog_"));
-        assert!(plain.len() > 10);
-        assert!(plain[6..].chars().all(|c| c.is_ascii_hexdigit()));
+        let (plain, hash) = generate_token("CI Pipeline");
+        assert!(plain.starts_with("rf_cipipe_"));
         assert_eq!(hash.len(), 64);
     }
 
     #[test]
+    fn name_slug_handles_non_ascii() {
+        assert_eq!(name_slug("CI/CD Pipeline"), "cicdpi");
+        assert_eq!(name_slug("测试密钥"), "ceshim");
+        assert_eq!(name_slug("部署凭证"), "bushup");
+        assert_eq!(name_slug("🎉"), "tada");
+        assert_eq!(name_slug("API"), "api");
+    }
+
+    #[test]
     fn generate_token_unique() {
-        let (p1, h1) = generate_token();
-        let (p2, h2) = generate_token();
+        let (p1, h1) = generate_token("First");
+        let (p2, h2) = generate_token("Second");
         assert_ne!(p1, p2);
         assert_ne!(h1, h2);
-    }
-
-    #[test]
-    fn scope_to_role_admin_wins() {
-        assert_eq!(
-            scope_to_role(&["read".into(), "write".into(), "admin".into()]),
-            "admin"
-        );
-    }
-
-    #[test]
-    fn scope_to_role_write() {
-        assert_eq!(scope_to_role(&["read".into(), "write".into()]), "author");
-    }
-
-    #[test]
-    fn scope_to_role_read_only() {
-        assert_eq!(scope_to_role(&["read".into()]), "reader");
-    }
-
-    #[test]
-    fn scope_to_role_empty() {
-        assert_eq!(scope_to_role(&[]), "reader");
     }
 
     #[tokio::test]
@@ -342,7 +469,7 @@ mod tests {
             crate::models::user::UserRole::Author,
             "default",
         );
-        let msg = create_token(&pool, &auth, "   ", vec!["read".into()], None)
+        let msg = create_token(&pool, &crate::config::app::AppConfig::test_defaults(), &auth, "   ", vec!["posts:read".into()], None)
             .await
             .unwrap_err()
             .to_string();
@@ -357,7 +484,7 @@ mod tests {
             crate::models::user::UserRole::Author,
             "default",
         );
-        let msg = create_token(&pool, &auth, "Test", vec![], None)
+        let msg = create_token(&pool, &crate::config::app::AppConfig::test_defaults(), &auth, "Test", vec![], None)
             .await
             .unwrap_err()
             .to_string();
@@ -372,7 +499,7 @@ mod tests {
             crate::models::user::UserRole::Author,
             "default",
         );
-        let msg = create_token(&pool, &auth, "Test", vec!["superuser".into()], None)
+        let msg = create_token(&pool, &crate::config::app::AppConfig::test_defaults(), &auth, "Test", vec!["superuser".into()], None)
             .await
             .unwrap_err()
             .to_string();
@@ -389,9 +516,10 @@ mod tests {
         );
         let msg = create_token(
             &pool,
+            &crate::config::app::AppConfig::test_defaults(),
             &auth,
             "Test",
-            vec!["read".into(), "delete".into()],
+            vec!["posts:read".into(), "invalid_scope".into()],
             None,
         )
         .await
@@ -411,16 +539,17 @@ mod tests {
         );
         let result = create_token(
             &pool,
+            &crate::config::app::AppConfig::test_defaults(),
             &auth,
             "CI/CD",
-            vec!["read".into(), "write".into()],
+            vec!["posts:read".into(), "posts:create".into()],
             None,
         )
         .await
         .unwrap();
-        assert!(result.token.starts_with("rblog_"));
+        assert!(result.token.starts_with("rf_"));
         assert_eq!(result.name, "CI/CD");
-        assert_eq!(result.scopes, vec!["read", "write"]);
+        assert_eq!(result.scopes, vec!["posts:read", "posts:create"]);
         assert!(result.expires_at.is_none());
         assert!(!result.id.is_empty());
     }
@@ -429,15 +558,16 @@ mod tests {
     async fn verify_api_token_expired_is_deleted() {
         let pool = setup_pool().await;
         let user = insert_user(&pool, crate::models::user::UserRole::Reader).await;
-        let plain = "rblog_expired_token_for_test";
+        let plain = "rf_expired_token_for_test";
         let token_hash = hash_token(plain);
         let past = "2000-01-01T00:00:00+00:00";
         crate::models::api_token::create(
             &pool,
             user.id,
             "Expired",
+            "",
             &token_hash,
-            &plain[..8],
+            "enc_expired",
             "[\"read\"]",
             Some(past),
         )
@@ -457,22 +587,23 @@ mod tests {
     async fn verify_api_token_not_expired_succeeds() {
         let pool = setup_pool().await;
         let user = insert_user(&pool, crate::models::user::UserRole::Admin).await;
-        let plain = "rblog_valid_future_token_test";
+        let plain = "rf_valid_future_token_test";
         let token_hash = hash_token(plain);
         let future = "2099-12-31T23:59:59+00:00";
         crate::models::api_token::create(
             &pool,
             user.id,
             "Valid",
+            "",
             &token_hash,
-            &plain[..8],
+            "enc_valid",
             "[\"admin\"]",
             Some(future),
         )
         .await
         .unwrap();
         let cache = test_cache();
-        let (uid, role, tenant_id) = verify_api_token(&pool, &*cache, plain).await.unwrap();
+        let (uid, role, _scopes, tenant_id) = verify_api_token(&pool, &*cache, plain).await.unwrap();
         assert_eq!(uid, *user.id);
         assert_eq!(role, "admin");
         assert_eq!(tenant_id, Some("default".to_string()));
@@ -483,14 +614,15 @@ mod tests {
     async fn verify_api_token_updates_last_used() {
         let pool = setup_pool().await;
         let user = insert_user(&pool, crate::models::user::UserRole::Reader).await;
-        let plain = "rblog_last_used_test_token";
+        let plain = "rf_last_used_test_token";
         let token_hash = hash_token(plain);
         crate::models::api_token::create(
             &pool,
             user.id,
             "TouchTest",
+            "",
             &token_hash,
-            &plain[..8],
+            "enc_touch",
             "[\"read\"]",
             None,
         )
@@ -524,8 +656,9 @@ mod tests {
             &pool,
             user.id,
             "Own",
+            "",
             "h-del",
-            "rblog_d",
+            "enc_del",
             "[\"read\"]",
             None,
         )
@@ -557,8 +690,9 @@ mod tests {
             &pool,
             user.id,
             "Target",
+            "",
             "h-adm",
-            "rblog_a",
+            "enc_adm",
             "[\"read\"]",
             None,
         )
@@ -583,8 +717,9 @@ mod tests {
             &pool,
             user.id,
             "FB",
+            "",
             "h-fb",
-            "rblog_f",
+            "enc_fb",
             "[\"read\"]",
             None,
         )
@@ -623,14 +758,15 @@ mod tests {
     async fn verify_api_token_cache_hit_skips_db() {
         let pool = setup_pool().await;
         let user = insert_user(&pool, crate::models::user::UserRole::Reader).await;
-        let plain = "rblog_cache_hit_test_token";
+        let plain = "rf_cache_hit_test_token";
         let token_hash = hash_token(plain);
         crate::models::api_token::create(
             &pool,
             user.id,
             "Cached",
+            "",
             &token_hash,
-            &plain[..8],
+            "enc_cache",
             "[\"read\"]",
             None,
         )
@@ -638,7 +774,7 @@ mod tests {
         .unwrap();
 
         let cache = test_cache();
-        let (uid1, _, _) = verify_api_token(&pool, &*cache, plain).await.unwrap();
+        let (uid1, _, _, _) = verify_api_token(&pool, &*cache, plain).await.unwrap();
         assert_eq!(uid1, *user.id);
 
         let cache_key = format!("{CACHE_PREFIX}{token_hash}");
@@ -655,7 +791,7 @@ mod tests {
         .await
         .unwrap();
 
-        let (uid2, _, _) = verify_api_token(&pool, &*cache, plain).await.unwrap();
+        let (uid2, _, _, _) = verify_api_token(&pool, &*cache, plain).await.unwrap();
         assert_eq!(uid2, *user.id);
     }
 
@@ -663,15 +799,16 @@ mod tests {
     async fn verify_api_token_expired_cache_clears() {
         let pool = setup_pool().await;
         let user = insert_user(&pool, crate::models::user::UserRole::Reader).await;
-        let plain = "rblog_cache_expired_test";
+        let plain = "rf_cache_expired_test";
         let token_hash = hash_token(plain);
         let past = "2000-01-01T00:00:00+00:00";
         crate::models::api_token::create(
             &pool,
             user.id,
             "CacheExp",
+            "",
             &token_hash,
-            &plain[..8],
+            "enc_cache_exp",
             "[\"read\"]",
             Some(past),
         )
@@ -683,6 +820,7 @@ mod tests {
         let cached = serde_json::to_string(&CachedTokenAuth {
             user_id: user.id,
             role: "reader".into(),
+            scopes: vec![],
             tenant_id: Some("default".to_string()),
             expires_at: Some(past.parse().unwrap()),
         })

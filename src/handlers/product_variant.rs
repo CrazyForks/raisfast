@@ -4,7 +4,7 @@ use crate::dto::product_variant::{
 use crate::errors::app_error::AppResult;
 use crate::errors::response::ApiResponse;
 use crate::errors::validation;
-use crate::middleware::auth::AuthUser;
+use crate::middleware::auth::{AuthUser, TokenAction};
 use axum::Json;
 use axum::extract::{Path, State};
 
@@ -75,6 +75,7 @@ pub async fn admin_create(
     Json(req): Json<CreateProductVariantRequest>,
 ) -> AppResult<ApiResponse<ProductVariantResponse>> {
     auth.ensure_admin()?;
+    auth.ensure_scope("product_variants", TokenAction::Create)?;
     validation::validate(&req)?;
     let v = state.product_variant_service.create(&auth, req).await?;
     Ok(ApiResponse::success(ProductVariantResponse::from(v)))
@@ -87,6 +88,7 @@ pub async fn admin_update(
     Json(req): Json<UpdateProductVariantRequest>,
 ) -> AppResult<ApiResponse<ProductVariantResponse>> {
     auth.ensure_admin()?;
+    auth.ensure_scope("product_variants", TokenAction::Update)?;
     validation::validate(&req)?;
     let id = crate::types::snowflake_id::parse_id(&id)?;
     let v = state.product_variant_service.update(&auth, id, req).await?;
@@ -99,6 +101,7 @@ pub async fn admin_delete(
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<()>> {
     auth.ensure_admin()?;
+    auth.ensure_scope("product_variants", TokenAction::Delete)?;
     let id = crate::types::snowflake_id::parse_id(&id)?;
     state.product_variant_service.delete(&auth, id).await?;
     Ok(ApiResponse::success(()))
