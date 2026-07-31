@@ -1,0 +1,12 @@
+{
+  "db_name": "MySQL",
+  "query": "INSERT INTO `pages` (`id`, `title`, `slug`, `content`, `blocks`, `meta_title`, `meta_description`, `og_image`, `template`, `parent_id`, `sort_order`, `status`, `created_by`, `updated_by`, `cover_image`, `published_at`, `created_at`, `updated_at`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 18
+    },
+    "nullable": []
+  },
+  "hash": "eea5def8af7d059a354e9b1ff5f6661f274cf6e387b3903e5bd75cd1e48074a4"
+}

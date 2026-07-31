@@ -296,6 +296,21 @@ CREATE TABLE IF NOT EXISTS sms_codes (
     INDEX idx_sms_codes_expires (expires_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- User device codes (IDE authentication)
+CREATE TABLE IF NOT EXISTS user_device_codes (
+    id BIGINT PRIMARY KEY,
+    user_id BIGINT NOT NULL,
+    code VARCHAR(255) NOT NULL UNIQUE,
+    access_token TEXT NOT NULL,
+    refresh_token TEXT NOT NULL,
+    expires_at DATETIME NOT NULL,
+    used_at DATETIME,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_user_device_codes_code (code),
+    INDEX idx_user_device_codes_user_id (user_id),
+    INDEX idx_user_device_codes_expires_at (expires_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 -- Email verification tokens
 CREATE TABLE IF NOT EXISTS email_verification_tokens (
     id BIGINT PRIMARY KEY,

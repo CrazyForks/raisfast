@@ -1184,6 +1184,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "bore-cli"
+version = "0.6.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "dashmap 5.5.3",
+ "fastrand 1.9.0",
+ "futures-util",
+ "hex",
+ "hmac",
+ "lazy_static",
+ "rstest 0.15.0",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "tracing-subscriber",
+ "uuid 1.23.0",
+]
+
+[[package]]
 name = "brotli"
 version = "8.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1477,6 +1500,24 @@ dependencies = [
  "cfg-if",
  "cpufeatures 0.3.0",
  "rand_core 0.10.1",
+]
+
+[[package]]
+name = "chat-server"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "chrono",
+ "dashmap 6.1.0",
+ "futures",
+ "jsonwebtoken",
+ "regex",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "uuid 1.23.0",
 ]
 
 [[package]]
@@ -2149,6 +2190,19 @@ dependencies = [
  "darling_core 0.23.0",
  "quote",
  "syn 2.0.117",
+]
+
+[[package]]
+name = "dashmap"
+version = "5.5.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "978747c1d849a7d2ee5e8adc0159961c48fb7e5db2f06af6723b80123bb53856"
+dependencies = [
+ "cfg-if",
+ "hashbrown 0.14.5",
+ "lock_api",
+ "once_cell",
+ "parking_lot_core",
 ]
 
 [[package]]
@@ -6303,12 +6357,13 @@ dependencies = [
  "axum",
  "axum-server",
  "base64 0.22.1",
+ "bore-cli",
  "chrono",
  "chrono-tz 0.10.4",
  "clap",
  "comrak",
  "cron",
- "dashmap",
+ "dashmap 6.1.0",
  "dotenvy",
  "ferroid",
  "futures",
@@ -6337,7 +6392,7 @@ dependencies = [
  "rquickjs",
  "rsa",
  "rss",
- "rstest",
+ "rstest 0.23.0",
  "rust-embed",
  "rust-i18n",
  "rustls 0.23.38",
@@ -6907,14 +6962,39 @@ dependencies = [
 
 [[package]]
 name = "rstest"
+version = "0.15.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e9c9dc66cc29792b663ffb5269be669f1613664e69ad56441fdb895c2347b930"
+dependencies = [
+ "futures",
+ "futures-timer",
+ "rstest_macros 0.14.0",
+ "rustc_version",
+]
+
+[[package]]
+name = "rstest"
 version = "0.23.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0a2c585be59b6b5dd66a9d2084aa1d8bd52fbdb806eafdeffb52791147862035"
 dependencies = [
  "futures",
  "futures-timer",
- "rstest_macros",
+ "rstest_macros 0.23.0",
  "rustc_version",
+]
+
+[[package]]
+name = "rstest_macros"
+version = "0.14.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5015e68a0685a95ade3eee617ff7101ab6a3fc689203101ca16ebc16f2b89c66"
+dependencies = [
+ "cfg-if",
+ "proc-macro2",
+ "quote",
+ "rustc_version",
+ "syn 1.0.109",
 ]
 
 [[package]]

@@ -28,6 +28,7 @@ pub mod tag;
 pub mod tenant;
 pub mod user;
 pub mod user_address;
+pub mod user_device_code;
 pub mod wallet;
 pub mod ws;
 
@@ -61,6 +62,7 @@ pub use tag::*;
 pub use tenant::*;
 pub use user::*;
 pub use user_address::*;
+pub use user_device_code::*;
 pub use wallet::*;
 pub use ws::*;
 

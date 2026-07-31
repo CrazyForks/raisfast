@@ -7,16 +7,16 @@ use axum::Json;
 use axum::extract::State;
 
 use crate::dto::{
-    AuthConfigResponse, BindEmailRequest, BindPhoneRequest, CredentialResponse,
-    ForgotPasswordRequest, LoginRequest, RefreshRequest, RegisterRequest,
-    ResendVerificationRequest, ResetPasswordRequest, SendSmsCodeRequest, SetPasswordRequest,
-    VerifyEmailRequest, VerifySmsRequest,
+    AuthConfigResponse, BindEmailRequest, BindPhoneRequest, CreateDeviceCodeRequest,
+    CredentialResponse, ExchangeDeviceCodeRequest, ForgotPasswordRequest, LoginRequest,
+    RefreshRequest, RegisterRequest, ResendVerificationRequest, ResetPasswordRequest,
+    SendSmsCodeRequest, SetPasswordRequest, VerifyEmailRequest, VerifySmsRequest,
 };
 use crate::errors::app_error::AppResult;
 use crate::errors::response::ApiResponse;
 use crate::errors::validation;
 use crate::middleware::auth::AuthUser;
-use crate::services::{auth, email_verification, password_reset, sms};
+use crate::services::{auth, email_verification, password_reset, sms, user_device_code};
 use crate::types::snowflake_id::SnowflakeId;
 
 pub fn routes(
@@ -165,6 +165,26 @@ pub fn routes(
         "/auth/credentials",
         get,
         list_credentials,
+        "system public",
+        "auth"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        restful,
+        "/auth/user-device-codes",
+        post,
+        create_device_code,
+        "system public",
+        "auth"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        restful,
+        "/auth/user-device-codes/exchange",
+        post,
+        exchange_device_code,
         "system public",
         "auth"
     );
@@ -436,4 +456,37 @@ pub async fn delete_credential(
     auth.ensure_authenticated()?;
     auth::delete_credential(&state.pool, &auth, SnowflakeId(id)).await?;
     Ok(ApiResponse::success(()))
+}
+
+/// Create a one-time device code for IDE authentication
+pub async fn create_device_code(
+    auth: AuthUser,
+    State(state): State<crate::AppState>,
+    Json(req): Json<CreateDeviceCodeRequest>,
+) -> AppResult<ApiResponse<crate::dto::DeviceCodeResponse>> {
+    auth.ensure_authenticated()?;
+    validation::validate(&req)?;
+    let uid = auth.ensure_snowflake_user_id()?;
+    let code =
+        user_device_code::create_device_code(&state.pool, uid, &req.access_token, &req.refresh_token)
+            .await?;
+    Ok(ApiResponse::success(crate::dto::DeviceCodeResponse { code }))
+}
+
+/// Exchange a device code for authentication tokens
+pub async fn exchange_device_code(
+    State(state): State<crate::AppState>,
+    Json(req): Json<ExchangeDeviceCodeRequest>,
+) -> AppResult<ApiResponse<crate::dto::ExchangeDeviceCodeResponse>> {
+    validation::validate(&req)?;
+    let resp = user_device_code::exchange_device_code(
+        &state.pool,
+        &req.code,
+        &state.config.jwt_secret,
+        state.config.jwt_access_expires,
+        state.config.jwt_refresh_expires,
+        None,
+    )
+    .await?;
+    Ok(ApiResponse::success(resp))
 }

@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "raisfast-derive"]
+members = [".", "raisfast-derive", "3rd/bore", "extra/chat-server"]
 resolver = "3"
 
 [package]
@@ -13,7 +13,7 @@ homepage = "https://github.com/raisfast/raisfast"
 license = "Apache-2.0"
 
 [features]
-default = ["db-sqlite", "search-tantivy", "plugin-js", "plugin-lua", "plugin-rhai", "openapi", "proxy"]
+default = ["db-sqlite", "search-tantivy", "plugin-js", "plugin-lua", "plugin-rhai", "openapi", "proxy", "tunnel"]
 
 # ── Database backend (pick exactly one) ────────────────────────────
 db-sqlite  = ["sqlx/sqlite"]
@@ -52,6 +52,9 @@ export-types = ["ts-rs"]
 
 # ── Built-in reverse proxy (multi-tenant) ──────────────────────────
 proxy = ["dep:hyper", "dep:hyper-util", "dep:http-body-util", "dep:tokio-util"]
+
+# ── Tunnel client (expose local ports via tunnel.raisfast.com) ────
+tunnel = ["dep:bore-cli"]
 
 # ── Tauri desktop mode ────────────────────────────────────────────
 tauri = ["dep:tauri"]
@@ -186,6 +189,9 @@ hyper = { version = "1", optional = true }
 hyper-util = { version = "0.1", features = ["tokio", "client", "server", "http1"], optional = true }
 http-body-util = { version = "0.1", optional = true }
 tokio-util = { version = "0.7", features = ["rt"], optional = true }
+
+# Tunnel client
+bore-cli = { path = "3rd/bore", optional = true }
 
 # OpenAPI
 utoipa = { version = "5", features = ["axum_extras", "chrono", "uuid"] }

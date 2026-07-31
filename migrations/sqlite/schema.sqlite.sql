@@ -311,6 +311,22 @@ CREATE TABLE IF NOT EXISTS sms_codes (
 CREATE INDEX IF NOT EXISTS idx_sms_codes_phone ON sms_codes(phone);
 CREATE INDEX IF NOT EXISTS idx_sms_codes_expires ON sms_codes(expires_at);
 
+-- User device codes (IDE authentication)
+CREATE TABLE IF NOT EXISTS user_device_codes (
+    id INTEGER PRIMARY KEY,
+    user_id INTEGER NOT NULL,
+    code TEXT NOT NULL UNIQUE,
+    access_token TEXT NOT NULL,
+    refresh_token TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    used_at TEXT,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_device_codes_code ON user_device_codes(code);
+CREATE INDEX IF NOT EXISTS idx_user_device_codes_user_id ON user_device_codes(user_id);
+CREATE INDEX IF NOT EXISTS idx_user_device_codes_expires_at ON user_device_codes(expires_at);
+
 -- Email verification tokens
 CREATE TABLE IF NOT EXISTS email_verification_tokens (
     id INTEGER PRIMARY KEY,

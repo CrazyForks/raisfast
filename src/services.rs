@@ -37,6 +37,7 @@ pub mod tag;
 pub mod tenant;
 pub mod user;
 pub mod user_address;
+pub mod user_device_code;
 pub mod wallet;
 
 #[cfg(feature = "export-types")]

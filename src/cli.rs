@@ -11,6 +11,8 @@ mod plugin_cmd;
 mod route_cmd;
 mod server_cmd;
 mod user_cmd;
+#[cfg(feature = "tunnel")]
+mod tunnel_cmd;
 
 use raisfast::config::app::AppConfig;
 
@@ -76,6 +78,24 @@ enum Commands {
     Proxy {
         #[command(subcommand)]
         action: ProxyAction,
+    },
+    /// Expose local port to the internet via tunnel
+    #[cfg(feature = "tunnel")]
+    Tunnel {
+        /// Local port to expose
+        local_port: u16,
+        /// Local host to forward (default: localhost)
+        #[arg(short = 'l', long, default_value = "localhost")]
+        local_host: String,
+        /// Address of the remote server (default: tunnel.raisfast.com)
+        #[arg(short, long)]
+        to: Option<String>,
+        /// Optional port on the remote server to select
+        #[arg(short, long)]
+        port: Option<u16>,
+        /// Optional secret for authentication
+        #[arg(short, long)]
+        secret: Option<String>,
     },
 }
 
@@ -556,6 +576,24 @@ pub async fn run(cli: Cli, config: &AppConfig) -> anyhow::Result<()> {
                     std::process::exit(1);
                 }
             }
+        }
+
+        #[cfg(feature = "tunnel")]
+        Some(Commands::Tunnel {
+            local_port,
+            local_host,
+            to,
+            port,
+            secret,
+        }) => {
+            tunnel_cmd::run(
+                local_port,
+                Some(&local_host),
+                to.as_deref(),
+                port,
+                secret.as_deref(),
+            )
+            .await?;
         }
     }
 

@@ -1,0 +1,12 @@
+{
+  "db_name": "MySQL",
+  "query": "INSERT INTO `api_tokens` (`id`, `user_id`, `name`, `token_hash`, `token_prefix`, `scopes`, `expires_at`, `created_at`) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 8
+    },
+    "nullable": []
+  },
+  "hash": "d89bd67cebf11fbf5c4a3150ca3a2996735aeb9f396e71d81fa3fd312abd18ef"
+}

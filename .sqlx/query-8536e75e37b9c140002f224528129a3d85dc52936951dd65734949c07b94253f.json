@@ -1,0 +1,12 @@
+{
+  "db_name": "MySQL",
+  "query": "INSERT INTO `posts` (`id`, `title`, `slug`, `content`, `excerpt`, `cover_image`, `image_ids`, `status`, `created_by`, `updated_by`, `category_id`, `meta_title`, `meta_description`, `og_title`, `og_description`, `og_image`, `canonical_url`, `published_at`, `created_at`, `updated_at`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 20
+    },
+    "nullable": []
+  },
+  "hash": "8536e75e37b9c140002f224528129a3d85dc52936951dd65734949c07b94253f"
+}
