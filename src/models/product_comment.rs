@@ -314,7 +314,7 @@ mod tests {
     async fn seed_user(pool: &crate::db::Pool) -> i64 {
         let id = crate::utils::id::new_id();
         let username = format!("testuser_{id}");
-        sqlx::query("INSERT INTO users (id, username, role, status, registered_via) VALUES (?, ?, 'reader', 'active', 'email')")
+        sqlx::query("INSERT INTO users (id, username, status, registered_via) VALUES (?, ?, 'active', 'email')")
             .bind(id)
             .bind(&username)
             .execute(pool)

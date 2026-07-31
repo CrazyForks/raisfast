@@ -27,7 +27,6 @@ CREATE TABLE IF NOT EXISTS users (
     id BIGINT PRIMARY KEY,
     tenant_id VARCHAR(36) NOT NULL DEFAULT 'default',
     username VARCHAR(255) UNIQUE NOT NULL,
-    role VARCHAR(50) NOT NULL DEFAULT 'reader',
     avatar VARCHAR(500),
     bio TEXT,
     website VARCHAR(500),
@@ -196,6 +195,19 @@ CREATE TABLE IF NOT EXISTS permissions (
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE KEY idx_permissions_role_action_subject (role_id, action, subject),
     INDEX idx_permissions_tenant (tenant_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- User-role assignments (many-to-many)
+CREATE TABLE IF NOT EXISTS user_roles (
+    id BIGINT PRIMARY KEY,
+    tenant_id VARCHAR(36) NOT NULL DEFAULT 'default',
+    user_id BIGINT NOT NULL,
+    role_id BIGINT NOT NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY idx_user_roles_unique (tenant_id, user_id, role_id),
+    INDEX idx_user_roles_user (user_id),
+    INDEX idx_user_roles_role (role_id),
+    INDEX idx_user_roles_tenant (tenant_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- Audit log

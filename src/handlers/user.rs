@@ -249,7 +249,7 @@ pub async fn update_role(
 ) -> AppResult<ApiResponse<UserResponse>> {
     let u = state
         .user_service
-        .update_role(&id, req.role, auth.tenant_id())
+        .update_role(&id, req.roles, auth.tenant_id())
         .await?;
     Ok(ApiResponse::success(
         UserResponse::from_user_with_contacts(&state.pool, u).await?,
@@ -344,7 +344,7 @@ pub async fn admin_batch_users(
             "disable" | "enable"
                 if state
                     .user_service
-                    .update_role(uid, UserRole::Reader, auth.tenant_id())
+                    .update_role(uid, vec![UserRole::Reader], auth.tenant_id())
                     .await
                     .is_ok() =>
             {
@@ -356,7 +356,7 @@ pub async fn admin_batch_users(
                 };
                 if state
                     .user_service
-                    .update_role(uid, role, auth.tenant_id())
+                    .update_role(uid, vec![role], auth.tenant_id())
                     .await
                     .is_ok()
                 {

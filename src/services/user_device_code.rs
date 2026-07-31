@@ -80,9 +80,23 @@ pub async fn exchange_device_code(
         Ok::<_, crate::errors::app_error::AppError>(rt)
     })?;
 
+    let role_names = crate::models::user_role::find_role_names_by_user_id(pool, user.id)
+        .await
+        .unwrap_or_else(|_| vec!["reader".to_string()]);
+    let mut role_ids: Vec<i64> = Vec::new();
+    for n in &role_names {
+        if let Some(id) = crate::models::rbac::find_role_id_by_name(pool, n)
+            .await
+            .ok()
+            .flatten()
+        {
+            role_ids.push(id);
+        }
+    }
     let new_access_token = auth::generate_access_token_internal(
         user.id,
-        user.role,
+        role_names,
+        role_ids,
         user.tenant_id
             .as_deref()
             .unwrap_or(crate::constants::DEFAULT_TENANT),

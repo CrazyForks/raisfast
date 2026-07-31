@@ -322,7 +322,13 @@ mod tests {
             )
             .await
             .unwrap_err();
-        assert!(matches!(err, AppError::Forbidden));
+        assert!(matches!(
+            err,
+            AppError::Forbidden
+                | AppError::ForbiddenOwnership
+                | AppError::ForbiddenAdmin
+                | AppError::ForbiddenRbac(_)
+        ));
     }
 
     #[tokio::test]

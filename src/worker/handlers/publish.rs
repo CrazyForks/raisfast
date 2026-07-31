@@ -91,15 +91,25 @@ mod tests {
             &crate::commands::CreateUserCmd {
                 username: "author".to_string(),
                 registered_via: crate::models::user::RegisteredVia::Email,
-                role: None,
             },
             None,
         )
         .await
         .unwrap();
-        user::update_role(pool, u.id, crate::models::user::UserRole::Author, None)
-            .await
-            .unwrap();
+        let role_ids = crate::models::user_role::resolve_role_ids(
+            pool,
+            &[crate::models::user::UserRole::Author],
+        )
+        .await
+        .unwrap();
+        crate::models::user_role::set_roles(
+            pool,
+            u.id,
+            &role_ids,
+            crate::constants::DEFAULT_TENANT,
+        )
+        .await
+        .unwrap();
         *u.id
     }
 

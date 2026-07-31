@@ -26,14 +26,16 @@ use crate::models::user_credential::AuthType;
 /// JWT token claims (payload).
 ///
 /// - `sub`: User ID.
-/// - `role`: User role (e.g. `"admin"`, `"author"`).
+/// - `roles`: User roles (e.g. `["admin"]`).
 /// - `tenant_id`: Tenant ID (defaults to `"default"`).
 /// - `exp`: Expiration time (UNIX timestamp).
 /// - `iat`: Issued-at time (UNIX timestamp).
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Claims {
     pub sub: String,
-    pub role: UserRole,
+    pub role_names: Vec<String>,
+    #[serde(default)]
+    pub role_ids: Vec<i64>,
     #[serde(default = "default_tenant_id")]
     pub tenant_id: String,
     pub exp: usize,
@@ -106,7 +108,8 @@ pub fn verify_password(password: &str, hash: &str) -> AppResult<bool> {
 /// Generate an HS256-signed JWT access token.
 pub(crate) fn generate_access_token_internal(
     user_id: SnowflakeId,
-    role: UserRole,
+    role_names: Vec<String>,
+    role_ids: Vec<i64>,
     tenant_id: &str,
     secret: &str,
     expires_in: u64,
@@ -116,7 +119,8 @@ pub(crate) fn generate_access_token_internal(
     let exp = (now.timestamp() as usize) + (expires_in as usize);
     let claims = Claims {
         sub: user_id.to_string(),
-        role,
+        role_names,
+        role_ids,
         tenant_id: tenant_id.to_string(),
         exp,
         iat,
@@ -153,10 +157,12 @@ pub(crate) fn generate_refresh_token_string_internal() -> AppResult<String> {
 /// Test helper: generate a JWT token using a fixed secret.
 #[allow(clippy::doc_lazy_continuation)]
 #[must_use]
-pub fn generate_access_token_for_test(user_id: SnowflakeId, role: UserRole) -> String {
+pub fn generate_access_token_for_test(user_id: SnowflakeId, roles: Vec<UserRole>) -> String {
+    let role_names: Vec<String> = roles.iter().map(|r| r.as_str().to_string()).collect();
     generate_access_token_internal(
         user_id,
-        role,
+        role_names,
+        Vec::new(),
         crate::constants::DEFAULT_TENANT,
         "test-secret-key-at-least-32-characters-long",
         900,
@@ -198,7 +204,6 @@ pub async fn register(
             &crate::commands::user::CreateUserCmd {
                 username: req.username.clone(),
                 registered_via,
-                role: None,
             },
             tenant_id,
         )
@@ -217,6 +222,9 @@ pub async fn register(
 
         Ok::<_, crate::errors::app_error::AppError>(user)
     })?;
+
+    let tid = tenant_id.unwrap_or(crate::constants::DEFAULT_TENANT);
+    crate::models::user_role::assign_role_by_name(pool, user.id, "reader", tid).await?;
 
     aspect_engine.emit(Event::UserRegistered(user.clone()));
 
@@ -266,7 +274,6 @@ pub async fn admin_create_user(
             &crate::commands::user::CreateUserCmd {
                 username: req.username.clone(),
                 registered_via: crate::models::user::RegisteredVia::Email,
-                role: req.role,
             },
             tenant_id,
         )
@@ -284,6 +291,11 @@ pub async fn admin_create_user(
 
         Ok::<_, crate::errors::app_error::AppError>(user)
     })?;
+
+    let tid = tenant_id.unwrap_or(crate::constants::DEFAULT_TENANT);
+    let roles = req.roles.unwrap_or_else(|| vec![UserRole::Reader]);
+    let role_ids = crate::models::user_role::resolve_role_ids(pool, &roles).await?;
+    crate::models::user_role::set_roles(pool, user.id, &role_ids, tid).await?;
 
     aspect_engine.emit(Event::UserRegistered(user.clone()));
 
@@ -342,10 +354,23 @@ pub async fn login(
         return Err(AppError::BadRequest("tenant_disabled".into()));
     }
 
-    let user_role = user.role;
+    let role_names = crate::models::user_role::find_role_names_by_user_id(pool, user.id)
+        .await
+        .unwrap_or_else(|_| vec!["reader".to_string()]);
+    let mut role_ids: Vec<i64> = Vec::new();
+    for n in &role_names {
+        if let Some(id) = crate::models::rbac::find_role_id_by_name(pool, n)
+            .await
+            .ok()
+            .flatten()
+        {
+            role_ids.push(id);
+        }
+    }
     let access_token = generate_access_token_internal(
         user.id,
-        user_role,
+        role_names,
+        role_ids,
         user.tenant_id
             .as_deref()
             .unwrap_or(crate::constants::DEFAULT_TENANT),
@@ -402,10 +427,23 @@ pub async fn refresh(
         .await?
         .ok_or_else(|| AppError::Unauthorized)?;
 
-    let user_role = user.role;
+    let role_names = crate::models::user_role::find_role_names_by_user_id(pool, user.id)
+        .await
+        .unwrap_or_else(|_| vec!["reader".to_string()]);
+    let mut role_ids: Vec<i64> = Vec::new();
+    for n in &role_names {
+        if let Some(id) = crate::models::rbac::find_role_id_by_name(pool, n)
+            .await
+            .ok()
+            .flatten()
+        {
+            role_ids.push(id);
+        }
+    }
     let access_token = generate_access_token_internal(
         user.id,
-        user_role,
+        role_names,
+        role_ids,
         user.tenant_id
             .as_deref()
             .unwrap_or(crate::constants::DEFAULT_TENANT),
@@ -544,7 +582,7 @@ pub async fn delete_credential(
         .ok_or_else(|| AppError::not_found("credential"))?;
 
     if cred.user_id != user.id {
-        return Err(AppError::Forbidden);
+        return Err(AppError::ForbiddenOwnership);
     }
 
     let count = crate::models::user_credential::count_by_user(pool, user.id).await?;
@@ -614,7 +652,8 @@ mod tests {
     fn generate_and_verify_token() {
         let token = generate_access_token_internal(
             SnowflakeId(1),
-            UserRole::Admin,
+            vec!["admin".to_string()],
+            vec![10001],
             "default",
             "secret",
             900,
@@ -623,14 +662,16 @@ mod tests {
         let key = jsonwebtoken::DecodingKey::from_secret("secret".as_bytes());
         let claims = verify_token(&token, &key).unwrap();
         assert_eq!(claims.sub, "1");
-        assert_eq!(claims.role, UserRole::Admin);
+        assert_eq!(claims.role_names, vec!["admin"]);
+        assert_eq!(claims.role_ids, vec![10001]);
     }
 
     #[test]
     fn verify_token_rejects_wrong_secret() {
         let token = generate_access_token_internal(
             SnowflakeId(1),
-            UserRole::Admin,
+            vec!["admin".to_string()],
+            Vec::new(),
             "default",
             "secret-a",
             900,
@@ -645,7 +686,8 @@ mod tests {
         let now = chrono::Utc::now();
         let claims = Claims {
             sub: "1".into(),
-            role: UserRole::Admin,
+            role_names: vec!["admin".to_string()],
+            role_ids: Vec::new(),
             tenant_id: "default".to_string(),
             exp: (now - chrono::Duration::seconds(120)).timestamp() as usize,
             iat: (now - chrono::Duration::seconds(180)).timestamp() as usize,
@@ -662,7 +704,7 @@ mod tests {
 
     #[test]
     fn generate_test_token_is_valid() {
-        let token = generate_access_token_for_test(SnowflakeId(1), UserRole::Author);
+        let token = generate_access_token_for_test(SnowflakeId(1), vec![UserRole::Author]);
         assert!(token.len() > 20);
     }
 }

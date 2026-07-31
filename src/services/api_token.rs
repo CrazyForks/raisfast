@@ -24,7 +24,8 @@ const CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(300);
 #[derive(serde::Serialize, serde::Deserialize)]
 struct CachedTokenAuth {
     user_id: SnowflakeId,
-    role: String,
+    #[serde(default)]
+    roles: Vec<String>,
     scopes: Vec<String>,
     tenant_id: Option<String>,
     expires_at: Option<Timestamp>,
@@ -227,7 +228,7 @@ pub async fn delete_token(
         .await?
         .ok_or(AppError::Unauthorized)?;
     if !is_admin && token.user_id != user.id {
-        return Err(AppError::Forbidden);
+        return Err(AppError::ForbiddenOwnership);
     }
     if let Err(e) = cache
         .delete(&format!("{CACHE_PREFIX}{}", token.token_hash))
@@ -258,7 +259,7 @@ pub async fn update_token(
         .await?
         .ok_or(AppError::Unauthorized)?;
     if !is_admin && token.user_id != user.id {
-        return Err(AppError::Forbidden);
+        return Err(AppError::ForbiddenOwnership);
     }
 
     if scopes.is_empty() {
@@ -315,15 +316,15 @@ pub async fn update_token(
     })
 }
 
-/// Verify an API token and return (user_id, role, tenant_id)
+/// Verify an API token and return (user_id, roles, scopes, tenant_id)
 ///
-/// Uses a cache-aside pattern: when the cache hits, all 3 DB operations are skipped.
+/// Uses a cache-aside pattern: when the cache hits, all DB operations are skipped.
 /// Cache key is `api_token:{sha256_hash}`, TTL 300s.
 pub async fn verify_api_token(
     pool: &crate::db::Pool,
     cache: &dyn CacheStore,
     plain: &str,
-) -> AppResult<(i64, String, Vec<String>, Option<String>)> {
+) -> AppResult<(i64, Vec<String>, Vec<String>, Option<String>)> {
     let hash = hash_token(plain);
     let cache_key = format!("{CACHE_PREFIX}{hash}");
 
@@ -336,7 +337,7 @@ pub async fn verify_api_token(
             let _ = cache.delete(&cache_key).await;
             return Err(AppError::Unauthorized);
         }
-        return Ok((*auth.user_id, auth.role, auth.scopes, auth.tenant_id));
+        return Ok((*auth.user_id, auth.roles, auth.scopes, auth.tenant_id));
     }
 
     let token = api_token::find_by_hash(pool, &hash)
@@ -359,8 +360,11 @@ pub async fn verify_api_token(
         .await?
         .ok_or(AppError::Unauthorized)?;
 
-    // Token inherits the user's real DB role; scopes only restrict which resources
-    let role = user.role.to_string();
+    // Token inherits the user's real roles from the user_roles table; scopes only
+    // restrict which resources
+    let roles = crate::models::user_role::find_role_names_by_user_id(pool, user.id)
+        .await
+        .unwrap_or_default();
     // Fail-closed: malformed scopes → deny (Unauthorized), never grant full access
     let scopes: Vec<String> = serde_json::from_str(&token.scopes).map_err(|e| {
         tracing::error!(
@@ -376,7 +380,7 @@ pub async fn verify_api_token(
 
     let cached_auth = CachedTokenAuth {
         user_id: user.id,
-        role: role.clone(),
+        roles: roles.clone(),
         scopes: scopes.clone(),
         tenant_id: user.tenant_id.clone(),
         expires_at: token.expires_at,
@@ -387,7 +391,7 @@ pub async fn verify_api_token(
         tracing::debug!("api_token cache set: {e}");
     }
 
-    Ok((*user.id, role, scopes, user.tenant_id))
+    Ok((*user.id, roles, scopes, user.tenant_id))
 }
 
 #[cfg(test)]
@@ -411,15 +415,19 @@ mod tests {
             &crate::commands::user::CreateUserCmd {
                 username: crate::utils::id::new_id().to_string(),
                 registered_via: crate::models::user::RegisteredVia::Email,
-                role: None,
             },
             None,
         )
         .await
         .unwrap();
-        crate::models::user::update_role(pool, user.id, role, None)
+        let tid = crate::constants::DEFAULT_TENANT;
+        let role_ids = crate::models::user_role::resolve_role_ids(pool, &[role])
             .await
-            .unwrap()
+            .unwrap();
+        crate::models::user_role::set_roles(pool, user.id, &role_ids, tid)
+            .await
+            .unwrap();
+        user
     }
 
     #[test]
@@ -636,10 +644,10 @@ mod tests {
         .await
         .unwrap();
         let cache = test_cache();
-        let (uid, role, _scopes, tenant_id) =
+        let (uid, roles, _scopes, tenant_id) =
             verify_api_token(&pool, &*cache, plain).await.unwrap();
         assert_eq!(uid, *user.id);
-        assert_eq!(role, "admin");
+        assert_eq!(roles, vec!["admin"]);
         assert_eq!(tenant_id, Some("default".to_string()));
         assert_eq!(tenant_id, Some("default".to_string()));
     }
@@ -853,7 +861,7 @@ mod tests {
         let cache_key = format!("{CACHE_PREFIX}{token_hash}");
         let cached = serde_json::to_string(&CachedTokenAuth {
             user_id: user.id,
-            role: "reader".into(),
+            roles: vec!["reader".into()],
             scopes: vec![],
             tenant_id: Some("default".to_string()),
             expires_at: Some(past.parse().unwrap()),

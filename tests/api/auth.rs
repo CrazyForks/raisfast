@@ -14,7 +14,13 @@ async fn register_success() {
     assert!(status.is_success(), "{status} {body:?}");
     assert_eq!(body["code"], 0);
     assert_eq!(body["data"]["username"], "reguser");
-    assert_eq!(body["data"]["role"], "reader");
+    assert!(
+        body["data"]["roles"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|r| r.as_str() == Some("reader"))
+    );
 }
 
 #[tokio::test]

@@ -14,6 +14,11 @@
 //! | `BadRequest`      | 400 Bad Request          | 40000   |
 //! | `Unauthorized`    | 401 Unauthorized         | 40100   |
 //! | `Forbidden`       | 403 Forbidden            | 40300   |
+//! | `ForbiddenAdmin`  | 403 Forbidden            | 40301   |
+//! | `ForbiddenScope`  | 403 Forbidden            | 40302   |
+//! | `ForbiddenRbac`   | 403 Forbidden            | 40303   |
+//! | `ForbiddenOwnership`| 403 Forbidden          | 40304   |
+//! | `ForbiddenTenant` | 403 Forbidden            | 40305   |
 //! | `NotFound`        | 404 Not Found            | 40400   |
 //! | `MethodNotAllowed`| 405 Method Not Allowed   | 40500   |
 //! | `Conflict`        | 409 Conflict             | 40900   |
@@ -64,6 +69,21 @@ pub enum AppError {
     /// 403 Forbidden — Authenticated user lacks permission for this operation
     #[error("forbidden")]
     Forbidden,
+    /// 403 Forbidden — Admin role required for this route
+    #[error("forbidden: admin role required")]
+    ForbiddenAdmin,
+    /// 403 Forbidden — API token scope insufficient
+    #[error("forbidden: missing scope {0}")]
+    ForbiddenScope(String),
+    /// 403 Forbidden — RBAC permission denied for this resource:action
+    #[error("forbidden: no permission for {0}")]
+    ForbiddenRbac(String),
+    /// 403 Forbidden — User does not own this resource
+    #[error("forbidden: not the owner of this resource")]
+    ForbiddenOwnership,
+    /// 403 Forbidden — Tenant isolation violation
+    #[error("forbidden: tenant mismatch")]
+    ForbiddenTenant,
     /// 404 Not Found — Requested resource does not exist
     ///
     /// The attached `String` is the resource identifier key (e.g., `"user"`), which is
@@ -144,6 +164,22 @@ impl AppError {
                 rust_i18n::t!("errors.unauthorized", locale = locale).to_string()
             }
             AppError::Forbidden => rust_i18n::t!("errors.forbidden", locale = locale).to_string(),
+            AppError::ForbiddenAdmin => {
+                rust_i18n::t!("errors.forbidden_admin", locale = locale).to_string()
+            }
+            AppError::ForbiddenScope(detail) => {
+                rust_i18n::t!("errors.forbidden_scope", locale = locale, detail = detail)
+                    .to_string()
+            }
+            AppError::ForbiddenRbac(detail) => {
+                rust_i18n::t!("errors.forbidden_rbac", locale = locale, detail = detail).to_string()
+            }
+            AppError::ForbiddenOwnership => {
+                rust_i18n::t!("errors.forbidden_ownership", locale = locale).to_string()
+            }
+            AppError::ForbiddenTenant => {
+                rust_i18n::t!("errors.forbidden_tenant", locale = locale).to_string()
+            }
             AppError::NotFound(resource_key) => {
                 let res_key = format!("resources.{resource_key}");
                 let resource = rust_i18n::t!(&res_key, locale = locale);
@@ -203,6 +239,11 @@ impl IntoResponse for AppError {
             AppError::BadRequest(_) => (StatusCode::BAD_REQUEST, 40000),
             AppError::Unauthorized => (StatusCode::UNAUTHORIZED, 40100),
             AppError::Forbidden => (StatusCode::FORBIDDEN, 40300),
+            AppError::ForbiddenAdmin => (StatusCode::FORBIDDEN, 40301),
+            AppError::ForbiddenScope(_) => (StatusCode::FORBIDDEN, 40302),
+            AppError::ForbiddenRbac(_) => (StatusCode::FORBIDDEN, 40303),
+            AppError::ForbiddenOwnership => (StatusCode::FORBIDDEN, 40304),
+            AppError::ForbiddenTenant => (StatusCode::FORBIDDEN, 40305),
             AppError::NotFound(_) => (StatusCode::NOT_FOUND, 40400),
             AppError::MethodNotAllowed(_) => (StatusCode::METHOD_NOT_ALLOWED, 40500),
             AppError::Conflict(_) => (StatusCode::CONFLICT, 40900),

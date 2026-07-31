@@ -85,7 +85,7 @@ impl UserAddressService for UserAddressServiceImpl {
             .ok_or_else(|| AppError::not_found("user_address"))?;
 
         if existing.user_id != user_id {
-            return Err(AppError::Forbidden);
+            return Err(AppError::ForbiddenOwnership);
         }
 
         let updated = crate::models::user_address::update(
@@ -130,7 +130,7 @@ impl UserAddressService for UserAddressServiceImpl {
             .ok_or_else(|| AppError::not_found("user_address"))?;
 
         if existing.user_id != user_id {
-            return Err(AppError::Forbidden);
+            return Err(AppError::ForbiddenOwnership);
         }
 
         crate::models::user_address::delete_by_id(

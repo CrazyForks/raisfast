@@ -266,10 +266,23 @@ async fn create_login_response_for_user(
     jwt_access_expires: u64,
     jwt_refresh_expires: u64,
 ) -> AppResult<LoginResponse> {
-    let user_role = user.role;
+    let role_names = crate::models::user_role::find_role_names_by_user_id(pool, user.id)
+        .await
+        .unwrap_or_else(|_| vec!["reader".to_string()]);
+    let mut role_ids: Vec<i64> = Vec::new();
+    for n in &role_names {
+        if let Some(id) = crate::models::rbac::find_role_id_by_name(pool, n)
+            .await
+            .ok()
+            .flatten()
+        {
+            role_ids.push(id);
+        }
+    }
     let access_token = crate::services::auth::generate_access_token_internal(
         user.id,
-        user_role,
+        role_names,
+        role_ids,
         user.tenant_id
             .as_deref()
             .unwrap_or(crate::constants::DEFAULT_TENANT),
@@ -318,9 +331,16 @@ async fn auto_register_user(
         &CreateUserCmd {
             username,
             registered_via: crate::models::user::RegisteredVia::Oauth,
-            role: None,
         },
         None,
+    )
+    .await?;
+
+    crate::models::user_role::assign_role_by_name(
+        pool,
+        user.id,
+        "reader",
+        crate::constants::DEFAULT_TENANT,
     )
     .await?;
 

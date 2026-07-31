@@ -22,7 +22,6 @@ CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY,
     tenant_id TEXT NOT NULL DEFAULT 'default',
     username TEXT UNIQUE NOT NULL,
-    role TEXT NOT NULL DEFAULT 'reader',
     avatar TEXT,
     bio TEXT,
     website TEXT,
@@ -203,6 +202,20 @@ CREATE TABLE IF NOT EXISTS permissions (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_permissions_role_action_subject
     ON permissions(role_id, action, subject);
 CREATE INDEX IF NOT EXISTS idx_permissions_tenant ON permissions(tenant_id);
+
+-- User-role assignments (many-to-many)
+CREATE TABLE IF NOT EXISTS user_roles (
+    id INTEGER PRIMARY KEY,
+    tenant_id TEXT NOT NULL DEFAULT 'default',
+    user_id INTEGER NOT NULL,
+    role_id INTEGER NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    UNIQUE(tenant_id, user_id, role_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_roles_user ON user_roles(user_id);
+CREATE INDEX IF NOT EXISTS idx_user_roles_role ON user_roles(role_id);
+CREATE INDEX IF NOT EXISTS idx_user_roles_tenant ON user_roles(tenant_id);
 
 -- Audit log
 CREATE TABLE IF NOT EXISTS audit_log (
@@ -1070,23 +1083,51 @@ INSERT OR IGNORE INTO roles (id, tenant_id, name, description, is_system, create
 
 -- Admin global permissions
 INSERT OR IGNORE INTO permissions (id, tenant_id, role_id, action, subject, fields, conditions, created_at) VALUES
-    (10001, 'default', (SELECT id FROM roles WHERE name = 'admin'), '*', '*', '["*"]', NULL, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'));
+    (10001, 'default', (SELECT id FROM roles WHERE name = 'admin'), '*', '*', NULL, NULL, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'));
 
 -- Editor permissions
 INSERT OR IGNORE INTO permissions (id, tenant_id, role_id, action, subject, fields, conditions, created_at) VALUES
-    (10002, 'default', (SELECT id FROM roles WHERE name = 'editor'), 'content-type::*.*', 'content-type::*', '["*"]', NULL, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'));
+    (10002, 'default', (SELECT id FROM roles WHERE name = 'editor'), '*.*', '*', NULL, NULL, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'));
 
 -- Author permissions
 INSERT OR IGNORE INTO permissions (id, tenant_id, role_id, action, subject, fields, conditions, created_at) VALUES
-    (10003, 'default', (SELECT id FROM roles WHERE name = 'author'), 'content-type::post.create', 'content-type::post', '["*"]', NULL, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
-    (10004, 'default', (SELECT id FROM roles WHERE name = 'author'), 'content-type::post.read', 'content-type::post', '["*"]', NULL, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
-    (10005, 'default', (SELECT id FROM roles WHERE name = 'author'), 'content-type::post.update', 'content-type::post', '["*"]', '{"author_id":"$user.id"}', strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
-    (10006, 'default', (SELECT id FROM roles WHERE name = 'author'), 'content-type::post.delete', 'content-type::post', '["*"]', '{"author_id":"$user.id"}', strftime('%Y-%m-%dT%H:%M:%SZ', 'now'));
+    (10003, 'default', (SELECT id FROM roles WHERE name = 'author'), 'create', 'posts', NULL, NULL, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    (10004, 'default', (SELECT id FROM roles WHERE name = 'author'), 'read', 'posts', NULL, NULL, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    (10005, 'default', (SELECT id FROM roles WHERE name = 'author'), 'update', 'posts', NULL, NULL, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    (10006, 'default', (SELECT id FROM roles WHERE name = 'author'), 'delete', 'posts', NULL, NULL, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    (10007, 'default', (SELECT id FROM roles WHERE name = 'author'), 'create', 'pages', NULL, NULL, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    (10008, 'default', (SELECT id FROM roles WHERE name = 'author'), 'read', 'pages', NULL, NULL, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    (10009, 'default', (SELECT id FROM roles WHERE name = 'author'), 'update', 'pages', NULL, NULL, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    (10010, 'default', (SELECT id FROM roles WHERE name = 'author'), 'delete', 'pages', NULL, NULL, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    (10036, 'default', (SELECT id FROM roles WHERE name = 'author'), 'create', 'media', NULL, NULL, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    (10011, 'default', (SELECT id FROM roles WHERE name = 'author'), 'read', 'media', NULL, NULL, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    (10012, 'default', (SELECT id FROM roles WHERE name = 'author'), 'delete', 'media', NULL, NULL, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    (10013, 'default', (SELECT id FROM roles WHERE name = 'author'), 'create', 'tags', NULL, NULL, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    (10014, 'default', (SELECT id FROM roles WHERE name = 'author'), 'update', 'tags', NULL, NULL, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    (10015, 'default', (SELECT id FROM roles WHERE name = 'author'), 'delete', 'tags', NULL, NULL, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    (10016, 'default', (SELECT id FROM roles WHERE name = 'author'), 'create', 'categories', NULL, NULL, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    (10017, 'default', (SELECT id FROM roles WHERE name = 'author'), 'update', 'categories', NULL, NULL, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    (10018, 'default', (SELECT id FROM roles WHERE name = 'author'), 'delete', 'categories', NULL, NULL, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    (10019, 'default', (SELECT id FROM roles WHERE name = 'author'), 'create', 'reusable_blocks', NULL, NULL, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    (10020, 'default', (SELECT id FROM roles WHERE name = 'author'), 'read', 'reusable_blocks', NULL, NULL, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    (10021, 'default', (SELECT id FROM roles WHERE name = 'author'), 'update', 'reusable_blocks', NULL, NULL, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    (10022, 'default', (SELECT id FROM roles WHERE name = 'author'), 'delete', 'reusable_blocks', NULL, NULL, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    (10023, 'default', (SELECT id FROM roles WHERE name = 'author'), 'create', 'comments', NULL, NULL, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    (10024, 'default', (SELECT id FROM roles WHERE name = 'author'), 'delete', 'comments', NULL, NULL, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    (10025, 'default', (SELECT id FROM roles WHERE name = 'author'), 'create', 'product_categories', NULL, NULL, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    (10026, 'default', (SELECT id FROM roles WHERE name = 'author'), 'update', 'product_categories', NULL, NULL, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    (10027, 'default', (SELECT id FROM roles WHERE name = 'author'), 'delete', 'product_categories', NULL, NULL, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'));
 
 -- Reader permissions
 INSERT OR IGNORE INTO permissions (id, tenant_id, role_id, action, subject, fields, conditions, created_at) VALUES
-    (10007, 'default', (SELECT id FROM roles WHERE name = 'reader'), 'content-type::post.read', 'content-type::post', '["title","slug","content","excerpt","status"]', NULL, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
-    (10008, 'default', (SELECT id FROM roles WHERE name = 'reader'), 'content-type::comment.create', 'content-type::comment', '["content","nickname","email"]', NULL, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'));
+    (10028, 'default', (SELECT id FROM roles WHERE name = 'reader'), 'read', 'posts', NULL, NULL, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    (10029, 'default', (SELECT id FROM roles WHERE name = 'reader'), 'read', 'pages', NULL, NULL, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    (10030, 'default', (SELECT id FROM roles WHERE name = 'reader'), 'create', 'comments', NULL, NULL, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    (10031, 'default', (SELECT id FROM roles WHERE name = 'reader'), 'delete', 'comments', NULL, NULL, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    (10032, 'default', (SELECT id FROM roles WHERE name = 'reader'), 'create', 'user_addresses', NULL, NULL, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    (10033, 'default', (SELECT id FROM roles WHERE name = 'reader'), 'read', 'user_addresses', NULL, NULL, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    (10034, 'default', (SELECT id FROM roles WHERE name = 'reader'), 'update', 'user_addresses', NULL, NULL, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    (10035, 'default', (SELECT id FROM roles WHERE name = 'reader'), 'delete', 'user_addresses', NULL, NULL, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'));
 
 -- Site options
 INSERT OR IGNORE INTO options (id, tenant_id, option_key, value, type, group_name, label, description, validation, is_public, autoload, sort_order, updated_at) VALUES

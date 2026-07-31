@@ -108,7 +108,7 @@ mod tests {
     use crate::models::comment::{Comment, CommentStatus};
     use crate::models::media::Media;
     use crate::models::post::{CommentOpenStatus, PostStatus};
-    use crate::models::user::{RegisteredVia, User, UserRole, UserStatus};
+    use crate::models::user::{RegisteredVia, User, UserStatus};
     use crate::worker::DefaultJobQueue;
 
     fn ts() -> crate::utils::tz::Timestamp {
@@ -156,7 +156,6 @@ mod tests {
             id: crate::types::snowflake_id::SnowflakeId(id),
             tenant_id: None,
             username: username.into(),
-            role: UserRole::Reader,
             status: UserStatus::Active,
             registered_via: RegisteredVia::Email,
             avatar: None,

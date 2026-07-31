@@ -184,13 +184,19 @@ async fn admin_can_update_role() {
         &mut app,
         put_json_auth(
             &format!("/api/v1/users/{reader_id}/role"),
-            json!({"role": "author"}),
+            json!({"roles": ["author"]}),
             &admin_token,
         ),
     )
     .await;
     assert!(status.is_success(), "{status} {body:?}");
-    assert_eq!(body["data"]["role"], "author");
+    assert!(
+        body["data"]["roles"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|r| r.as_str() == Some("author"))
+    );
 }
 
 #[tokio::test]

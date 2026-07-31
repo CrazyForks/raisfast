@@ -121,7 +121,6 @@ mod tests {
         let cmd = crate::commands::user::CreateUserCmd {
             username: crate::utils::id::new_id().to_string(),
             registered_via: crate::models::user::RegisteredVia::Email,
-            role: None,
         };
         let user = crate::models::user::create(pool, &cmd, None).await.unwrap();
         *user.id

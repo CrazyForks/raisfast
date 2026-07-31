@@ -38,6 +38,30 @@ pub struct Permission {
     pub created_at: Timestamp,
 }
 
+/// Fetch permissions for multiple role IDs in a single query.
+///
+/// Used by the permission middleware to check whether any of a user's roles
+/// grant the requested (action, subject) pair.
+pub async fn find_permissions_by_role_ids(
+    pool: &crate::db::Pool,
+    role_ids: &[i64],
+) -> AppResult<Vec<Permission>> {
+    if role_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let placeholders: Vec<String> = (1..=role_ids.len()).map(crate::db::Driver::ph).collect();
+    let sql = format!(
+        "SELECT id, role_id, action, subject, fields, conditions, created_at \
+         FROM permissions WHERE role_id IN ({})",
+        placeholders.join(", ")
+    );
+    let mut q = sqlx::query_as::<_, Permission>(&sql);
+    for rid in role_ids {
+        q = q.bind(rid);
+    }
+    Ok(q.fetch_all(pool).await?)
+}
+
 /// List all roles
 pub async fn list_roles(pool: &crate::db::Pool) -> AppResult<Vec<Role>> {
     raisfast_derive::check_schema!(

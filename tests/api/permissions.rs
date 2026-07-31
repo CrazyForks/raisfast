@@ -233,17 +233,22 @@ async fn malformed_scopes_fail_closed() {
         .unwrap();
 
     // Verify DB was updated
-    let db_scopes: String = sqlx::query_scalar("SELECT scopes FROM api_tokens WHERE token_hash = ?")
-        .bind(&hash)
-        .fetch_one(&state.pool)
-        .await
-        .unwrap();
+    let db_scopes: String =
+        sqlx::query_scalar("SELECT scopes FROM api_tokens WHERE token_hash = ?")
+            .bind(&hash)
+            .fetch_one(&state.pool)
+            .await
+            .unwrap();
     assert_eq!(db_scopes, "{bad json", "DB should have corrupted scopes");
 
     // Invalidate cache
     let _ = state.cache.delete(&format!("api_token:{hash}")).await;
 
-    let (status, _) = send(&mut app, post_json_auth("/api/v1/posts", json!({"title":"T","content":"C"}), &t)).await;
+    let (status, _) = send(
+        &mut app,
+        post_json_auth("/api/v1/posts", json!({"title":"T","content":"C"}), &t),
+    )
+    .await;
     assert_eq!(
         status,
         StatusCode::UNAUTHORIZED,

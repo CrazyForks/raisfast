@@ -63,7 +63,6 @@ pub async fn create(
             "username" => username,
             "created_at" => now,
             "updated_at" => now,
-            "role" => role,
             "status" => UserStatus::Active,
             "registered_via" => RegisteredVia::Email
         ])?;
@@ -73,11 +72,14 @@ pub async fn create(
             "username" => username,
             "created_at" => now,
             "updated_at" => now,
-            "role" => role,
             "status" => UserStatus::Active,
             "registered_via" => RegisteredVia::Email
         ])?;
     }
+
+    let assigned_tid = tid.as_deref().unwrap_or("default");
+    let role_ids = raisfast::models::user_role::resolve_role_ids(&pool, &[role]).await?;
+    raisfast::models::user_role::set_roles(&pool, id, &role_ids, assigned_tid).await?;
 
     let cred_data = user_credential::wrap_password_hash(&password_hash);
     user_credential::create(
@@ -109,11 +111,19 @@ pub async fn list(config: &AppConfig) -> anyhow::Result<()> {
     );
     println!("{}", "-".repeat(70));
     for u in &users.0 {
+        let roles = raisfast::models::user_role::find_role_names_by_user_id(&pool, u.id)
+            .await
+            .unwrap_or_default();
+        let role_str = if roles.is_empty() {
+            "reader".to_string()
+        } else {
+            roles.join(",")
+        };
         println!(
             "{:<20} {:<25} {:<10} {:<10}",
             *u.id,
             u.username,
-            u.role.as_str(),
+            role_str,
             u.status.as_str(),
         );
     }
@@ -163,7 +173,10 @@ pub async fn delete(config: &AppConfig, username: &str, force: bool) -> anyhow::
         .await?
         .ok_or_else(|| anyhow::anyhow!("user not found: {username}"))?;
 
-    if user.role == UserRole::Admin && !force {
+    let roles = raisfast::models::user_role::find_role_names_by_user_id(&pool, user.id)
+        .await
+        .unwrap_or_default();
+    if roles.iter().any(|r| r == "admin") && !force {
         eprintln!("error: refusing to delete admin user. Use --force to override.");
         std::process::exit(1);
     }

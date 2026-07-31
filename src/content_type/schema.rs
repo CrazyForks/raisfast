@@ -380,7 +380,9 @@ pub fn check_api_access(
     auth: &crate::middleware::auth::AuthUser,
 ) -> Result<(), crate::errors::app_error::AppError> {
     match access {
-        ApiAccess::None => Err(crate::errors::app_error::AppError::Forbidden),
+        ApiAccess::None => Err(crate::errors::app_error::AppError::ForbiddenRbac(
+            "content-type access denied".to_string(),
+        )),
         ApiAccess::Public => Ok(()),
         ApiAccess::Member | ApiAccess::Owner => {
             if auth.is_authenticated() {
@@ -393,7 +395,9 @@ pub fn check_api_access(
             if auth.is_admin() {
                 Ok(())
             } else if auth.is_authenticated() {
-                Err(crate::errors::app_error::AppError::Forbidden)
+                Err(crate::errors::app_error::AppError::ForbiddenRbac(
+                    "insufficient access level".to_string(),
+                ))
             } else {
                 Err(crate::errors::app_error::AppError::Unauthorized)
             }
@@ -1566,7 +1570,13 @@ type = "text"
             None,
         );
         let err = check_api_access(ApiAccess::Admin, &user).unwrap_err();
-        assert!(matches!(err, AppError::Forbidden));
+        assert!(matches!(
+            err,
+            AppError::Forbidden
+                | AppError::ForbiddenOwnership
+                | AppError::ForbiddenAdmin
+                | AppError::ForbiddenRbac(_)
+        ));
         let admin = crate::middleware::auth::AuthUser::from_parts(
             Some(1),
             crate::models::user::UserRole::Admin,

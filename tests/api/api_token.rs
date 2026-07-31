@@ -178,8 +178,20 @@ async fn delete_token_non_owner_forbidden() {
     let id = create_body["data"]["id"].as_str().unwrap();
 
     let reader_hash = raisfast::services::auth::hash_password("ReaderPass123!").unwrap();
-    let sql = "INSERT INTO users (username, role, status, registered_via) VALUES ('tokenreader', 'reader', 'active', 'email') RETURNING id";
+    let sql = "INSERT INTO users (username, status, registered_via) VALUES ('tokenreader', 'active', 'email') RETURNING id";
     let reader_int_id: i64 = sqlx::query_scalar(sql).fetch_one(&pool).await.unwrap();
+    let reader_rid = raisfast::models::rbac::find_role_id_by_name(&pool, "reader")
+        .await
+        .unwrap()
+        .unwrap();
+    raisfast::models::user_role::assign_role(
+        &pool,
+        raisfast::types::snowflake_id::SnowflakeId(reader_int_id),
+        raisfast::types::snowflake_id::SnowflakeId(reader_rid),
+        "default",
+    )
+    .await
+    .unwrap();
     let cred_data = serde_json::json!({"password_hash": reader_hash}).to_string();
     let cred_id = raisfast::utils::id::new_id();
     let cred_now = raisfast::utils::tz::now_utc();
@@ -220,8 +232,20 @@ async fn delete_token_non_owner_forbidden() {
 async fn admin_can_delete_other_users_token() {
     let (mut app, tok, pool) = setup().await;
     let reader_hash = raisfast::services::auth::hash_password("ReaderPass123!").unwrap();
-    let sql = "INSERT INTO users (username, role, status, registered_via) VALUES ('readeradmindel', 'reader', 'active', 'email') RETURNING id";
+    let sql = "INSERT INTO users (username, status, registered_via) VALUES ('readeradmindel', 'active', 'email') RETURNING id";
     let reader_int_id: i64 = sqlx::query_scalar(sql).fetch_one(&pool).await.unwrap();
+    let reader_rid = raisfast::models::rbac::find_role_id_by_name(&pool, "reader")
+        .await
+        .unwrap()
+        .unwrap();
+    raisfast::models::user_role::assign_role(
+        &pool,
+        raisfast::types::snowflake_id::SnowflakeId(reader_int_id),
+        raisfast::types::snowflake_id::SnowflakeId(reader_rid),
+        "default",
+    )
+    .await
+    .unwrap();
     let cred_data = serde_json::json!({"password_hash": reader_hash}).to_string();
     let cred_id = raisfast::utils::id::new_id();
     let cred_now = raisfast::utils::tz::now_utc();
@@ -483,8 +507,20 @@ async fn each_user_sees_only_own_tokens() {
     let (mut app, tok, pool) = setup().await;
 
     let reader_hash = raisfast::services::auth::hash_password("ReaderPass123!").unwrap();
-    let sql = "INSERT INTO users (username, role, status, registered_via) VALUES ('isolationreader', 'reader', 'active', 'email') RETURNING id";
+    let sql = "INSERT INTO users (username, status, registered_via) VALUES ('isolationreader', 'active', 'email') RETURNING id";
     let reader_int_id: i64 = sqlx::query_scalar(sql).fetch_one(&pool).await.unwrap();
+    let reader_rid = raisfast::models::rbac::find_role_id_by_name(&pool, "reader")
+        .await
+        .unwrap()
+        .unwrap();
+    raisfast::models::user_role::assign_role(
+        &pool,
+        raisfast::types::snowflake_id::SnowflakeId(reader_int_id),
+        raisfast::types::snowflake_id::SnowflakeId(reader_rid),
+        "default",
+    )
+    .await
+    .unwrap();
     let cred_data = serde_json::json!({"password_hash": reader_hash}).to_string();
     let cred_id = raisfast::utils::id::new_id();
     let cred_now = raisfast::utils::tz::now_utc();

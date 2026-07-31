@@ -171,7 +171,7 @@ mod tests {
         let id = crate::utils::id::new_id();
         let username = format!("testuser_{id}");
         sqlx::query(
-            "INSERT INTO users (id, username, role, status, registered_via) VALUES (?, ?, 'reader', 'active', 'email')",
+            "INSERT INTO users (id, username, status, registered_via) VALUES (?, ?, 'active', 'email')",
         )
         .bind(id)
         .bind(&username)

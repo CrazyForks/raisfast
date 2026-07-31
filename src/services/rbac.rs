@@ -71,12 +71,13 @@ fn perm_to_view(p: &Permission) -> PermissionView {
 /// RBAC service
 pub struct RbacService {
     pool: Arc<crate::db::Pool>,
+    cache: Arc<dyn crate::cache::CacheStore>,
 }
 
 impl RbacService {
     /// Create a `RbacService` instance
-    pub fn new(pool: Arc<crate::db::Pool>) -> Self {
-        Self { pool }
+    pub fn new(pool: Arc<crate::db::Pool>, cache: Arc<dyn crate::cache::CacheStore>) -> Self {
+        Self { pool, cache }
     }
 
     /// List all roles
@@ -114,7 +115,9 @@ impl RbacService {
         if role.is_system {
             return Err(AppError::BadRequest("cannot delete system role".into()));
         }
-        crate::models::rbac::delete_role(&self.pool, id).await
+        crate::models::rbac::delete_role(&self.pool, id).await?;
+        let _ = self.cache.delete_prefix("perm:").await;
+        Ok(())
     }
 
     pub async fn get_permissions(&self, role_id: &str) -> Result<Vec<PermissionView>, AppError> {
@@ -164,6 +167,9 @@ impl RbacService {
             Ok(())
         })?;
 
+        // Invalidate cached RBAC permission checks — they may reference this role's permissions
+        let _ = self.cache.delete_prefix("perm:").await;
+
         self.get_permissions(role_id).await
     }
 
@@ -190,7 +196,7 @@ impl RbacService {
                 return Ok(());
             }
         }
-        Err(AppError::Forbidden)
+        Err(AppError::ForbiddenRbac(format!("{action} on {subject}")))
     }
 
     /// Get role ID by role name
@@ -199,14 +205,16 @@ impl RbacService {
     }
 }
 
-/// Permission action matching (supports `*` wildcard and `::` namespace)
+/// Permission action matching (supports `*` wildcard, `::` namespace, case-insensitive)
 #[must_use]
 pub fn matches_action(pattern: &str, action: &str) -> bool {
+    let pattern = pattern.to_ascii_lowercase();
+    let action = action.to_ascii_lowercase();
     if pattern == "*" || pattern == action {
         return true;
     }
-    let (p_ns, p_op) = rsplit_dot(pattern);
-    let (a_ns, a_op) = rsplit_dot(action);
+    let (p_ns, p_op) = rsplit_dot(&pattern);
+    let (a_ns, a_op) = rsplit_dot(&action);
 
     if !ns_matches(p_ns, a_ns) {
         return false;
@@ -234,9 +242,11 @@ fn ns_matches(pattern: &str, action: &str) -> bool {
     pp.iter().zip(ap.iter()).all(|(p, a)| *p == "*" || *p == *a)
 }
 
-/// Permission subject matching (supports `*` wildcard and `::` namespace)
+/// Permission subject matching (supports `*` wildcard, `::` namespace, case-insensitive)
 #[must_use]
 pub fn matches_subject(pattern: &str, subject: &str) -> bool {
+    let pattern = pattern.to_ascii_lowercase();
+    let subject = subject.to_ascii_lowercase();
     if pattern == "*" || pattern == subject {
         return true;
     }
@@ -290,39 +300,20 @@ mod tests {
 
     #[test]
     fn matches_action_wildcard() {
-        assert!(matches_action("*", "content-type::post.create"));
-        assert!(matches_action(
-            "content-type::*.*",
-            "content-type::post.create"
-        ));
-        assert!(matches_action(
-            "content-type::post.*",
-            "content-type::post.create"
-        ));
-        assert!(matches_action(
-            "content-type::post.create",
-            "content-type::post.create"
-        ));
-        assert!(!matches_action(
-            "content-type::post.delete",
-            "content-type::post.create"
-        ));
+        assert!(matches_action("*", "posts.create"));
+        assert!(matches_action("*.*", "posts.create"));
+        assert!(matches_action("posts.*", "posts.create"));
+        assert!(matches_action("posts.create", "posts.create"));
+        assert!(!matches_action("posts.delete", "posts.create"));
         assert!(matches_action("*", "anything"));
-        assert!(matches_action(
-            "content-type::*.*",
-            "content-type::comment.delete"
-        ));
+        assert!(matches_action("*.*", "comments.delete"));
     }
 
     #[test]
     fn matches_subject_wildcard() {
-        assert!(matches_subject("*", "content-type::post"));
-        assert!(matches_subject("content-type::*", "content-type::post"));
-        assert!(matches_subject("content-type::post", "content-type::post"));
-        assert!(!matches_subject(
-            "content-type::post",
-            "content-type::comment"
-        ));
+        assert!(matches_subject("*", "posts"));
+        assert!(matches_subject("posts", "posts"));
+        assert!(!matches_subject("posts", "comments"));
     }
 
     #[test]

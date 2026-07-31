@@ -257,15 +257,26 @@ mod tests {
             &crate::commands::user::CreateUserCmd {
                 username: crate::utils::id::new_id().to_string(),
                 registered_via: crate::models::user::RegisteredVia::Email,
-                role: None,
             },
             None,
         )
         .await
         .unwrap();
-        crate::models::user::update_role(pool, user.id, crate::models::user::UserRole::Admin, None)
-            .await
-            .unwrap()
+        let role_ids = crate::models::user_role::resolve_role_ids(
+            pool,
+            &[crate::models::user::UserRole::Admin],
+        )
+        .await
+        .unwrap();
+        crate::models::user_role::set_roles(
+            pool,
+            user.id,
+            &role_ids,
+            crate::constants::DEFAULT_TENANT,
+        )
+        .await
+        .unwrap();
+        user
     }
 
     async fn insert_post(pool: &crate::db::Pool, user_id: i64) -> i64 {

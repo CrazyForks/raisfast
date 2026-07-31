@@ -35,7 +35,7 @@ pub struct AdminCreateUserRequest {
     pub username: String,
     #[validate(length(min = 8, max = 128), custom(function = "validate_password"))]
     pub password: String,
-    pub role: Option<UserRole>,
+    pub roles: Option<Vec<UserRole>>,
 }
 
 #[cfg_attr(feature = "export-types", derive(TS))]
@@ -66,7 +66,6 @@ pub struct UpdateUserRequest {
     pub social_links: Option<SocialLinks>,
     #[cfg_attr(feature = "export-types", ts(type = "unknown"))]
     pub metadata: Option<UserMetadata>,
-    pub role: Option<UserRole>,
     pub status: Option<UserStatus>,
     #[validate(length(min = 8, max = 128), custom(function = "validate_password"))]
     pub password: Option<String>,
@@ -84,7 +83,7 @@ pub struct UpdatePasswordRequest {
 #[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct UpdateRoleRequest {
-    pub role: UserRole,
+    pub roles: Vec<UserRole>,
 }
 
 #[cfg_attr(feature = "export-types", derive(TS))]
@@ -210,7 +209,7 @@ pub struct UserResponse {
     pub email: Option<String>,
     pub phone: Option<String>,
     pub username: String,
-    pub role: UserRole,
+    pub roles: Vec<String>,
     pub status: UserStatus,
     pub registered_via: RegisteredVia,
     pub avatar: Option<String>,
@@ -231,7 +230,7 @@ pub struct UserResponse {
 
 impl UserResponse {
     pub fn from_user(user: User) -> AppResult<Self> {
-        Self::build(user, None, None)
+        Self::build(user, None, None, Vec::new())
     }
 
     pub async fn from_user_with_contacts(pool: &crate::db::Pool, user: User) -> AppResult<Self> {
@@ -244,11 +243,18 @@ impl UserResponse {
             .iter()
             .find(|c| c.auth_type == crate::models::user_credential::AuthType::Phone)
             .map(|c| c.identifier.clone());
-        Self::build(user, email, phone)
+        let roles = crate::models::user_role::find_role_names_by_user_id(pool, user.id)
+            .await
+            .unwrap_or_default();
+        Self::build(user, email, phone, roles)
     }
 
-    fn build(user: User, email: Option<String>, phone: Option<String>) -> AppResult<Self> {
-        let role = user.role;
+    fn build(
+        user: User,
+        email: Option<String>,
+        phone: Option<String>,
+        roles: Vec<String>,
+    ) -> AppResult<Self> {
         let status = user.status;
         let registered_via = user.registered_via;
         Ok(Self {
@@ -256,7 +262,7 @@ impl UserResponse {
             email,
             phone,
             username: user.username,
-            role,
+            roles,
             status,
             registered_via,
             avatar: user.avatar,
@@ -365,7 +371,6 @@ mod tests {
             avatar: None,
             social_links: None,
             metadata: None,
-            role: None,
             status: None,
             password: None,
         };
@@ -397,7 +402,7 @@ mod tests {
             email: Some("test@example.com".to_string()),
             phone: None,
             username: "test".to_string(),
-            role: UserRole::Reader,
+            roles: Vec::new(),
             status: UserStatus::Active,
             registered_via: RegisteredVia::Email,
             avatar: None,

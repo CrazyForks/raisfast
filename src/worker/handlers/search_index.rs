@@ -111,7 +111,7 @@ mod tests {
     async fn create_user(pool: &crate::db::Pool) -> i64 {
         let id = crate::utils::id::new_id();
         let (user_id,): (i64,) = sqlx::query_as(&format!(
-            "INSERT INTO users (id, username, role, status, registered_via) VALUES (?, 'testuser', 'author', 'active', 'email') {}",
+            "INSERT INTO users (id, username, status, registered_via) VALUES (?, 'testuser', 'active', 'email') {}",
             crate::db::Driver::returning_col("id"),
         ))
         .bind(id)

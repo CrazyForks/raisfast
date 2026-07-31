@@ -77,7 +77,7 @@ pub trait UserService: Send + Sync {
     async fn update_role(
         &self,
         user_id: &str,
-        role: UserRole,
+        roles: Vec<UserRole>,
         tenant_id: Option<&str>,
     ) -> AppResult<User>;
 
@@ -112,11 +112,17 @@ impl UserService for UserServiceImpl {
     async fn update_role(
         &self,
         user_id: &str,
-        role: UserRole,
+        roles: Vec<UserRole>,
         tenant_id: Option<&str>,
     ) -> AppResult<User> {
         let uid = crate::types::snowflake_id::parse_id(user_id)?;
-        crate::models::user::update_role(&self.pool, uid, role, tenant_id).await
+        let user = crate::models::user::find_by_id(&self.pool, uid, tenant_id)
+            .await?
+            .ok_or_else(|| AppError::not_found("user"))?;
+        let tid = tenant_id.unwrap_or(crate::constants::DEFAULT_TENANT);
+        let role_ids = crate::models::user_role::resolve_role_ids(&self.pool, &roles).await?;
+        crate::models::user_role::set_roles(&self.pool, uid, &role_ids, tid).await?;
+        Ok(user)
     }
 
     async fn admin_update_user(
@@ -139,14 +145,10 @@ impl UserService for UserServiceImpl {
             social_links: req.social_links.clone(),
             metadata: req.metadata.clone(),
         };
-        let mut user = crate::models::user::update_profile(&self.pool, &cmd, tenant_id).await?;
-
-        if let Some(ref role) = req.role {
-            user = crate::models::user::update_role(&self.pool, uid, *role, tenant_id).await?;
-        }
+        crate::models::user::update_profile(&self.pool, &cmd, tenant_id).await?;
 
         if let Some(ref status) = req.status {
-            user = crate::models::user::update_status(&self.pool, uid, *status, tenant_id).await?;
+            crate::models::user::update_status(&self.pool, uid, *status, tenant_id).await?;
         }
 
         if let Some(ref password) = req.password {
@@ -157,7 +159,10 @@ impl UserService for UserServiceImpl {
                 .await?;
         }
 
-        Ok(user)
+        let fresh = crate::models::user::find_by_id(&self.pool, uid, tenant_id)
+            .await?
+            .ok_or_else(|| AppError::not_found("user"))?;
+        Ok(fresh)
     }
 
     async fn delete_user(&self, user_id: &str, tenant_id: Option<&str>) -> AppResult<()> {
@@ -172,8 +177,8 @@ impl UserService for UserServiceImpl {
     ) -> AppResult<Vec<bool>> {
         let mut results = Vec::with_capacity(operations.len());
         for (user_id, role) in operations {
-            let uid = crate::types::snowflake_id::parse_id(user_id)?;
-            let ok = crate::models::user::update_role(&self.pool, uid, *role, tenant_id)
+            let ok = self
+                .update_role(user_id, vec![*role], tenant_id)
                 .await
                 .is_ok();
             results.push(ok);
@@ -202,7 +207,6 @@ mod tests {
             &crate::commands::CreateUserCmd {
                 username: username.to_string(),
                 registered_via: crate::models::user::RegisteredVia::Email,
-                role: None,
             },
             None,
         )
@@ -241,7 +245,6 @@ mod tests {
                 avatar: None,
                 social_links: None,
                 metadata: None,
-                role: None,
                 status: None,
                 password: None,
             },

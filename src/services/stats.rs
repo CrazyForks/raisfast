@@ -455,7 +455,7 @@ mod tests {
         .unwrap();
 
         sqlx::query(
-            "CREATE TABLE users (id INTEGER PRIMARY KEY AUTOINCREMENT, tenant_id TEXT NOT NULL DEFAULT 'default', username TEXT NOT NULL, role TEXT NOT NULL, status TEXT NOT NULL, registered_via TEXT NOT NULL)",
+            "CREATE TABLE users (id INTEGER PRIMARY KEY AUTOINCREMENT, tenant_id TEXT NOT NULL DEFAULT 'default', username TEXT NOT NULL, status TEXT NOT NULL, registered_via TEXT NOT NULL)",
         )
         .execute(&pool)
         .await
@@ -533,7 +533,7 @@ mod tests {
         .unwrap();
 
         sqlx::query(
-            "CREATE TABLE users (id INTEGER PRIMARY KEY AUTOINCREMENT, tenant_id TEXT NOT NULL DEFAULT 'default', username TEXT NOT NULL, role TEXT NOT NULL, status TEXT NOT NULL, registered_via TEXT NOT NULL)",
+            "CREATE TABLE users (id INTEGER PRIMARY KEY AUTOINCREMENT, tenant_id TEXT NOT NULL DEFAULT 'default', username TEXT NOT NULL, status TEXT NOT NULL, registered_via TEXT NOT NULL)",
         )
         .execute(&pool)
         .await
@@ -590,7 +590,7 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
-        sqlx::query("INSERT INTO users (id, username, role, status, registered_via) VALUES (1, 'user1', 'reader', 'active', 'email')")
+        sqlx::query("INSERT INTO users (id, username, status, registered_via) VALUES (1, 'user1', 'active', 'email')")
             .execute(&pool)
             .await
             .unwrap();

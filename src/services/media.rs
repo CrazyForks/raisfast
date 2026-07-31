@@ -272,7 +272,7 @@ pub async fn delete_media(
         .ok_or_else(|| AppError::not_found("media"))?;
 
     if !auth.is_admin() && m.user_id != user.id {
-        return Err(AppError::Forbidden);
+        return Err(AppError::ForbiddenOwnership);
     }
 
     media::delete(pool, SnowflakeId(media_pk), auth.tenant_id()).await?;

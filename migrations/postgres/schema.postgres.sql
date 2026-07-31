@@ -22,7 +22,6 @@ CREATE TABLE IF NOT EXISTS users (
     id BIGINT PRIMARY KEY,
     tenant_id TEXT NOT NULL DEFAULT 'default',
     username VARCHAR(255) UNIQUE NOT NULL,
-    role VARCHAR(50) NOT NULL DEFAULT 'reader',
     avatar VARCHAR(500),
     bio TEXT,
     website VARCHAR(500),
@@ -200,6 +199,20 @@ CREATE TABLE IF NOT EXISTS permissions (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_permissions_role_action_subject
     ON permissions(role_id, action, subject);
 CREATE INDEX IF NOT EXISTS idx_permissions_tenant ON permissions(tenant_id);
+
+-- User-role assignments (many-to-many)
+CREATE TABLE IF NOT EXISTS user_roles (
+    id BIGSERIAL PRIMARY KEY,
+    tenant_id TEXT NOT NULL DEFAULT 'default',
+    user_id BIGINT NOT NULL,
+    role_id BIGINT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE(tenant_id, user_id, role_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_roles_user ON user_roles(user_id);
+CREATE INDEX IF NOT EXISTS idx_user_roles_role ON user_roles(role_id);
+CREATE INDEX IF NOT EXISTS idx_user_roles_tenant ON user_roles(tenant_id);
 
 -- Audit log
 CREATE TABLE IF NOT EXISTS audit_log (

@@ -1020,7 +1020,7 @@ mod tests {
     async fn create_user(pool: &crate::db::Pool) -> i64 {
         let uid = crate::utils::id::new_id();
         sqlx::query(
-            "INSERT INTO users (id, username, role, status, registered_via) VALUES (?, 'testuser', 'author', 'active', 'email')",
+            "INSERT INTO users (id, username, status, registered_via) VALUES (?, 'testuser', 'active', 'email')",
         )
         .bind(uid)
         .execute(pool)

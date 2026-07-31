@@ -409,7 +409,6 @@ mod tests {
                 &crate::commands::user::CreateUserCmd {
                     username: "testuser".to_string(),
                     registered_via: crate::models::user::RegisteredVia::Email,
-                    role: None,
                 },
                 None,
             )

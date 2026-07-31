@@ -1043,7 +1043,9 @@ pub async fn do_update(
             .as_ref()
             .ok_or_else(|| AppError::not_found(&format!("{}/{}", ct.name, id)))?;
         if !is_owner(rec, auth) {
-            return Err(AppError::Forbidden);
+            return Err(AppError::ForbiddenRbac(
+                "content-type write access denied".to_string(),
+            ));
         }
     }
 
@@ -1053,7 +1055,9 @@ pub async fn do_update(
     {
         let ctx = super::rule_engine::RuleContext::from_auth(auth);
         if !rule.evaluate(record, &ctx, &state.config.rule_engine) {
-            return Err(AppError::Forbidden);
+            return Err(AppError::ForbiddenRbac(
+                "content-type write access denied".to_string(),
+            ));
         }
     }
 
@@ -1139,7 +1143,9 @@ pub async fn do_delete(
 
     // Owner access: only the creator may delete
     if ct.api.delete.access == ApiAccess::Owner && !is_owner(&value, auth) {
-        return Err(AppError::Forbidden);
+        return Err(AppError::ForbiddenRbac(
+            "content-type access denied".to_string(),
+        ));
     }
 
     let record: crate::aspects::Record = match value.as_object() {
@@ -1156,7 +1162,7 @@ pub async fn do_delete(
     {
         let ctx = super::rule_engine::RuleContext::from_auth(auth);
         if !rule.evaluate(&value, &ctx, &state.config.rule_engine) {
-            return Err(AppError::Forbidden);
+            return Err(AppError::ForbiddenOwnership);
         }
     }
 

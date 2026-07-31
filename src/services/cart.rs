@@ -144,7 +144,7 @@ impl CartService for CartServiceImpl {
             .ok_or_else(|| AppError::not_found("cart_item"))?;
 
         if item.user_id != user_id {
-            return Err(AppError::Forbidden);
+            return Err(AppError::ForbiddenOwnership);
         }
 
         crate::models::cart_item::delete_by_id(&self.pool, id, auth.tenant_id()).await?;
@@ -168,7 +168,7 @@ impl CartService for CartServiceImpl {
             .ok_or_else(|| AppError::not_found("cart_item"))?;
 
         if item.user_id != user_id {
-            return Err(AppError::Forbidden);
+            return Err(AppError::ForbiddenOwnership);
         }
 
         crate::models::cart_item::update_quantity(&self.pool, item.id, quantity, auth.tenant_id())

@@ -618,7 +618,7 @@ pub async fn create_payment_order(
         .ok_or_else(|| AppError::not_found("order"))?;
 
     if order.user_id != user_id {
-        return Err(AppError::Forbidden);
+        return Err(AppError::ForbiddenOwnership);
     }
 
     if order.total_amount <= 0 {
@@ -790,7 +790,7 @@ pub async fn cancel_payment_order(
         .ok_or_else(|| AppError::not_found("payment_order"))?;
 
     if order.user_id != user_id {
-        return Err(AppError::Forbidden);
+        return Err(AppError::ForbiddenOwnership);
     }
     if order.status != PaymentStatus::Pending {
         return Err(AppError::BadRequest("only_pending_can_cancel".into()));
@@ -855,7 +855,7 @@ pub async fn get_payment_order(
         .await?
         .ok_or_else(|| AppError::not_found("payment_order"))?;
     if !auth.is_admin() && order.user_id != user_id {
-        return Err(AppError::Forbidden);
+        return Err(AppError::ForbiddenOwnership);
     }
     Ok(order)
 }
@@ -1325,7 +1325,7 @@ mod tests {
         let id = crate::utils::id::new_id();
         let username = format!("testuser_{id}");
         sqlx::query(
-            "INSERT INTO users (id, username, role, status, registered_via) VALUES (?, ?, 'reader', 'active', 'email')",
+            "INSERT INTO users (id, username, status, registered_via) VALUES (?, ?, 'active', 'email')",
         )
         .bind(id)
         .bind(&username)
@@ -1339,7 +1339,7 @@ mod tests {
         let id = crate::utils::id::new_id();
         let username = format!("admin_{id}");
         sqlx::query(
-            "INSERT INTO users (id, username, role, status, registered_via) VALUES (?, ?, 'admin', 'active', 'email')",
+            "INSERT INTO users (id, username, status, registered_via) VALUES (?, ?, 'active', 'email')",
         )
         .bind(id)
         .bind(&username)
@@ -1472,7 +1472,7 @@ mod tests {
 
         assert!(result.is_err());
         match result.unwrap_err() {
-            AppError::Forbidden => {}
+            AppError::Forbidden | AppError::ForbiddenOwnership => {}
             e => panic!("expected Forbidden, got: {e:?}"),
         }
     }
@@ -1570,7 +1570,7 @@ mod tests {
 
         assert!(result.is_err());
         match result.unwrap_err() {
-            AppError::Forbidden => {}
+            AppError::Forbidden | AppError::ForbiddenOwnership => {}
             e => panic!("expected Forbidden, got: {e:?}"),
         }
     }
@@ -1633,7 +1633,7 @@ mod tests {
 
         assert!(result.is_err());
         match result.unwrap_err() {
-            AppError::Forbidden => {}
+            AppError::Forbidden | AppError::ForbiddenOwnership => {}
             e => panic!("expected Forbidden, got: {e:?}"),
         }
     }

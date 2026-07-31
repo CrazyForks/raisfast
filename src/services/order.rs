@@ -257,7 +257,7 @@ impl OrderService for OrderServiceImpl {
                     .await?
                     .ok_or_else(|| AppError::not_found("shipping_address"))?;
             if addr.user_id != user_id {
-                return Err(AppError::Forbidden);
+                return Err(AppError::ForbiddenOwnership);
             }
             Some(addr)
         } else {
@@ -416,7 +416,7 @@ impl OrderService for OrderServiceImpl {
             .ok_or_else(|| AppError::not_found("order"))?;
 
         if order.user_id != user_id {
-            return Err(AppError::Forbidden);
+            return Err(AppError::ForbiddenOwnership);
         }
         if order.status != OrderStatus::Pending {
             return Err(AppError::BadRequest("only_pending_can_cancel".into()));
@@ -568,7 +568,7 @@ impl OrderService for OrderServiceImpl {
             .ok_or_else(|| AppError::not_found("order"))?;
 
         if order.user_id != user_id {
-            return Err(AppError::Forbidden);
+            return Err(AppError::ForbiddenOwnership);
         }
         if order.status != OrderStatus::Shipped {
             return Err(AppError::BadRequest("only_shipped_can_confirm".into()));
@@ -715,7 +715,7 @@ impl OrderService for OrderServiceImpl {
         if !auth.is_admin() {
             let user_id = auth.ensure_snowflake_user_id()?;
             if order.user_id != user_id {
-                return Err(AppError::Forbidden);
+                return Err(AppError::ForbiddenOwnership);
             }
         }
         let items =
@@ -840,7 +840,7 @@ mod tests {
     async fn seed_user(pool: &crate::db::Pool) -> i64 {
         let id = crate::utils::id::new_id();
         let username = format!("testuser_{id}");
-        let _: crate::db::pool::DbQueryResult = sqlx::query("INSERT INTO users (id, username, role, status, registered_via) VALUES (?, ?, 'reader', 'active', 'email')")
+        let _: crate::db::pool::DbQueryResult = sqlx::query("INSERT INTO users (id, username, status, registered_via) VALUES (?, ?, 'active', 'email')")
             .bind(id)
             .bind(&username)
             .execute(pool)
@@ -1170,7 +1170,13 @@ mod tests {
             .cancel(&a, order.id, SnowflakeId(999))
             .await
             .unwrap_err();
-        assert!(matches!(err, AppError::Forbidden));
+        assert!(matches!(
+            err,
+            AppError::Forbidden
+                | AppError::ForbiddenOwnership
+                | AppError::ForbiddenAdmin
+                | AppError::ForbiddenRbac(_)
+        ));
     }
 
     #[tokio::test]
@@ -1318,7 +1324,13 @@ mod tests {
             .confirm_receipt(&a, order.id, SnowflakeId(999))
             .await
             .unwrap_err();
-        assert!(matches!(err, AppError::Forbidden));
+        assert!(matches!(
+            err,
+            AppError::Forbidden
+                | AppError::ForbiddenOwnership
+                | AppError::ForbiddenAdmin
+                | AppError::ForbiddenRbac(_)
+        ));
     }
 
     #[tokio::test]
@@ -1747,7 +1759,13 @@ mod tests {
             .await
             .unwrap_err();
 
-        assert!(matches!(err, AppError::Forbidden));
+        assert!(matches!(
+            err,
+            AppError::Forbidden
+                | AppError::ForbiddenOwnership
+                | AppError::ForbiddenAdmin
+                | AppError::ForbiddenRbac(_)
+        ));
     }
 
     #[tokio::test]

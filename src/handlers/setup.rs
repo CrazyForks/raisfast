@@ -70,12 +70,16 @@ pub fn routes(
 }
 
 async fn ensure_no_admin(pool: &crate::db::Pool) -> AppResult<()> {
-    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM users WHERE role = 'admin'")
-        .fetch_one(pool)
-        .await
-        .map_err(|_| AppError::BadRequest("database_not_connected".into()))?;
+    let count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM user_roles ur \
+         JOIN roles r ON r.id = ur.role_id \
+         WHERE r.name = 'admin'",
+    )
+    .fetch_one(pool)
+    .await
+    .map_err(|_| AppError::BadRequest("database_not_connected".into()))?;
     if count > 0 {
-        return Err(AppError::Forbidden);
+        return Err(AppError::ForbiddenAdmin);
     }
     Ok(())
 }
@@ -101,10 +105,14 @@ pub async fn setup_status(
         .unwrap_or_else(|| "./extensions/plugins".into());
     let ext_writable = is_dir_writable(&ct_path) && is_dir_writable(&plugin_path);
 
-    let admin_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM users WHERE role = 'admin'")
-        .fetch_one(&state.pool)
-        .await
-        .unwrap_or(0);
+    let admin_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM user_roles ur \
+         JOIN roles r ON r.id = ur.role_id \
+         WHERE r.name = 'admin'",
+    )
+    .fetch_one(&state.pool)
+    .await
+    .unwrap_or(0);
 
     Ok(ApiResponse::success(SetupStatusResponse {
         database: crate::dto::DatabaseStatusInfo {
@@ -227,12 +235,24 @@ pub async fn setup_init(
 
     let uid = parse_user_id(&user.id)?;
 
-    crate::models::user::update_role(&state.pool, uid, crate::models::user::UserRole::Admin, None)
-        .await?;
+    crate::models::user_role::assign_role_by_name(
+        &state.pool,
+        uid,
+        "admin",
+        crate::constants::DEFAULT_TENANT,
+    )
+    .await?;
 
+    let role_ids: Vec<i64> = crate::models::rbac::find_role_id_by_name(&state.pool, "admin")
+        .await
+        .ok()
+        .flatten()
+        .into_iter()
+        .collect();
     let access_token = crate::services::auth::generate_access_token_internal(
         uid,
-        crate::models::user::UserRole::Admin,
+        vec!["admin".to_string()],
+        role_ids,
         crate::constants::DEFAULT_TENANT,
         &state.config.jwt_secret,
         state.config.jwt_access_expires,

@@ -87,7 +87,7 @@ impl ProductCommentService for ProductCommentServiceImpl {
             .ok_or_else(|| AppError::not_found("order"))?;
 
         if order.user_id != user_id {
-            return Err(AppError::Forbidden);
+            return Err(AppError::ForbiddenOwnership);
         }
         if order.status != OrderStatus::Completed {
             return Err(AppError::BadRequest("only_completed_can_review".into()));
@@ -142,7 +142,7 @@ impl ProductCommentService for ProductCommentServiceImpl {
             .ok_or_else(|| AppError::not_found("product_comment"))?;
 
         if existing.user_id != user_id {
-            return Err(AppError::Forbidden);
+            return Err(AppError::ForbiddenOwnership);
         }
 
         crate::models::product_comment::update(
@@ -170,7 +170,7 @@ impl ProductCommentService for ProductCommentServiceImpl {
             .ok_or_else(|| AppError::not_found("product_comment"))?;
 
         if existing.user_id != user_id {
-            return Err(AppError::Forbidden);
+            return Err(AppError::ForbiddenOwnership);
         }
 
         crate::models::product_comment::delete_by_id(&self.pool, id, auth.tenant_id()).await
@@ -314,7 +314,7 @@ mod tests {
         let id = crate::utils::id::new_id();
         let username = format!("testuser_{id}");
         sqlx::query(
-            "INSERT INTO users (id, username, role, status, registered_via) VALUES (?, ?, 'reader', 'active', 'email')",
+            "INSERT INTO users (id, username, status, registered_via) VALUES (?, ?, 'active', 'email')",
         )
         .bind(id)
         .bind(&username)
@@ -543,7 +543,13 @@ mod tests {
             )
             .await
             .unwrap_err();
-        assert!(matches!(err, AppError::Forbidden));
+        assert!(matches!(
+            err,
+            AppError::Forbidden
+                | AppError::ForbiddenOwnership
+                | AppError::ForbiddenAdmin
+                | AppError::ForbiddenRbac(_)
+        ));
     }
 
     #[tokio::test]

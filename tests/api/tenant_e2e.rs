@@ -44,15 +44,13 @@ async fn create_user_in_tenant(
 ) -> i64 {
     let hash = raisfast::services::auth::hash_password("TestPass123!").unwrap();
     let sql = format!(
-        "INSERT INTO users (tenant_id, username, role, status, registered_via) VALUES ({}, {}, {}, 'active', 'email') RETURNING id",
+        "INSERT INTO users (tenant_id, username, status, registered_via) VALUES ({}, {}, 'active', 'email') RETURNING id",
         raisfast::db::Driver::ph(1),
-        raisfast::db::Driver::ph(2),
-        raisfast::db::Driver::ph(3)
+        raisfast::db::Driver::ph(2)
     );
     let int_id: i64 = sqlx::query_scalar(&sql)
         .bind(tenant_id)
         .bind(username)
-        .bind(role)
         .fetch_one(pool)
         .await
         .unwrap();
@@ -78,6 +76,19 @@ async fn create_user_in_tenant(
         .execute(pool)
         .await
         .unwrap();
+    if let Some(rid) = raisfast::models::rbac::find_role_id_by_name(pool, role)
+        .await
+        .unwrap()
+    {
+        raisfast::models::user_role::assign_role(
+            pool,
+            raisfast::types::snowflake_id::SnowflakeId(int_id),
+            raisfast::types::snowflake_id::SnowflakeId(rid),
+            tenant_id,
+        )
+        .await
+        .unwrap();
+    }
     int_id
 }
 

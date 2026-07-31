@@ -55,6 +55,7 @@ pub mod user;
 pub mod user_address;
 pub mod user_credential;
 pub mod user_device_code;
+pub mod user_role;
 pub mod wallet;
 pub mod wallet_outbox;
 pub mod wallet_transaction;

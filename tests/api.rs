@@ -193,9 +193,10 @@ async fn build_test_app(pool: raisfast::db::Pool) -> (axum::Router, AppState) {
         options: Arc::new(
             raisfast::services::options::OptionsService::new(Arc::new(pool.clone()), false).await,
         ),
-        rbac: Arc::new(raisfast::services::rbac::RbacService::new(Arc::new(
-            pool.clone(),
-        ))),
+        rbac: Arc::new(raisfast::services::rbac::RbacService::new(
+            Arc::new(pool.clone()),
+            Arc::new(raisfast::cache::MemoryCache::new()),
+        )),
         tenant: Arc::new(raisfast::services::tenant::TenantService::new(Arc::new(
             pool.clone(),
         ))),
@@ -652,7 +653,7 @@ pub(crate) fn make_token(
 ) -> String {
     raisfast::services::auth::generate_access_token_for_test(
         raisfast::types::snowflake_id::SnowflakeId(iid),
-        role,
+        vec![role],
     )
 }
 
@@ -690,8 +691,20 @@ pub(crate) async fn register_and_login(
 
 pub(crate) async fn create_admin(pool: &raisfast::db::Pool) -> (i64, String) {
     let hash = raisfast::services::auth::hash_password("AdminPass123!").unwrap();
-    let sql = "INSERT INTO users (username, role, status, registered_via) VALUES ('testadmin', 'admin', 'active', 'email') RETURNING id";
+    let sql = "INSERT INTO users (username, status, registered_via) VALUES ('testadmin', 'active', 'email') RETURNING id";
     let int_id: i64 = sqlx::query_scalar(sql).fetch_one(pool).await.unwrap();
+    let admin_rid = raisfast::models::rbac::find_role_id_by_name(pool, "admin")
+        .await
+        .unwrap()
+        .unwrap();
+    raisfast::models::user_role::assign_role(
+        pool,
+        raisfast::types::snowflake_id::SnowflakeId(int_id),
+        raisfast::types::snowflake_id::SnowflakeId(admin_rid),
+        "default",
+    )
+    .await
+    .unwrap();
     let cred_data = serde_json::json!({"password_hash": hash}).to_string();
     let cred_id = raisfast::utils::id::new_id();
     let cred_now = raisfast::utils::tz::now_utc();
@@ -719,8 +732,20 @@ pub(crate) async fn create_admin(pool: &raisfast::db::Pool) -> (i64, String) {
 
 pub(crate) async fn create_author(pool: &raisfast::db::Pool) -> (i64, String) {
     let hash = raisfast::services::auth::hash_password("AuthorPass123!").unwrap();
-    let sql = "INSERT INTO users (username, role, status, registered_via) VALUES ('testauthor', 'author', 'active', 'email') RETURNING id";
+    let sql = "INSERT INTO users (username, status, registered_via) VALUES ('testauthor', 'active', 'email') RETURNING id";
     let int_id: i64 = sqlx::query_scalar(sql).fetch_one(pool).await.unwrap();
+    let author_rid = raisfast::models::rbac::find_role_id_by_name(pool, "author")
+        .await
+        .unwrap()
+        .unwrap();
+    raisfast::models::user_role::assign_role(
+        pool,
+        raisfast::types::snowflake_id::SnowflakeId(int_id),
+        raisfast::types::snowflake_id::SnowflakeId(author_rid),
+        "default",
+    )
+    .await
+    .unwrap();
     let cred_data = serde_json::json!({"password_hash": hash}).to_string();
     let cred_id = raisfast::utils::id::new_id();
     let cred_now = raisfast::utils::tz::now_utc();

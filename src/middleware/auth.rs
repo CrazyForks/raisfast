@@ -65,15 +65,23 @@ impl TokenAction {
 #[derive(Debug, Clone)]
 pub(crate) struct Claims {
     pub user_id: SnowflakeId,
-    pub role: UserRole,
+    pub roles: Vec<UserRole>,
+    pub role_ids: Vec<i64>,
     pub tenant_id: String,
     pub scopes: Vec<String>,
+}
+
+impl Claims {
+    pub(crate) fn has_role(&self, role: UserRole) -> bool {
+        self.roles.contains(&role)
+    }
 }
 
 #[derive(Debug, Clone)]
 struct RequestIdentity {
     user_id: Option<i64>,
-    role: UserRole,
+    roles: Vec<UserRole>,
+    role_ids: Vec<i64>,
     tenant_id: Option<String>,
     is_super_admin: bool,
     token_present_but_invalid: bool,
@@ -94,7 +102,26 @@ impl AuthUser {
     }
 
     pub fn role(&self) -> &str {
-        self.0.role.as_str()
+        self.0
+            .roles
+            .first()
+            .copied()
+            .map(UserRole::as_str)
+            .unwrap_or(UserRole::Reader.as_str())
+    }
+
+    /// All roles assigned to the current user.
+    pub fn roles(&self) -> &[UserRole] {
+        &self.0.roles
+    }
+
+    pub fn role_ids(&self) -> &[i64] {
+        &self.0.role_ids
+    }
+
+    /// Whether the current user has a specific role.
+    pub fn has_role(&self, role: UserRole) -> bool {
+        self.0.roles.contains(&role)
     }
 
     pub fn tenant_id(&self) -> Option<&str> {
@@ -106,11 +133,11 @@ impl AuthUser {
     }
 
     pub fn is_admin(&self) -> bool {
-        self.0.role == UserRole::Admin
+        self.has_role(UserRole::Admin)
     }
 
     pub fn is_author(&self) -> bool {
-        self.0.role == UserRole::Author || self.0.role == UserRole::Admin
+        self.has_role(UserRole::Author) || self.has_role(UserRole::Admin)
     }
 
     pub fn is_super_admin(&self) -> bool {
@@ -152,7 +179,11 @@ impl AuthUser {
             return Err(AppError::Unauthorized);
         }
         if !self.has_scope(resource, action) {
-            return Err(AppError::Forbidden);
+            return Err(AppError::ForbiddenScope(format!(
+                "{}:{}",
+                resource,
+                action.as_str()
+            )));
         }
         Ok(())
     }
@@ -181,7 +212,7 @@ impl AuthUser {
         if self.is_authenticated() && self.is_admin() {
             Ok(())
         } else {
-            Err(AppError::Forbidden)
+            Err(AppError::ForbiddenAdmin)
         }
     }
 
@@ -192,14 +223,15 @@ impl AuthUser {
         if self.is_authenticated() && self.is_author() {
             Ok(())
         } else {
-            Err(AppError::Forbidden)
+            Err(AppError::ForbiddenRbac("author role required".to_string()))
         }
     }
 
     pub fn from_parts(user_id: Option<i64>, role: UserRole, tenant_id: Option<String>) -> Self {
         AuthUser(RequestIdentity {
             user_id,
-            role,
+            roles: vec![role],
+            role_ids: Vec::new(),
             tenant_id,
             is_super_admin: false,
             token_present_but_invalid: false,
@@ -214,7 +246,8 @@ impl AuthUser {
         let uid = if user_id == 0 { None } else { Some(user_id) };
         AuthUser(RequestIdentity {
             user_id: uid,
-            role,
+            roles: vec![role],
+            role_ids: Vec::new(),
             tenant_id: if tenant_id.is_empty() {
                 None
             } else {
@@ -230,7 +263,8 @@ impl AuthUser {
         let uid = if user_id == 0 { None } else { Some(user_id) };
         AuthUser(RequestIdentity {
             user_id: uid,
-            role: UserRole::Admin,
+            roles: vec![UserRole::Admin],
+            role_ids: Vec::new(),
             tenant_id: if tenant_id.is_empty() {
                 None
             } else {
@@ -277,27 +311,66 @@ fn extract_bearer_token(parts: &Parts) -> Option<&str> {
 /// Returns `None` if the token is invalid or expired.
 pub(crate) async fn resolve_bearer(token: &str, state: &AppState) -> Option<Claims> {
     if crate::services::api_token::is_api_token(token) {
-        let (user_id, role, scopes, tenant_id) =
+        let (user_id, role_names, scopes, tenant_id) =
             crate::services::api_token::verify_api_token(&state.pool, &*state.cache, token)
                 .await
                 .ok()?;
-        let role: UserRole = role.parse().ok()?;
+        let roles: Vec<UserRole> = role_names.iter().filter_map(|r| r.parse().ok()).collect();
+        let role_ids = resolve_role_ids_cached(&state.pool, &*state.cache, &role_names).await;
+        let tenant_id = tenant_id.unwrap_or_else(|| crate::constants::DEFAULT_TENANT.to_string());
         Some(Claims {
             user_id: SnowflakeId(user_id),
-            role,
-            tenant_id: tenant_id.unwrap_or_else(|| crate::constants::DEFAULT_TENANT.to_string()),
+            roles,
+            role_ids,
+            tenant_id,
             scopes,
         })
     } else {
         let jwt_claims =
             crate::services::auth::verify_token(token, &state.jwt_decoding_key).ok()?;
+        // role_names and role_ids are embedded in the JWT — zero DB/cache queries
+        let roles: Vec<UserRole> = jwt_claims
+            .role_names
+            .iter()
+            .filter_map(|r| r.parse().ok())
+            .collect();
         Some(Claims {
             user_id: jwt_claims.sub.parse().ok()?,
-            role: jwt_claims.role,
+            roles,
+            role_ids: jwt_claims.role_ids,
             tenant_id: jwt_claims.tenant_id,
             scopes: Vec::new(),
         })
     }
+}
+
+/// Resolve role names to role IDs, with cache-aside (60s TTL).
+///
+/// Avoids hitting the DB on every request for the same set of role names.
+async fn resolve_role_ids_cached(
+    pool: &crate::db::Pool,
+    cache: &dyn crate::cache::CacheStore,
+    role_names: &[String],
+) -> Vec<i64> {
+    const CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(300);
+
+    let mut ids = Vec::with_capacity(role_names.len());
+    for name in role_names {
+        let cache_key = format!("role_id:{name}");
+        if let Some(cached) = cache.get(&cache_key).await
+            && let Ok(id) = cached.parse::<i64>()
+        {
+            ids.push(id);
+            continue;
+        }
+        if let Ok(Some(id)) = crate::models::rbac::find_role_id_by_name(pool, name).await {
+            let _ = cache
+                .set(&cache_key, &id.to_string(), Some(CACHE_TTL))
+                .await;
+            ids.push(id);
+        }
+    }
+    ids
 }
 
 async fn extract_claims(parts: &Parts, state: &AppState) -> Option<Claims> {
@@ -326,17 +399,19 @@ impl FromRequestParts<AppState> for AuthUser {
             let token_invalid = has_token && claims.is_none();
 
             let identity = match (claims, header_tenant) {
-                (Some(c), Some(ht)) if c.role == UserRole::Admin => RequestIdentity {
+                (Some(c), Some(ht)) if c.has_role(UserRole::Admin) => RequestIdentity {
                     user_id: Some(*c.user_id),
-                    role: c.role,
+                    roles: c.roles,
+                    role_ids: c.role_ids,
                     tenant_id: if no_tenant { None } else { Some(ht) },
                     is_super_admin: true,
                     token_present_but_invalid: false,
                     scopes: c.scopes,
                 },
-                (Some(c), None) if c.role == UserRole::Admin => RequestIdentity {
+                (Some(c), None) if c.has_role(UserRole::Admin) => RequestIdentity {
                     user_id: Some(*c.user_id),
-                    role: c.role,
+                    roles: c.roles,
+                    role_ids: c.role_ids,
                     tenant_id: None,
                     is_super_admin: true,
                     token_present_but_invalid: false,
@@ -344,7 +419,8 @@ impl FromRequestParts<AppState> for AuthUser {
                 },
                 (Some(c), _) => RequestIdentity {
                     user_id: Some(*c.user_id),
-                    role: c.role,
+                    roles: c.roles,
+                    role_ids: c.role_ids,
                     tenant_id: if no_tenant { None } else { Some(c.tenant_id) },
                     is_super_admin: false,
                     token_present_but_invalid: false,
@@ -352,7 +428,8 @@ impl FromRequestParts<AppState> for AuthUser {
                 },
                 (None, Some(ht)) => RequestIdentity {
                     user_id: None,
-                    role: UserRole::Reader,
+                    roles: vec![UserRole::Reader],
+                    role_ids: Vec::new(),
                     tenant_id: if no_tenant { None } else { Some(ht) },
                     is_super_admin: false,
                     token_present_but_invalid: token_invalid,
@@ -360,7 +437,8 @@ impl FromRequestParts<AppState> for AuthUser {
                 },
                 (None, None) => RequestIdentity {
                     user_id: None,
-                    role: UserRole::Reader,
+                    roles: vec![UserRole::Reader],
+                    role_ids: Vec::new(),
                     tenant_id: if no_tenant {
                         None
                     } else {
@@ -415,12 +493,12 @@ mod tests {
         assert!(!auth.is_admin());
         assert!(matches!(
             auth.ensure_admin().unwrap_err(),
-            AppError::Forbidden
+            AppError::ForbiddenAdmin
         ));
         assert!(!auth.is_author());
         assert!(matches!(
             auth.ensure_author().unwrap_err(),
-            AppError::Forbidden
+            AppError::ForbiddenRbac(_)
         ));
     }
 
@@ -432,7 +510,7 @@ mod tests {
         assert!(!auth.is_admin());
         assert!(matches!(
             auth.ensure_admin().unwrap_err(),
-            AppError::Forbidden
+            AppError::ForbiddenAdmin
         ));
     }
 
@@ -467,11 +545,11 @@ mod tests {
         let auth = AuthUser::from_parts(None, UserRole::Reader, None);
         assert!(matches!(
             auth.ensure_admin().unwrap_err(),
-            AppError::Forbidden
+            AppError::ForbiddenAdmin
         ));
         assert!(matches!(
             auth.ensure_author().unwrap_err(),
-            AppError::Forbidden
+            AppError::ForbiddenRbac(_)
         ));
     }
 

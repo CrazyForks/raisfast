@@ -63,7 +63,14 @@ pub async fn audit_denied_layer(
             Some(token) => match crate::middleware::auth::resolve_bearer(token, &state).await {
                 Some(c) => (
                     Some(*c.user_id),
-                    Some(c.role.as_str().to_string()),
+                    Some(
+                        c.roles
+                            .iter()
+                            .copied()
+                            .map(crate::models::user::UserRole::as_str)
+                            .collect::<Vec<_>>()
+                            .join(","),
+                    ),
                     c.tenant_id,
                 ),
                 None => (None, None, crate::constants::DEFAULT_TENANT.to_string()),

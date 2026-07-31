@@ -311,7 +311,7 @@ pub async fn build_app_state(
             options_service.clone(),
         ));
 
-    let rbac_service = Arc::new(RbacService::new(Arc::new(pool.clone())));
+    let rbac_service = Arc::new(RbacService::new(Arc::new(pool.clone()), Arc::clone(&cache)));
 
     let tenant_service = Arc::new(TenantService::new(Arc::new(pool.clone())));
     let audit_service = Arc::new(crate::services::audit::AuditService::new(pool.clone()));

@@ -33,13 +33,13 @@ pub fn check_owner(
     resource_tenant: Option<&str>,
 ) -> AppResult<()> {
     if !check_tenant(user.tenant_id(), resource_tenant) {
-        return Err(AppError::Forbidden);
+        return Err(AppError::ForbiddenTenant);
     }
     let uid = user.user_id().ok_or(AppError::Unauthorized)?;
     if user.is_admin() || SnowflakeId(uid) == created_by {
         Ok(())
     } else {
-        Err(AppError::Forbidden)
+        Err(AppError::ForbiddenOwnership)
     }
 }
 
@@ -57,13 +57,13 @@ pub fn check_owner_opt(
     resource_tenant: Option<&str>,
 ) -> AppResult<()> {
     if !check_tenant(user.tenant_id(), resource_tenant) {
-        return Err(AppError::Forbidden);
+        return Err(AppError::ForbiddenTenant);
     }
     let uid = user.user_id().ok_or(AppError::Unauthorized)?;
     if user.is_admin() || created_by == Some(SnowflakeId(uid)) {
         Ok(())
     } else {
-        Err(AppError::Forbidden)
+        Err(AppError::ForbiddenOwnership)
     }
 }
 

@@ -53,7 +53,7 @@ mod tests {
     use super::*;
     use crate::dto::PostResponse;
     use crate::models::post::{CommentOpenStatus, Post, PostStatus};
-    use crate::models::user::{RegisteredVia, User, UserRole, UserStatus};
+    use crate::models::user::{RegisteredVia, User, UserStatus};
 
     fn ts() -> crate::utils::tz::Timestamp {
         "2025-01-01T00:00:00Z".parse().unwrap()
@@ -133,7 +133,6 @@ mod tests {
             id: crate::types::snowflake_id::SnowflakeId(id),
             tenant_id: None,
             username: username.into(),
-            role: UserRole::Reader,
             status: UserStatus::Active,
             registered_via: RegisteredVia::Email,
             avatar: None,

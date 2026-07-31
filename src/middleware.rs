@@ -14,7 +14,6 @@ pub mod audit_denied;
 pub mod auth;
 pub mod locale;
 pub mod metrics;
-pub mod permission;
 pub mod permission_guard;
 pub mod rate_limit;
 pub mod request_id;

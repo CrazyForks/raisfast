@@ -159,7 +159,6 @@ mod tests {
             &CreateUserCmd {
                 username: email.to_string(),
                 registered_via: crate::models::user::RegisteredVia::Email,
-                role: None,
             },
             None,
         )
@@ -251,7 +250,6 @@ mod tests {
             &CreateUserCmd {
                 username: "oauthu".into(),
                 registered_via: crate::models::user::RegisteredVia::Oauth,
-                role: None,
             },
             None,
         )

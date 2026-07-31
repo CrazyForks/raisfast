@@ -29,15 +29,33 @@ macro_rules! reg_route {
     // Layered arms: accept a pre-built MethodRouter (with .layer() applied).
     // Requires permission (9 params + `layered`).
     // ═══════════════════════════════════════════════════════════════
-    ($router:expr, $registry:expr, $restful:expr, $path:literal, $method:tt, $router_expr:expr, $source:expr, $name:expr, $perm:expr, layered $(,)?) => {{
+    ($router:expr, $registry:expr, $restful:expr, $path:literal, get, $router_expr:expr, $source:expr, $name:expr, $perm:expr, layered $(,)?) => {{
         let r = $router.route($path, $router_expr);
-        $registry.record_perm(
-            stringify!($method),
-            concat!("/api/v1", $path),
-            $source,
-            $name,
-            $perm,
-        );
+        $registry.record_perm("GET", concat!("/api/v1", $path), $source, $name, $perm);
+        r
+    }};
+
+    ($router:expr, $registry:expr, $restful:expr, $path:literal, post, $router_expr:expr, $source:expr, $name:expr, $perm:expr, layered $(,)?) => {{
+        let r = $router.route($path, $router_expr);
+        $registry.record_perm("POST", concat!("/api/v1", $path), $source, $name, $perm);
+        r
+    }};
+
+    ($router:expr, $registry:expr, $restful:expr, $path:literal, put, $router_expr:expr, $source:expr, $name:expr, $perm:expr, layered $(,)?) => {{
+        let r = $router.route($path, $router_expr);
+        $registry.record_perm("PUT", concat!("/api/v1", $path), $source, $name, $perm);
+        r
+    }};
+
+    ($router:expr, $registry:expr, $restful:expr, $path:literal, delete, $router_expr:expr, $source:expr, $name:expr, $perm:expr, layered $(,)?) => {{
+        let r = $router.route($path, $router_expr);
+        $registry.record_perm("DELETE", concat!("/api/v1", $path), $source, $name, $perm);
+        r
+    }};
+
+    ($router:expr, $registry:expr, $restful:expr, $path:literal, create, $router_expr:expr, $source:expr, $name:expr, $perm:expr, layered $(,)?) => {{
+        let r = $router.route($path, $router_expr);
+        $registry.record_perm("POST", concat!("/api/v1", $path), $source, $name, $perm);
         r
     }};
 
