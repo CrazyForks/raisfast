@@ -265,8 +265,7 @@ impl ContentTypeRegistry {
             schema.api.update.access,
             schema.api.delete.access,
         ]
-        .iter()
-        .any(|a| *a == ContentTypeApiAccess::Owner);
+        .contains(&ContentTypeApiAccess::Owner);
         if needs_owner
             && !schema.is_protocol_column(COL_CREATED_BY)
             && schema.get_field(COL_CREATED_BY).is_none()

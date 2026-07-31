@@ -228,7 +228,7 @@ CREATE TABLE IF NOT EXISTS api_tokens (
     token_hash VARCHAR(255) UNIQUE NOT NULL,
     token_encrypted TEXT NOT NULL,
     description TEXT DEFAULT '',
-    scopes JSONB NOT NULL DEFAULT '["read","write"]',
+    scopes JSONB NOT NULL,
     last_used_at TIMESTAMPTZ,
     expires_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW()

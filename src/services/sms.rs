@@ -89,7 +89,7 @@ pub async fn verify_sms_and_auth(
         None => {
             let username = format!(
                 "user_{}",
-                &phone.replace(|c: char| !c.is_ascii_alphanumeric(), "")
+                phone.replace(|c: char| !c.is_ascii_alphanumeric(), "")
             );
             let user = crate::models::user::create(
                 pool,

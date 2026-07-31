@@ -223,7 +223,7 @@ CREATE TABLE IF NOT EXISTS api_tokens (
     name VARCHAR(255) NOT NULL,
     token_hash VARCHAR(255) UNIQUE NOT NULL,
     token_encrypted TEXT NOT NULL,
-    description TEXT DEFAULT '',
+    description VARCHAR(1000) DEFAULT '',
     scopes TEXT NOT NULL,
     last_used_at DATETIME,
     expires_at DATETIME,

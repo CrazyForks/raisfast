@@ -58,6 +58,7 @@ struct ApiTokenRow {
 }
 
 /// Create a new API Token record
+#[allow(clippy::too_many_arguments)]
 pub async fn create(
     pool: &crate::db::Pool,
     user_id: SnowflakeId,

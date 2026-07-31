@@ -1,0 +1,1 @@
+ALTER TABLE api_tokens ADD COLUMN description VARCHAR(1000) DEFAULT '';

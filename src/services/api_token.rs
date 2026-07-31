@@ -118,6 +118,7 @@ fn decrypt_token(enc: &str, config: &AppConfig) -> AppResult<String> {
 pub struct CreateTokenResult {
     pub id: String,
     pub name: String,
+    pub description: String,
     pub token: String,
     pub scopes: Vec<String>,
     pub expires_at: Option<Timestamp>,
@@ -130,6 +131,7 @@ pub async fn create_token(
     config: &AppConfig,
     auth: &AuthUser,
     name: &str,
+    description: &str,
     scopes: Vec<String>,
     expires_at: Option<&str>,
 ) -> AppResult<CreateTokenResult> {
@@ -174,7 +176,7 @@ pub async fn create_token(
         pool,
         user_id,
         name.trim(),
-        "",
+        description,
         &hash,
         &encrypted,
         &scopes_json,
@@ -185,6 +187,7 @@ pub async fn create_token(
     Ok(CreateTokenResult {
         id: row.id.to_string(),
         name: row.name,
+        description: row.description,
         token: plain,
         scopes,
         expires_at: row.expires_at,
@@ -469,7 +472,7 @@ mod tests {
             crate::models::user::UserRole::Author,
             "default",
         );
-        let msg = create_token(&pool, &crate::config::app::AppConfig::test_defaults(), &auth, "   ", vec!["posts:read".into()], None)
+        let msg = create_token(&pool, &crate::config::app::AppConfig::test_defaults(), &auth, "   ", "", vec!["posts:read".into()], None)
             .await
             .unwrap_err()
             .to_string();
@@ -484,7 +487,7 @@ mod tests {
             crate::models::user::UserRole::Author,
             "default",
         );
-        let msg = create_token(&pool, &crate::config::app::AppConfig::test_defaults(), &auth, "Test", vec![], None)
+        let msg = create_token(&pool, &crate::config::app::AppConfig::test_defaults(), &auth, "Test", "", vec![], None)
             .await
             .unwrap_err()
             .to_string();
@@ -499,7 +502,7 @@ mod tests {
             crate::models::user::UserRole::Author,
             "default",
         );
-        let msg = create_token(&pool, &crate::config::app::AppConfig::test_defaults(), &auth, "Test", vec!["superuser".into()], None)
+        let msg = create_token(&pool, &crate::config::app::AppConfig::test_defaults(), &auth, "Test", "", vec!["superuser".into()], None)
             .await
             .unwrap_err()
             .to_string();
@@ -519,6 +522,7 @@ mod tests {
             &crate::config::app::AppConfig::test_defaults(),
             &auth,
             "Test",
+            "",
             vec!["posts:read".into(), "invalid_scope".into()],
             None,
         )
@@ -542,6 +546,7 @@ mod tests {
             &crate::config::app::AppConfig::test_defaults(),
             &auth,
             "CI/CD",
+            "",
             vec!["posts:read".into(), "posts:create".into()],
             None,
         )

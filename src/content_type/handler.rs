@@ -732,7 +732,7 @@ pub async fn do_list(
     params: ListParams,
     auth: &AuthUser,
 ) -> Result<serde_json::Value, AppError> {
-    auth.ensure_scope(&ct.singular, TokenAction::Read)?;
+    auth.ensure_scope(&ct.plural, TokenAction::Read)?;
     let repo = ContentRepository::new(state.pool.clone());
     let include = params.include.as_deref().map(parse_include);
 
@@ -884,7 +884,7 @@ pub async fn do_get(
     id: SnowflakeId,
     auth: &AuthUser,
 ) -> Result<serde_json::Value, AppError> {
-    auth.ensure_scope(&ct.singular, TokenAction::Read)?;
+    auth.ensure_scope(&ct.plural, TokenAction::Read)?;
     let cache_key = cms_detail_cache_key(ct, id);
     let cache_ttl = std::time::Duration::from_secs(state.config.rule_engine.cms_cache_ttl_secs);
     if ct.api.get.cache
@@ -941,7 +941,7 @@ pub async fn do_create(
     save_ctx: &SaveContext,
     auth: &AuthUser,
 ) -> Result<serde_json::Value, AppError> {
-    auth.ensure_scope(&ct.singular, TokenAction::Create)?;
+    auth.ensure_scope(&ct.plural, TokenAction::Create)?;
     let hook_data = json!({
         "content_type": ct.singular,
         "data": &data,
@@ -1023,7 +1023,7 @@ pub async fn do_update(
     save_ctx: &SaveContext,
     auth: &AuthUser,
 ) -> Result<serde_json::Value, AppError> {
-    auth.ensure_scope(&ct.singular, TokenAction::Update)?;
+    auth.ensure_scope(&ct.plural, TokenAction::Update)?;
     let repo = ContentRepository::new(state.pool.clone());
 
     let old_record_value = repo.find_by_id(ct, id, None, true).await?;
@@ -1121,7 +1121,7 @@ pub async fn do_delete(
     id: SnowflakeId,
     auth: &AuthUser,
 ) -> Result<(), AppError> {
-    auth.ensure_scope(&ct.singular, TokenAction::Delete)?;
+    auth.ensure_scope(&ct.plural, TokenAction::Delete)?;
     let repo = ContentRepository::new(state.pool.clone());
 
     let existing = repo.find_by_id(ct, id, None, true).await?;

@@ -83,6 +83,7 @@ pub async fn create(
         &state.config,
         &auth,
         &body.name,
+        body.description.as_deref().unwrap_or(""),
         body.scopes,
         body.expires_at.as_deref(),
     )

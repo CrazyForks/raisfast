@@ -232,7 +232,7 @@ CREATE TABLE IF NOT EXISTS api_tokens (
     token_hash TEXT UNIQUE NOT NULL,
     token_encrypted TEXT NOT NULL,
     description TEXT DEFAULT '',
-    scopes TEXT NOT NULL DEFAULT '["read","write"]',
+    scopes TEXT NOT NULL,
     last_used_at TEXT,
     expires_at TEXT,
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
