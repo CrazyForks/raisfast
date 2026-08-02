@@ -158,6 +158,9 @@ pub struct AppConfig {
     /// Whether to enable WebSocket real-time push (default false)
     #[serde(default)]
     pub websocket_enabled: bool,
+    /// MCP (Model Context Protocol) server configuration
+    #[serde(default)]
+    pub mcp: McpConfig,
     #[serde(default)]
     pub oauth: crate::config::oauth::OAuthConfig,
     #[serde(default = "default_true")]
@@ -229,6 +232,10 @@ pub struct BuiltinsConfig {
     pub payment: bool,
     #[serde(default = "default_true")]
     pub wallet: bool,
+    /// Whether to enable the MCP (Model Context Protocol) server at `/api/v1/mcp`
+    /// and the `raisfast mcp serve` stdio subcommand (default true).
+    #[serde(default = "default_true")]
+    pub mcp: bool,
 }
 
 impl Default for BuiltinsConfig {
@@ -242,6 +249,7 @@ impl Default for BuiltinsConfig {
             ecommerce: true,
             payment: true,
             wallet: true,
+            mcp: true,
         }
     }
 }
@@ -281,6 +289,10 @@ impl BuiltinsConfig {
                 .ok()
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(true),
+            mcp: env::var("BUILTIN_MCP")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(true),
         }
     }
 
@@ -294,6 +306,7 @@ impl BuiltinsConfig {
             && !self.ecommerce
             && !self.payment
             && !self.wallet
+            && !self.mcp
     }
 
     /// Returns the list of protected tables.
@@ -324,6 +337,7 @@ impl BuiltinsConfig {
             "graphql",
             "health",
             "media",
+            "mcp",
             "oauth",
             "options",
             "orders",
@@ -463,6 +477,77 @@ pub struct CronScheduleConfig {
     pub cron_expr: String,
     #[serde(default = "default_true")]
     pub enabled: bool,
+}
+
+/// MCP (Model Context Protocol) server configuration
+///
+/// Controls the built-in MCP server which exposes raisfast's CMS data,
+/// content-type schemas, and admin operations to AI assistants such as
+/// Claude Desktop and Cursor.
+///
+/// | Environment Variable | Type | Default | Description |
+/// |----------|------|--------|------|
+/// | `MCP_ENABLED` | bool | `true` | Master switch (also governed by `BUILTIN_MCP`) |
+/// | `MCP_LOCAL_USER_ID` | i64 | (empty) | User ID impersonated by the stdio transport (`mcp serve`) |
+/// | `MCP_LOCAL_TENANT_ID` | String | `default` | Tenant for stdio transport |
+/// | `MCP_MAX_RESULT_CHARS` | usize | `20000` | Truncate tool/resource results above this length |
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct McpConfig {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// User ID impersonated by the stdio transport when no HTTP auth is available.
+    /// When empty, stdio tools run as an anonymous reader (write tools will fail).
+    #[serde(default)]
+    pub local_user_id: Option<i64>,
+    /// Tenant ID for the stdio transport.
+    #[serde(default = "default_mcp_local_tenant")]
+    pub local_tenant_id: String,
+    /// Hard upper bound on the size of any tool/resource result, in characters.
+    /// Protects AI clients from accidentally pulling huge tables.
+    #[serde(default = "default_mcp_max_result_chars")]
+    pub max_result_chars: usize,
+}
+
+impl Default for McpConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            local_user_id: None,
+            local_tenant_id: default_mcp_local_tenant(),
+            max_result_chars: default_mcp_max_result_chars(),
+        }
+    }
+}
+
+impl McpConfig {
+    pub fn from_env() -> Self {
+        let defaults = Self::default();
+        Self {
+            enabled: env::var("MCP_ENABLED")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(true),
+            local_user_id: env::var("MCP_LOCAL_USER_ID")
+                .ok()
+                .and_then(|v| v.parse().ok()),
+            local_tenant_id: env::var("MCP_LOCAL_TENANT_ID")
+                .ok()
+                .filter(|v| !v.is_empty())
+                .unwrap_or(defaults.local_tenant_id),
+            max_result_chars: env::var("MCP_MAX_RESULT_CHARS")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(defaults.max_result_chars),
+        }
+    }
+}
+
+fn default_mcp_local_tenant() -> String {
+    crate::constants::DEFAULT_TENANT.to_string()
+}
+
+fn default_mcp_max_result_chars() -> usize {
+    20000
 }
 
 fn default_true() -> bool {
@@ -944,6 +1029,7 @@ impl AppConfig {
                 .ok()
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(false),
+            mcp: McpConfig::from_env(),
             oauth: crate::config::oauth::OAuthConfig::from_env(),
             registration_email_enabled: env::var("REGISTRATION_EMAIL_ENABLED")
                 .ok()
@@ -1112,6 +1198,7 @@ impl AppConfig {
             rule_engine: RuleEngineConfig::default(),
             graphql_enabled: false,
             websocket_enabled: false,
+            mcp: McpConfig::default(),
             oauth: crate::config::oauth::OAuthConfig {
                 enabled: false,
                 redirect_url: "http://localhost:3000/auth/callback".into(),
@@ -1302,6 +1389,7 @@ mod tests {
             ecommerce: false,
             payment: false,
             wallet: false,
+            mcp: false,
         };
         assert!(b.is_all_disabled());
     }

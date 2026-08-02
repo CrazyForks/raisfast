@@ -32,6 +32,8 @@ pub mod event;
 pub mod eventbus;
 pub mod graphql;
 pub mod handlers;
+#[cfg(feature = "mcp")]
+pub mod mcp;
 pub mod middleware;
 pub mod models;
 pub mod notifier;

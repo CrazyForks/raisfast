@@ -10,7 +10,7 @@ homepage = "https://github.com/raisfast/raisfast"
 license = "Apache-2.0"
 
 [features]
-default = ["db-sqlite", "search-tantivy", "plugin-js", "plugin-lua", "plugin-rhai", "openapi", "proxy", "tunnel"]
+default = ["db-sqlite", "search-tantivy", "plugin-js", "plugin-lua", "plugin-rhai", "openapi", "proxy", "tunnel", "mcp"]
 
 # ── Database backend (pick exactly one) ────────────────────────────
 db-sqlite  = ["sqlx/sqlite"]
@@ -55,6 +55,11 @@ tunnel = ["dep:bore-cli"]
 
 # ── Tauri desktop mode ────────────────────────────────────────────
 tauri = ["dep:tauri"]
+
+# ── MCP (Model Context Protocol) server ────────────────────────────
+# Manual JSON-RPC implementation over Streamable HTTP + stdio.
+# Zero extra dependencies — reuses axum + serde_json already in the tree.
+mcp = []
 
 [dependencies]
 indexmap = "2"

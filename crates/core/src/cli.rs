@@ -7,6 +7,8 @@ mod codegen_cmd;
 mod ct_cmd;
 mod db_cmd;
 mod doctor_cmd;
+#[cfg(feature = "mcp")]
+mod mcp_cmd;
 mod plugin_cmd;
 mod route_cmd;
 mod server_cmd;
@@ -72,6 +74,12 @@ enum Commands {
     Codegen {
         #[command(subcommand)]
         action: CodegenAction,
+    },
+    /// MCP (Model Context Protocol) server
+    #[cfg(feature = "mcp")]
+    Mcp {
+        #[command(subcommand)]
+        action: McpAction,
     },
     /// Proxy management (multi-tenant reverse proxy)
     #[cfg(all(feature = "proxy", unix))]
@@ -257,6 +265,14 @@ pub enum CodegenAction {
         #[arg(long)]
         dry_run: bool,
     },
+}
+
+/// MCP server subcommands
+#[cfg(feature = "mcp")]
+#[derive(Subcommand)]
+pub enum McpAction {
+    /// Run the MCP server over stdio (for local AI clients like Claude Desktop)
+    Serve,
 }
 
 fn lerp(a: u8, b: u8, t: f32) -> u8 {
@@ -539,6 +555,13 @@ pub async fn run(cli: Cli, config: &AppConfig) -> anyhow::Result<()> {
                 },
         }) => {
             codegen_cmd::run_model(&tables, force, dry_run)?;
+        }
+
+        #[cfg(feature = "mcp")]
+        Some(Commands::Mcp {
+            action: McpAction::Serve,
+        }) => {
+            mcp_cmd::serve(config).await?;
         }
 
         #[cfg(all(feature = "proxy", unix))]

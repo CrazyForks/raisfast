@@ -225,6 +225,12 @@ async fn build_app(
         api_v1 = api_v1.merge(crate::graphql::handler::routes(&mut registry, config));
     }
 
+    #[cfg(feature = "mcp")]
+    if config.builtins.mcp && config.mcp.enabled {
+        tracing::info!("MCP server enabled at /api/v1/mcp");
+        api_v1 = api_v1.merge(crate::mcp::handler::routes(&mut registry, config));
+    }
+
     api_v1 = api_v1
         .merge(plugin::routes(&mut registry, config))
         .merge(cron::routes(&mut registry, config))
