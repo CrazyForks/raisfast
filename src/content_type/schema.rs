@@ -279,7 +279,7 @@ pub enum ApiAccess {
     #[default]
     Public,
     /// Requires login (any role)
-    Member,
+    Authed,
     /// Requires login; only the record's creator (`created_by`) may access
     Owner,
     /// Requires admin role
@@ -299,7 +299,7 @@ pub enum ApiAccess {
 #[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ApiEndpointConfig {
-    /// Access level: none / public / member / admin
+    /// Access level: none / public / authed / owner / admin
     #[serde(default)]
     pub access: ApiAccess,
     /// Data filter expression (applies to all requests passing access check)
@@ -338,19 +338,19 @@ pub struct ApiConfig {
     #[serde(default)]
     pub get: ApiEndpointConfig,
     /// Create (POST /cms/{plural})
-    #[serde(default = "api_endpoint_member")]
+    #[serde(default = "api_endpoint_authed")]
     pub create: ApiEndpointConfig,
     /// Update (PUT /cms/{plural}/{id})
-    #[serde(default = "api_endpoint_member")]
+    #[serde(default = "api_endpoint_authed")]
     pub update: ApiEndpointConfig,
     /// Delete (DELETE /cms/{plural}/{id})
     #[serde(default = "api_endpoint_admin")]
     pub delete: ApiEndpointConfig,
 }
 
-fn api_endpoint_member() -> ApiEndpointConfig {
+fn api_endpoint_authed() -> ApiEndpointConfig {
     ApiEndpointConfig {
-        access: ApiAccess::Member,
+        access: ApiAccess::Authed,
         filter: None,
         filter_auth: None,
         cache: true,
@@ -373,8 +373,8 @@ impl Default for ApiConfig {
         Self {
             list: ApiEndpointConfig::default(),
             get: ApiEndpointConfig::default(),
-            create: api_endpoint_member(),
-            update: api_endpoint_member(),
+            create: api_endpoint_authed(),
+            update: api_endpoint_authed(),
             delete: api_endpoint_admin(),
         }
     }
@@ -390,7 +390,7 @@ pub fn check_api_access(
             "content-type access denied".to_string(),
         )),
         ApiAccess::Public => Ok(()),
-        ApiAccess::Member | ApiAccess::Owner => {
+        ApiAccess::Authed | ApiAccess::Owner => {
             if auth.is_authenticated() {
                 Ok(())
             } else {
@@ -1617,19 +1617,19 @@ type = "text"
     }
 
     #[test]
-    fn check_api_access_member_requires_auth() {
+    fn check_api_access_authed_requires_auth() {
         let anon = crate::middleware::auth::AuthUser::from_parts(
             None,
             crate::models::user::UserRole::Reader,
             None,
         );
-        assert!(check_api_access(ApiAccess::Member, &anon).is_err());
+        assert!(check_api_access(ApiAccess::Authed, &anon).is_err());
         let user = crate::middleware::auth::AuthUser::from_parts(
             Some(1),
             crate::models::user::UserRole::Reader,
             None,
         );
-        assert!(check_api_access(ApiAccess::Member, &user).is_ok());
+        assert!(check_api_access(ApiAccess::Authed, &user).is_ok());
     }
 
     #[test]
@@ -1781,8 +1781,8 @@ fields = ["a; DROP TABLE"]
         let api = ApiConfig::default();
         assert_eq!(api.list.access, ApiAccess::Public);
         assert_eq!(api.get.access, ApiAccess::Public);
-        assert_eq!(api.create.access, ApiAccess::Member);
-        assert_eq!(api.update.access, ApiAccess::Member);
+        assert_eq!(api.create.access, ApiAccess::Authed);
+        assert_eq!(api.update.access, ApiAccess::Authed);
         assert_eq!(api.delete.access, ApiAccess::Admin);
     }
 
@@ -2034,13 +2034,13 @@ access = "admin"
 cache = true
 
 [api.get]
-access = "member"
+access = "authed"
 filter = 'status = "published"'
 "#;
         let ct = ContentTypeSchema::parse_from_str(toml).unwrap();
         assert_eq!(ct.api.list.access, ApiAccess::Admin);
         assert!(ct.api.list.cache);
-        assert_eq!(ct.api.get.access, ApiAccess::Member);
+        assert_eq!(ct.api.get.access, ApiAccess::Authed);
         assert_eq!(ct.api.get.filter.as_deref(), Some("status = \"published\""));
     }
 }

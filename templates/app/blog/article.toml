@@ -70,10 +70,10 @@ cache = true
 filter = 'status = "published"'
 
 [api.create]
-access = "member"
+access = "authed"
 
 [api.update]
-access = "member"
+access = "authed"
 filter = 'created_by = @request.auth.id'
 
 [api.delete]

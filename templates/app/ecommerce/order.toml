@@ -34,15 +34,15 @@ min = 0
 type = "json"
 
 [api.list]
-access = "member"
+access = "authed"
 filter = 'created_by = @request.auth.id'
 
 [api.get]
-access = "member"
+access = "authed"
 filter = 'created_by = @request.auth.id'
 
 [api.create]
-access = "member"
+access = "authed"
 
 [api.update]
 access = "admin"

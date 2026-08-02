@@ -43,25 +43,25 @@ handler = "listBoardTopics"
 method = "PUT"
 path = "/api/v1/plugins/forum/replies/:id/accept"
 handler = "acceptAnswer"
-auth = "member"
+auth = "authed"
 
 [[routes]]
 method = "POST"
 path = "/api/v1/plugins/forum/vote"
 handler = "vote"
-auth = "member"
+auth = "authed"
 
 [[routes]]
 method = "DELETE"
 path = "/api/v1/plugins/forum/vote"
 handler = "unvote"
-auth = "member"
+auth = "authed"
 
 [[routes]]
 method = "POST"
 path = "/api/v1/plugins/forum/polls"
 handler = "createPoll"
-auth = "member"
+auth = "authed"
 
 [[routes]]
 method = "GET"
@@ -72,10 +72,10 @@ handler = "getPoll"
 method = "POST"
 path = "/api/v1/plugins/forum/polls/:pollId/vote"
 handler = "castVote"
-auth = "member"
+auth = "authed"
 
 [[routes]]
 method = "DELETE"
 path = "/api/v1/plugins/forum/polls/:pollId"
 handler = "deletePoll"
-auth = "member"
+auth = "authed"

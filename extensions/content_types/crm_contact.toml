@@ -90,16 +90,16 @@ default_sort = "created_at:desc"
 columns = ["first_name", "last_name", "email", "company", "job_title", "status", "lifecycle_stage", "owner_id"]
 
 [api.list]
-access = "member"
+access = "authed"
 
 [api.get]
-access = "member"
+access = "authed"
 
 [api.create]
-access = "member"
+access = "authed"
 
 [api.update]
-access = "member"
+access = "authed"
 filter = "@request.auth.id == owner_id || @request.auth.role == 'admin'"
 
 [api.delete]

@@ -485,6 +485,7 @@ plural = "portfolios"
 table = "portfolios"
 kind = "collection"
 description = "Portfolio items"
+# group = "showcase"      # optional namespace (see Content Type Groups below)
 
 [[fields]]
 name = "title"
@@ -505,15 +506,45 @@ relation = { relation_type = "many_to_one", target = "category" }
 protocols = ["timestampable", "soft_deletable", "sortable"]
 ```
 
+### Content Type Groups
+
+The optional `group` field namespaces a content type so related types can be bundled together and share a URL prefix. When set, API routes are prefixed with the group: `/cms/{group}/{plural}` instead of `/cms/{plural}`.
+
+```toml
+# extensions/content_types/forum_topic.toml
+[content_type]
+name = "Forum Topic"
+singular = "topic"
+plural = "topics"
+table = "forum_topics"
+group = "forum"           # all forum_* types live under /cms/forum/*
+```
+
+**Naming & uniqueness rules:**
+
+- `group` accepts only alphanumeric / underscore characters (empty string = no group, the default).
+- Different groups may share the same `singular` / `plural` names; only `table` must stay globally unique.
+- TOML file naming convention: `{singular}.toml` (flat) or `{group}_{singular}.toml` (grouped), e.g. `forum_topic.toml`.
+
+**Derived keys (used by the registry, permissions, GraphQL, Tauri & CLI):**
+
+| Key | Flat | Grouped | Used for |
+|-----|------|---------|----------|
+| Registry key | `topic` | `forum/topic` | internal lookup |
+| Scope | `topics` | `forum/topics` | `ensure_scope`, cache keys |
+| Route segment | `topics` | `forum/topics` | URL path |
+
 ### Generated API
 
-| Method | Path | Description |
-|--------|------|-------------|
-| `GET` | `/cms/portfolios` | List (paginated, filterable) |
-| `GET` | `/cms/portfolios/:id` | Get single |
-| `POST` | `/cms/portfolios` | Create |
-| `PUT` | `/cms/portfolios/:id` | Update |
-| `DELETE` | `/cms/portfolios/:id` | Delete |
+| Method | Flat path | Grouped path | Description |
+|--------|-----------|--------------|-------------|
+| `GET` | `/cms/portfolios` | `/cms/forum/topics` | List (paginated, filterable) |
+| `GET` | `/cms/portfolios/:id` | `/cms/forum/topics/:id` | Get single |
+| `POST` | `/cms/portfolios` | `/cms/forum/topics` | Create |
+| `PUT` | `/cms/portfolios/:id` | `/cms/forum/topics/:id` | Update |
+| `DELETE` | `/cms/portfolios/:id` | `/cms/forum/topics/:id` | Delete |
+
+Single-kind (`kind = "single"`) content types use the singular segment instead of the plural, e.g. `/cms/forum/settings`.
 
 ### API Access Control
 
@@ -521,7 +552,7 @@ Each content type can configure per-endpoint access:
 
 ```toml
 [content_type.api.list]
-access = "public"       # none / public / member / admin
+access = "public"       # none / public / authed / owner / admin
 cache = true
 fields = ["title", "image"]
 
@@ -535,8 +566,65 @@ Dynamic data filtering via expressions:
 
 - `@request.auth.id` — current user ID
 - `@request.body.*` — request body fields
+- `@request.query.*` — URL query params
 - `@now` — current timestamp
-- Compiles to SQL WHERE clauses
+- `:isset` / `:length` — suffix operators
+- Compiles to SQL WHERE clauses (single-table, no JOINs)
+
+### Three-Layer Permission Model
+
+Content type APIs enforce **three orthogonal layers** of access control. Every request must pass all layers (logical AND — the strictest wins):
+
+```
+Request
+  │
+  ▼
+Layer 1: Token Scope (ensure_scope)
+  │   Does this token have permission for resource:action?
+  │   JWT (empty scopes) → always pass
+  │   API Token → must match scope wildcard
+  │
+  ▼
+Layer 2: Endpoint Access (check_api_access)
+  │   Does the user's role meet the TOML-configured access level?
+  │   none → deny all
+  │   public → anyone
+  │   authed → requires login
+  │   owner → requires login + must be record creator
+  │   admin → requires admin role
+  │
+  ▼
+Layer 3: Rule Engine (filter / filter_auth)
+  │   Row-level data filtering via expressions
+  │   filter → applies to all requests
+  │   filter_auth → additional OR condition for authenticated users
+  │   owner → auto-injects `created_by = auth_id`
+  │
+  ▼
+Response
+```
+
+The layers are **orthogonal** — they check different dimensions and never conflict:
+
+| Dimension | Token Scope | Endpoint Access | Rule Engine |
+|-----------|-------------|-----------------|-------------|
+| What it controls | token → resource mapping | user role → operation | row-level visibility |
+| Source | API Token scopes at creation | TOML `[api.xxx] access =` | TOML `filter =` expressions |
+| JWT behavior | skipped (always pass) | enforced | enforced |
+| API Token behavior | enforced | enforced (inherits user roles) | enforced |
+
+### Known Permission Limitations
+
+The three-layer model covers most CMS/BaaS scenarios (blogs, e-commerce, forums, CRM). The following cases are **not natively supported** — use **plugin hooks** for custom enforcement in the service layer:
+
+| Limitation | Description | Workaround |
+|-----------|-------------|------------|
+| **Field-level write ACL** | Cannot restrict which fields a user may modify per role (e.g. author can edit `title` but not `status`). | Plugin `before_update` hook validates field changes. |
+| **Cross-table relational rules** | Rule expressions compile to single-table WHERE; cannot reference parent/related tables (e.g. "only delete replies whose parent topic is unlocked"). | Plugin `before_delete` hook queries related table. |
+| **Per-resource dynamic roles** | Roles are global (`user_roles` table), not scoped to a specific resource (e.g. "user A is moderator of board-1 but not board-2"). | Custom `resource_roles` table + plugin hook. |
+| **Quota / rate limits per user** | No counting mechanism in rule expressions (e.g. "max 5 posts per user per day"). | Plugin `before_create` hook + counter cache/DB. |
+| **Hierarchical permission inheritance** | Tree-structured permission inheritance (e.g. "moderator of parent board manages all child boards") is not expressible. | Plugin hook with recursive parent_id traversal. |
+| **Conditional field masking** | `fields` config is static; cannot dynamically mask/sanitize field values per role at read time (e.g. mask email for non-admins). | Plugin `after_get` hook transforms response. |
 
 ---
 

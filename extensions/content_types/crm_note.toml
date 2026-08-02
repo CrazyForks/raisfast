@@ -58,18 +58,18 @@ default_sort = "pinned:desc,created_at:desc"
 columns = ["content", "contact", "company", "deal", "pinned", "owner_id", "created_at"]
 
 [api.list]
-access = "member"
+access = "authed"
 
 [api.get]
-access = "member"
+access = "authed"
 
 [api.create]
-access = "member"
+access = "authed"
 
 [api.update]
-access = "member"
+access = "authed"
 filter = "@request.auth.id == owner_id || @request.auth.role == 'admin'"
 
 [api.delete]
-access = "member"
+access = "authed"
 filter = "@request.auth.id == owner_id || @request.auth.role == 'admin'"

@@ -65,12 +65,12 @@ access = "public"
 cache = true
 
 [api.create]
-access = "member"
+access = "authed"
 
 [api.update]
-access = "member"
+access = "authed"
 filter = "@request.auth.id == author_id || @request.auth.role == 'admin'"
 
 [api.delete]
-access = "member"
+access = "authed"
 filter = "@request.auth.id == author_id || @request.auth.role == 'admin'"
