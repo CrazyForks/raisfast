@@ -5,7 +5,7 @@ use axum::{
 use rust_embed::Embed;
 
 #[derive(Embed)]
-#[folder = "adminui/"]
+#[folder = "$RAISFAST_ROOT/adminui"]
 #[prefix = ""]
 #[exclude = ".git"]
 struct AdminAssets;

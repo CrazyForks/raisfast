@@ -40,7 +40,10 @@ impl JobHandler for SendEmailVerificationHandler {
         );
 
         let mut tera = tera::Tera::default();
-        let source = include_str!("../../../templates/email/email-verification.html");
+        let source = include_str!(concat!(
+            env!("RAISFAST_ROOT"),
+            "/templates/email/email-verification.html"
+        ));
         let html = match tera.add_raw_template("email-verification", source) {
             Ok(_) => {
                 let mut ctx = tera::Context::new();

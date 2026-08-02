@@ -1,0 +1,206 @@
+[package]
+name = "raisfast"
+version = "0.2.29"
+edition = "2024"
+default-run = "raisfast"
+build = "build.rs"
+repository = "https://github.com/raisfast/raisfast"
+description = "The fastest CMS, easiest to deploy. Rust-powered high-performance BaaS and headless CMS with built-in blog, ecommerce, wallet, payment and 4 plugin engines."
+homepage = "https://github.com/raisfast/raisfast"
+license = "Apache-2.0"
+
+[features]
+default = ["db-sqlite", "search-tantivy", "plugin-js", "plugin-lua", "plugin-rhai", "openapi", "proxy", "tunnel"]
+
+# ── Database backend (pick exactly one) ────────────────────────────
+db-sqlite  = ["sqlx/sqlite"]
+db-postgres = ["sqlx/postgres"]
+db-mysql   = ["sqlx/mysql"]
+
+# ── Plugin runtimes ────────────────────────────────────────────────
+plugin-wasm = ["wasmtime", "wasmtime-wasi"]
+plugin-js   = ["rquickjs"]
+plugin-lua  = ["mlua"]
+plugin-rhai = ["rhai"]
+plugin-all  = ["plugin-wasm", "plugin-js", "plugin-lua", "plugin-rhai"]
+
+# ── Search engine ────────────────────────────────────────────────────
+search-tantivy = ["tantivy"]
+
+# ── TLS (HTTPS) ─────────────────────────────────────────────────────
+tls = ["axum-server", "rustls", "tokio-rustls"]
+
+# ── Storage backend ────────────────────────────────────────────────
+storage-s3 = ["aws-sdk-s3", "aws-config"]
+
+# ── Payment providers ────────────────────────────────────────────────
+payment-alipay = ["rsa"]
+payment-creem = []
+payment-stripe = ["async-stripe"]
+payment-wechat = ["rsa", "x509-cert"]
+payment-dodo = []
+payment-all = ["payment-alipay", "payment-creem", "payment-dodo", "payment-stripe", "payment-wechat"]
+
+# ── OpenAPI / Swagger UI ────────────────────────────────────────────
+openapi = []
+
+# ── TypeScript type generation ────────────────────────────────────
+export-types = ["ts-rs"]
+
+# ── Built-in reverse proxy (multi-tenant) ──────────────────────────
+proxy = ["dep:hyper", "dep:hyper-util", "dep:http-body-util", "dep:tokio-util"]
+
+# ── Tunnel client (expose local ports via tunnel.raisfast.com) ────
+tunnel = ["dep:bore-cli"]
+
+# ── Tauri desktop mode ────────────────────────────────────────────
+tauri = ["dep:tauri"]
+
+[dependencies]
+indexmap = "2"
+# Web framework
+axum = { version = "0.8", features = ["macros", "multipart", "ws"] }
+async-graphql = "7"
+async-graphql-axum = "7"
+tokio = { version = "1", features = ["full"] }
+tokio-stream = { version = "0.1", features = ["sync"] }
+futures = "0.3"
+tower = "0.5"
+tower-http = { version = "0.6", features = ["cors", "trace", "limit", "fs", "compression-gzip"] }
+rust-embed = { version = "8", features = ["mime-guess", "include-exclude", "interpolate-folder-path"] }
+mime_guess = "2"
+
+# Observability
+metrics = "0.24"
+metrics-exporter-prometheus = { version = "0.16", default-features = false, features = ["http-listener"] }
+
+# Database
+sqlx = { version = "0.8", features = ["runtime-tokio", "macros", "chrono"] }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Data types
+uuid = { version = "1", features = ["v7", "serde"] }
+chrono = { version = "0.4", features = ["serde", "clock"] }
+chrono-tz = "0.10"
+hex = "0.4"
+hmac = "0.12"
+ sha2 = "0.10"
+ sha1 = "0.10"
+rsa = { version = "0.9", features = ["pem", "sha2"], optional = true }
+x509-cert = { version = "0.2", optional = true }
+base64 = "0.22"
+
+# Security
+argon2 = "0.5"
+getrandom = "0.2"
+jsonwebtoken = "9"
+ammonia = "4"
+
+# Error handling
+thiserror = "2"
+anyhow = "1"
+async-trait = "0.1"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+tracing-appender = "0.2"
+
+# Config
+dotenvy = "0.15"
+
+# Validation
+validator = { version = "0.19", features = ["derive"] }
+
+# URL encoding
+serde_urlencoded = "0.7"
+urlencoding = "2"
+
+# Content
+comrak = { version = "0.36", default-features = false, features = ["shortcodes"] }
+slug = "0.1"
+
+# Media（仅启用博客常用格式：jpeg/png/gif/webp/ico）
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif", "webp", "ico"] }
+
+# Cron scheduling
+cron = "0.15"
+
+# RSS
+rss = "2"
+rust-i18n = "3.1.5"
+clap = { version = "4.6.0", features = ["derive"] }
+nix = { version = "0.31.2", features = ["signal"] }
+
+# Plugin system
+wasmtime = { version = "26", optional = true }
+wasmtime-wasi = { version = "26", optional = true }
+rquickjs = { version = "0.11", features = ["futures", "parallel", "loader", "macro"], optional = true }
+mlua = { version = "0.11", features = ["lua54", "vendored", "send", "serde", "macros"], optional = true }
+rhai = { version = "1.24", features = ["serde", "sync", "internals"], optional = true }
+reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
+toml = { version = "0.8", features = ["preserve_order"] }
+notify = { version = "7", features = ["macos_kqueue"] }
+
+# Search engine (optional)
+tantivy = { version = "0.26", optional = true }
+
+# TLS (optional, for HTTPS)
+axum-server = { version = "0.7", features = ["tls-rustls"], optional = true }
+rustls = { version = "0.23", optional = true }
+tokio-rustls = { version = "0.26", optional = true }
+
+# S3 Storage (optional)
+aws-sdk-s3 = { version = "1", optional = true }
+aws-config = { version = "1", optional = true }
+regex = "1.12.3"
+tera = "1"
+sqlparser = "0.62"
+lettre = { version = "0.11", default-features = false, features = ["smtp-transport", "builder", "tokio1-rustls-tls", "hostname"] }
+tauri = { version = "2", features = ["devtools"], optional = true }
+
+aes-gcm = "0.10"
+async-stripe = { version = "0.39", features = ["runtime-tokio-hyper", "webhook-events"], optional = true }
+dashmap = "6"
+moka = { version = "0.12", features = ["sync"] }
+arc-swap = "1"
+
+# Proxy (optional, multi-tenant reverse proxy)
+hyper = { version = "1", optional = true }
+hyper-util = { version = "0.1", features = ["tokio", "client", "server", "http1"], optional = true }
+http-body-util = { version = "0.1", optional = true }
+tokio-util = { version = "0.7", features = ["rt"], optional = true }
+
+# Tunnel client
+bore-cli = { path = "../../3rd/bore", optional = true }
+
+# OpenAPI
+utoipa = { version = "5", features = ["axum_extras", "chrono", "uuid"] }
+
+# TypeScript type generation
+ts-rs = { version = "12", optional = true, features = ["chrono-impl"] }
+inventory = "0.3.24"
+raisfast-derive = { version = "0.1.0", path = "../derive" }
+ferroid = { version = "2.0.0", features = ["snowflake", "atomic", "basic", "std", "alloc"] }
+
+[dev-dependencies]
+http-body-util = "0.1.3"
+rstest = "0.23"
+tempfile = "3"
+
+[[example]]
+name = "export-types"
+path = "src/tools/export-types.rs"
+required-features = ["export-types"]
+
+[[example]]
+name = "tauri-app"
+path = "src/tools/tauri-app.rs"
+required-features = ["tauri"]
+
+[[test]]
+name = "proxy_tests"
+required-features = ["proxy"]

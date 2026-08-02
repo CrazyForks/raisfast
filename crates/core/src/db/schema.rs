@@ -11,7 +11,7 @@ use std::sync::LazyLock;
 /// Files are accessible as `{db}/{filename}` (e.g. `sqlite/001_add_foo.sql`).
 /// This allows the binary to run migrations without a `migrations/` directory on disk.
 #[derive(Embed)]
-#[folder = "migrations/"]
+#[folder = "$RAISFAST_ROOT/migrations"]
 struct MigrationAssets;
 
 /// Get the list of incremental migration filenames for the active database driver.
@@ -65,13 +65,22 @@ pub fn embedded_migration_sql(filename: &str) -> Option<String> {
 }
 
 #[cfg(feature = "db-sqlite")]
-pub const SCHEMA_SQL: &str = include_str!("../../migrations/sqlite/schema.sqlite.sql");
+pub const SCHEMA_SQL: &str = include_str!(concat!(
+    env!("RAISFAST_ROOT"),
+    "/migrations/sqlite/schema.sqlite.sql"
+));
 
 #[cfg(feature = "db-postgres")]
-pub const SCHEMA_SQL: &str = include_str!("../../migrations/postgres/schema.postgres.sql");
+pub const SCHEMA_SQL: &str = include_str!(concat!(
+    env!("RAISFAST_ROOT"),
+    "/migrations/postgres/schema.postgres.sql"
+));
 
 #[cfg(feature = "db-mysql")]
-pub const SCHEMA_SQL: &str = include_str!("../../migrations/mysql/schema.mysql.sql");
+pub const SCHEMA_SQL: &str = include_str!(concat!(
+    env!("RAISFAST_ROOT"),
+    "/migrations/mysql/schema.mysql.sql"
+));
 
 fn parse_create_table_names(sql: &str) -> Vec<String> {
     let mut names = Vec::new();

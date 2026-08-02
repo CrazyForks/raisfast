@@ -191,12 +191,30 @@ pub enum SqlType {
     Blob,
 }
 
+fn workspace_root() -> PathBuf {
+    let manifest_dir =
+        PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set"));
+    let mut dir: &std::path::Path = &manifest_dir;
+    loop {
+        let cargo_toml = dir.join("Cargo.toml");
+        if cargo_toml.is_file()
+            && let Ok(content) = std::fs::read_to_string(&cargo_toml)
+            && content.contains("[workspace]")
+        {
+            return dir.to_path_buf();
+        }
+        match dir.parent() {
+            Some(p) => dir = p,
+            None => return manifest_dir,
+        }
+    }
+}
+
 impl Schema {
     /// Load and parse migration SQL files for the detected dialect.
     pub fn load() -> Self {
         let dialect = Dialect::from_env();
-        let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set");
-        let base = PathBuf::from(manifest_dir);
+        let base = workspace_root();
         let dir = format!("migrations/{}", dialect.migration_dir());
         let ext = dialect.schema_ext();
 

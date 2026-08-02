@@ -1,27 +1,60 @@
 use std::collections::HashMap;
 use std::env;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+
+/// Walk up from `CARGO_MANIFEST_DIR` to find the directory containing the
+/// workspace-defining `Cargo.toml` (the one with a `[workspace]` table).
+///
+/// This anchors resource paths to the workspace root so that the crate can be
+/// relocated freely without breaking `include_str!` / `rust-embed` references.
+fn workspace_root() -> PathBuf {
+    let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
+    let mut dir: &Path = &manifest_dir;
+    loop {
+        let cargo_toml = dir.join("Cargo.toml");
+        if cargo_toml.is_file()
+            && let Ok(content) = fs::read_to_string(&cargo_toml)
+            && content.contains("[workspace]")
+        {
+            return dir.to_path_buf();
+        }
+        match dir.parent() {
+            Some(p) => dir = p,
+            None => return manifest_dir,
+        }
+    }
+}
 
 fn main() {
-    println!("cargo:rerun-if-changed=migrations");
+    let root = workspace_root();
+
+    // Expose the workspace root to the crate (and proc-macros) at compile time.
+    // - `env!("RAISFAST_ROOT")` in include_str!(concat!(...))
+    // - `$RAISFAST_ROOT` in rust-embed #[folder] (needs `interpolate-folder-path`)
+    println!("cargo:rustc-env=RAISFAST_ROOT={}", root.display());
+
+    println!(
+        "cargo:rerun-if-changed={}",
+        root.join("migrations").display()
+    );
 
     let out_dir = env::var("OUT_DIR").unwrap();
     let dest = Path::new(&out_dir).join("schema_meta.rs");
 
-    let schema = parse_schema();
+    let schema = parse_schema(&root);
     let code = generate_code(&schema);
     fs::write(&dest, code).unwrap();
 }
 
-fn parse_schema() -> HashMap<String, Vec<String>> {
+fn parse_schema(root: &Path) -> HashMap<String, Vec<String>> {
     let mut tables: HashMap<String, Vec<String>> = HashMap::new();
 
     for path in &[
         "migrations/sqlite/schema.sqlite.sql",
         "migrations/sqlite/tenantable.sqlite.sql",
     ] {
-        if let Ok(content) = fs::read_to_string(path) {
+        if let Ok(content) = fs::read_to_string(root.join(path)) {
             parse_sql(&content, &mut tables);
         }
     }

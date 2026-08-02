@@ -24,9 +24,9 @@ fi
 
 # ── 1. 校验：JS host 函数 vs TS SDK ──
 
-JS_HOST="$ROOT_DIR/src/plugins/js_host.rs"
+JS_HOST="$ROOT_DIR/crates/core/src/plugins/js_host.rs"
 TS_SDK="$ROOT_DIR/plugin-sdk/js/js_plugin_v1.ts"
-CONSTANTS="$ROOT_DIR/src/constants.rs"
+CONSTANTS="$ROOT_DIR/crates/core/src/constants.rs"
 
 # 从 js_host.rs 提取 host.set("functionName", ...) 的函数名
 js_host_fns=$(grep -oE 'host\.set\("([a-zA-Z]+)"' "$JS_HOST" | sed 's/host\.set("//;s/"//' | sort -u)

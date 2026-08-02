@@ -26,16 +26,20 @@ pub fn create_new(name: &str, template: &str) -> anyhow::Result<()> {
         std::fs::create_dir_all(project_dir.join(dir))?;
     }
 
-    let config_toml = render_template(include_str!("../../templates/app/config.toml"), name, "");
+    let config_toml = render_template(
+        include_str!(concat!(env!("RAISFAST_ROOT"), "/templates/app/config.toml")),
+        name,
+        "",
+    );
     std::fs::write(project_dir.join("config.toml"), config_toml)?;
 
     std::fs::write(
         project_dir.join(".env.example"),
-        include_str!("../../templates/app/env.example"),
+        include_str!(concat!(env!("RAISFAST_ROOT"), "/templates/app/env.example")),
     )?;
     std::fs::write(
         project_dir.join(".gitignore"),
-        include_str!("../../templates/app/gitignore"),
+        include_str!(concat!(env!("RAISFAST_ROOT"), "/templates/app/gitignore")),
     )?;
 
     match template {
@@ -49,7 +53,7 @@ pub fn create_new(name: &str, template: &str) -> anyhow::Result<()> {
     }
 
     let readme = render_template(
-        include_str!("../../templates/app/README.md"),
+        include_str!(concat!(env!("RAISFAST_ROOT"), "/templates/app/README.md")),
         name,
         match template {
             "blog" => "A blog project built with raisfast",
@@ -98,17 +102,35 @@ fn copy_content_types(project_dir: &Path, template: &str, files: &[&str]) -> any
     for file in files {
         let content = match template {
             "blog" => match *file {
-                "article" => include_str!("../../templates/app/blog/article.toml"),
-                "category" => include_str!("../../templates/app/blog/category.toml"),
-                "tag" => include_str!("../../templates/app/blog/tag.toml"),
+                "article" => include_str!(concat!(
+                    env!("RAISFAST_ROOT"),
+                    "/templates/app/blog/article.toml"
+                )),
+                "category" => include_str!(concat!(
+                    env!("RAISFAST_ROOT"),
+                    "/templates/app/blog/category.toml"
+                )),
+                "tag" => include_str!(concat!(
+                    env!("RAISFAST_ROOT"),
+                    "/templates/app/blog/tag.toml"
+                )),
                 _ => continue,
             },
             "ecommerce" => match *file {
-                "product" => include_str!("../../templates/app/ecommerce/product.toml"),
+                "product" => include_str!(concat!(
+                    env!("RAISFAST_ROOT"),
+                    "/templates/app/ecommerce/product.toml"
+                )),
                 "product_category" => {
-                    include_str!("../../templates/app/ecommerce/product_category.toml")
+                    include_str!(concat!(
+                        env!("RAISFAST_ROOT"),
+                        "/templates/app/ecommerce/product_category.toml"
+                    ))
                 }
-                "order" => include_str!("../../templates/app/ecommerce/order.toml"),
+                "order" => include_str!(concat!(
+                    env!("RAISFAST_ROOT"),
+                    "/templates/app/ecommerce/order.toml"
+                )),
                 _ => continue,
             },
             _ => continue,

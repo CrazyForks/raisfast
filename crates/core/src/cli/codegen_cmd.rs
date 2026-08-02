@@ -59,7 +59,10 @@ pub fn run_model(tables: &[String], force: bool, dry_run: bool) -> anyhow::Resul
     let mut tera = tera::Tera::default();
     tera.add_raw_template(
         "model.rs",
-        include_str!("../../templates/codegen/model.rs.tera"),
+        include_str!(concat!(
+            env!("RAISFAST_ROOT"),
+            "/templates/codegen/model.rs.tera"
+        )),
     )?;
 
     for table in &targets {

@@ -6,17 +6,24 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     protobuf-compiler \
     && rm -rf /var/lib/apt/lists/*
 
+# Workspace + crate manifests (for dependency caching layer)
 COPY Cargo.toml Cargo.lock ./
-COPY raisfast-derive/ raisfast-derive/
-RUN mkdir src && echo "fn main() {}" > src/main.rs
-RUN cargo build --release --features "db-sqlite plugin-all search-tantivy storage-s3" || true
-RUN rm -rf src
-
-COPY src/ src/
-COPY adminui/ adminui/
+COPY crates/derive/ crates/derive/
+COPY crates/core/Cargo.toml crates/core/Cargo.toml
+COPY crates/core/build.rs crates/core/build.rs
+COPY 3rd/bore/ 3rd/bore/
 COPY migrations/ migrations/
-COPY tests/ tests/
-RUN touch src/main.rs \
+RUN mkdir -p crates/core/src && echo "fn main() {}" > crates/core/src/main.rs
+RUN cargo build --release --features "db-sqlite plugin-all search-tantivy storage-s3" || true
+RUN rm -rf crates/core/src
+
+# Real sources + embedded assets
+COPY crates/core/src/ crates/core/src/
+COPY crates/core/tests/ crates/core/tests/
+COPY adminui/ adminui/
+COPY templates/ templates/
+COPY plugin-sdk/ plugin-sdk/
+RUN touch crates/core/src/main.rs \
     && cargo build --release --features "db-sqlite plugin-all search-tantivy storage-s3"
 
 FROM debian:bookworm-slim

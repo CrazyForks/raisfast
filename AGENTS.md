@@ -14,12 +14,15 @@ raisfast — Rust-powered high-performance BaaS and headless CMS. Single binary,
 
 ```bash
 # Compile (SQLite + JS + Rhai)
-SQLX_OFFLINE=false DATABASE_URL="sqlite:./storage/db/raisfast.db?mode=rwc" \
+# NOTE: DATABASE_URL must be absolute — sqlx proc-macros run with CWD = crate
+# root (crates/core/), so relative paths resolve wrongly. `$PWD` anchors to the
+# workspace root when commands are run from there.
+SQLX_OFFLINE=false DATABASE_URL="sqlite:$PWD/storage/db/raisfast.db?mode=rwc" \
   cargo clippy --tests --no-default-features \
   --features "db-sqlite,plugin-js,plugin-rhai" -- -D warnings
 
 # Test
-SQLX_OFFLINE=false DATABASE_URL="sqlite:./storage/db/raisfast.db?mode=rwc" \
+SQLX_OFFLINE=false DATABASE_URL="sqlite:$PWD/storage/db/raisfast.db?mode=rwc" \
   cargo test --no-default-features \
   --features "db-sqlite,plugin-js,plugin-rhai"
 

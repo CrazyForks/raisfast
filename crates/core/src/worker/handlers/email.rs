@@ -131,9 +131,18 @@ impl JobHandler for SendPasswordResetEmailHandler {
 
 fn render_template(template_name: &str, ctx: tera::Context) -> Option<String> {
     let source = match template_name {
-        "welcome" => include_str!("../../../templates/email/welcome.html"),
-        "password-reset" => include_str!("../../../templates/email/password-reset.html"),
-        "email-verification" => include_str!("../../../templates/email/email-verification.html"),
+        "welcome" => include_str!(concat!(
+            env!("RAISFAST_ROOT"),
+            "/templates/email/welcome.html"
+        )),
+        "password-reset" => include_str!(concat!(
+            env!("RAISFAST_ROOT"),
+            "/templates/email/password-reset.html"
+        )),
+        "email-verification" => include_str!(concat!(
+            env!("RAISFAST_ROOT"),
+            "/templates/email/email-verification.html"
+        )),
         _ => return None,
     };
     let mut tera = tera::Tera::default();
