@@ -246,19 +246,6 @@ async fn build_app(
         api_v1 = api_v1.merge(workflow::handler::routes(&mut registry, config));
     }
 
-    api_v1 = api_v1
-        .layer(from_fn(global_rate_limit))
-        .layer(from_fn_with_state(
-            state.clone(),
-            crate::middleware::permission_guard::permission_guard,
-        ))
-        .layer(from_fn_with_state(
-            state.clone(),
-            crate::middleware::audit_denied::audit_denied_layer,
-        ))
-        .layer(Extension(limiters.clone()))
-        .layer(RequestBodyLimitLayer::new(2 * 1024 * 1024));
-
     api_v1 = crate::content_type::handler::register_content_routes(
         api_v1,
         &state.content_type_registry,
@@ -435,6 +422,23 @@ async fn build_app(
     state.route_registry = Arc::new(routes_vec.clone());
     state.route_perms =
         Arc::new(crate::middleware::permission_guard::RoutePermissionMap::from_routes(&routes_vec));
+
+    // Layers must be applied AFTER route_perms is populated so that
+    // `state.clone()` captures the fully-built permission map.
+    // Moving this block before the assignment was a bug that left
+    // permission_guard with an empty route_perms for the lifetime of the app.
+    api_v1 = api_v1
+        .layer(from_fn(global_rate_limit))
+        .layer(from_fn_with_state(
+            state.clone(),
+            crate::middleware::permission_guard::permission_guard,
+        ))
+        .layer(from_fn_with_state(
+            state.clone(),
+            crate::middleware::audit_denied::audit_denied_layer,
+        ))
+        .layer(Extension(limiters.clone()))
+        .layer(RequestBodyLimitLayer::new(2 * 1024 * 1024));
 
     let app = axum::Router::new()
         .route("/health", get(health::health))
