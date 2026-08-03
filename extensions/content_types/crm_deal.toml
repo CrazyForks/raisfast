@@ -3,6 +3,7 @@ name = "Deal"
 singular = "deal"
 plural = "deals"
 table = "crm_deals"
+group = "crm"
 description = "商机/销售机会"
 implements = ["ownable", "timestampable"]
 
@@ -40,14 +41,14 @@ label = "赢单概率(%)"
 [fields.contact]
 type = "relation"
 relation_type = "many_to_one"
-target = "contacts"
+target = "crm_contacts"
 foreign_key = "contact_id"
 label = "关联联系人"
 
 [fields.company]
 type = "relation"
 relation_type = "many_to_one"
-target = "companies"
+target = "crm_companies"
 foreign_key = "company_id"
 label = "关联公司"
 

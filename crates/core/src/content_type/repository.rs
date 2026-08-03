@@ -1425,6 +1425,21 @@ fn cell_to_json(row: &DbRow, col: &str, id_columns: &std::collections::HashSet<&
         }
         return json!(s);
     }
+    if let Ok(Some(v)) = row.try_get::<Option<chrono::NaiveDateTime>, &str>(col) {
+        return json!(v.to_string());
+    }
+    if let Ok(Some(v)) = row.try_get::<Option<chrono::DateTime<chrono::Utc>>, &str>(col) {
+        return json!(v.to_rfc3339());
+    }
+    if let Ok(Some(v)) = row.try_get::<Option<chrono::NaiveDate>, &str>(col) {
+        return json!(v.to_string());
+    }
+    if let Ok(Some(v)) = row.try_get::<Option<chrono::NaiveTime>, &str>(col) {
+        return json!(v.to_string());
+    }
+    if let Ok(Some(v)) = row.try_get::<Option<serde_json::Value>, &str>(col) {
+        return v;
+    }
     Value::Null
 }
 

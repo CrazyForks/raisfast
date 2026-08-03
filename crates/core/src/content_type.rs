@@ -23,6 +23,7 @@
 //! Newly added content types are handled via catch-all dynamic routes without server restart.
 
 pub mod handler;
+pub mod import;
 pub mod migration;
 pub mod repository;
 pub mod resolver;
@@ -450,6 +451,83 @@ impl ContentTypeRegistry {
 
         removed
     }
+
+    /// Check that every relation target in `schema` refers to a known table.
+    ///
+    /// Returns `Err` with a descriptive message listing the first missing
+    /// target. The check includes the schema's own `table` (for self-referencing
+    /// relations) so it is safe to call **before** registering the schema.
+    pub fn check_relation_targets(&self, schema: &ContentTypeSchema) -> Result<(), AppError> {
+        let known: std::collections::HashSet<String> = {
+            let guard = self.inner.load();
+            guard
+                .types
+                .values()
+                .map(|ct| ct.table.clone())
+                .chain(guard.protected_tables.iter().cloned())
+                .chain(std::iter::once(schema.table.clone()))
+                .collect()
+        };
+        for field in &schema.fields {
+            if let Some(rel) = &field.relation
+                && !known.contains(&rel.target)
+            {
+                return Err(AppError::BadRequest(format!(
+                    "relation field \"{}\" targets unknown table \"{}\"",
+                    field.name, rel.target
+                )));
+            }
+        }
+        Ok(())
+    }
+
+    /// Validate that every relation target refers to a known table.
+    ///
+    /// Must be called after [`set_protected_tables`] so that core tables
+    /// (users, tags, …) are recognised as valid targets.
+    ///
+    /// Content types whose relation `target` is neither a registered CT table
+    /// nor a protected (core) table are **unregistered** with a warning.
+    /// The pass iterates to a fixed-point so transitive failures
+    /// (A → B → missing) are caught in one call.
+    pub fn validate_relations(&self) {
+        loop {
+            // Snapshot of valid target tables: registered CT tables + protected core tables.
+            let known: std::collections::HashSet<String> = {
+                let guard = self.inner.load();
+                guard
+                    .types
+                    .values()
+                    .map(|ct| ct.table.clone())
+                    .chain(guard.protected_tables.iter().cloned())
+                    .collect()
+            };
+
+            let mut to_remove: Vec<(String, String, String)> = Vec::new();
+            for ct in self.all() {
+                for field in &ct.fields {
+                    if let Some(rel) = &field.relation
+                        && !known.contains(&rel.target)
+                    {
+                        to_remove.push((ct.registry_key(), ct.name.clone(), rel.target.clone()));
+                        break;
+                    }
+                }
+            }
+
+            if to_remove.is_empty() {
+                break;
+            }
+
+            for (key, ct_name, missing) in to_remove {
+                tracing::warn!(
+                    "content type \"{ct_name}\" references unknown table \"{missing}\"; \
+                     unregistering to avoid runtime errors"
+                );
+                self.unregister(&key);
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -863,5 +941,111 @@ type = "text"
 
         assert_eq!(reg.get("poll").unwrap().name, "poll");
         assert_eq!(reg.get("forum/poll").unwrap().name, "Poll");
+    }
+
+    fn register_ct_with_relation(
+        reg: &ContentTypeRegistry,
+        singular: &str,
+        plural: &str,
+        table: &str,
+        target_table: &str,
+    ) -> Result<(), AppError> {
+        let toml = format!(
+            r#"
+[content_type]
+name = "{singular}"
+singular = "{singular}"
+plural = "{plural}"
+table = "{table}"
+
+[fields.title]
+type = "text"
+
+[fields.link]
+type = "relation"
+relation_type = "many_to_one"
+target = "{target_table}"
+"#
+        );
+        let schema = schema::ContentTypeSchema::parse_from_str(&toml).unwrap();
+        reg.register(
+            schema,
+            &RuleEngineConfig::default(),
+            &[],
+            &valid_protocols(),
+            &test_protocol_registry(),
+        )
+    }
+
+    #[test]
+    fn check_relation_targets_ok() {
+        let reg = ContentTypeRegistry::new();
+        register_ct(&reg, "user", "users", "users").unwrap();
+        // schema targeting "users" before registration
+        let toml = r#"
+[content_type]
+name = "Post"
+singular = "post"
+plural = "posts"
+table = "posts"
+
+[fields.author]
+type = "relation"
+relation_type = "many_to_one"
+target = "users"
+"#;
+        let schema = schema::ContentTypeSchema::parse_from_str(toml).unwrap();
+        assert!(reg.check_relation_targets(&schema).is_ok());
+    }
+
+    #[test]
+    fn check_relation_targets_missing() {
+        let reg = ContentTypeRegistry::new();
+        let toml = r#"
+[content_type]
+name = "Post"
+singular = "post"
+plural = "posts"
+table = "posts"
+
+[fields.author]
+type = "relation"
+relation_type = "many_to_one"
+target = "ghosts"
+"#;
+        let schema = schema::ContentTypeSchema::parse_from_str(toml).unwrap();
+        let err = reg.check_relation_targets(&schema).unwrap_err();
+        assert!(err.to_string().contains("ghosts"));
+    }
+
+    #[test]
+    fn validate_relations_unregisters_dangling() {
+        let reg = ContentTypeRegistry::new();
+        register_ct_with_relation(&reg, "post", "posts", "posts", "users").unwrap();
+        assert_eq!(reg.len(), 1);
+        // "users" is not registered and not a protected table
+        reg.validate_relations();
+        assert_eq!(reg.len(), 0);
+    }
+
+    #[test]
+    fn validate_relations_keeps_valid() {
+        let reg = ContentTypeRegistry::new();
+        reg.set_protected_tables(vec!["users".into()]);
+        register_ct_with_relation(&reg, "post", "posts", "posts", "users").unwrap();
+        reg.validate_relations();
+        assert_eq!(reg.len(), 1);
+    }
+
+    #[test]
+    fn validate_relations_cascades() {
+        let reg = ContentTypeRegistry::new();
+        // post → users (missing)
+        register_ct_with_relation(&reg, "post", "posts", "posts", "users").unwrap();
+        // comment → posts (valid now, but will be invalid after post is removed)
+        register_ct_with_relation(&reg, "comment", "comments", "comments", "posts").unwrap();
+        assert_eq!(reg.len(), 2);
+        reg.validate_relations();
+        assert_eq!(reg.len(), 0);
     }
 }

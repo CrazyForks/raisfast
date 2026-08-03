@@ -248,6 +248,11 @@ pub async fn build_app_state(
     crate::db::schema::set_protected_tables(live_tables, &ct_tables);
     ct_registry.set_protected_tables(crate::db::schema::get_protected_tables());
 
+    // Validate relation targets after all CTs are loaded and protected tables
+    // are known. CTs with dangling relation targets are unregistered here so
+    // that migrate() and runtime queries never hit a missing-table error.
+    ct_registry.validate_relations();
+
     {
         let repo = crate::content_type::repository::ContentRepository::new(pool.clone());
         for schema in ct_registry.all() {

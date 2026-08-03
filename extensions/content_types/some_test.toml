@@ -1,0 +1,17 @@
+[content_type]
+name = "some_test"
+singular = "some_test"
+plural = "some_tests"
+table = "some_tests"
+implements = [
+    "timestampable",
+    "ownable",
+]
+
+[fields.title]
+type = "text"
+max_length = 255
+
+[fields.content]
+type = "text"
+max_length = 255

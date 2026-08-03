@@ -162,7 +162,8 @@ pub async fn permission_guard(
     if required == "admin" {
         match &claims {
             Some(c) if c.has_role(crate::models::user::UserRole::Admin) => {}
-            _ => return AppError::ForbiddenAdmin.into_response(),
+            Some(_) => return AppError::ForbiddenAdmin.into_response(),
+            None => return AppError::Unauthorized.into_response(),
         }
         return next.run(req).await;
     }

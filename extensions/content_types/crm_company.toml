@@ -3,6 +3,7 @@ name = "Company"
 singular = "company"
 plural = "companies"
 table = "crm_companies"
+group = "crm"
 description = "公司/组织"
 implements = ["ownable", "timestampable"]
 

@@ -3,6 +3,7 @@ name = "Activity"
 singular = "activity"
 plural = "activities"
 table = "crm_activities"
+group = "crm"
 description = "活动/互动记录"
 implements = ["ownable", "timestampable"]
 
@@ -26,21 +27,21 @@ label = "内容"
 [fields.contact]
 type = "relation"
 relation_type = "many_to_one"
-target = "contacts"
+target = "crm_contacts"
 foreign_key = "contact_id"
 label = "关联联系人"
 
 [fields.company]
 type = "relation"
 relation_type = "many_to_one"
-target = "companies"
+target = "crm_companies"
 foreign_key = "company_id"
 label = "关联公司"
 
 [fields.deal]
 type = "relation"
 relation_type = "many_to_one"
-target = "deals"
+target = "crm_deals"
 foreign_key = "deal_id"
 label = "关联商机"
 

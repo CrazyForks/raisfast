@@ -43,6 +43,24 @@ impl BatchResponse {
     }
 }
 
+/// Per-record failure detail returned by a bulk import.
+#[cfg_attr(feature = "export-types", derive(TS))]
+#[derive(Debug, Serialize, ToSchema)]
+pub struct BulkImportError {
+    /// Index of the failed record within the request `records` array.
+    pub index: usize,
+    pub message: String,
+}
+
+#[cfg_attr(feature = "export-types", derive(TS))]
+#[derive(Debug, Serialize, ToSchema)]
+pub struct BulkImportResponse {
+    pub action: String,
+    pub created: usize,
+    pub failed: usize,
+    pub errors: Vec<BulkImportError>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -89,5 +107,20 @@ mod tests {
         let resp = BatchResponse::new("delete", 3);
         assert_eq!(resp.action, "delete");
         assert_eq!(resp.affected, 3);
+    }
+
+    #[test]
+    fn bulk_import_response_shapes() {
+        let resp = BulkImportResponse {
+            action: "create".into(),
+            created: 1,
+            failed: 1,
+            errors: vec![BulkImportError {
+                index: 1,
+                message: "bad record".into(),
+            }],
+        };
+        assert_eq!(resp.created, 1);
+        assert_eq!(resp.errors[0].index, 1);
     }
 }

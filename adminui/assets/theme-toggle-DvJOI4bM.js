@@ -1,0 +1,1 @@
+import{j as s}from"./vendor-react-j_G0Dyx0.js";import{cJ as o,i as r,av as t,a7 as i}from"./index-C8CQ70BB.js";function c(){const{resolvedTheme:e,setTheme:a}=o();return s.jsx(r,{variant:"ghost",size:"icon-sm",onClick:()=>a(e==="dark"?"light":"dark"),children:e==="dark"?s.jsx(t,{className:"size-4"}):s.jsx(i,{className:"size-4"})})}export{c as T};

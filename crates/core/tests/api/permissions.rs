@@ -151,10 +151,10 @@ async fn anon_resource_action_401() {
 }
 
 #[tokio::test]
-async fn anon_admin_403() {
+async fn anon_admin_401() {
     let (mut app, _, _) = perm_setup().await;
     let (status, _) = send(&mut app, get_req("/api/v1/admin/stats")).await;
-    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
 }
 
 #[tokio::test]

@@ -3,6 +3,7 @@ name = "Contact"
 singular = "contact"
 plural = "contacts"
 table = "crm_contacts"
+group = "crm"
 description = "联系人"
 implements = ["ownable", "timestampable"]
 
@@ -39,7 +40,7 @@ label = "职位"
 [fields.company]
 type = "relation"
 relation_type = "many_to_one"
-target = "companies"
+target = "crm_companies"
 foreign_key = "company_id"
 label = "所属公司"
 

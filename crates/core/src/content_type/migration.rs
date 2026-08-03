@@ -42,9 +42,7 @@ pub fn generate_create_table(ct: &ContentTypeSchema, protocol_columns: &[ColumnD
                     }
                     let not_null = if field.required { " NOT NULL" } else { "" };
                     let fk_type = crate::db::Driver::fk_type();
-                    cols.push(format!(
-                        "    {fk} {fk_type}{not_null} REFERENCES {target_table}(id)"
-                    ));
+                    cols.push(format!("    {fk} {fk_type}{not_null}"));
                 }
                 Some(RelationType::ManyToMany | RelationType::ManyWay) => {
                     // junction table generated separately below
@@ -134,16 +132,14 @@ pub fn generate_junction_tables(ct: &ContentTypeSchema) -> Vec<String> {
             let fk_t = crate::db::Driver::fk_type();
             let sql = format!(
                 "CREATE TABLE IF NOT EXISTS {through} (\n\
-                 {source_col} {fk_t} NOT NULL REFERENCES {source_table}({COL_ID}),\n\
-                 {target_col} {fk_t} NOT NULL REFERENCES {target_table}({COL_ID}),\n\
+                 {source_col} {fk_t} NOT NULL,\n\
+                 {target_col} {fk_t} NOT NULL,\n\
                  PRIMARY KEY ({source_col}, {target_col})\n\
                  )",
                 fk_t = fk_t,
                 through = through,
                 source_col = source_col,
-                source_table = ct.table,
                 target_col = target_col,
-                target_table = rel.target,
             );
             tables.push(sql);
         }
@@ -217,18 +213,15 @@ pub fn generate_alter_table(
                         .as_ref()
                         .and_then(|r| r.foreign_key.clone())
                         .unwrap_or_else(|| format!("{}_id", field.name));
-                    let target_table = field
-                        .relation
-                        .as_ref()
-                        .map_or("users", |r| r.target.as_str());
                     if !existing.contains(fk.as_str()) {
                         let not_null_default = if field.required {
                             " NOT NULL DEFAULT ''"
                         } else {
                             ""
                         };
+                        let fk_type = crate::db::Driver::fk_type();
                         stmts.push(format!(
-                            "ALTER TABLE {} ADD COLUMN {fk} INTEGER{not_null_default} REFERENCES {target_table}({COL_ID})",
+                            "ALTER TABLE {} ADD COLUMN {fk} {fk_type}{not_null_default}",
                             ct.table
                         ));
                     }
@@ -396,15 +389,9 @@ fn generate_create_table_for_rebuild(
                         .as_ref()
                         .and_then(|r| r.foreign_key.clone())
                         .unwrap_or_else(|| format!("{}_id", field.name));
-                    let target_table = field
-                        .relation
-                        .as_ref()
-                        .map_or("users", |r| r.target.as_str());
                     let not_null = if field.required { " NOT NULL" } else { "" };
                     let fk_type = crate::db::Driver::fk_type();
-                    cols.push(format!(
-                        "    {fk} {fk_type}{not_null} REFERENCES {target_table}(id)"
-                    ));
+                    cols.push(format!("    {fk} {fk_type}{not_null}"));
                 }
                 Some(RelationType::OneToMany) => {}
                 _ => {}
@@ -840,7 +827,8 @@ target = "users"
         )
         .unwrap();
         let sql = generate_create_table(&ct, &[]);
-        assert!(sql.contains("user_id INTEGER REFERENCES users(id)"));
+        assert!(sql.contains("user_id INTEGER"));
+        assert!(!sql.contains("REFERENCES"));
     }
 
     #[test]
@@ -863,7 +851,7 @@ required = true
         .unwrap();
         let sql = generate_create_table(&ct, &[]);
         assert!(sql.contains("NOT NULL"));
-        assert!(sql.contains("REFERENCES users(id)"));
+        assert!(!sql.contains("REFERENCES"));
     }
 
     #[test]
@@ -885,7 +873,8 @@ foreign_key = "owner_id"
         )
         .unwrap();
         let sql = generate_create_table(&ct, &[]);
-        assert!(sql.contains("owner_id INTEGER REFERENCES users(id)"));
+        assert!(sql.contains("owner_id INTEGER"));
+        assert!(!sql.contains("REFERENCES"));
     }
 
     #[test]

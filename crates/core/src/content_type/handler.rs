@@ -6,6 +6,7 @@
 
 use crate::types::snowflake_id::SnowflakeId;
 use axum::Json;
+use axum::body::Body;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
@@ -22,7 +23,9 @@ use super::schema::{
 use crate::AppState;
 use crate::constants::*;
 use crate::db::DbDriver;
+use crate::dto::batch::{BatchRequest, BatchResponse, BulkImportResponse};
 use crate::errors::app_error::AppError;
+use crate::errors::validation::validate;
 use crate::event::Event;
 use crate::middleware::auth::{AuthUser, TokenAction};
 
@@ -312,6 +315,12 @@ pub fn register_content_routes(
                         move |state, auth, params| {
                             admin_list_handler(state, auth, key.clone(), params)
                         }
+                    })
+                    .post({
+                        let key = registry_key.clone();
+                        move |auth, state, data| {
+                            admin_create_handler(auth, state, key.clone(), data)
+                        }
                     }),
                 )
                 .route(
@@ -319,6 +328,34 @@ pub fn register_content_routes(
                     axum::routing::get({
                         let key = registry_key.clone();
                         move |state, auth, path| admin_get_handler(state, auth, path, key.clone())
+                    })
+                    .put({
+                        let key = registry_key.clone();
+                        move |auth, state, path, data| {
+                            admin_update_handler(auth, state, path, data, key.clone())
+                        }
+                    })
+                    .delete({
+                        let key = registry_key.clone();
+                        move |auth, state, path| {
+                            admin_delete_handler(auth, state, path, key.clone())
+                        }
+                    }),
+                )
+                .route(
+                    &format!("{admin_prefix}/batch"),
+                    axum::routing::post({
+                        let key = registry_key.clone();
+                        move |auth, state, data| admin_batch_handler(auth, state, key.clone(), data)
+                    }),
+                )
+                .route(
+                    &format!("{admin_prefix}/import"),
+                    axum::routing::post({
+                        let key = registry_key.clone();
+                        move |auth, state, query, body| {
+                            admin_import_handler(auth, state, key.clone(), query, body)
+                        }
                     }),
                 );
         } else {
@@ -674,14 +711,15 @@ pub async fn dynamic_admin_cms_handler(
     method: axum::http::Method,
     Path(path): Path<String>,
     Query(params): Query<ListParams>,
+    body: Body,
 ) -> Result<axum::response::Response, AppError> {
     auth.ensure_admin()?;
     let restful = state.config.api_restful;
 
     if restful {
-        dynamic_admin_cms_dispatch_restful(&state, method, &path, params).await
+        dynamic_admin_cms_dispatch_restful(&state, method, &path, params, body, &auth).await
     } else {
-        dynamic_admin_cms_dispatch_simple(&state, method, &path, params).await
+        dynamic_admin_cms_dispatch_simple(&state, method, &path, params, body, &auth).await
     }
 }
 
@@ -690,6 +728,8 @@ async fn dynamic_admin_cms_dispatch_restful(
     method: axum::http::Method,
     path: &str,
     params: ListParams,
+    body: Body,
+    auth: &AuthUser,
 ) -> Result<axum::response::Response, AppError> {
     let Some((group, segment, id)) = resolve_path_segments(&state.content_type_registry, path)
     else {
@@ -721,6 +761,24 @@ async fn dynamic_admin_cms_dispatch_restful(
                 let data = do_admin_get(state, &ct, int_id).await?;
                 Ok(Json(crate::errors::response::ApiResponse::success(data)).into_response())
             }
+            (axum::http::Method::POST, Some(id)) if id == "batch" => {
+                let req = parse_batch_request(body).await?;
+                let affected = do_admin_batch(state, &ct, &req.action, &req.ids, auth).await?;
+                Ok(Json(crate::errors::response::ApiResponse::success(
+                    BatchResponse::new(&req.action, affected),
+                ))
+                .into_response())
+            }
+            (axum::http::Method::POST, Some(id)) if id == "import" => {
+                let format = params.extra.get("format").cloned().unwrap_or_default();
+                let bytes = axum::body::to_bytes(body, 8 * 1024 * 1024)
+                    .await
+                    .map_err(|e| AppError::BadRequest(format!("invalid request body: {e}")))?;
+                let records = super::import::parse_import_records(&ct, &format, &bytes)?;
+                let save_ctx = SaveContext::from_auth(auth);
+                let result = do_admin_bulk_create(state, &ct, &records, &save_ctx, auth).await?;
+                Ok(Json(crate::errors::response::ApiResponse::success(result)).into_response())
+            }
             _ => Err(AppError::not_found(&format!("{method} {path}"))),
         }
     }
@@ -731,6 +789,8 @@ async fn dynamic_admin_cms_dispatch_simple(
     method: axum::http::Method,
     path: &str,
     params: ListParams,
+    body: Body,
+    auth: &AuthUser,
 ) -> Result<axum::response::Response, AppError> {
     let Some((group, segment, id, action)) =
         resolve_path_segments_with_action(&state.content_type_registry, path)
@@ -767,12 +827,77 @@ async fn dynamic_admin_cms_dispatch_simple(
                 let data = do_admin_get(state, &ct, int_id).await?;
                 Ok(Json(crate::errors::response::ApiResponse::success(data)).into_response())
             }
+            (axum::http::Method::POST, Some(id)) if id == "batch" => {
+                let req = parse_batch_request(body).await?;
+                let affected = do_admin_batch(state, &ct, &req.action, &req.ids, auth).await?;
+                Ok(Json(crate::errors::response::ApiResponse::success(
+                    BatchResponse::new(&req.action, affected),
+                ))
+                .into_response())
+            }
+            (axum::http::Method::POST, Some(id)) if id == "import" => {
+                let format = params.extra.get("format").cloned().unwrap_or_default();
+                let bytes = axum::body::to_bytes(body, 8 * 1024 * 1024)
+                    .await
+                    .map_err(|e| AppError::BadRequest(format!("invalid request body: {e}")))?;
+                let records = super::import::parse_import_records(&ct, &format, &bytes)?;
+                let save_ctx = SaveContext::from_auth(auth);
+                let result = do_admin_bulk_create(state, &ct, &records, &save_ctx, auth).await?;
+                Ok(Json(crate::errors::response::ApiResponse::success(result)).into_response())
+            }
             _ => Err(AppError::not_found(&format!("{method} {path}"))),
         }
     }
 }
 
 // ── Core business logic (shared between fixed and dynamic routes) ──────────────────────
+
+/// Parse and validate a `BatchRequest` from the request body.
+async fn parse_batch_request(body: Body) -> Result<BatchRequest, AppError> {
+    let bytes = axum::body::to_bytes(body, 1024 * 1024)
+        .await
+        .map_err(|e| AppError::BadRequest(format!("invalid request body: {e}")))?;
+    if bytes.is_empty() {
+        return Err(AppError::BadRequest("request body required".to_string()));
+    }
+    let req: BatchRequest = serde_json::from_slice(&bytes)
+        .map_err(|e| AppError::BadRequest(format!("invalid batch request: {e}")))?;
+    validate(&req)?;
+    Ok(req)
+}
+
+/// Execute a batch operation (`delete`) over multiple CMS records.
+///
+/// Runs each record through the full delete pipeline (permission check, aspects,
+/// soft-delete protocol, cache invalidation) via `do_delete`. Writes are serialized
+/// by the global write lock acquired inside each delete transaction.
+pub async fn do_admin_batch(
+    state: &AppState,
+    ct: &ContentTypeSchema,
+    action: &str,
+    ids: &[String],
+    auth: &AuthUser,
+) -> Result<usize, AppError> {
+    auth.ensure_admin()?;
+    let parsed = ids
+        .iter()
+        .map(|id| crate::types::snowflake_id::parse_id(id))
+        .collect::<Result<Vec<SnowflakeId>, _>>()?;
+
+    match action {
+        "delete" => {
+            let mut affected = 0usize;
+            for int_id in parsed {
+                do_delete(state, ct, int_id, auth).await?;
+                affected += 1;
+            }
+            Ok(affected)
+        }
+        _ => Err(AppError::BadRequest(format!(
+            "unsupported batch action: {action}"
+        ))),
+    }
+}
 
 pub fn cms_list_cache_key(ct: &ContentTypeSchema, query: &ContentQuery) -> String {
     use std::collections::hash_map::DefaultHasher;
@@ -1611,6 +1736,169 @@ async fn admin_get_handler(
     Ok(Json(crate::errors::response::ApiResponse::success(data)))
 }
 
+async fn admin_create_handler(
+    auth: AuthUser,
+    State(state): State<AppState>,
+    type_name: String,
+    Json(data): Json<Value>,
+) -> Result<
+    (
+        StatusCode,
+        Json<crate::errors::response::ApiResponse<serde_json::Value>>,
+    ),
+    AppError,
+> {
+    auth.ensure_admin()?;
+    let ct = state
+        .content_type_registry
+        .get(&type_name)
+        .ok_or_else(|| AppError::not_found(&type_name))?;
+    let save_ctx = SaveContext::from_auth(&auth);
+    let result = do_create(&state, &ct, data, &save_ctx, &auth).await?;
+    Ok((
+        StatusCode::CREATED,
+        Json(crate::errors::response::ApiResponse::success(result)),
+    ))
+}
+
+async fn admin_update_handler(
+    auth: AuthUser,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(data): Json<Value>,
+    type_name: String,
+) -> Result<impl IntoResponse, AppError> {
+    auth.ensure_admin()?;
+    let ct = state
+        .content_type_registry
+        .get(&type_name)
+        .ok_or_else(|| AppError::not_found(&type_name))?;
+    let int_id = crate::types::snowflake_id::parse_id(&id)?;
+    let save_ctx = SaveContext::from_auth(&auth);
+    let result = do_update(&state, &ct, int_id, data, &save_ctx, &auth).await?;
+    Ok(Json(crate::errors::response::ApiResponse::success(result)))
+}
+
+async fn admin_delete_handler(
+    auth: AuthUser,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    type_name: String,
+) -> Result<impl IntoResponse, AppError> {
+    auth.ensure_admin()?;
+    let ct = state
+        .content_type_registry
+        .get(&type_name)
+        .ok_or_else(|| AppError::not_found(&type_name))?;
+    let int_id = crate::types::snowflake_id::parse_id(&id)?;
+    do_delete(&state, &ct, int_id, &auth).await?;
+    Ok(Json(crate::errors::response::ApiResponse::success(
+        json!({"deleted": true}),
+    )))
+}
+
+/// Admin: batch operations (`delete`) over CMS records of a content type.
+///
+/// POST `/admin/cms/{group}/{plural}/batch` with body `{ action, ids }`.
+pub async fn admin_batch_handler(
+    auth: AuthUser,
+    State(state): State<AppState>,
+    type_name: String,
+    Json(req): Json<BatchRequest>,
+) -> Result<impl IntoResponse, AppError> {
+    auth.ensure_admin()?;
+    validate(&req)?;
+    let ct = state
+        .content_type_registry
+        .get(&type_name)
+        .ok_or_else(|| AppError::not_found(&type_name))?;
+    let affected = do_admin_batch(&state, &ct, &req.action, &req.ids, &auth).await?;
+    Ok(Json(crate::errors::response::ApiResponse::success(
+        BatchResponse::new(&req.action, affected),
+    )))
+}
+
+/// Query parameters for the CMS bulk-import endpoint.
+#[derive(Debug, Deserialize)]
+pub struct ImportQuery {
+    /// File format: `json`, `csv` or `xlsx`.
+    pub format: String,
+}
+
+/// Admin: bulk-import CMS records of a content type from an uploaded file.
+///
+/// POST `/admin/cms/{group}/{plural}/import?format=csv` with the raw file bytes
+/// as the request body. The file is parsed server-side (JSON/CSV/XLSX) and each
+/// record is created through the full create pipeline; failures are collected
+/// per-record so a single bad row does not abort the whole import.
+pub async fn admin_import_handler(
+    auth: AuthUser,
+    State(state): State<AppState>,
+    type_name: String,
+    Query(query): Query<ImportQuery>,
+    body: Body,
+) -> Result<impl IntoResponse, AppError> {
+    auth.ensure_admin()?;
+    let ct = state
+        .content_type_registry
+        .get(&type_name)
+        .ok_or_else(|| AppError::not_found(&type_name))?;
+    let bytes = axum::body::to_bytes(body, 8 * 1024 * 1024)
+        .await
+        .map_err(|e| AppError::BadRequest(format!("invalid request body: {e}")))?;
+    let records = super::import::parse_import_records(&ct, &query.format, &bytes)?;
+    let save_ctx = SaveContext::from_auth(&auth);
+    let result = do_admin_bulk_create(&state, &ct, &records, &save_ctx, &auth).await?;
+    Ok(Json(crate::errors::response::ApiResponse::success(result)))
+}
+
+/// Execute a bulk create over CMS records, running each through `do_create`.
+///
+/// Returns created/failed counts plus per-record error details (capped at 20).
+pub async fn do_admin_bulk_create(
+    state: &AppState,
+    ct: &ContentTypeSchema,
+    records: &[serde_json::Value],
+    save_ctx: &SaveContext,
+    auth: &AuthUser,
+) -> Result<BulkImportResponse, AppError> {
+    auth.ensure_admin()?;
+    let mut created = 0usize;
+    let mut errors = Vec::new();
+    for (i, record) in records.iter().enumerate() {
+        match do_create(state, ct, record.clone(), save_ctx, auth).await {
+            Ok(_) => created += 1,
+            Err(e) => {
+                if errors.len() < 20 {
+                    errors.push(crate::dto::batch::BulkImportError {
+                        index: i,
+                        message: strip_error_prefix(&e),
+                    });
+                }
+            }
+        }
+    }
+    Ok(BulkImportResponse {
+        action: "create".into(),
+        created,
+        failed: records.len() - created,
+        errors,
+    })
+}
+
+/// Strip common `AppError` prefixes (e.g. `bad request: `) so import error
+/// messages read cleanly in the admin UI.
+fn strip_error_prefix(error: &AppError) -> String {
+    const PREFIXES: &[&str] = &["bad request: ", "conflict: ", "not found: ", "forbidden: "];
+    let msg = error.to_string();
+    for prefix in PREFIXES {
+        if let Some(rest) = msg.strip_prefix(prefix) {
+            return rest.to_string();
+        }
+    }
+    msg
+}
+
 // ── Schema Management API ──────────────────────────────────────────
 
 /// Parse a catch-all content-type path into a registry key.
@@ -1699,6 +1987,10 @@ pub async fn create_schema(
             registry_key
         )));
     }
+
+    state
+        .content_type_registry
+        .check_relation_targets(&schema)?;
 
     let dir = std::path::Path::new(&state.config.content_type_dir);
     schema.save_to_dir(dir)?;
@@ -1805,6 +2097,10 @@ pub async fn update_schema(
 
     let dir = std::path::Path::new(&state.config.content_type_dir);
     updated.save_to_dir(dir)?;
+
+    state
+        .content_type_registry
+        .check_relation_targets(&updated)?;
 
     let repo = ContentRepository::new(state.pool.clone());
     repo.migrate(&updated, &state.protocol_registry).await?;
@@ -1923,6 +2219,42 @@ target = "users"
         assert_eq!(group, "");
         assert_eq!(seg, "products");
         assert_eq!(id, Some("abc-123".to_string()));
+    }
+
+    #[test]
+    fn resolve_path_segments_batch() {
+        let reg = empty_registry();
+        let (group, seg, id) = resolve_path_segments(&reg, "products/batch").unwrap();
+        assert_eq!(group, "");
+        assert_eq!(seg, "products");
+        assert_eq!(id, Some("batch".to_string()));
+    }
+
+    #[test]
+    fn resolve_path_segments_grouped_batch() {
+        let reg = crate::content_type::ContentTypeRegistry::new();
+        reg.set_protected_tables(vec![]);
+        let ct = ContentTypeSchema::parse_from_str(
+            r#"
+[content_type]
+name = "Poll"
+singular = "poll"
+plural = "polls"
+table = "forum_polls"
+group = "forum"
+
+[fields.title]
+type = "text"
+"#,
+        )
+        .unwrap();
+        let preg = crate::protocols::ProtocolRegistry::new();
+        reg.register(ct, &Default::default(), &[], &[], &preg)
+            .unwrap();
+        let (group, seg, id) = resolve_path_segments(&reg, "forum/polls/batch").unwrap();
+        assert_eq!(group, "forum");
+        assert_eq!(seg, "polls");
+        assert_eq!(id, Some("batch".to_string()));
     }
 
     #[test]
