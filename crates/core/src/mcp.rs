@@ -10,22 +10,23 @@
 //! - **stdio** — `raisfast mcp serve` subcommand, for local clients that spawn
 //!   raisfast as a child process. Runs as the user configured in `MCP_LOCAL_USER_ID`.
 //!
-//! # Design
+//! # Architecture
 //!
-//! A manual JSON-RPC 2.0 implementation (no external `rmcp` dependency) to keep
-//! the dependency tree clean and match the existing manual SSE / WS / GraphQL
-//! handlers. Tools wrap the Service layer so policy checks, the event bus, and
-//! audit logging are preserved — the model layer is never reached directly.
+//! ```text
+//! Transport (handler.rs)  →  JSON-RPC dispatch  →  Registry  →  Tool / ResourceProvider
+//!     (HTTP / stdio)            (jsonrpc.rs)       (registry.rs)    (tools/ resources/)
+//! ```
 //!
-//! Capabilities exposed:
-//! - **Tools** — `list_content_types`, `list_entries`, `get_entry`, `create_entry`,
-//!   `list_posts`, `get_post`, `create_post`
-//! - **Resources** — `raisfast://content-types`, `raisfast://content-types/{key}`,
-//!   `raisfast://routes`
-//! - **Prompts** — `draft_post`, `summarize_posts`
+//! Tools and resources implement the [`registry::Tool`] and
+//! [`registry::ResourceProvider`] traits respectively, organised by domain
+//! under `tools/` and `resources/`. Adding a new capability is a matter of
+//! writing one struct and registering it in [`build_tool_registry`] /
+//! [`build_resource_registry`].
 
 pub mod handler;
 mod jsonrpc;
+pub mod prompts;
+mod registry;
 pub mod resources;
 pub mod tools;
 
@@ -38,11 +39,13 @@ use crate::content_type::repository::ContentRepository;
 use crate::middleware::auth::AuthUser;
 use crate::models::user::UserRole;
 
+pub(crate) use registry::{PromptRegistry, ResourceRegistry, ToolRegistry};
+
 /// Shared context handed to every tool / resource handler.
 ///
 /// Holds clones of the bits of [`crate::AppState`] the MCP handlers need, plus
 /// the resolved [`AuthUser`] used to authorize service-layer calls.
-pub(crate) struct McpContext {
+pub struct McpContext {
     pub state: Arc<crate::AppState>,
     pub auth: AuthUser,
     pub repo: ContentRepository,
@@ -97,8 +100,6 @@ pub(crate) fn truncate(value: Value, max_chars: usize) -> Value {
     if s.len() <= max_chars {
         return value;
     }
-    // Walk back to the nearest UTF-8 char boundary so we never split a
-    // multi-byte sequence (which would panic `str` ops or produce invalid UTF-8).
     let mut end = max_chars;
     while end > 0 && !s.is_char_boundary(end) {
         end -= 1;
@@ -107,6 +108,30 @@ pub(crate) fn truncate(value: Value, max_chars: usize) -> Value {
         "{} …[truncated: payload exceeded {max_chars} chars]",
         &s[..end]
     ))
+}
+
+/// Build the complete tool registry with all built-in tools registered.
+///
+/// To add a new tool: implement [`Tool`] on a struct in the relevant domain
+/// module under `tools/`, then add one `reg.register(...)` line here.
+pub(crate) fn build_tool_registry() -> ToolRegistry {
+    let mut reg = ToolRegistry::new();
+    tools::register_all(&mut reg);
+    reg
+}
+
+/// Build the complete resource registry with all built-in providers registered.
+pub(crate) fn build_resource_registry() -> ResourceRegistry {
+    let mut reg = ResourceRegistry::new();
+    resources::register_all(&mut reg);
+    reg
+}
+
+/// Build the complete prompt registry with all built-in providers registered.
+pub(crate) fn build_prompt_registry() -> PromptRegistry {
+    let mut reg = PromptRegistry::new();
+    prompts::register_all(&mut reg);
+    reg
 }
 
 #[cfg(test)]
@@ -123,18 +148,13 @@ mod tests {
 
     #[test]
     fn truncate_produces_valid_utf8_string() {
-        // Build a value whose serialized form is well over 100 bytes, with
-        // multi-byte UTF-8 chars near the cut point.
         let v: Value = (0..200)
             .map(|i| format!("item-{i}-é-€"))
             .collect::<Vec<_>>()
             .into();
         let out = truncate(v, 100);
         let s = out.as_str().expect("truncated result is a string");
-        // Must be valid UTF-8 (no panic, no broken sequence).
         assert!(s.contains("…[truncated"));
-        // Cut point must be on a char boundary (is_char_boundary already guarantees
-        // this, but assert UTF-8 validity explicitly).
         assert!(std::str::from_utf8(s.as_bytes()).is_ok());
     }
 

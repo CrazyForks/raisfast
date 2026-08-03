@@ -1,11 +1,14 @@
-//! Minimal JSON-RPC 2.0 envelope types used by the MCP transport.
+//! JSON-RPC 2.0 envelope types for the MCP 2026-07-28 transport.
 //!
-//! Implements just the subset required by MCP: single requests, notifications,
-//! responses, and errors. Batching is not supported (MCP clients send one
-//! message per request).
+//! Implements the modern (stateless, per-request-metadata) protocol: each
+//! request carries `_meta` with `protocolVersion`, `clientInfo`, and
+//! `clientCapabilities`; every result includes `resultType`.
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+
+/// The MCP protocol version implemented by this server.
+pub const PROTOCOL_VERSION: &str = "2026-07-28";
 
 /// JSON-RPC 2.0 error object.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -16,13 +19,19 @@ pub struct ErrorObject {
     pub data: Option<Value>,
 }
 
-/// Standard JSON-RPC error codes.
+/// MCP-defined error codes (JSON-RPC reserved range `-32020` to `-32099`).
 impl ErrorObject {
+    // Standard JSON-RPC
     pub const PARSE_ERROR: i32 = -32700;
     pub const INVALID_REQUEST: i32 = -32600;
     pub const METHOD_NOT_FOUND: i32 = -32601;
     pub const INVALID_PARAMS: i32 = -32602;
     pub const INTERNAL_ERROR: i32 = -32603;
+
+    // MCP-specific (2026-07-28)
+    pub const HEADER_MISMATCH: i32 = -32020;
+    pub const MISSING_CLIENT_CAPABILITY: i32 = -32021;
+    pub const UNSUPPORTED_PROTOCOL_VERSION: i32 = -32022;
 
     pub fn new(code: i32, message: impl Into<String>) -> Self {
         Self {
@@ -59,6 +68,32 @@ impl ErrorObject {
     pub fn internal_error(msg: impl Into<String>) -> Self {
         Self::new(Self::INTERNAL_ERROR, msg)
     }
+
+    /// `-32021` — the request requires a client capability the client didn't declare.
+    pub fn missing_client_capability(cap: &str) -> Self {
+        Self::new(
+            Self::MISSING_CLIENT_CAPABILITY,
+            format!("Missing required client capability: {cap}"),
+        )
+        .with_data(serde_json::json!({ "requiredCapabilities": [cap] }))
+    }
+
+    /// `-32022` — the requested protocol version is not supported.
+    pub fn unsupported_protocol_version(requested: &str) -> Self {
+        Self::new(
+            Self::UNSUPPORTED_PROTOCOL_VERSION,
+            "Unsupported protocol version",
+        )
+        .with_data(serde_json::json!({
+            "supported": [PROTOCOL_VERSION],
+            "requested": requested,
+        }))
+    }
+
+    /// `-32020` — HTTP header value doesn't match the request body.
+    pub fn header_mismatch(detail: impl Into<String>) -> Self {
+        Self::new(Self::HEADER_MISMATCH, detail)
+    }
 }
 
 impl From<ErrorObject> for Value {
@@ -75,7 +110,7 @@ impl From<ErrorObject> for Value {
 /// An inbound JSON-RPC message: either a request (has `id`) or a notification.
 #[derive(Debug, Clone, Deserialize)]
 pub struct Request {
-    /// Present only for spec-compliance validation; not read after parse.
+    /// Must be `"2.0"`.
     #[allow(dead_code)]
     pub jsonrpc: String,
     pub method: String,
@@ -87,15 +122,20 @@ pub struct Request {
 }
 
 /// JSON-RPC id — a number or a string (null is treated as a notification).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(untagged)]
 pub enum Id {
     Num(i64),
     Str(String),
 }
 
-/// Build a successful JSON-RPC response object for the given id.
-pub fn success(id: Id, result: Value) -> Value {
+/// Build a successful JSON-RPC response with `resultType: "complete"`.
+pub fn success(id: Id, mut result: Value) -> Value {
+    // Inject resultType if the caller didn't already.
+    if let Some(obj) = result.as_object_mut() {
+        obj.entry("resultType")
+            .or_insert_with(|| Value::String("complete".into()));
+    }
     serde_json::json!({ "jsonrpc": "2.0", "id": id, "result": result })
 }
 
@@ -109,7 +149,6 @@ pub fn error(id: Id, err: ErrorObject) -> Value {
 /// Returns the parse error so the caller can reply with `id = null` per spec.
 pub fn parse(raw: &str) -> Result<Request, ErrorObject> {
     serde_json::from_str::<Request>(raw).map_err(|e| {
-        // If the payload is valid JSON but not a valid request, prefer -32600.
         let code = if raw.trim().is_empty() || raw.trim().parse::<Value>().is_err() {
             ErrorObject::PARSE_ERROR
         } else {
@@ -117,6 +156,17 @@ pub fn parse(raw: &str) -> Result<Request, ErrorObject> {
         };
         ErrorObject::new(code, e.to_string())
     })
+}
+
+/// Extract the protocol version from a request's `_meta` field.
+///
+/// Returns `None` if `_meta` or the version key is absent.
+pub fn extract_protocol_version(params: &Value) -> Option<String> {
+    params
+        .get("_meta")?
+        .get("io.modelcontextprotocol/protocolVersion")?
+        .as_str()
+        .map(String::from)
 }
 
 #[cfg(test)]
@@ -159,10 +209,11 @@ mod tests {
     }
 
     #[test]
-    fn success_envelope_shape() {
+    fn success_envelope_includes_result_type() {
         let resp = success(Id::Num(1), serde_json::json!({"tools": []}));
         assert_eq!(resp["jsonrpc"], "2.0");
         assert_eq!(resp["id"], 1);
+        assert_eq!(resp["result"]["resultType"], "complete");
         assert!(resp["result"]["tools"].is_array());
     }
 
@@ -173,5 +224,28 @@ mod tests {
         assert_eq!(resp["id"], "x");
         assert_eq!(resp["error"]["code"], -32601);
         assert!(resp["error"]["message"].as_str().unwrap().contains("boom"));
+    }
+
+    #[test]
+    fn extract_version_from_meta() {
+        let params = serde_json::json!({
+            "_meta": {
+                "io.modelcontextprotocol/protocolVersion": "2026-07-28"
+            }
+        });
+        assert_eq!(extract_protocol_version(&params), Some("2026-07-28".into()));
+    }
+
+    #[test]
+    fn extract_version_missing_returns_none() {
+        let params = serde_json::json!({});
+        assert_eq!(extract_protocol_version(&params), None);
+    }
+
+    #[test]
+    fn unsupported_version_error_carries_supported_list() {
+        let err = ErrorObject::unsupported_protocol_version("2099-01-01");
+        assert_eq!(err.code, -32022);
+        assert_eq!(err.data.unwrap()["supported"][0], PROTOCOL_VERSION);
     }
 }
