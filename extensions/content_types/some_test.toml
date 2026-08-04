@@ -1,17 +1,13 @@
 [content_type]
-name = "some_test"
+name = "some test"
 singular = "some_test"
 plural = "some_tests"
 table = "some_tests"
-implements = [
-    "timestampable",
-    "ownable",
-]
+implements = ["timestampable"]
 
 [fields.title]
 type = "text"
 max_length = 255
 
-[fields.content]
-type = "text"
-max_length = 255
+[fields.bb]
+type = "blob"

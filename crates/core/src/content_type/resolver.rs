@@ -137,9 +137,17 @@ async fn resolve_many_to_one_batch(
         .map_err(|e| AppError::Internal(anyhow::anyhow!("batch relation query failed: {e}")))?;
 
     let id_cols: std::collections::HashSet<&str> = std::collections::HashSet::from([COL_ID]);
+    let blob_cols = fetch_blob_columns(pool, target_table).await;
     let mut lookup: std::collections::HashMap<i64, Value> = std::collections::HashMap::new();
     for row in &rows {
-        let val = super::repository::row_to_value(row, &columns, &id_cols);
+        let val = super::repository::row_to_value(
+            row,
+            &columns,
+            &id_cols,
+            &blob_cols,
+            &std::collections::HashMap::new(),
+            &std::collections::HashSet::new(),
+        );
         if let Some(id) = val.get(COL_ID).and_then(extract_id_i64) {
             lookup.insert(id, val);
         }
@@ -221,10 +229,18 @@ async fn resolve_one_to_many_batch(
         .map_err(|e| AppError::Internal(anyhow::anyhow!("batch one_to_many query failed: {e}")))?;
 
     let id_cols: std::collections::HashSet<&str> = std::collections::HashSet::from([COL_ID]);
+    let blob_cols = fetch_blob_columns(pool, target_table).await;
     let mut lookup: std::collections::HashMap<i64, Vec<Value>> = std::collections::HashMap::new();
     for row in &rows {
         let fk_val: i64 = row.try_get("__fk").unwrap_or(0);
-        let val = super::repository::row_to_value(row, &columns, &id_cols);
+        let val = super::repository::row_to_value(
+            row,
+            &columns,
+            &id_cols,
+            &blob_cols,
+            &std::collections::HashMap::new(),
+            &std::collections::HashSet::new(),
+        );
         lookup.entry(fk_val).or_default().push(val);
     }
 
@@ -305,10 +321,18 @@ async fn resolve_many_to_many_batch(
         .map_err(|e| AppError::Internal(anyhow::anyhow!("batch many_to_many query failed: {e}")))?;
 
     let id_cols: std::collections::HashSet<&str> = std::collections::HashSet::from([COL_ID]);
+    let blob_cols = fetch_blob_columns(pool, target_table).await;
     let mut lookup: std::collections::HashMap<i64, Vec<Value>> = std::collections::HashMap::new();
     for row in &rows {
         let source_id: i64 = row.try_get("__source_id").unwrap_or(0);
-        let val = super::repository::row_to_value(row, &columns, &id_cols);
+        let val = super::repository::row_to_value(
+            row,
+            &columns,
+            &id_cols,
+            &blob_cols,
+            &std::collections::HashMap::new(),
+            &std::collections::HashSet::new(),
+        );
         lookup.entry(source_id).or_default().push(val);
     }
 
@@ -358,6 +382,41 @@ async fn fetch_column_names(pool: &Pool, table: &str) -> Vec<String> {
                 .collect()
         })
         .unwrap_or_else(|_| vec![COL_ID.into()]);
+
+    {
+        let mut cache = CACHE.write().unwrap_or_else(|e| e.into_inner());
+        cache.insert(table.to_string(), cols.clone());
+    }
+
+    cols
+}
+
+async fn fetch_blob_columns(pool: &Pool, table: &str) -> std::collections::HashSet<String> {
+    use std::sync::{LazyLock, RwLock};
+    static CACHE: LazyLock<
+        RwLock<std::collections::HashMap<String, std::collections::HashSet<String>>>,
+    > = LazyLock::new(|| RwLock::new(std::collections::HashMap::new()));
+
+    {
+        let cache = CACHE.read().unwrap_or_else(|e| e.into_inner());
+        if let Some(cached) = cache.get(table) {
+            return cached.clone();
+        }
+    }
+
+    let mut cols = std::collections::HashSet::new();
+    if !crate::db::driver::is_safe_identifier(table) {
+        return cols;
+    }
+
+    if let Ok(pairs) = crate::db::Driver::fetch_columns_with_types(pool, table).await {
+        for (name, typ) in pairs {
+            let t = typ.to_ascii_lowercase();
+            if t.contains("blob") || t.contains("bytea") {
+                cols.insert(name);
+            }
+        }
+    }
 
     {
         let mut cache = CACHE.write().unwrap_or_else(|e| e.into_inner());

@@ -5,6 +5,8 @@
 //! and S3-compatible object storage.
 
 use chrono::Utc;
+#[cfg(feature = "export-types")]
+use ts_rs::TS;
 
 use crate::commands::CreateMediaCmd;
 use crate::errors::app_error::{AppError, AppResult};
@@ -13,41 +15,121 @@ use crate::models::media;
 use crate::storage::Storage;
 use crate::types::snowflake_id::SnowflakeId;
 
-/// Whitelist of allowed upload MIME types.
-pub(crate) const ALLOWED_TYPES: &[&str] = &[
-    // Images
-    "image/jpeg",
-    "image/png",
-    "image/gif",
-    "image/webp",
-    "image/svg+xml",
-    // Video
-    "video/mp4",
-    "video/webm",
-    "video/quicktime",
-    // Audio
-    "audio/mpeg",
-    "audio/ogg",
-    "audio/wav",
-    "audio/aac",
-    // Documents
-    "application/pdf",
-    "application/msword",
-    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-    "application/vnd.ms-excel",
-    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    "application/vnd.ms-powerpoint",
-    "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-    // Archives
-    "application/zip",
-    "application/x-tar",
-    "application/gzip",
-    "application/x-rar-compressed",
-    // Text
-    "text/plain",
-    "text/csv",
-    "text/markdown",
-];
+/// Canonical allowed upload MIME types.
+///
+/// Single source of truth for both backend upload validation
+/// (`ALLOWED_TYPES`) and the frontend "accept" picker (exported to the SDK
+/// via ts-rs as the `MediaMime` constant).
+///
+/// Adding a new type is a one-line change below:
+/// `(VariantName, "mime/type", "ext")`.
+macro_rules! media_types {
+    ($(($variant:ident, $mime:literal, $ext:literal)),* $(,)?) => {
+        /// Canonical allowed upload MIME types.
+        #[cfg_attr(feature = "export-types", derive(TS))]
+        #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+        pub enum MediaMime {
+            $(
+                #[cfg_attr(feature = "export-types", ts(rename = $mime))]
+                $variant,
+            )*
+        }
+
+        impl MediaMime {
+            /// Returns the MIME string for this variant.
+            #[must_use]
+            pub const fn as_str(self) -> &'static str {
+                match self {
+                    $(Self::$variant => $mime,)*
+                }
+            }
+        }
+
+        /// All canonical media types, in display order.
+        pub const ALL_MEDIA_MIMES: &[MediaMime] = &[$(MediaMime::$variant),*];
+
+        /// Whitelist of allowed upload MIME types.
+        pub(crate) const ALLOWED_TYPES: &[&str] = &[$(MediaMime::$variant.as_str()),*];
+
+        /// Infer file extension from MIME type.
+        pub fn mime_to_ext(content_type: &str) -> &'static str {
+            match content_type {
+                $($mime => $ext,)*
+                _ => "bin",
+            }
+        }
+    };
+}
+
+media_types!(
+    (ImageJpeg, "image/jpeg", "jpg"),
+    (ImagePng, "image/png", "png"),
+    (ImageGif, "image/gif", "gif"),
+    (ImageWebp, "image/webp", "webp"),
+    (ImageSvg, "image/svg+xml", "svg"),
+    (VideoMp4, "video/mp4", "mp4"),
+    (VideoWebm, "video/webm", "webm"),
+    (VideoQuicktime, "video/quicktime", "mov"),
+    (AudioMpeg, "audio/mpeg", "mp3"),
+    (AudioOgg, "audio/ogg", "ogg"),
+    (AudioWav, "audio/wav", "wav"),
+    (AudioAac, "audio/aac", "aac"),
+    (Pdf, "application/pdf", "pdf"),
+    (Doc, "application/msword", "doc"),
+    (
+        Docx,
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "docx"
+    ),
+    (Xls, "application/vnd.ms-excel", "xls"),
+    (
+        Xlsx,
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "xlsx"
+    ),
+    (Ppt, "application/vnd.ms-powerpoint", "ppt"),
+    (
+        Pptx,
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        "pptx"
+    ),
+    (Zip, "application/zip", "zip"),
+    (Tar, "application/x-tar", "tar"),
+    (Gzip, "application/gzip", "gz"),
+    (Rar, "application/x-rar-compressed", "rar"),
+    (PlainText, "text/plain", "txt"),
+    (Csv, "text/csv", "csv"),
+    (Markdown, "text/markdown", "md"),
+    (ImageBmp, "image/bmp", "bmp"),
+    (ImageAvif, "image/avif", "avif"),
+    (ImageTiff, "image/tiff", "tiff"),
+    (ImageIco, "image/x-icon", "ico"),
+    (VideoMkv, "video/x-matroska", "mkv"),
+    (AudioFlac, "audio/flac", "flac"),
+    (AudioOpus, "audio/opus", "opus"),
+    (Epub, "application/epub+zip", "epub"),
+    (Rtf, "application/rtf", "rtf"),
+    (SevenZip, "application/x-7z-compressed", "7z"),
+    (Json, "application/json", "json"),
+    (Html, "text/html", "html"),
+    (Xml, "application/xml", "xml"),
+    (Javascript, "application/javascript", "js"),
+    (ImageHeic, "image/heic", "heic"),
+    (ImageHeif, "image/heif", "heif"),
+    (Ttf, "font/ttf", "ttf"),
+    (Otf, "font/otf", "otf"),
+    (Woff, "font/woff", "woff"),
+    (Woff2, "font/woff2", "woff2"),
+    (AudioM4a, "audio/mp4", "m4a"),
+    (Yaml, "text/yaml", "yaml"),
+    (Ini, "text/x-ini", "ini"),
+    (Toml, "application/toml", "toml"),
+    (Css, "text/css", "css"),
+    (Shell, "text/x-shellscript", "sh"),
+    (Php, "application/x-httpd-php", "php"),
+    (Sql, "application/sql", "sql"),
+    (Python, "text/x-python", "py"),
+);
 
 /// Generate a storage key: `{bucket}/{year}/{month}/{uuid}.{ext}`
 pub(crate) fn storage_key(bucket: &str, ext: &str) -> String {
@@ -63,42 +145,31 @@ pub(crate) fn storage_key(bucket: &str, ext: &str) -> String {
     )
 }
 
-/// Infer file extension from MIME type.
-pub(crate) fn mime_to_ext(content_type: &str) -> &'static str {
-    match content_type {
-        // Images
-        "image/jpeg" => "jpg",
-        "image/png" => "png",
-        "image/gif" => "gif",
-        "image/webp" => "webp",
-        "image/svg+xml" => "svg",
-        // Video
-        "video/mp4" => "mp4",
-        "video/webm" => "webm",
-        "video/quicktime" => "mov",
-        // Audio
-        "audio/mpeg" => "mp3",
-        "audio/ogg" => "ogg",
-        "audio/wav" => "wav",
-        "audio/aac" => "aac",
-        // Documents
-        "application/pdf" => "pdf",
-        "application/msword" => "doc",
-        "application/vnd.openxmlformats-officedocument.wordprocessingml.document" => "docx",
-        "application/vnd.ms-excel" => "xls",
-        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" => "xlsx",
-        "application/vnd.ms-powerpoint" => "ppt",
-        "application/vnd.openxmlformats-officedocument.presentationml.presentation" => "pptx",
-        // Archives
-        "application/zip" => "zip",
-        "application/x-tar" => "tar",
-        "application/gzip" => "gz",
-        "application/x-rar-compressed" => "rar",
-        // Text
-        "text/plain" => "txt",
-        "text/csv" => "csv",
-        "text/markdown" => "md",
-        _ => "bin",
+/// Whether a MIME type is a ZIP-based OOXML office document.
+fn is_ooxml(content_type: &str) -> bool {
+    matches!(
+        content_type,
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            | "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            | "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+    )
+}
+
+/// Resolve the final MIME type for an upload.
+///
+/// Prefers the magic-byte detected type, except that ZIP-based Office documents
+/// (docx/xlsx/pptx are ZIP containers) keep their declared type instead of
+/// being rewritten to `application/zip`.
+fn resolve_content_type<'a>(declared: &'a str, data: &[u8]) -> &'a str {
+    match detect_mime_from_magic(data) {
+        Some(detected) if detected != declared => {
+            if detected == "application/zip" && is_ooxml(declared) {
+                declared
+            } else {
+                detected
+            }
+        }
+        _ => declared,
     }
 }
 
@@ -126,18 +197,7 @@ pub async fn save_file(
         return Err(AppError::BadRequest("file_type_not_allowed".into()));
     }
 
-    let detected_type = detect_mime_from_magic(data);
-    let content_type = match detected_type {
-        Some(detected) if detected != content_type => {
-            tracing::info!(
-                declared = %content_type,
-                detected = %detected,
-                "auto-correcting MIME type from file content"
-            );
-            detected
-        }
-        _ => content_type,
-    };
+    let content_type = resolve_content_type(content_type, data);
 
     if !validate_magic_bytes(content_type, data) {
         tracing::warn!(content_type = %content_type, data_len = data.len(), "file content magic bytes mismatch");
@@ -464,6 +524,28 @@ mod tests {
     fn mime_to_ext_unknown_returns_bin() {
         assert_eq!(mime_to_ext("application/x-unknown"), "bin");
         assert_eq!(mime_to_ext("foo/bar"), "bin");
+    }
+
+    #[test]
+    fn resolve_keeps_ooxml_over_zip_magic() {
+        let zip_data = b"PK\x03\x04zip-container-content";
+        let xlsx = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+        assert_eq!(resolve_content_type(xlsx, zip_data), xlsx);
+        let docx = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+        assert_eq!(resolve_content_type(docx, zip_data), docx);
+        let pptx = "application/vnd.openxmlformats-officedocument.presentationml.presentation";
+        assert_eq!(resolve_content_type(pptx, zip_data), pptx);
+        assert_eq!(
+            resolve_content_type("application/octet-stream", zip_data),
+            "application/zip"
+        );
+    }
+
+    #[test]
+    fn resolve_prefers_declared_image_when_magic_matches() {
+        let jpeg = b"\xFF\xD8\xFF\xE0";
+        assert_eq!(resolve_content_type("image/jpeg", jpeg), "image/jpeg");
+        assert_eq!(resolve_content_type("image/png", jpeg), "image/jpeg");
     }
 
     #[test]

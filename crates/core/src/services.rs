@@ -42,6 +42,7 @@ pub mod wallet;
 
 #[cfg(feature = "export-types")]
 export_types!(
+    media::MediaMime,
     options::OptionGroup,
     options::OptionEntry,
     api_token::CreateTokenResult,

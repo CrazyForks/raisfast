@@ -1,4 +1,18 @@
 use raisfast::export_type::collect_all;
+use raisfast::services::media::{ALL_MEDIA_MIMES, mime_to_ext};
+
+fn emit_mime_ext() -> String {
+    let mut out = String::from("export const MimeExt: Record<string, string> = {\n");
+    for m in ALL_MEDIA_MIMES {
+        out.push_str(&format!(
+            "  \"{}\": \"{}\",\n",
+            m.as_str(),
+            mime_to_ext(m.as_str())
+        ));
+    }
+    out.push_str("} as const;\n");
+    out
+}
 
 fn main() {
     let decls = collect_all();
@@ -12,12 +26,23 @@ fn main() {
         out.push_str("\n\n");
     }
 
+    out.push_str(&emit_mime_ext());
+
     let out_dir = "frontend/sdk/src/generated";
     std::fs::create_dir_all(out_dir).unwrap();
     let out_path = format!("{out_dir}/types.ts");
     std::fs::write(&out_path, out).unwrap();
 
     println!("Exported {} types to {}", decls.len(), out_path);
+}
+
+fn is_ts_identifier(s: &str) -> bool {
+    let mut chars = s.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    (first == '_' || first == '$' || first.is_ascii_alphabetic())
+        && chars.all(|c| c == '_' || c == '$' || c.is_ascii_alphanumeric())
 }
 
 fn format_type_decl(decl: &str) -> String {
@@ -46,6 +71,11 @@ fn format_type_decl(decl: &str) -> String {
                     let v = v.trim();
                     let key = v.trim_matches('"');
                     let key = key.replace('-', "_");
+                    let key = if is_ts_identifier(&key) {
+                        key.to_string()
+                    } else {
+                        format!("\"{key}\"")
+                    };
                     format!("  {key}: {v}")
                 })
                 .collect();

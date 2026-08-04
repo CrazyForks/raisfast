@@ -64,6 +64,15 @@ pub fn generate_create_table(ct: &ContentTypeSchema, protocol_columns: &[ColumnD
         }
 
         cols.push(col_def);
+
+        if field.field_type == FieldType::Blob
+            && let Some(meta) = ct.blob_meta_column_map().get(&field.name)
+        {
+            cols.push(format!(
+                "    {meta} {}",
+                crate::db::sql_type::SqlType::Json.as_str()
+            ));
+        }
     }
 
     let user_col_names: std::collections::HashSet<&str> = ct
@@ -248,6 +257,21 @@ pub fn generate_alter_table(
             }
 
             stmts.push(sql);
+        }
+    }
+
+    for field in &ct.fields {
+        if field.field_type != FieldType::Blob {
+            continue;
+        }
+        if let Some(meta) = ct.blob_meta_column_map().get(&field.name)
+            && !existing.contains(meta.as_str())
+        {
+            stmts.push(format!(
+                "ALTER TABLE {} ADD COLUMN {meta} {}",
+                ct.table,
+                crate::db::sql_type::SqlType::Json.as_str()
+            ));
         }
     }
 
@@ -509,6 +533,8 @@ fn field_type_to_sql(ft: &FieldType) -> &'static str {
         | FieldType::Enum
         | FieldType::Uid
         | FieldType::Media => SqlType::Varchar.as_str(),
+        FieldType::MediaSet => SqlType::Json.as_str(),
+        FieldType::Blob => SqlType::Blob.as_str(),
         FieldType::Relation => SqlType::BigInt.as_str(),
     }
 }
@@ -795,6 +821,8 @@ foreign_key = "author_id"
         assert_eq!(field_type_to_sql(&FieldType::Uid), "TEXT");
         assert_eq!(field_type_to_sql(&FieldType::Json), "TEXT");
         assert_eq!(field_type_to_sql(&FieldType::Media), "TEXT");
+        assert_eq!(field_type_to_sql(&FieldType::MediaSet), "TEXT");
+        assert_eq!(field_type_to_sql(&FieldType::Blob), "BLOB");
         assert_eq!(field_type_to_sql(&FieldType::Relation), "INTEGER");
     }
 

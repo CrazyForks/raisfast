@@ -217,6 +217,169 @@ async fn create_and_find_by_id() {
     assert_eq!(found["id"], created["id"]);
 }
 
+const BLOB_TOML: &str = r#"
+[content_type]
+name = "Document"
+singular = "document"
+plural = "documents"
+table = "ct_documents"
+implements = ["timestampable"]
+
+[fields.title]
+type = "text"
+required = true
+
+[fields.payload]
+type = "blob"
+"#;
+
+#[tokio::test]
+async fn blob_round_trip() {
+    use base64::Engine;
+
+    let pool = setup_pool().await;
+    let mut ct = ContentTypeSchema::parse_from_str(BLOB_TOML).unwrap();
+    cache_ct(&mut ct);
+    let repo = ContentRepository::new(pool.clone());
+    repo.migrate(&ct, &test_protocol_registry()).await.unwrap();
+
+    let raw = b"\x00\x01\x02hello\xff\xfe";
+    let b64 = |bytes: &[u8]| base64::engine::general_purpose::STANDARD.encode(bytes);
+    let blob = |bytes: &[u8], filename: &str, mimetype: &str| json!({ "data": b64(bytes), "filename": filename, "mimetype": mimetype });
+
+    let created = repo
+        .create(
+            &ct,
+            with_timestamps(json!({
+                "title": "doc1",
+                "payload": blob(raw, "hello.bin", "application/octet-stream"),
+            })),
+            None,
+            &SaveContext::default(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(created["payload"]["data"], b64(raw));
+    assert_eq!(created["payload"]["filename"], "hello.bin");
+    assert_eq!(created["payload"]["mimetype"], "application/octet-stream");
+    assert!(created["payload"].get("_filename").is_none());
+    assert!(created["payload"].get("_mimetype").is_none());
+
+    let id: SnowflakeId = created["id"].as_str().unwrap().parse().unwrap();
+    let found = repo.find_by_id(&ct, id, None, true).await.unwrap().unwrap();
+    assert_eq!(found["payload"]["data"], b64(raw));
+    assert_eq!(found["payload"]["filename"], "hello.bin");
+
+    let updated = b"updated-bytes-42";
+    repo.update(
+        &ct,
+        id,
+        json!({ "payload": blob(updated, "v2.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet") }),
+        None,
+        &SaveContext::default(),
+    )
+    .await
+    .unwrap();
+    let found = repo.find_by_id(&ct, id, None, true).await.unwrap().unwrap();
+    assert_eq!(found["payload"]["data"], b64(updated));
+    assert_eq!(found["payload"]["filename"], "v2.xlsx");
+    assert_eq!(
+        found["payload"]["mimetype"],
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    );
+
+    let (items, _total) = repo.find(&ct, ContentQuery::default()).await.unwrap();
+    assert_eq!(items[0]["payload"]["data"], b64(updated));
+
+    let big = base64::engine::general_purpose::STANDARD.encode(vec![0u8; 600 * 1024]);
+    let err = repo
+        .create(
+            &ct,
+            with_timestamps(json!({
+                "title": "big",
+                "payload": big,
+            })),
+            None,
+            &SaveContext::default(),
+        )
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("max size"));
+}
+
+const MEDIA_SET_TOML: &str = r#"
+[content_type]
+name = "Gallery"
+singular = "gallery"
+plural = "galleries"
+table = "ct_galleries"
+implements = ["timestampable"]
+
+[fields.title]
+type = "text"
+required = true
+
+[fields.images]
+type = "mediaset"
+accept = ["image/*"]
+max_count = 5
+"#;
+
+#[tokio::test]
+async fn media_set_round_trip() {
+    let pool = setup_pool().await;
+    let mut ct = ContentTypeSchema::parse_from_str(MEDIA_SET_TOML).unwrap();
+    cache_ct(&mut ct);
+    let repo = ContentRepository::new(pool.clone());
+    repo.migrate(&ct, &test_protocol_registry()).await.unwrap();
+
+    let ids = ["1000000000000000001", "1000000000000000002"];
+    let created = repo
+        .create(
+            &ct,
+            with_timestamps(json!({
+                "title": "gallery1",
+                "images": ids,
+            })),
+            None,
+            &SaveContext::default(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(created["images"], serde_json::json!(ids));
+
+    let id: SnowflakeId = created["id"].as_str().unwrap().parse().unwrap();
+    let found = repo.find_by_id(&ct, id, None, true).await.unwrap().unwrap();
+    assert_eq!(found["images"], serde_json::json!(ids));
+
+    let empty: Vec<String> = Vec::new();
+    repo.update(
+        &ct,
+        id,
+        json!({ "images": empty }),
+        None,
+        &SaveContext::default(),
+    )
+    .await
+    .unwrap();
+    let found = repo.find_by_id(&ct, id, None, true).await.unwrap().unwrap();
+    assert_eq!(found["images"], serde_json::json!([]));
+
+    let err = repo
+        .create(
+            &ct,
+            with_timestamps(json!({
+                "title": "bad",
+                "images": ["ok", 42],
+            })),
+            None,
+            &SaveContext::default(),
+        )
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("media_set"));
+}
+
 #[tokio::test]
 async fn create_sets_defaults() {
     let pool = setup_pool().await;

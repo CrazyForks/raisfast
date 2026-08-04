@@ -1,13 +1,16 @@
 //! Media file handlers
 
 use axum::Json;
+use axum::body::Body;
 use axum::extract::{Multipart, Path, Query, State};
+use axum::response::Response;
 
 use crate::dto::{BatchRequest, BatchResponse};
 use crate::errors::app_error::{AppError, AppResult};
 use crate::errors::response::{ApiResponse, PaginatedData};
 use crate::middleware::auth::AuthUser;
 use crate::services::media as media_service;
+use crate::types::snowflake_id::SnowflakeId;
 use crate::utils::pagination::PaginationParams;
 
 pub fn routes(
@@ -63,6 +66,17 @@ pub fn routes(
         "content",
         "media",
         "media:delete"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        restful,
+        "/admin/media/{id}/file",
+        get,
+        self::serve_file,
+        "content",
+        "admin/media",
+        "admin"
     );
     let r = reg_route!(
         r,
@@ -194,6 +208,34 @@ pub async fn delete(
 ) -> AppResult<ApiResponse<()>> {
     media_service::delete_media(state.storage.as_ref(), &state.pool, &id, &auth).await?;
     Ok(ApiResponse::success(()))
+}
+
+/// Serve a media file using its stored filename and MIME type (admin only).
+#[utoipa::path(get, path = "/admin/media/{id}/file", tag = "admin/media",
+    params(("id" = String, Path, description = "Media ID")),
+    responses((status = 200, description = "Media file bytes"))
+)]
+pub async fn serve_file(
+    State(state): State<crate::AppState>,
+    Path(id): Path<String>,
+) -> AppResult<Response> {
+    let media_id: SnowflakeId = id
+        .parse()
+        .map_err(|_| AppError::BadRequest("invalid media id".into()))?;
+    let media = crate::models::media::find_by_id(&state.pool, media_id, None)
+        .await?
+        .ok_or_else(|| AppError::NotFound("media".into()))?;
+    let bytes = state.storage.get(&media.filepath).await?;
+    let filename = media.filename.replace(['\r', '\n', '"'], "_");
+    Response::builder()
+        .header("Content-Type", media.mimetype)
+        .header(
+            "Content-Disposition",
+            format!("inline; filename=\"{filename}\""),
+        )
+        .header("Content-Length", bytes.len().to_string())
+        .body(Body::from(bytes))
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("failed to build media response: {e}")))
 }
 
 /// Get storage statistics

@@ -210,6 +210,8 @@ pub enum FieldType {
     Uid,
     Json,
     Media,
+    MediaSet,
+    Blob,
     Relation,
 }
 
@@ -488,6 +490,8 @@ impl ContentTypeSchema {
                 "uid" => FieldType::Uid,
                 "json" => FieldType::Json,
                 "media" => FieldType::Media,
+                "mediaset" => FieldType::MediaSet,
+                "blob" => FieldType::Blob,
                 "relation" => FieldType::Relation,
                 other => {
                     return Err(AppError::Internal(anyhow::anyhow!(
@@ -502,11 +506,12 @@ impl ContentTypeSchema {
                 None
             };
 
-            let media_config = if field_type == FieldType::Media {
-                Some(parse_media_config(field_toml))
-            } else {
-                None
-            };
+            let media_config =
+                if field_type == FieldType::Media || field_type == FieldType::MediaSet {
+                    Some(parse_media_config(field_toml))
+                } else {
+                    None
+                };
 
             let default = field_toml.get("default").map(toml_value_to_json);
 
@@ -824,6 +829,57 @@ impl ContentTypeSchema {
         self.fields
             .iter()
             .filter(|f| f.field_type == FieldType::Relation)
+            .collect()
+    }
+
+    /// Get all column names that store binary BLOB data.
+    #[must_use]
+    pub fn blob_column_set(&self) -> std::collections::HashSet<String> {
+        self.fields
+            .iter()
+            .filter(|f| f.field_type == FieldType::Blob)
+            .map(|f| f.name.clone())
+            .collect()
+    }
+
+    /// Map each blob field to its auto-created JSON metadata column name.
+    ///
+    /// Metadata column names are derived as `{field}_meta` and bumped until
+    /// they collide with no existing field name nor another metadata column.
+    #[must_use]
+    pub fn blob_meta_column_map(&self) -> std::collections::HashMap<String, String> {
+        let mut used: std::collections::HashSet<String> =
+            self.fields.iter().map(|f| f.name.clone()).collect();
+        let mut map = std::collections::HashMap::new();
+        for f in &self.fields {
+            if f.field_type != FieldType::Blob {
+                continue;
+            }
+            let mut cand = format!("{}_meta", f.name);
+            let mut n = 2;
+            while used.contains(&cand) {
+                cand = format!("{}_{}_meta", f.name, n);
+                n += 1;
+            }
+            used.insert(cand.clone());
+            map.insert(f.name.clone(), cand);
+        }
+        map
+    }
+
+    /// Get all auto-created blob metadata column names.
+    #[must_use]
+    pub fn blob_meta_columns(&self) -> std::collections::HashSet<String> {
+        self.blob_meta_column_map().into_values().collect()
+    }
+
+    /// Get all column names that store a set of media IDs.
+    #[must_use]
+    pub fn media_set_column_set(&self) -> std::collections::HashSet<String> {
+        self.fields
+            .iter()
+            .filter(|f| f.field_type == FieldType::MediaSet)
+            .map(|f| f.name.clone())
             .collect()
     }
 
@@ -1436,6 +1492,40 @@ target = "user"
         );
         assert_eq!(ct.get_field("f_json").unwrap().field_type, FieldType::Json);
         assert_eq!(ct.get_field("f_enum").unwrap().field_type, FieldType::Enum);
+    }
+
+    #[test]
+    fn blob_meta_columns_avoid_collisions() {
+        let ct = ContentTypeSchema::parse_from_str(
+            r#"
+[content_type]
+name = "B"
+singular = "b"
+plural = "bs"
+table = "bs"
+
+[fields.data]
+type = "blob"
+
+[fields.data_meta]
+type = "text"
+
+[fields.file]
+type = "blob"
+"#,
+        )
+        .unwrap();
+        let map = ct.blob_meta_column_map();
+        // "data" collides with the existing field "data_meta", so it bumps
+        assert_eq!(map.get("data").unwrap(), "data_2_meta");
+        assert_eq!(map.get("file").unwrap(), "file_meta");
+        let names: std::collections::HashSet<&String> = map.values().collect();
+        let field_names: std::collections::HashSet<&str> =
+            ct.fields.iter().map(|f| f.name.as_str()).collect();
+        for meta in &names {
+            assert!(!field_names.contains(meta.as_str()));
+        }
+        assert_eq!(names.len(), 2);
     }
 
     #[test]

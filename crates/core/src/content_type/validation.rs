@@ -363,7 +363,7 @@ async fn check_unique_fields(
 ) -> Result<(), AppError> {
     let mut sql_builder = String::new();
     for field in &ct.fields {
-        if !field.unique {
+        if !field.unique || field.field_type == FieldType::Blob {
             continue;
         }
         let Some(val) = obj.get(&field.name) else {
@@ -483,6 +483,31 @@ fn check_type(ft: &FieldType, val: &Value) -> Result<(), String> {
         FieldType::Media => {
             if !val.is_string() {
                 return Err("expected string (media url)".into());
+            }
+        }
+        FieldType::MediaSet => {
+            let Some(arr) = val.as_array() else {
+                return Err("expected array of media ids (media_set)".into());
+            };
+            if arr.iter().any(|v| !v.is_string()) {
+                return Err("expected array of media id strings (media_set)".into());
+            }
+        }
+        FieldType::Blob => {
+            let data = match val {
+                Value::String(s) => s.as_str(),
+                Value::Object(obj) => obj
+                    .get("data")
+                    .and_then(|d| d.as_str())
+                    .ok_or("expected { data, filename, mimetype } (blob)")?,
+                _ => {
+                    return Err(
+                        "expected base64 string or { data, filename, mimetype } (blob)".into(),
+                    );
+                }
+            };
+            if base64::Engine::decode(&base64::engine::general_purpose::STANDARD, data).is_err() {
+                return Err("invalid base64 (blob)".into());
             }
         }
         FieldType::Relation => {}

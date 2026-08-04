@@ -321,6 +321,8 @@ fn field_type_to_ts(field: &raisfast::content_type::schema::FieldSchema) -> Stri
         },
         FieldType::Json => "Record<string, unknown>".into(),
         FieldType::Media => "string".into(),
+        FieldType::MediaSet => "string[]".into(),
+        FieldType::Blob => "string".into(),
         FieldType::Relation => "string".into(),
     }
 }

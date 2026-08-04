@@ -19,7 +19,76 @@ use crate::db::Pool;
 use crate::errors::app_error::AppError;
 use crate::middleware::auth::AuthUser;
 use crate::protocols::ProtocolRegistry;
+use base64::Engine;
 use sqlx::Row;
+
+/// Value bound to a dynamic SQL parameter.
+///
+/// BLOB fields bind raw bytes (real binary columns); all other fields bind text.
+enum BindValue {
+    Text(String),
+    Blob(Vec<u8>),
+}
+
+/// Maximum size of a blob field payload in bytes.
+const MAX_BLOB_SIZE: usize = 512 * 1024;
+
+/// Decode a base64 blob payload into raw bytes (with size guard).
+fn decode_blob_data(data: &str) -> Result<Vec<u8>, AppError> {
+    if (data.len() / 4) * 3 > MAX_BLOB_SIZE {
+        return Err(AppError::BadRequest(format!(
+            "blob field exceeds max size of {MAX_BLOB_SIZE} bytes"
+        )));
+    }
+    base64::engine::general_purpose::STANDARD
+        .decode(data)
+        .map_err(|e| AppError::BadRequest(format!("blob field: invalid base64: {e}")))
+}
+
+/// Parse a blob field value: either `{ data, filename, mimetype }` or a legacy
+/// plain base64 string. Returns `(data, filename, mimetype)`.
+fn parse_blob_value(val: &Value) -> Result<(String, String, String), AppError> {
+    match val {
+        Value::Object(obj) => {
+            let data = obj
+                .get("data")
+                .and_then(|d| d.as_str())
+                .unwrap_or("")
+                .to_string();
+            let filename = obj
+                .get("filename")
+                .and_then(|f| f.as_str())
+                .unwrap_or("")
+                .to_string();
+            let mimetype = obj
+                .get("mimetype")
+                .and_then(|m| m.as_str())
+                .unwrap_or("")
+                .to_string();
+            Ok((data, filename, mimetype))
+        }
+        Value::String(s) => Ok((s.clone(), String::new(), String::new())),
+        _ => Err(AppError::BadRequest(
+            "blob field: expected base64 string or { data, filename, mimetype }".into(),
+        )),
+    }
+}
+
+impl BindValue {
+    fn bind<'q, DB: sqlx::Database>(
+        self,
+        query: sqlx::query::Query<'q, DB, <DB as sqlx::Database>::Arguments<'q>>,
+    ) -> sqlx::query::Query<'q, DB, <DB as sqlx::Database>::Arguments<'q>>
+    where
+        String: sqlx::Encode<'q, DB> + sqlx::Type<DB>,
+        Vec<u8>: sqlx::Encode<'q, DB> + sqlx::Type<DB>,
+    {
+        match self {
+            Self::Text(s) => query.bind(s),
+            Self::Blob(b) => query.bind(b),
+        }
+    }
+}
 
 /// Save operation context (passed from handler layer to repository layer)
 #[derive(Debug, Clone, Default)]
@@ -192,9 +261,21 @@ impl ContentRepository {
         };
 
         let id_cols = ct.id_column_set();
+        let blob_cols = ct.blob_column_set();
+        let blob_meta_map = ct.blob_meta_column_map();
+        let media_set_cols = ct.media_set_column_set();
         let mut items: Vec<Value> = rows
             .iter()
-            .map(|row| row_to_value(row, &columns, &id_cols))
+            .map(|row| {
+                row_to_value(
+                    row,
+                    &columns,
+                    &id_cols,
+                    &blob_cols,
+                    &blob_meta_map,
+                    &media_set_cols,
+                )
+            })
             .collect();
 
         if !ct.relation_fields().is_empty() {
@@ -244,7 +325,19 @@ impl ContentRepository {
         let row = q.fetch_optional(&self.pool).await?;
 
         let id_cols = ct.id_column_set();
-        let mut result = row.map(|r| row_to_value(&r, &columns, &id_cols));
+        let blob_cols = ct.blob_column_set();
+        let blob_meta_map = ct.blob_meta_column_map();
+        let media_set_cols = ct.media_set_column_set();
+        let mut result = row.map(|r| {
+            row_to_value(
+                &r,
+                &columns,
+                &id_cols,
+                &blob_cols,
+                &blob_meta_map,
+                &media_set_cols,
+            )
+        });
 
         if let Some(ref mut item) = result
             && !ct.relation_fields().is_empty()
@@ -291,7 +384,17 @@ impl ContentRepository {
 
         if let Some(r) = row {
             let id_cols = ct.id_column_set();
-            let mut result = row_to_value(&r, &columns, &id_cols);
+            let blob_cols = ct.blob_column_set();
+            let blob_meta_map = ct.blob_meta_column_map();
+            let media_set_cols = ct.media_set_column_set();
+            let mut result = row_to_value(
+                &r,
+                &columns,
+                &id_cols,
+                &blob_cols,
+                &blob_meta_map,
+                &media_set_cols,
+            );
             if !ct.relation_fields().is_empty() {
                 super::resolver::resolve_relations(
                     &self.pool,
@@ -357,7 +460,19 @@ impl ContentRepository {
         let row = q.fetch_optional(&self.pool).await?;
 
         let id_cols = ct.id_column_set();
-        let mut result = row.map(|r| row_to_value(&r, &columns, &id_cols));
+        let blob_cols = ct.blob_column_set();
+        let blob_meta_map = ct.blob_meta_column_map();
+        let media_set_cols = ct.media_set_column_set();
+        let mut result = row.map(|r| {
+            row_to_value(
+                &r,
+                &columns,
+                &id_cols,
+                &blob_cols,
+                &blob_meta_map,
+                &media_set_cols,
+            )
+        });
 
         if let Some(ref mut item) = result
             && !ct.relation_fields().is_empty()
@@ -393,19 +508,19 @@ impl ContentRepository {
 
         let mut cols = Vec::new();
         let mut placeholders = Vec::new();
-        let mut values: Vec<String> = Vec::new();
+        let mut values: Vec<BindValue> = Vec::new();
         let mut idx = 1;
 
         cols.push(COL_ID.to_string());
         placeholders.push(crate::db::Driver::ph(idx));
         idx += 1;
-        values.push(new_id.to_string());
+        values.push(BindValue::Text(new_id.to_string()));
 
         if let Some(ref tid) = tid {
             cols.push(COL_TENANT_ID.to_string());
             placeholders.push(crate::db::Driver::ph(idx));
             idx += 1;
-            values.push(tid.clone());
+            values.push(BindValue::Text(tid.clone()));
         }
 
         let mut fk_relation_map: std::collections::HashMap<String, (String, String)> =
@@ -474,7 +589,7 @@ impl ContentRepository {
                     cols.push(fk_col.clone());
                     placeholders.push(crate::db::Driver::ph(idx));
                     idx += 1;
-                    values.push(String::new());
+                    values.push(BindValue::Text(String::new()));
                 } else {
                     let parsed_id = crate::types::snowflake_id::parse_id(&target_id)?;
                     let int_id = find_existing_id(&self.pool, target_table, parsed_id)
@@ -487,15 +602,35 @@ impl ContentRepository {
                     cols.push(fk_col.clone());
                     placeholders.push(crate::db::Driver::ph(idx));
                     idx += 1;
-                    values.push(int_id.to_string());
+                    values.push(BindValue::Text(int_id.to_string()));
                 }
                 continue;
             }
 
-            cols.push(key.clone());
-            placeholders.push(crate::db::Driver::ph(idx));
-            idx += 1;
-            values.push(value_to_string(val));
+            if let Some(f) = ct.get_field(key)
+                && f.field_type == FieldType::Blob
+            {
+                let (data, filename, mimetype) = parse_blob_value(val)?;
+                cols.push(key.clone());
+                placeholders.push(crate::db::Driver::ph(idx));
+                idx += 1;
+                values.push(BindValue::Blob(decode_blob_data(&data)?));
+                if let Some(meta) = ct.blob_meta_column_map().get(key) {
+                    let meta_json = serde_json::json!({
+                        "filename": filename,
+                        "mimetype": mimetype,
+                    });
+                    cols.push(meta.clone());
+                    placeholders.push(crate::db::Driver::ph(idx));
+                    idx += 1;
+                    values.push(BindValue::Text(meta_json.to_string()));
+                }
+            } else {
+                cols.push(key.clone());
+                placeholders.push(crate::db::Driver::ph(idx));
+                idx += 1;
+                values.push(BindValue::Text(value_to_string(val)));
+            }
         }
 
         let sql = format!(
@@ -506,8 +641,8 @@ impl ContentRepository {
         );
 
         let mut query = sqlx::query(&sql);
-        for v in &values {
-            query = query.bind(v);
+        for v in values {
+            query = v.bind(query);
         }
 
         query.execute(&mut *tx).await?;
@@ -598,8 +733,20 @@ impl ContentRepository {
             .await?;
 
         let id_cols = ct.id_column_set();
-        row.map(|r| row_to_value(&r, &columns, &id_cols))
-            .ok_or_else(|| AppError::Internal(anyhow::anyhow!("created record not found")))
+        let blob_cols = ct.blob_column_set();
+        let blob_meta_map = ct.blob_meta_column_map();
+        let media_set_cols = ct.media_set_column_set();
+        row.map(|r| {
+            row_to_value(
+                &r,
+                &columns,
+                &id_cols,
+                &blob_cols,
+                &blob_meta_map,
+                &media_set_cols,
+            )
+        })
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("created record not found")))
     }
 
     /// Update (with field validation, transaction-protected)
@@ -642,7 +789,7 @@ impl ContentRepository {
         let tid = self.resolve_tenant(ct, tenant_id);
 
         let mut set_clauses = Vec::new();
-        let mut values: Vec<String> = Vec::new();
+        let mut values: Vec<BindValue> = Vec::new();
         let mut idx = 1;
 
         let mut fk_relation_map: std::collections::HashMap<String, (String, String)> =
@@ -713,7 +860,7 @@ impl ContentRepository {
                     if target_id.is_empty() {
                         set_clauses.push(format!("{fk_col} = {}", crate::db::Driver::ph(idx)));
                         idx += 1;
-                        values.push(String::new());
+                        values.push(BindValue::Text(String::new()));
                     } else {
                         let parsed_id = crate::types::snowflake_id::parse_id(&target_id)?;
                         let int_id = find_existing_id(&self.pool, target_table, parsed_id)
@@ -725,13 +872,38 @@ impl ContentRepository {
                             })?;
                         set_clauses.push(format!("{fk_col} = {}", crate::db::Driver::ph(idx)));
                         idx += 1;
-                        values.push(int_id.to_string());
+                        values.push(BindValue::Text(int_id.to_string()));
                     }
                     continue;
                 }
-                set_clauses.push(format!("{key} = {}", crate::db::Driver::ph(idx)));
-                idx += 1;
-                values.push(value_to_string(val));
+                if ct
+                    .get_field(key)
+                    .is_some_and(|f| f.field_type == FieldType::Blob)
+                {
+                    let (data, filename, mimetype) = parse_blob_value(val)?;
+                    if let Some(meta) = ct.blob_meta_column_map().get(key) {
+                        let meta_json = serde_json::json!({
+                            "filename": filename,
+                            "mimetype": mimetype,
+                        });
+                        set_clauses.push(format!(
+                            "{key} = {}, {meta} = {}",
+                            crate::db::Driver::ph(idx),
+                            crate::db::Driver::ph(idx + 1)
+                        ));
+                        idx += 2;
+                        values.push(BindValue::Blob(decode_blob_data(&data)?));
+                        values.push(BindValue::Text(meta_json.to_string()));
+                    } else {
+                        set_clauses.push(format!("{key} = {}", crate::db::Driver::ph(idx)));
+                        idx += 1;
+                        values.push(BindValue::Blob(decode_blob_data(&data)?));
+                    }
+                } else {
+                    set_clauses.push(format!("{key} = {}", crate::db::Driver::ph(idx)));
+                    idx += 1;
+                    values.push(BindValue::Text(value_to_string(val)));
+                }
             }
         }
 
@@ -753,14 +925,14 @@ impl ContentRepository {
             if let Some(ref tid) = tid {
                 where_parts.push(format!("{COL_TENANT_ID} = {}", crate::db::Driver::ph(idx)));
                 idx += 1;
-                values.push(tid.clone());
+                values.push(BindValue::Text(tid.clone()));
             }
 
             if let Some(ref lock_col) = decl.lock_column
                 && let Some(current_version) = obj.get(lock_col).and_then(|v| v.as_i64())
             {
                 where_parts.push(format!("{lock_col} = {}", crate::db::Driver::ph(idx)));
-                values.push(current_version.to_string());
+                values.push(BindValue::Text(current_version.to_string()));
             }
 
             let sql = format!(
@@ -771,12 +943,12 @@ impl ContentRepository {
             );
 
             let mut query = sqlx::query(&sql);
-            for v in &values[..set_value_count] {
-                query = query.bind(v);
+            for v in values.drain(..set_value_count) {
+                query = v.bind(query);
             }
             query = query.bind(id);
-            for v in &values[set_value_count..] {
-                query = query.bind(v);
+            for v in values {
+                query = v.bind(query);
             }
 
             let result = query
@@ -1377,6 +1549,12 @@ pub fn build_column_names(
         }
 
         cols.push(field.name.clone());
+
+        if field.field_type == FieldType::Blob
+            && let Some(meta) = ct.blob_meta_column_map().get(&field.name)
+        {
+            cols.push(meta.clone());
+        }
     }
 
     for col in ct.protocol_column_names() {
@@ -1394,20 +1572,73 @@ pub(crate) fn row_to_value(
     row: &DbRow,
     columns: &[String],
     id_columns: &std::collections::HashSet<&str>,
+    blob_columns: &std::collections::HashSet<String>,
+    blob_meta_map: &std::collections::HashMap<String, String>,
+    media_set_columns: &std::collections::HashSet<String>,
 ) -> Value {
+    let meta_set: std::collections::HashSet<&str> =
+        blob_meta_map.values().map(String::as_str).collect();
     let mut map = serde_json::Map::with_capacity(columns.len());
     for col in columns {
-        let val = cell_to_json(row, col.as_str(), id_columns);
+        if blob_columns.contains(col) {
+            let meta_col = blob_meta_map.get(col).map(String::as_str);
+            map.insert(col.clone(), blob_cell_to_json(row, col.as_str(), meta_col));
+            continue;
+        }
+        if meta_set.contains(col.as_str()) {
+            continue;
+        }
+        let val = cell_to_json(row, col.as_str(), id_columns, media_set_columns);
         map.insert(col.clone(), val);
     }
     Value::Object(map)
 }
 
-fn cell_to_json(row: &DbRow, col: &str, id_columns: &std::collections::HashSet<&str>) -> Value {
+fn blob_cell_to_json(row: &DbRow, col: &str, meta_col: Option<&str>) -> Value {
+    let Ok(Some(v)) = row.try_get::<Option<Vec<u8>>, &str>(col) else {
+        return Value::Null;
+    };
+    if v.is_empty() {
+        return Value::Null;
+    }
+    let mut filename = String::new();
+    let mut mimetype = String::new();
+    if let Some(mc) = meta_col
+        && let Ok(Some(meta)) = row.try_get::<Option<serde_json::Value>, &str>(mc)
+    {
+        filename = meta
+            .get("filename")
+            .and_then(|x| x.as_str())
+            .unwrap_or("")
+            .to_string();
+        mimetype = meta
+            .get("mimetype")
+            .and_then(|x| x.as_str())
+            .unwrap_or("")
+            .to_string();
+    }
+    json!({
+        "data": base64::engine::general_purpose::STANDARD.encode(&v),
+        "filename": filename,
+        "mimetype": mimetype,
+    })
+}
+
+fn cell_to_json(
+    row: &DbRow,
+    col: &str,
+    id_columns: &std::collections::HashSet<&str>,
+    media_set_columns: &std::collections::HashSet<String>,
+) -> Value {
     if id_columns.contains(col)
         && let Ok(Some(v)) = row.try_get::<Option<i64>, &str>(col)
     {
         return json!(crate::types::snowflake_id::encode_id(v));
+    }
+    if media_set_columns.contains(col)
+        && let Ok(Some(v)) = row.try_get::<Option<serde_json::Value>, &str>(col)
+    {
+        return v;
     }
     if let Ok(Some(v)) = row.try_get::<Option<i64>, &str>(col) {
         return json!(v);
