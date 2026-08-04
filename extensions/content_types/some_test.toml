@@ -28,8 +28,12 @@ enum_values = [
 type = "mediaset"
 max_count = 5
 
+[fields.mail]
+type = "email"
+max_length = 255
+
 [api.list]
-access = "authed"
+access = "admin"
 cache = false
 
 [api.get]

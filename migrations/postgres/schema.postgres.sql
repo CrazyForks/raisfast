@@ -11,7 +11,7 @@ CREATE TABLE IF NOT EXISTS tenants (
     id BIGINT PRIMARY KEY,
     name VARCHAR(255) NOT NULL UNIQUE,
     domain VARCHAR(255) UNIQUE,
-    config JSONB NOT NULL DEFAULT '{}',
+    config TEXT NOT NULL DEFAULT '{}',
     status VARCHAR(50) NOT NULL DEFAULT 'active',
     created_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW()
@@ -30,8 +30,8 @@ CREATE TABLE IF NOT EXISTS users (
     display_name VARCHAR(100),
     slug VARCHAR(100) UNIQUE,
     locale VARCHAR(10),
-    social_links JSONB,
-    metadata JSONB,
+    social_links TEXT,
+    metadata TEXT,
     created_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW()
 );
@@ -66,7 +66,7 @@ CREATE TABLE IF NOT EXISTS oauth_accounts (
     access_token VARCHAR(1024),
     refresh_token VARCHAR(1024),
     token_expires_at TIMESTAMPTZ,
-    profile JSONB,
+    profile TEXT,
     created_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW(),
     UNIQUE(provider, provider_user_id)
@@ -92,9 +92,9 @@ CREATE TABLE IF NOT EXISTS currencies (
     tenant_id VARCHAR(36) NOT NULL DEFAULT 'default',
     code VARCHAR(10) NOT NULL CHECK(code = UPPER(code) AND LENGTH(code) BETWEEN 1 AND 10),
     name TEXT NOT NULL,
-    decimals INTEGER NOT NULL DEFAULT 0 CHECK(decimals BETWEEN 0 AND 18),
+    decimals BIGINT NOT NULL DEFAULT 0 CHECK(decimals BETWEEN 0 AND 18),
     is_active BOOLEAN NOT NULL DEFAULT TRUE,
-    version INTEGER NOT NULL DEFAULT 1,
+    version BIGINT NOT NULL DEFAULT 1,
     created_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW(),
     UNIQUE(tenant_id, code)
@@ -131,7 +131,7 @@ CREATE TABLE IF NOT EXISTS wallet_transactions (
     reference_type VARCHAR(100),
     reference_id VARCHAR(255),
     counterparty_wallet_id BIGINT,
-    metadata JSONB,
+    metadata TEXT,
     created_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW()
 );
 
@@ -162,10 +162,10 @@ CREATE TABLE IF NOT EXISTS options (
     group_name VARCHAR(100) NOT NULL DEFAULT 'general',
     label VARCHAR(255) NOT NULL DEFAULT '',
     description TEXT,
-    validation JSONB,
+    validation TEXT,
     is_public BOOLEAN NOT NULL DEFAULT FALSE,
     autoload BOOLEAN NOT NULL DEFAULT TRUE,
-    sort_order INTEGER NOT NULL DEFAULT 0,
+    sort_order BIGINT NOT NULL DEFAULT 0,
     updated_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW(),
     UNIQUE(tenant_id, option_key)
 );
@@ -191,9 +191,10 @@ CREATE TABLE IF NOT EXISTS permissions (
     role_id BIGINT NOT NULL,
     action VARCHAR(255) NOT NULL,
     subject VARCHAR(255) NOT NULL,
-    fields JSONB,
-    conditions JSONB,
-    created_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW()
+    fields TEXT,
+    conditions TEXT,
+    created_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW(),
+    UNIQUE(role_id, action, subject)
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_permissions_role_action_subject
@@ -202,7 +203,7 @@ CREATE INDEX IF NOT EXISTS idx_permissions_tenant ON permissions(tenant_id);
 
 -- User-role assignments (many-to-many)
 CREATE TABLE IF NOT EXISTS user_roles (
-    id BIGSERIAL PRIMARY KEY,
+    id BIGINT PRIMARY KEY,
     tenant_id TEXT NOT NULL DEFAULT 'default',
     user_id BIGINT NOT NULL,
     role_id BIGINT NOT NULL,
@@ -241,7 +242,7 @@ CREATE TABLE IF NOT EXISTS api_tokens (
     token_hash VARCHAR(255) UNIQUE NOT NULL,
     token_encrypted TEXT NOT NULL,
     description TEXT DEFAULT '',
-    scopes JSONB NOT NULL,
+    scopes TEXT NOT NULL,
     last_used_at TIMESTAMPTZ,
     expires_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW()
@@ -255,7 +256,7 @@ CREATE TABLE IF NOT EXISTS webhook_subscriptions (
     tenant_id TEXT NOT NULL DEFAULT 'default',
     url VARCHAR(1024) NOT NULL,
     secret VARCHAR(255) NOT NULL,
-    events JSONB NOT NULL DEFAULT '[]',
+    events TEXT NOT NULL DEFAULT '[]',
     enabled BOOLEAN NOT NULL DEFAULT TRUE,
     description TEXT,
     created_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW(),
@@ -282,8 +283,8 @@ CREATE TABLE IF NOT EXISTS content_revisions (
     id BIGINT PRIMARY KEY,
     content_type VARCHAR(100) NOT NULL,
     record_id BIGINT NOT NULL,
-    revision_number INTEGER NOT NULL,
-    snapshot JSONB NOT NULL,
+    revision_number BIGINT NOT NULL,
+    snapshot TEXT NOT NULL,
     created_by BIGINT,
     created_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW(),
     UNIQUE(content_type, record_id, revision_number)
@@ -313,7 +314,7 @@ CREATE TABLE IF NOT EXISTS sms_codes (
     purpose VARCHAR(50) NOT NULL,
     expires_at TIMESTAMPTZ NOT NULL,
     verified_at TIMESTAMPTZ,
-    attempts INTEGER NOT NULL DEFAULT 0,
+    attempts BIGINT NOT NULL DEFAULT 0,
     ip_address VARCHAR(45),
     created_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW()
 );
@@ -328,9 +329,9 @@ CREATE TABLE IF NOT EXISTS user_device_codes (
     code VARCHAR(255) NOT NULL UNIQUE,
     access_token TEXT NOT NULL,
     refresh_token TEXT NOT NULL,
-    expires_at TIMESTAMP NOT NULL,
-    used_at TIMESTAMP,
-    created_at TIMESTAMP NOT NULL DEFAULT NOW()
+    expires_at TIMESTAMPTZ NOT NULL,
+    used_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE INDEX IF NOT EXISTS idx_user_device_codes_code ON user_device_codes(code);
@@ -394,7 +395,7 @@ CREATE TABLE IF NOT EXISTS cron_execution_log (
     job_type     VARCHAR(100) NOT NULL,
     label        VARCHAR(255) NOT NULL,
     status       VARCHAR(50) NOT NULL DEFAULT 'running',
-    duration_ms  INTEGER,
+    duration_ms  BIGINT,
     error        TEXT,
     started_at   TIMESTAMPTZ NOT NULL,
     finished_at  TIMESTAMPTZ
@@ -414,7 +415,7 @@ CREATE TABLE IF NOT EXISTS categories (
     slug VARCHAR(255) NOT NULL,
     description TEXT,
     parent_id BIGINT,
-    sort_order INTEGER NOT NULL DEFAULT 0,
+    sort_order BIGINT NOT NULL DEFAULT 0,
     created_by BIGINT,
     updated_by BIGINT,
     cover_image VARCHAR(500),
@@ -440,7 +441,7 @@ CREATE TABLE IF NOT EXISTS product_categories (
     description TEXT,
     cover_image VARCHAR(500),
     parent_id BIGINT,
-    sort_order INTEGER NOT NULL DEFAULT 0,
+    sort_order BIGINT NOT NULL DEFAULT 0,
     meta_title VARCHAR(255),
     meta_description VARCHAR(500),
     og_title VARCHAR(255),
@@ -493,7 +494,7 @@ CREATE TABLE IF NOT EXISTS posts (
     created_by BIGINT NOT NULL,
     updated_by BIGINT,
     category_id BIGINT,
-    view_count INTEGER NOT NULL DEFAULT 0,
+    view_count BIGINT NOT NULL DEFAULT 0,
     is_pinned BOOLEAN NOT NULL DEFAULT FALSE,
     password VARCHAR(255),
     comment_status VARCHAR(20) NOT NULL DEFAULT 'open',
@@ -505,7 +506,7 @@ CREATE TABLE IF NOT EXISTS posts (
     og_description VARCHAR(500),
     og_image VARCHAR(500),
     canonical_url VARCHAR(1024),
-    reading_time INTEGER NOT NULL DEFAULT 0,
+    reading_time BIGINT NOT NULL DEFAULT 0,
     created_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW(),
     published_at TIMESTAMPTZ
@@ -577,13 +578,13 @@ CREATE TABLE IF NOT EXISTS pages (
     title            TEXT NOT NULL,
     slug             VARCHAR(255) NOT NULL UNIQUE,
     content          TEXT,
-    blocks           JSONB,
+    blocks           TEXT,
     meta_title       VARCHAR(255),
     meta_description VARCHAR(500),
     og_image         VARCHAR(500),
     template         VARCHAR(100) NOT NULL DEFAULT 'default',
     parent_id        BIGINT,
-    sort_order       INTEGER NOT NULL DEFAULT 0,
+    sort_order       BIGINT NOT NULL DEFAULT 0,
     status           VARCHAR(50) NOT NULL DEFAULT 'draft',
     created_by       BIGINT NOT NULL,
     updated_by       BIGINT,
@@ -628,7 +629,7 @@ CREATE TABLE IF NOT EXISTS media (
     filename VARCHAR(255) NOT NULL,
     filepath VARCHAR(500) NOT NULL,
     mimetype VARCHAR(100) NOT NULL,
-    size INTEGER NOT NULL,
+size BIGINT NOT NULL,
     width INTEGER,
     height INTEGER,
     title VARCHAR(255),
@@ -649,9 +650,9 @@ CREATE TABLE IF NOT EXISTS workflow_definitions (
     id BIGINT PRIMARY KEY,
     name VARCHAR(255) NOT NULL,
     description TEXT,
-    steps JSONB NOT NULL,
+    steps TEXT NOT NULL,
     initial_step VARCHAR(100) NOT NULL,
-    version INTEGER NOT NULL DEFAULT 1,
+    version BIGINT NOT NULL DEFAULT 1,
     enabled BOOLEAN NOT NULL DEFAULT TRUE,
     created_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW()
@@ -662,7 +663,7 @@ CREATE TABLE IF NOT EXISTS workflow_instances (
     definition_id BIGINT NOT NULL,
     status VARCHAR(50) NOT NULL DEFAULT 'running',
     current_step VARCHAR(100),
-    context JSONB NOT NULL DEFAULT '{}',
+    context TEXT NOT NULL DEFAULT '{}',
     triggered_by BIGINT,
     started_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW(),
     completed_at TIMESTAMPTZ,
@@ -698,32 +699,32 @@ CREATE TABLE IF NOT EXISTS products (
     product_type VARCHAR(50) NOT NULL DEFAULT 'custom',
     fulfillment_type VARCHAR(50) NOT NULL DEFAULT 'digital',
     delivery_hook VARCHAR(255),
-    weight INTEGER,
+    weight BIGINT,
     shipping_template_id BIGINT,
     price BIGINT NOT NULL CHECK(price >= 0),
     currency VARCHAR(50) NOT NULL DEFAULT 'USD',
     status VARCHAR(50) NOT NULL DEFAULT 'draft',
-    attributes JSONB,
-    sort_order INTEGER NOT NULL DEFAULT 0,
-    version INTEGER NOT NULL DEFAULT 1,
+    attributes TEXT,
+    sort_order BIGINT NOT NULL DEFAULT 0,
+    version BIGINT NOT NULL DEFAULT 1,
     created_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW(),
     slug VARCHAR(255) UNIQUE,
     content TEXT,
-    image_ids JSONB,
+    image_ids TEXT,
     original_price BIGINT,
-    specs JSONB,
+    specs TEXT,
     unit VARCHAR(50) NOT NULL DEFAULT 'piece',
-    min_purchase INTEGER NOT NULL DEFAULT 1,
-    max_purchase INTEGER,
-    total_sales INTEGER NOT NULL DEFAULT 0,
-    virtual_sales INTEGER NOT NULL DEFAULT 0,
+    min_purchase BIGINT NOT NULL DEFAULT 1,
+    max_purchase BIGINT,
+    total_sales BIGINT NOT NULL DEFAULT 0,
+    virtual_sales BIGINT NOT NULL DEFAULT 0,
     meta_title VARCHAR(255),
     meta_description VARCHAR(500),
     og_title VARCHAR(255),
     og_description VARCHAR(500),
     og_image VARCHAR(500),
     published_at TIMESTAMPTZ,
-    stock INTEGER NOT NULL DEFAULT 0,
+    stock BIGINT NOT NULL DEFAULT 0,
     cost_price BIGINT,
     sale_price BIGINT,
     has_variants BOOLEAN NOT NULL DEFAULT FALSE,
@@ -744,11 +745,11 @@ CREATE TABLE IF NOT EXISTS product_variants (
     title TEXT NOT NULL,
     price BIGINT NOT NULL CHECK(price >= 0),
     original_price BIGINT,
-    stock INTEGER NOT NULL DEFAULT 0,
-    attributes JSONB,
+    stock BIGINT NOT NULL DEFAULT 0,
+    attributes TEXT,
     image_url TEXT,
-    weight INTEGER,
-    sort_order INTEGER NOT NULL DEFAULT 0,
+    weight BIGINT,
+    sort_order BIGINT NOT NULL DEFAULT 0,
     is_active BOOLEAN NOT NULL DEFAULT TRUE,
     created_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW()
@@ -801,7 +802,7 @@ CREATE TABLE IF NOT EXISTS orders (
     carrier VARCHAR(100),
     remark TEXT,
     admin_remark TEXT,
-    delivery_data JSONB,
+    delivery_data TEXT,
     tax_amount BIGINT NOT NULL DEFAULT 0,
     coupon_id BIGINT,
     shipping_address_id BIGINT,
@@ -833,11 +834,11 @@ CREATE TABLE IF NOT EXISTS order_items (
     description TEXT,
     sku VARCHAR(100),
     unit_price BIGINT NOT NULL CHECK(unit_price >= 0),
-    quantity INTEGER NOT NULL CHECK(quantity > 0),
+    quantity BIGINT NOT NULL CHECK(quantity > 0),
     subtotal BIGINT NOT NULL,
     tax_amount BIGINT NOT NULL DEFAULT 0,
     cover_url VARCHAR(500),
-    attributes JSONB,
+    attributes TEXT,
     created_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW()
 );
 
@@ -851,8 +852,8 @@ CREATE TABLE IF NOT EXISTS cart_items (
     user_id BIGINT NOT NULL,
     product_id BIGINT NOT NULL,
     variant_id BIGINT,
-    quantity INTEGER NOT NULL DEFAULT 1,
-    attributes JSONB,
+    quantity BIGINT NOT NULL DEFAULT 1,
+    attributes TEXT,
     created_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW(),
     UNIQUE(user_id, product_id, variant_id)
@@ -867,10 +868,10 @@ CREATE TABLE IF NOT EXISTS payment_channels (
     is_live BOOLEAN NOT NULL DEFAULT FALSE,
     credentials TEXT NOT NULL,
     webhook_secret TEXT,
-    settings JSONB,
+    settings TEXT,
     is_active BOOLEAN NOT NULL DEFAULT TRUE,
-    sort_order INTEGER NOT NULL DEFAULT 0,
-    version INTEGER NOT NULL DEFAULT 1,
+    sort_order BIGINT NOT NULL DEFAULT 0,
+    version BIGINT NOT NULL DEFAULT 1,
     created_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW(),
     UNIQUE(provider, name)
@@ -898,14 +899,14 @@ CREATE TABLE IF NOT EXISTS payment_orders (
     reference_id VARCHAR(200),
     return_url VARCHAR(500),
     idempotency_key VARCHAR(200) NOT NULL UNIQUE,
-    version INTEGER NOT NULL DEFAULT 1,
-    provider_data JSONB,
+    version BIGINT NOT NULL DEFAULT 1,
+    provider_data TEXT,
     client_ip VARCHAR(45),
     client_language VARCHAR(50),
     client_country VARCHAR(2),
     client_user_agent VARCHAR(512),
     channel_selected_by VARCHAR(20),
-    metadata JSONB,
+    metadata TEXT,
     paid_at TIMESTAMPTZ,
     cancelled_at TIMESTAMPTZ,
     expired_at TIMESTAMPTZ,
@@ -932,7 +933,7 @@ CREATE TABLE IF NOT EXISTS payment_transactions (
     currency VARCHAR(10) NOT NULL,
     provider_tx_id VARCHAR(200) NOT NULL UNIQUE,
     status VARCHAR(50) NOT NULL DEFAULT 'pending',
-    raw_payload JSONB,
+    raw_payload TEXT,
     created_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW()
 );
 
@@ -953,7 +954,7 @@ CREATE TABLE IF NOT EXISTS payment_refunds (
     provider_refund_id VARCHAR(200),
     status VARCHAR(50) NOT NULL DEFAULT 'pending',
     payment_tx_id BIGINT,
-    metadata JSONB,
+    metadata TEXT,
     created_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW()
 );
@@ -976,8 +977,8 @@ CREATE TABLE IF NOT EXISTS wallet_outbox (
     reference_id TEXT,
     metadata TEXT,
     status TEXT NOT NULL DEFAULT 'pending',
-    attempts INTEGER NOT NULL DEFAULT 0,
-    max_attempts INTEGER NOT NULL DEFAULT 5,
+    attempts BIGINT NOT NULL DEFAULT 0,
+    max_attempts BIGINT NOT NULL DEFAULT 5,
     last_error TEXT,
     created_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW()
@@ -994,7 +995,7 @@ CREATE TABLE IF NOT EXISTS product_comments (
     product_id BIGINT NOT NULL,
     order_id BIGINT NOT NULL,
     user_id BIGINT NOT NULL,
-    rating INT NOT NULL DEFAULT 5,
+    rating BIGINT NOT NULL DEFAULT 5,
     title VARCHAR(255),
     content TEXT NOT NULL,
     images TEXT,
@@ -1019,9 +1020,9 @@ CREATE TABLE IF NOT EXISTS coupons (
     coupon_type VARCHAR(32) NOT NULL DEFAULT 'percent',
     value BIGINT NOT NULL,
     min_order BIGINT NOT NULL DEFAULT 0,
-    max_uses INT NOT NULL DEFAULT 0,
-    used_count INT NOT NULL DEFAULT 0,
-    max_uses_per_user INT NOT NULL DEFAULT 1,
+    max_uses BIGINT NOT NULL DEFAULT 0,
+    used_count BIGINT NOT NULL DEFAULT 0,
+    max_uses_per_user BIGINT NOT NULL DEFAULT 1,
     starts_at TIMESTAMPTZ,
     expires_at TIMESTAMPTZ,
     status VARCHAR(32) NOT NULL DEFAULT 'active',
@@ -1038,15 +1039,15 @@ CREATE TABLE IF NOT EXISTS shipping_templates (
     tenant_id TEXT NOT NULL DEFAULT 'default',
     name TEXT NOT NULL,
     type TEXT NOT NULL DEFAULT 'weight',
-    first_unit INTEGER NOT NULL DEFAULT 1,
-    first_price INTEGER NOT NULL DEFAULT 0,
-    additional_unit INTEGER NOT NULL DEFAULT 1,
-    additional_price INTEGER NOT NULL DEFAULT 0,
-    free_shipping_amount INTEGER NOT NULL DEFAULT 0,
+    first_unit BIGINT NOT NULL DEFAULT 1,
+    first_price BIGINT NOT NULL DEFAULT 0,
+    additional_unit BIGINT NOT NULL DEFAULT 1,
+    additional_price BIGINT NOT NULL DEFAULT 0,
+    free_shipping_amount BIGINT NOT NULL DEFAULT 0,
     regions TEXT NOT NULL DEFAULT '[]',
     status TEXT NOT NULL DEFAULT 'active',
-    created_at TEXT NOT NULL DEFAULT (NOW()),
-    updated_at TEXT NOT NULL DEFAULT (NOW())
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE INDEX IF NOT EXISTS idx_shipping_templates_tenant ON shipping_templates(tenant_id);
@@ -1076,7 +1077,7 @@ INSERT INTO roles (id, tenant_id, name, description, is_system, created_at, upda
     (10002, 'default', 'editor', 'Editor', FALSE, NOW(), NOW()),
     (10003, 'default', 'author', 'Author', FALSE, NOW(), NOW()),
     (10004, 'default', 'reader', 'Reader', TRUE, NOW(), NOW())
-ON CONFLICT (name) DO NOTHING;
+ON CONFLICT (tenant_id, name) DO NOTHING;
 
 -- Admin global permissions
 INSERT INTO permissions (id, tenant_id, role_id, action, subject, fields, conditions, created_at) VALUES
@@ -1119,4 +1120,4 @@ INSERT INTO options (id, tenant_id, option_key, value, type, group_name, label, 
     (10013, 'default', 'theme', '"default"', 'select', 'appearance', 'Current theme', NULL, '{"values":["default","corporate","minimal","warm"]}', TRUE, TRUE, 30, NOW()),
     (10014, 'default', 'maintenance_mode', 'false', 'boolean', 'appearance', 'Maintenance mode', 'When enabled, a maintenance page is shown to visitors', NULL, TRUE, TRUE, 31, NOW()),
     (10015, 'default', 'default_currency', '"USD"', 'select', 'ecommerce', 'Default currency', 'Currency code for products and orders', '{"values":["USD","CNY","EUR","GBP","JPY","KRW","HKD","TWD","SGD","AUD","CAD"]}', TRUE, TRUE, 40, NOW())
-ON CONFLICT (option_key) DO NOTHING;
+ON CONFLICT (tenant_id, option_key) DO NOTHING;

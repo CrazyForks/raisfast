@@ -286,6 +286,30 @@ fn expand_insert(input: TokenStream) -> TokenStream {
         .map(|i| syn::Ident::new(&format!("__vi_{}", i), proc_macro2::Span::call_site()))
         .collect();
 
+    // PostgreSQL's `query!` macro type-checks binds strictly against the column
+    // type. BIGINT columns expect `i64`, so coerce values (`SnowflakeId`, `i32`,
+    // `i64`, and their `Option` wrappers) through [`crate::db::bigint::PgBigInt`] —
+    // a no-op for plain `i64`. Other dialects are left untouched (SQLite/MySQL
+    // accept the raw values).
+    let coerced: Vec<proc_macro2::TokenStream> = col_strs
+        .iter()
+        .zip(&val_idents)
+        .map(|(col, ident)| {
+            if d == crate::schema::Dialect::Postgres
+                && get_schema().tables.get(&table_str).is_some_and(|t| {
+                    t.columns
+                        .iter()
+                        .find(|c| c.name == *col)
+                        .is_some_and(|c| matches!(c.ty, crate::schema::SqlType::BigInt))
+                })
+            {
+                quote! { crate::db::bigint::PgBigInt::pg_bigint(#ident) }
+            } else {
+                quote! { #ident }
+            }
+        })
+        .collect();
+
     if parsed.tid.is_some() {
         let qi_tid = d.qi("tenant_id");
         let col_list_with = format!("{}, {}", col_list, qi_tid);
@@ -313,8 +337,8 @@ fn expand_insert(input: TokenStream) -> TokenStream {
             {
                 #(let #val_idents = #vals;)*
                 let __r: sqlx::Result<crate::db::pool::DbQueryResult> = match #tid {
-                    Some(_tid) => sqlx::query!(#sql_with, #(#val_idents),*, _tid).execute(#pool).await,
-                    None => sqlx::query!(#sql_without, #(#val_idents),*).execute(#pool).await,
+                    Some(_tid) => sqlx::query!(#sql_with, #(#coerced),*, _tid).execute(#pool).await,
+                    None => sqlx::query!(#sql_without, #(#coerced),*).execute(#pool).await,
                 };
                 __r
             }
@@ -334,7 +358,7 @@ fn expand_insert(input: TokenStream) -> TokenStream {
         let expanded = quote! {
             {
                 #(let #val_idents = #vals;)*
-                let __r: sqlx::Result<crate::db::pool::DbQueryResult> = sqlx::query!(#sql, #(#val_idents),*).execute(#pool).await;
+                let __r: sqlx::Result<crate::db::pool::DbQueryResult> = sqlx::query!(#sql, #(#coerced),*).execute(#pool).await;
                 __r
             }
         };
@@ -1663,10 +1687,8 @@ pub fn crud_join_paged(input: TokenStream) -> TokenStream {
     let sel_lit = syn::LitStr::new(&sel_str, proc_macro2::Span::call_site());
     let from_lit = syn::LitStr::new(&qi_from, proc_macro2::Span::call_site());
     let join_lit = syn::LitStr::new(&join_str, proc_macro2::Span::call_site());
-    let from_for_count = syn::LitStr::new(
-        &d.qi(from_str.split_whitespace().next().unwrap_or("")),
-        proc_macro2::Span::call_site(),
-    );
+    let from_for_count =
+        syn::LitStr::new(&qi_table_ref(&d, &from_str), proc_macro2::Span::call_site());
 
     let order_str = match &parsed.order_by {
         Some(ob) => format!(" ORDER BY {}", ob.value()),

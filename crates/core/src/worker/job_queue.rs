@@ -32,13 +32,13 @@ impl JobQueue for DefaultJobQueue {
         let now = crate::utils::tz::now_utc();
         let job_type = new_job.job.job_type();
         let payload = serialize_job(&new_job.job);
-        let max_attempts = new_job.max_attempts.unwrap_or(3);
+        let max_attempts = new_job.max_attempts.unwrap_or(3) as i32;
 
         raisfast_derive::crud_insert!(&self.pool, "jobs", [
             "id" => id,
             "job_type" => job_type,
             "payload" => &payload,
-            "status" => JobStatus::Pending,
+            "status" => JobStatus::Pending.as_str(),
             "max_attempts" => max_attempts,
             "run_after" => new_job.run_after,
             "created_at" => now,
@@ -395,7 +395,7 @@ impl JobQueue for DefaultJobQueue {
             .map_err(|e| AppError::Internal(anyhow::anyhow!("invalid id: {e}")))?;
         let result: crate::db::pool::DbQueryResult = raisfast_derive::crud_update!(&self.pool, "jobs",
             bind: [
-                "status" => JobStatus::Pending,
+            "status" => JobStatus::Pending.as_str(),
                 "attempts" => 0i32,
                 "error" => None::<String>,
                 "run_after" => None::<crate::utils::tz::Timestamp>,

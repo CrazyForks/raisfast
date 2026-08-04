@@ -54,7 +54,7 @@ macro_rules! cron_row_to_schedule {
             job_type: r.job_type,
             payload: r.payload,
             cron_expr: r.cron_expr,
-            enabled: r.enabled != 0,
+            enabled: r.enabled,
             last_run_at: r.last_run_at,
             next_run_at: r.next_run_at,
             plugin_id: r.plugin_id,
@@ -88,7 +88,7 @@ struct CronScheduleRow {
     job_type: String,
     payload: Option<String>,
     cron_expr: String,
-    enabled: i64,
+    enabled: bool,
     last_run_at: Option<Timestamp>,
     next_run_at: Timestamp,
     plugin_id: Option<String>,
@@ -350,7 +350,7 @@ impl CronScheduler {
 
         let rows = sqlx::query_as::<_, CronScheduleRow>(&format!(
             "SELECT id, label, job_type, payload, cron_expr, enabled, last_run_at, next_run_at, plugin_id, created_at, updated_at
-             FROM cron_schedules WHERE enabled = 1 AND next_run_at <= {}",
+             FROM cron_schedules WHERE enabled = TRUE AND next_run_at <= {}",
             Driver::ph(1)
         ))
         .bind(now)
@@ -526,7 +526,7 @@ pub async fn create_execution_log(
         "schedule_id" => schedule_id,
         "job_type" => job_type,
         "label" => label,
-        "status" => CronExecStatus::Running,
+        "status" => CronExecStatus::Running.as_str(),
         "started_at" => now
     ])?;
 
@@ -683,7 +683,7 @@ pub async fn sync_plugin_crons(
                     "id" => id,
                     "label" => &entry.label,
                     "job_type" => &entry.job_type,
-                    "payload" => &entry.payload,
+                    "payload" => entry.payload.as_deref(),
                     "cron_expr" => &entry.cron_expr,
                     "enabled" => entry.enabled,
                     "next_run_at" => next,

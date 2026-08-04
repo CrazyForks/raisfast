@@ -86,14 +86,14 @@ pub async fn insert(
         [
             "id" => id,
             "payment_order_id" => cmd.payment_order_id,
-            "order_id" => &cmd.order_id,
+            "order_id" => cmd.order_id.as_deref(),
             "user_id" => cmd.user_id,
             "tx_type" => &cmd.tx_type,
             "amount" => cmd.amount,
             "currency" => &cmd.currency,
             "provider_tx_id" => &cmd.provider_tx_id,
             "status" => &cmd.status,
-            "raw_payload" => &cmd.raw_payload,
+            "raw_payload" => cmd.raw_payload.as_deref(),
             "created_at" => &now
         ],
         tenant: tenant_id
@@ -120,14 +120,14 @@ pub async fn tx_insert(
         [
             "id" => id,
             "payment_order_id" => cmd.payment_order_id,
-            "order_id" => &cmd.order_id,
+            "order_id" => cmd.order_id.as_deref(),
             "user_id" => cmd.user_id,
             "tx_type" => &cmd.tx_type,
             "amount" => cmd.amount,
             "currency" => &cmd.currency,
             "provider_tx_id" => &cmd.provider_tx_id,
             "status" => &cmd.status,
-            "raw_payload" => &cmd.raw_payload,
+            "raw_payload" => cmd.raw_payload.as_deref(),
             "created_at" => &now
         ],
         tenant: tenant_id

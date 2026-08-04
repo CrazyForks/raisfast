@@ -87,13 +87,13 @@ pub async fn create(
             "post_id" => cmd.post_id,
             "created_by" => cmd.created_by,
             "updated_by" => cmd.created_by,
-            "nickname" => &cmd.nickname,
-            "email" => &cmd.email,
+            "nickname" => cmd.nickname.as_deref(),
+            "email" => cmd.email.as_deref(),
             "content" => &cmd.content,
             "parent_id" => cmd.parent_id,
             "created_at" => now,
             "updated_at" => now,
-            "status" => CommentStatus::Pending
+            "status" => CommentStatus::Pending.as_str()
         ],
         tenant: tenant_id
     )?;

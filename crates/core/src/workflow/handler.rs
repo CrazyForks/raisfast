@@ -124,7 +124,8 @@ pub fn routes(
 #[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Deserialize)]
 pub struct CreateWorkflowRequest {
-    pub id: String,
+    /// Optional client-provided id; a new one is generated when omitted.
+    pub id: Option<String>,
     pub name: String,
     pub description: Option<String>,
     pub steps: Vec<StepDef>,
@@ -158,7 +159,10 @@ pub async fn create(
     State(state): State<AppState>,
     Json(body): Json<CreateWorkflowRequest>,
 ) -> AppResult<ApiResponse<serde_json::Value>> {
-    let wf_id = crate::types::snowflake_id::parse_id(&body.id)?;
+    let wf_id = match body.id {
+        Some(id) => crate::types::snowflake_id::parse_id(&id)?,
+        None => crate::utils::id::new_snowflake_id(),
+    };
     let wf = state
         .workflow
         .create_workflow(wf_id, &body.name, body.description.as_deref(), &body.steps)

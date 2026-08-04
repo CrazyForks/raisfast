@@ -40,7 +40,7 @@ pub async fn create(
         "code" => code,
         "access_token" => access_token,
         "refresh_token" => refresh_token,
-        "expires_at" => expires_at,
+        "expires_at" => crate::utils::tz::parse_rfc3339(expires_at)?,
         "created_at" => now
     ])?;
     Ok(())

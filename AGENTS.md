@@ -12,8 +12,38 @@ raisfast — Rust-powered high-performance BaaS and headless CMS. Single binary,
 
 ## Commands
 
+The default dev backend is PostgreSQL (`justfile` sets `db = "postgres"`).
+
 ```bash
-# Compile (SQLite + JS + Rhai)
+# Compile/run (PostgreSQL + JS + Rhai + search + payment + mcp)
+# The raisfast database must already contain the schema (see below).
+SQLX_OFFLINE=false DATABASE_URL="postgres://postgres:postgres@localhost:5432/raisfast" \
+  cargo clippy --tests --no-default-features \
+  --features "db-postgres,plugin-js,plugin-rhai,search-tantivy,payment-all,tunnel,mcp" -- -D warnings
+
+# Test (PostgreSQL)
+SQLX_OFFLINE=false DATABASE_URL="postgres://postgres:postgres@localhost:5432/raisfast" \
+  cargo test --no-default-features \
+  --features "db-postgres,plugin-js,plugin-rhai,search-tantivy,payment-all,tunnel,mcp"
+
+# Format check
+cargo fmt --check
+```
+
+### Postgres first-run
+
+sqlx proc-macros need live tables at compile time, and the binary embeds the
+schema (`SCHEMA_SQL`) for first-run. After changing `migrations/postgres/schema.postgres.sql`,
+load it into the DB, then build:
+
+```bash
+psql "postgres://postgres:postgres@localhost:5432/raisfast" \
+  -f migrations/postgres/schema.postgres.sql
+```
+
+### SQLite commands (legacy path)
+
+```bash
 # NOTE: DATABASE_URL must be absolute — sqlx proc-macros run with CWD = crate
 # root (crates/core/), so relative paths resolve wrongly. `$PWD` anchors to the
 # workspace root when commands are run from there.
@@ -21,14 +51,22 @@ SQLX_OFFLINE=false DATABASE_URL="sqlite:$PWD/storage/db/raisfast.db?mode=rwc" \
   cargo clippy --tests --no-default-features \
   --features "db-sqlite,plugin-js,plugin-rhai" -- -D warnings
 
-# Test
 SQLX_OFFLINE=false DATABASE_URL="sqlite:$PWD/storage/db/raisfast.db?mode=rwc" \
   cargo test --no-default-features \
   --features "db-sqlite,plugin-js,plugin-rhai"
-
-# Format check
-cargo fmt --check
 ```
+
+### Postgres type discipline
+
+sqlx's `query!` macro type-checks binds strictly against Postgres column types
+(SQLite/MySQL accept loose binds). `crud_insert!` auto-coerces BIGINT binds via
+`crate::db::bigint::PgBigInt` (`SnowflakeId`/`i64`/`i32` and their `Option`s).
+All other binds must match exactly:
+
+- TEXT/VARCHAR → `&str`/`String`/`Option<&str>` (use `.as_deref()` on `Option<String>`)
+- enum values (`define_enum!`) → `.as_str()`
+- TIMESTAMPTZ → `DateTime<Utc>`/`Timestamp`; parse `&str` with `crate::utils::tz::parse_rfc3339*`
+- BOOLEAN → `bool` (never `0`/`1` integers)
 
 ## Architecture
 

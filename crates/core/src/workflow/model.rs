@@ -49,6 +49,8 @@ pub enum StepType {
 #[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StepDef {
+    /// Auto-generated when omitted so free-form step JSON still imports.
+    #[serde(default = "generate_step_id")]
     pub id: String,
     pub name: String,
     #[serde(rename = "type")]
@@ -62,6 +64,11 @@ pub struct StepDef {
     pub next: serde_json::Value,
     #[serde(default)]
     pub timeout_ms: u64,
+}
+
+/// Generates a unique step id for steps missing one.
+fn generate_step_id() -> String {
+    crate::utils::id::new_snowflake_id().to_string()
 }
 
 /// Workflow definition row
@@ -178,7 +185,7 @@ pub async fn create_instance(
     let ctx_str = serde_json::to_string(context)?;
     raisfast_derive::crud_insert!(
         pool, "workflow_instances",
-        ["id" => id, "definition_id" => definition_id, "status" => WorkflowInstanceStatus::Running, "context" => ctx_str, "triggered_by" => triggered_by, "started_at" => now, "updated_at" => now]
+        ["id" => id, "definition_id" => definition_id, "status" => WorkflowInstanceStatus::Running.as_str(), "context" => ctx_str, "triggered_by" => triggered_by, "started_at" => now, "updated_at" => now]
     )?;
     get_instance(pool, id)
         .await?
@@ -293,7 +300,7 @@ pub async fn create_step_log(
     let input_str = input.map(|v| serde_json::to_string(v).unwrap_or_default());
     raisfast_derive::crud_insert!(
         pool, "workflow_step_logs",
-        ["id" => id, "instance_id" => instance_id, "step_id" => step_id, "step_name" => step_name, "status" => WorkflowStepStatus::Running, "input" => input_str, "started_at" => now]
+        ["id" => id, "instance_id" => instance_id, "step_id" => step_id, "step_name" => step_name, "status" => WorkflowStepStatus::Running.as_str(), "input" => input_str.as_deref(), "started_at" => now]
     )?;
     let result: StepLog =
         raisfast_derive::crud_find_one!(pool, "workflow_step_logs", StepLog, where: ("id", id))

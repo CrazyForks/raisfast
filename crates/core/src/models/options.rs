@@ -42,7 +42,7 @@ pub struct OptionRow {
 
 /// Query all autoload options (preloaded at startup)
 pub async fn find_autoload(pool: &crate::db::Pool) -> AppResult<Vec<OptionRow>> {
-    Ok(raisfast_derive::crud_find_all!(pool, "options", OptionRow, where: ("autoload", 1_i64))?)
+    Ok(raisfast_derive::crud_find_all!(pool, "options", OptionRow, where: ("autoload", true))?)
 }
 
 /// Query a single option by key

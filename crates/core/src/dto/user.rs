@@ -169,7 +169,7 @@ impl CredentialResponse {
             id: c.id.to_string(),
             auth_type: c.auth_type,
             identifier: c.identifier,
-            verified: c.verified == 1,
+            verified: c.verified,
             created_at: c.created_at,
             updated_at: c.updated_at,
         })

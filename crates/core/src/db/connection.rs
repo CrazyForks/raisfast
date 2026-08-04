@@ -147,12 +147,20 @@ async fn try_connect(database_url: &str, pool_size: u32) -> Result<Pool, sqlx::E
     }
 }
 
-/// Execute the full schema SQL, splitting into individual statements for MySQL.
+/// Execute the full schema SQL, splitting into individual statements.
 ///
-/// SQLite and PostgreSQL can handle multiple statements in a single query,
-/// but MySQL requires each statement to be sent separately.
+/// SQLite's prepared statements accept a full script, but MySQL and PostgreSQL
+/// (via sqlx's extended protocol) reject multiple commands in a single prepared
+/// statement, so their schema scripts must be split per statement.
 pub async fn execute_schema(pool: &Pool) -> anyhow::Result<()> {
-    #[cfg(feature = "db-mysql")]
+    #[cfg(feature = "db-sqlite")]
+    {
+        sqlx::query::<crate::db::pool::Db>(crate::db::schema::SCHEMA_SQL)
+            .execute(pool)
+            .await
+            .map_err(|e| anyhow::anyhow!("schema execution failed: {e}"))?;
+    }
+    #[cfg(not(feature = "db-sqlite"))]
     {
         for stmt in split_sql_statements(crate::db::schema::SCHEMA_SQL) {
             sqlx::query::<crate::db::pool::Db>(&stmt)
@@ -161,18 +169,11 @@ pub async fn execute_schema(pool: &Pool) -> anyhow::Result<()> {
                 .map_err(|e| anyhow::anyhow!("schema statement failed: {e}\nSQL: {stmt}"))?;
         }
     }
-    #[cfg(not(feature = "db-mysql"))]
-    {
-        sqlx::query::<crate::db::pool::Db>(crate::db::schema::SCHEMA_SQL)
-            .execute(pool)
-            .await
-            .map_err(|e| anyhow::anyhow!("schema execution failed: {e}"))?;
-    }
     Ok(())
 }
 
 /// Split a SQL script into individual statements, respecting string literals and comments.
-#[cfg(feature = "db-mysql")]
+#[cfg(not(feature = "db-sqlite"))]
 fn split_sql_statements(sql: &str) -> Vec<String> {
     let mut stmts = Vec::new();
     let mut current = String::new();
@@ -357,10 +358,21 @@ pub async fn run_pending_migrations(pool: &Pool) -> anyhow::Result<()> {
         let checksum = sha256_hex(&sql);
 
         tracing::info!(filename = %filename, batch, "applying migration...");
-        sqlx::query(&sql)
-            .execute(pool)
-            .await
-            .map_err(|e| anyhow::anyhow!("migration {filename} failed: {e}"))?;
+
+        // PostgreSQL/MySQL reject multiple commands in a single prepared
+        // statement, so split the migration script per statement (SQLite
+        // executes the whole script in one call).
+        #[cfg(feature = "db-sqlite")]
+        let statements: Vec<String> = vec![sql];
+        #[cfg(not(feature = "db-sqlite"))]
+        let statements = split_sql_statements(&sql);
+
+        for stmt in statements {
+            sqlx::query(&stmt)
+                .execute(pool)
+                .await
+                .map_err(|e| anyhow::anyhow!("migration {filename} failed: {e}\nSQL: {stmt}"))?;
+        }
 
         sqlx::query(&insert_sql)
             .bind(filename)

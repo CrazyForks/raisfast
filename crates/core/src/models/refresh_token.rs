@@ -41,7 +41,7 @@ pub async fn create_token(
         "id" => id,
         "user_id" => user_id,
         "token" => token,
-        "expires_at" => expires_at,
+        "expires_at" => crate::utils::tz::parse_rfc3339(expires_at)?,
         "created_at" => now
     ])?;
     Ok(())
@@ -94,7 +94,7 @@ pub async fn tx_create_token(
         "id" => id,
         "user_id" => user_id,
         "token" => token,
-        "expires_at" => expires_at,
+        "expires_at" => crate::utils::tz::parse_rfc3339(expires_at)?,
         "created_at" => now
     ])?;
     Ok(())

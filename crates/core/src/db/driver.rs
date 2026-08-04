@@ -338,7 +338,7 @@ impl DbDriver for Postgres {
     }
 
     fn date_trunc_day(col: &str) -> String {
-        format!("DATE_TRUNC('day', {col}::timestamp)")
+        format!("TO_CHAR(DATE_TRUNC('day', {col}::timestamp), 'YYYY-MM-DD')")
     }
 
     fn current_date() -> String {
@@ -354,11 +354,15 @@ impl DbDriver for Postgres {
     }
 
     fn cast_int(expr: &str) -> String {
-        expr.to_string()
+        // `SUM(bigint)` and `COALESCE(SUM(...), 0)` resolve to `NUMERIC` in
+        // Postgres; cast to BIGINT so the result decodes as Rust `i64`.
+        format!("CAST({expr} AS BIGINT)")
     }
 
     fn cast_ts(expr: &str) -> String {
-        expr.to_string()
+        // Postgres timestamps are typed; cast to TEXT so the value decodes as
+        // Rust `String` (matching SQLite's ISO-text timestamps).
+        format!("CAST({expr} AS TEXT)")
     }
 
     fn returning_clause() -> &'static str {

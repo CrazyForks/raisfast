@@ -181,7 +181,7 @@ pub async fn tx_insert(
     );
     raisfast_derive::crud_insert!(
         &mut *tx, "wallet_transactions",
-        ["id" => id, "wallet_id" => wallet_id, "user_id" => user_id, "entry_type" => entry_type, "amount" => amount, "balance_after" => balance_after, "tx_type" => tx_type, "currency" => currency, "transaction_no" => transaction_no, "related_tx_id" => related_tx_id, "reference_type" => reference_type, "reference_id" => reference_id, "counterparty_wallet_id" => counterparty_wallet_id, "metadata" => metadata, "created_at" => now]
+        ["id" => id, "wallet_id" => wallet_id, "user_id" => user_id, "entry_type" => entry_type.as_str(), "amount" => amount, "balance_after" => balance_after, "tx_type" => tx_type.as_str(), "currency" => currency, "transaction_no" => transaction_no, "related_tx_id" => related_tx_id, "reference_type" => reference_type.map(|r| r.as_str()), "reference_id" => reference_id.as_deref(), "counterparty_wallet_id" => counterparty_wallet_id, "metadata" => metadata.as_deref(), "created_at" => now]
     )?;
     Ok(
         raisfast_derive::crud_find_one!(&mut *tx, "wallet_transactions", WalletTransaction, where: ("id", id))?,

@@ -39,7 +39,7 @@ impl Aspect for VersionableAspect {
     fn columns(&self) -> Vec<ColumnDef> {
         vec![ColumnDef {
             name: COL_VERSION.into(),
-            sql_type: SqlType::Integer,
+            sql_type: SqlType::BigInt,
             default: Some("1".into()),
         }]
     }
@@ -133,7 +133,7 @@ mod tests {
         let cols = VersionableAspect.columns();
         assert_eq!(cols.len(), 1);
         assert_eq!(cols[0].name, COL_VERSION);
-        assert_eq!(cols[0].sql_type, SqlType::Integer);
+        assert_eq!(cols[0].sql_type, SqlType::BigInt);
     }
 
     #[tokio::test]

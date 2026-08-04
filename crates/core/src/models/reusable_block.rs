@@ -60,7 +60,7 @@ pub async fn create_reusable(
             "name" => &cmd.name,
             "block_type" => &cmd.block_type,
             "content" => &cmd.content,
-            "description" => &cmd.description,
+            "description" => cmd.description.as_deref(),
             "created_by" => cmd.created_by,
             "updated_by" => cmd.created_by,
             "created_at" => now,

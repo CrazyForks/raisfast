@@ -63,8 +63,8 @@ pub async fn create(
             "username" => username,
             "created_at" => now,
             "updated_at" => now,
-            "status" => UserStatus::Active,
-            "registered_via" => RegisteredVia::Email
+            "status" => UserStatus::Active.as_str(),
+            "registered_via" => RegisteredVia::Email.as_str()
         ])?;
     } else {
         raisfast_derive::crud_insert!(&pool, "users", [
@@ -72,8 +72,8 @@ pub async fn create(
             "username" => username,
             "created_at" => now,
             "updated_at" => now,
-            "status" => UserStatus::Active,
-            "registered_via" => RegisteredVia::Email
+            "status" => UserStatus::Active.as_str(),
+            "registered_via" => RegisteredVia::Email.as_str()
         ])?;
     }
 

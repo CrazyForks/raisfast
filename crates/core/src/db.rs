@@ -4,6 +4,7 @@
 //! with the backend selected at compile time via feature flags.
 
 pub mod backup;
+pub mod bigint;
 pub mod connection;
 pub mod driver;
 pub mod pool;

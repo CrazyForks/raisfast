@@ -78,7 +78,7 @@ pub async fn create(
             "name" => name,
             "domain" => domain,
             "config" => config,
-            "status" => TenantStatus::Active,
+            "status" => TenantStatus::Active.as_str(),
             "created_at" => now,
             "updated_at" => now
         ]

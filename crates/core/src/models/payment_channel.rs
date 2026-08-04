@@ -65,8 +65,6 @@ pub async fn insert(
     tenant_id: Option<&str>,
 ) -> AppResult<PaymentChannel> {
     let id = crate::utils::id::new_id();
-    let is_live_val = if cmd.is_live { 1_i64 } else { 0_i64 };
-    let is_active_val = if cmd.is_active { 1_i64 } else { 0_i64 };
     let now = crate::utils::tz::now_utc();
     raisfast_derive::crud_insert!(
         pool,
@@ -75,11 +73,11 @@ pub async fn insert(
             "id" => id,
             "provider" => &cmd.provider,
             "name" => &cmd.name,
-            "is_live" => is_live_val,
+            "is_live" => cmd.is_live,
             "credentials" => &cmd.credentials,
-            "webhook_secret" => &cmd.webhook_secret,
-            "settings" => &cmd.settings,
-            "is_active" => is_active_val,
+            "webhook_secret" => cmd.webhook_secret.as_deref(),
+            "settings" => cmd.settings.as_deref(),
+            "is_active" => cmd.is_active,
             "sort_order" => cmd.sort_order,
             "created_at" => &now,
             "updated_at" => &now

@@ -45,7 +45,7 @@ pub struct UserCredential {
     pub auth_type: AuthType,
     pub identifier: String,
     pub credential_data: String,
-    pub verified: i64,
+    pub verified: bool,
     pub created_at: Timestamp,
     pub updated_at: Timestamp,
 }
@@ -86,10 +86,10 @@ pub async fn create(
     raisfast_derive::crud_insert!(pool, "user_credentials", [
         "id" => id,
         "user_id" => user_id,
-        "auth_type" => auth_type,
+        "auth_type" => auth_type.as_str(),
         "identifier" => identifier,
         "credential_data" => credential_data,
-        "verified" => if verified { 1 } else { 0 },
+        "verified" => verified,
         "created_at" => now,
         "updated_at" => now
     ])?;
@@ -117,7 +117,7 @@ pub async fn update_verified(
 ) -> AppResult<()> {
     let now = crate::utils::tz::now_str();
     raisfast_derive::crud_update!(pool, "user_credentials",
-        bind: ["verified" => if verified { 1 } else { 0 }, "updated_at" => &now],
+        bind: ["verified" => verified, "updated_at" => &now],
         where: ("id", id)
     )?;
     Ok(())
@@ -153,10 +153,10 @@ pub async fn tx_create(
     raisfast_derive::crud_insert!(&mut *tx, "user_credentials", [
         "id" => id,
         "user_id" => user_id,
-        "auth_type" => auth_type,
+        "auth_type" => auth_type.as_str(),
         "identifier" => identifier,
         "credential_data" => credential_data,
-        "verified" => if verified { 1i64 } else { 0i64 },
+        "verified" => verified,
         "created_at" => now,
         "updated_at" => now
     ])?;
@@ -194,7 +194,7 @@ pub async fn tx_verify_email_by_user(
 ) -> AppResult<()> {
     let now = crate::utils::tz::now_str();
     raisfast_derive::crud_update!(&mut *tx, "user_credentials",
-        bind: ["verified" => 1i64, "updated_at" => now],
+        bind: ["verified" => true, "updated_at" => now],
         where: AND(("user_id", user_id), ("auth_type", AuthType::Email))
     )?;
     Ok(())

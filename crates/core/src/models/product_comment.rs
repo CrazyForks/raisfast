@@ -160,10 +160,10 @@ pub async fn insert(
             "order_id" => cmd.order_id,
             "user_id" => cmd.user_id,
             "rating" => cmd.rating,
-            "title" => &cmd.title,
+            "title" => cmd.title.as_deref(),
             "content" => &cmd.content,
-            "images" => &cmd.images,
-            "status" => ProductCommentStatus::Approved,
+            "images" => cmd.images.as_deref(),
+            "status" => ProductCommentStatus::Approved.as_str(),
             "created_at" => &now,
             "updated_at" => &now
         ],

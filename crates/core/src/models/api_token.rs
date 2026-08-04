@@ -81,7 +81,7 @@ pub async fn create(
         "token_hash" => token_hash,
         "token_encrypted" => token_encrypted,
         "scopes" => scopes,
-        "expires_at" => expires_at,
+        "expires_at" => crate::utils::tz::parse_rfc3339_opt(expires_at),
         "created_at" => now
     ])?;
     find_by_id(pool, id).await?.ok_or_else(|| {

@@ -56,7 +56,7 @@ pub async fn create_state(
         "provider" => provider,
         "code_verifier" => code_verifier,
         "user_id" => user_id,
-        "expires_at" => expires_at,
+        "expires_at" => crate::utils::tz::parse_rfc3339(expires_at)?,
         "created_at" => now,
     ])?;
     Ok(*id)
@@ -149,7 +149,7 @@ pub async fn create_account(
         "avatar_url" => params.avatar_url,
         "access_token" => params.access_token,
         "refresh_token" => params.refresh_token,
-        "token_expires_at" => params.token_expires_at,
+        "token_expires_at" => crate::utils::tz::parse_rfc3339_opt(params.token_expires_at),
         "profile" => params.profile,
         "created_at" => now,
         "updated_at" => now,
@@ -184,7 +184,7 @@ pub async fn update_account(
             "avatar_url" => params.avatar_url,
             "access_token" => params.access_token,
             "refresh_token" => params.refresh_token,
-            "token_expires_at" => params.token_expires_at,
+        "token_expires_at" => crate::utils::tz::parse_rfc3339_opt(params.token_expires_at),
             "profile" => params.profile,
         ],
         where: ("id", params.id)

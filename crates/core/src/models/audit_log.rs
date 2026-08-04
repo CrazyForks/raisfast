@@ -33,13 +33,13 @@ pub async fn insert(pool: &crate::db::Pool, entry: &AuditEntry) -> AppResult<()>
         [
             "id" => entry.id,
             "actor_id" => entry.actor_id,
-            "actor_role" => &entry.actor_role,
+            "actor_role" => entry.actor_role.as_deref(),
             "action" => &entry.action,
             "subject" => &entry.subject,
-            "subject_id" => &entry.subject_id,
-            "detail" => &entry.detail,
-            "ip_address" => &entry.ip_address,
-            "user_agent" => &entry.user_agent,
+            "subject_id" => entry.subject_id.as_deref(),
+            "detail" => entry.detail.as_deref(),
+            "ip_address" => entry.ip_address.as_deref(),
+            "user_agent" => entry.user_agent.as_deref(),
             "created_at" => entry.created_at
         ],
         tenant: entry.tenant_id.as_deref()
@@ -59,8 +59,11 @@ pub async fn find_paginated(
     let result = raisfast_derive::crud_query_paged!(
         pool, AuditEntry,
         table: "audit_log",
-        where: AND(("tenant_id", tenant_id), ("action", action), ("actor_id", actor_id)),
+        // The list form skips conditions whose Option value is None
+        // (the `AND(...)` DSL form would emit `col = NULL` and match nothing).
+        where: ["action" => action, "actor_id" => actor_id],
         order_by: "created_at DESC",
+        tenant: tenant_id,
         page: page,
         page_size: page_size
     );

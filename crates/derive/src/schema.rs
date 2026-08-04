@@ -175,7 +175,6 @@ pub struct TableSchema {
 /// Metadata for a single column.
 pub struct ColumnSchema {
     pub name: String,
-    #[expect(dead_code)]
     pub ty: SqlType,
     #[expect(dead_code)]
     pub nullable: bool,
@@ -185,7 +184,10 @@ pub struct ColumnSchema {
 
 /// Simplified SQL type classification.
 pub enum SqlType {
+    /// `INTEGER` / `INT` / `SMALLINT` / `TINYINT` — sqlx maps these to `i32`.
     Integer,
+    /// `BIGINT` / `INT8` — sqlx maps these to `i64`.
+    BigInt,
     Real,
     Text,
     Blob,
@@ -382,7 +384,9 @@ fn parse_column_line(line: &str) -> Option<ColumnSchema> {
         return None;
     }
 
-    let ty = if rest.starts_with("INTEGER") || rest.starts_with("INT") {
+    let ty = if rest.starts_with("BIGINT") || rest.starts_with("INT8") {
+        SqlType::BigInt
+    } else if rest.starts_with("INTEGER") || rest.starts_with("INT") {
         SqlType::Integer
     } else if rest.starts_with("REAL") || rest.starts_with("FLOAT") || rest.starts_with("DOUBLE") {
         SqlType::Real

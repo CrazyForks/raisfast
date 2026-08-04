@@ -112,8 +112,8 @@ pub async fn create(
             "username" => &cmd.username,
             "created_at" => now,
             "updated_at" => now,
-            "status" => UserStatus::Active,
-            "registered_via" => cmd.registered_via
+            "status" => UserStatus::Active.as_str(),
+            "registered_via" => cmd.registered_via.as_str()
         ],
         tenant: tenant_id
     )?;
@@ -233,8 +233,8 @@ pub async fn tx_create(
             "username" => &cmd.username,
             "created_at" => now,
             "updated_at" => now,
-            "status" => UserStatus::Active,
-            "registered_via" => registered_via
+            "status" => UserStatus::Active.as_str(),
+            "registered_via" => registered_via.as_str()
         ])?;
     } else {
         raisfast_derive::crud_insert!(&mut *tx, "users", [
@@ -242,8 +242,8 @@ pub async fn tx_create(
             "username" => &cmd.username,
             "created_at" => now,
             "updated_at" => now,
-            "status" => UserStatus::Active,
-            "registered_via" => registered_via
+            "status" => UserStatus::Active.as_str(),
+            "registered_via" => registered_via.as_str()
         ])?;
     }
     Ok(tx_find_by_id(tx, id, tenant_id)

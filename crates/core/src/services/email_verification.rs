@@ -65,7 +65,7 @@ pub async fn resend_verification(
     .await?
     .ok_or_else(|| AppError::not_found("user"))?;
 
-    if cred.verified == 1 {
+    if cred.verified {
         return Err(AppError::BadRequest("email_already_verified".into()));
     }
 
@@ -182,7 +182,7 @@ mod tests {
         .await
         .unwrap()
         .unwrap();
-        assert_eq!(cred.verified, 1);
+        assert!(cred.verified);
     }
 
     #[tokio::test]

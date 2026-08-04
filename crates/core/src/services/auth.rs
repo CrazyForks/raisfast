@@ -333,7 +333,7 @@ pub async fn login(
         return Err(AppError::Unauthorized);
     }
 
-    if require_email_verification && cred.verified == 0 {
+    if require_email_verification && !cred.verified {
         return Err(AppError::BadRequest("email_not_verified".into()));
     }
 

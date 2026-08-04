@@ -23,10 +23,20 @@ use sqlx::Row;
 
 /// Value bound to a dynamic SQL parameter.
 ///
-/// BLOB fields bind raw bytes (real binary columns); all other fields bind text.
+/// Variants are selected to match each column's SQL type so binds pass
+/// PostgreSQL's strict type checking (SQLite/MySQL are lenient).
 enum BindValue {
     Text(String),
+    Int(i64),
+    Int32(i32),
+    Float(f64),
+    Bool(bool),
+    Timestamp(chrono::DateTime<chrono::Utc>),
+    Date(chrono::NaiveDate),
+    Time(chrono::NaiveTime),
+    Json(serde_json::Value),
     Blob(Vec<u8>),
+    Null,
 }
 
 /// Maximum size of a blob field payload in bytes.
@@ -96,12 +106,122 @@ impl BindValue {
     ) -> sqlx::query::Query<'q, DB, <DB as sqlx::Database>::Arguments<'q>>
     where
         String: sqlx::Encode<'q, DB> + sqlx::Type<DB>,
+        i64: sqlx::Encode<'q, DB> + sqlx::Type<DB>,
+        i32: sqlx::Encode<'q, DB> + sqlx::Type<DB>,
+        f64: sqlx::Encode<'q, DB> + sqlx::Type<DB>,
+        bool: sqlx::Encode<'q, DB> + sqlx::Type<DB>,
+        chrono::DateTime<chrono::Utc>: sqlx::Encode<'q, DB> + sqlx::Type<DB>,
+        chrono::NaiveDate: sqlx::Encode<'q, DB> + sqlx::Type<DB>,
+        chrono::NaiveTime: sqlx::Encode<'q, DB> + sqlx::Type<DB>,
+        serde_json::Value: sqlx::Encode<'q, DB> + sqlx::Type<DB>,
+        Option<i64>: sqlx::Encode<'q, DB> + sqlx::Type<DB>,
         Vec<u8>: sqlx::Encode<'q, DB> + sqlx::Type<DB>,
     {
         match self {
             Self::Text(s) => query.bind(s),
+            Self::Int(v) => query.bind(v),
+            Self::Int32(v) => query.bind(v),
+            Self::Float(v) => query.bind(v),
+            Self::Bool(v) => query.bind(v),
+            Self::Timestamp(v) => query.bind(v),
+            Self::Date(v) => query.bind(v),
+            Self::Time(v) => query.bind(v),
+            Self::Json(v) => query.bind(v),
             Self::Blob(b) => query.bind(b),
+            Self::Null => query.bind(None::<i64>),
         }
+    }
+}
+
+/// Parse a `%Y-%m-%d %H:%M:%S` or RFC 3339 datetime string into UTC.
+fn parse_datetime_utc(s: &str) -> Option<chrono::DateTime<chrono::Utc>> {
+    if s.is_empty() {
+        return None;
+    }
+    if let Ok(n) = chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S") {
+        return Some(chrono::DateTime::from_naive_utc_and_offset(n, chrono::Utc));
+    }
+    if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(s) {
+        return Some(dt.with_timezone(&chrono::Utc));
+    }
+    None
+}
+
+fn parse_naive_date(s: &str) -> Option<chrono::NaiveDate> {
+    if s.is_empty() {
+        return None;
+    }
+    chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").ok()
+}
+
+fn parse_naive_time(s: &str) -> Option<chrono::NaiveTime> {
+    if s.is_empty() {
+        return None;
+    }
+    chrono::NaiveTime::parse_from_str(s, "%H:%M:%S")
+        .or_else(|_| chrono::NaiveTime::parse_from_str(s, "%H:%M"))
+        .ok()
+}
+
+/// Build the bind value for a content-type field according to its declared type.
+fn field_bind(field_type: &FieldType, raw: &serde_json::Value) -> BindValue {
+    let s = value_to_string(raw);
+    let s = s.trim();
+    if s.is_empty() {
+        return BindValue::Null;
+    }
+    match field_type {
+        FieldType::Integer => match s.parse::<i32>() {
+            Ok(v) => BindValue::Int32(v),
+            Err(_) => BindValue::Null,
+        },
+        FieldType::BigInt => match s.parse::<i64>() {
+            Ok(v) => BindValue::Int(v),
+            Err(_) => BindValue::Null,
+        },
+        FieldType::Decimal | FieldType::Float => match s.parse::<f64>() {
+            Ok(v) => BindValue::Float(v),
+            Err(_) => BindValue::Null,
+        },
+        FieldType::Boolean => match s.to_lowercase().as_str() {
+            "1" | "true" | "yes" | "on" => BindValue::Bool(true),
+            "0" | "false" | "no" | "off" => BindValue::Bool(false),
+            _ => BindValue::Null,
+        },
+        FieldType::Date => match parse_naive_date(s) {
+            Some(d) => BindValue::Date(d),
+            None => BindValue::Null,
+        },
+        FieldType::DateTime => match parse_datetime_utc(s) {
+            Some(dt) => BindValue::Timestamp(dt),
+            None => BindValue::Null,
+        },
+        FieldType::Time => match parse_naive_time(s) {
+            Some(t) => BindValue::Time(t),
+            None => BindValue::Null,
+        },
+        // Json, Media and MediaSet columns are stored as JSON (JSONB on
+        // PostgreSQL); bind the raw value so it decodes/encodes as JSON.
+        FieldType::Json | FieldType::Media | FieldType::MediaSet => BindValue::Json(raw.clone()),
+        _ => BindValue::Text(value_to_string(raw)),
+    }
+}
+
+/// Build the bind value for a protocol/system column (`created_at`, `created_by`, ...).
+fn protocol_bind(key: &str, raw: &serde_json::Value) -> BindValue {
+    let s = value_to_string(raw);
+    if key == COL_CREATED_AT || key == COL_UPDATED_AT {
+        match parse_datetime_utc(s.trim()) {
+            Some(dt) => BindValue::Timestamp(dt),
+            None => BindValue::Null,
+        }
+    } else if key == COL_CREATED_BY || key == COL_UPDATED_BY || key == COL_VERSION {
+        match s.trim().parse::<i64>() {
+            Ok(v) => BindValue::Int(v),
+            Err(_) => BindValue::Null,
+        }
+    } else {
+        BindValue::Text(s)
     }
 }
 
@@ -740,7 +860,7 @@ impl ContentRepository {
         cols.push(COL_ID.to_string());
         placeholders.push(crate::db::Driver::ph(idx));
         idx += 1;
-        values.push(BindValue::Text(new_id.to_string()));
+        values.push(BindValue::Int(new_id));
 
         if let Some(ref tid) = tid {
             cols.push(COL_TENANT_ID.to_string());
@@ -812,10 +932,8 @@ impl ContentRepository {
             if let Some((fk_col, target_table)) = fk_relation_map.get(key) {
                 let target_id = value_to_string(val);
                 if target_id.is_empty() {
-                    cols.push(fk_col.clone());
-                    placeholders.push(crate::db::Driver::ph(idx));
-                    idx += 1;
-                    values.push(BindValue::Text(String::new()));
+                    // empty relation → leave FK NULL (omit from INSERT so the
+                    // column uses its default)
                 } else {
                     let parsed_id = crate::types::snowflake_id::parse_id(&target_id)?;
                     let int_id = find_existing_id(&self.pool, target_table, parsed_id)
@@ -828,7 +946,7 @@ impl ContentRepository {
                     cols.push(fk_col.clone());
                     placeholders.push(crate::db::Driver::ph(idx));
                     idx += 1;
-                    values.push(BindValue::Text(int_id.to_string()));
+                    values.push(BindValue::Int(int_id));
                 }
                 continue;
             }
@@ -856,13 +974,22 @@ impl ContentRepository {
                     cols.push(meta.clone());
                     placeholders.push(crate::db::Driver::ph(idx));
                     idx += 1;
-                    values.push(BindValue::Text(meta_json.to_string()));
+                    values.push(BindValue::Json(meta_json));
                 }
             } else {
-                cols.push(key.clone());
-                placeholders.push(crate::db::Driver::ph(idx));
-                idx += 1;
-                values.push(BindValue::Text(value_to_string(val)));
+                let bind_value = if let Some(f) = ct.get_field(key) {
+                    field_bind(&f.field_type, val)
+                } else {
+                    protocol_bind(key, val)
+                };
+                // NULL binds are omitted so the column falls back to its default
+                // (PostgreSQL rejects typed NULL parameters for mismatched columns).
+                if !matches!(bind_value, BindValue::Null) {
+                    cols.push(key.clone());
+                    placeholders.push(crate::db::Driver::ph(idx));
+                    idx += 1;
+                    values.push(bind_value);
+                }
             }
         }
 
@@ -961,7 +1088,7 @@ impl ContentRepository {
             crate::db::Driver::ph(1)
         );
         let row = sqlx::query(&sql)
-            .bind(new_id.to_string())
+            .bind(new_id)
             .fetch_optional(&self.pool)
             .await?;
 
@@ -1091,9 +1218,7 @@ impl ContentRepository {
                 if let Some((fk_col, target_table)) = fk_relation_map.get(key) {
                     let target_id = value_to_string(val);
                     if target_id.is_empty() {
-                        set_clauses.push(format!("{fk_col} = {}", crate::db::Driver::ph(idx)));
-                        idx += 1;
-                        values.push(BindValue::Text(String::new()));
+                        set_clauses.push(format!("{fk_col} = NULL"));
                     } else {
                         let parsed_id = crate::types::snowflake_id::parse_id(&target_id)?;
                         let int_id = find_existing_id(&self.pool, target_table, parsed_id)
@@ -1105,7 +1230,7 @@ impl ContentRepository {
                             })?;
                         set_clauses.push(format!("{fk_col} = {}", crate::db::Driver::ph(idx)));
                         idx += 1;
-                        values.push(BindValue::Text(int_id.to_string()));
+                        values.push(BindValue::Int(int_id));
                     }
                     continue;
                 }
@@ -1133,16 +1258,27 @@ impl ContentRepository {
                         ));
                         idx += 2;
                         values.push(BindValue::Blob(bytes));
-                        values.push(BindValue::Text(meta_json.to_string()));
+                        values.push(BindValue::Json(meta_json));
                     } else {
                         set_clauses.push(format!("{key} = {}", crate::db::Driver::ph(idx)));
                         idx += 1;
                         values.push(BindValue::Blob(bytes));
                     }
                 } else {
-                    set_clauses.push(format!("{key} = {}", crate::db::Driver::ph(idx)));
-                    idx += 1;
-                    values.push(BindValue::Text(value_to_string(val)));
+                    let bind_value = if let Some(f) = ct.get_field(key) {
+                        field_bind(&f.field_type, val)
+                    } else {
+                        protocol_bind(key, val)
+                    };
+                    if matches!(bind_value, BindValue::Null) {
+                        // PostgreSQL rejects typed NULL parameters for columns of a
+                        // different type, so emit a literal NULL instead.
+                        set_clauses.push(format!("{key} = NULL"));
+                    } else {
+                        set_clauses.push(format!("{key} = {}", crate::db::Driver::ph(idx)));
+                        idx += 1;
+                        values.push(bind_value);
+                    }
                 }
             }
         }
@@ -1172,7 +1308,7 @@ impl ContentRepository {
                 && let Some(current_version) = obj.get(lock_col).and_then(|v| v.as_i64())
             {
                 where_parts.push(format!("{lock_col} = {}", crate::db::Driver::ph(idx)));
-                values.push(BindValue::Text(current_version.to_string()));
+                values.push(BindValue::Int(current_version));
             }
 
             let sql = format!(

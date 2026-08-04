@@ -32,7 +32,7 @@ pub async fn find_active_by_code(
     code: &str,
     tenant_id: Option<&str>,
 ) -> AppResult<Option<Currency>> {
-    raisfast_derive::crud_find!(pool, "currencies", Currency, where: AND(("code", code), ("is_active", 1i64)), tenant: tenant_id)
+    raisfast_derive::crud_find!(pool, "currencies", Currency, where: AND(("code", code), ("is_active", true)), tenant: tenant_id)
         .map_err(Into::into)
 }
 
@@ -53,7 +53,7 @@ pub async fn find_by_code_tx(
     code: &str,
     tenant_id: Option<&str>,
 ) -> AppResult<Option<Currency>> {
-    raisfast_derive::crud_find!(tx, "currencies", Currency, where: AND(("code", code), ("is_active", 1i64)), tenant: tenant_id)
+    raisfast_derive::crud_find!(tx, "currencies", Currency, where: AND(("code", code), ("is_active", true)), tenant: tenant_id)
         .map_err(Into::into)
 }
 

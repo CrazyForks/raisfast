@@ -57,7 +57,7 @@ pub async fn insert(pool: &crate::db::Pool, sub: &WebhookSubscription) -> AppRes
             "secret" => &sub.secret,
             "events" => &sub.events,
             "enabled" => sub.enabled,
-            "description" => &sub.description,
+            "description" => sub.description.as_deref(),
             "created_at" => now,
             "updated_at" => now
         ],

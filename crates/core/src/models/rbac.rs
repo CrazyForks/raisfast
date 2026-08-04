@@ -112,7 +112,7 @@ pub async fn create_role(
             "id" => id,
             "name" => name,
             "description" => description,
-            "is_system" => 0_i64,
+            "is_system" => false,
             "created_at" => now,
             "updated_at" => now
         ]

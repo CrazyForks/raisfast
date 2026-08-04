@@ -128,19 +128,19 @@ pub async fn create_tx(
             "title" => &cmd.title,
             "slug" => &cmd.slug,
             "content" => &cmd.content,
-            "excerpt" => &cmd.excerpt,
-            "cover_image" => &cmd.cover_image,
-            "image_ids" => &cmd.image_ids,
-            "status" => cmd.status,
+            "excerpt" => cmd.excerpt.as_deref(),
+            "cover_image" => cmd.cover_image.as_deref(),
+            "image_ids" => cmd.image_ids.as_deref(),
+            "status" => cmd.status.as_str(),
             "created_by" => cmd.created_by,
             "updated_by" => cmd.updated_by,
             "category_id" => cmd.category_id,
-            "meta_title" => &cmd.meta_title,
-            "meta_description" => &cmd.meta_description,
-            "og_title" => &cmd.og_title,
-            "og_description" => &cmd.og_description,
-            "og_image" => &cmd.og_image,
-            "canonical_url" => &cmd.canonical_url,
+            "meta_title" => cmd.meta_title.as_deref(),
+            "meta_description" => cmd.meta_description.as_deref(),
+            "og_title" => cmd.og_title.as_deref(),
+            "og_description" => cmd.og_description.as_deref(),
+            "og_image" => cmd.og_image.as_deref(),
+            "canonical_url" => cmd.canonical_url.as_deref(),
             "published_at" => published_at,
             "created_at" => now,
             "updated_at" => now
@@ -659,14 +659,15 @@ pub async fn find_all_joined(
         );
         let (data, _) = result;
         let count_filter = match tenant_id {
-            Some(_) => " AND tenant_id = ?",
-            None => "",
+            Some(_) => format!(
+                " AND {} = {}",
+                crate::constants::COL_TENANT_ID,
+                crate::db::Driver::ph(1)
+            ),
+            None => String::new(),
         };
-        let count_sql = format!(
-            "SELECT COUNT(*) FROM posts WHERE status = ?{}",
-            count_filter
-        );
-        let mut cq = sqlx::query_scalar::<_, i64>(&count_sql).bind(PostStatus::Published);
+        let count_sql = format!("SELECT COUNT(*) FROM posts WHERE 1=1{}", count_filter);
+        let mut cq = sqlx::query_scalar::<_, i64>(&count_sql);
         if let Some(tid) = tenant_id {
             cq = cq.bind(tid);
         }

@@ -211,7 +211,9 @@ impl AppError {
                 if std::env::var("APP_ENV").unwrap_or_default() == "production" {
                     base
                 } else {
-                    format!("{base}: {err}")
+                    // anyhow's Debug prints the full context chain (including the
+                    // root cause), so the underlying DB/SQL error is visible in dev.
+                    format!("{base}: {err:?}")
                 }
             }
         }

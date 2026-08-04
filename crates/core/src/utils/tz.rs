@@ -55,6 +55,20 @@ pub fn now_utc() -> Timestamp {
     chrono::Utc::now()
 }
 
+/// Parse an RFC 3339 timestamp string into a [`Timestamp`] (UTC).
+///
+/// Used when binding externally supplied timestamp strings (e.g. token expiry)
+/// to PostgreSQL `TIMESTAMPTZ` columns, which require a typed `DateTime` value.
+pub fn parse_rfc3339(s: &str) -> anyhow::Result<Timestamp> {
+    Ok(chrono::DateTime::parse_from_rfc3339(s)?.with_timezone(&chrono::Utc))
+}
+
+/// Parse an optional RFC 3339 timestamp string into an optional [`Timestamp`].
+pub fn parse_rfc3339_opt(s: Option<&str>) -> Option<Timestamp> {
+    s.and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+        .map(|dt| dt.with_timezone(&chrono::Utc))
+}
+
 /// Returns the current UTC time as a database-compatible timestamp string.
 ///
 /// Used by the Aspect system (injected into timestamp columns of dynamic Content Type tables).

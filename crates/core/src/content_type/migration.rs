@@ -473,11 +473,22 @@ fn type_compatible(expected: &str, actual: &str) -> bool {
         let s = s.to_uppercase();
         let s = s.split('(').next().unwrap_or(&s).trim();
         match s {
-            "INT" | "INTEGER" | "BIGINT" => "INTEGER",
-            "TEXT" | "VARCHAR" | "CHAR" => "TEXT",
-            "REAL" | "FLOAT" | "DOUBLE" | "NUMERIC" => "REAL",
+            "INT" | "INTEGER" | "BIGINT" | "SMALLINT" | "TINYINT" => "INTEGER",
+            // PostgreSQL's information_schema reports VARCHAR as `character varying`
+            // and CHAR as `character`; normalize them together with TEXT/VARCHAR.
+            "TEXT" | "VARCHAR" | "CHAR" | "CHARACTER" | "CHARACTER VARYING" => "TEXT",
+            "REAL" | "FLOAT" | "DOUBLE" | "DOUBLE PRECISION" | "NUMERIC" | "DECIMAL" => "REAL",
             "BOOLEAN" | "BOOL" => "BOOLEAN",
-            "DECIMAL" => "DECIMAL",
+            // PostgreSQL reports timestamps as `timestamp with/without time zone`.
+            "TIMESTAMP"
+            | "TIMESTAMPTZ"
+            | "DATETIME"
+            | "TIMESTAMP WITH TIME ZONE"
+            | "TIMESTAMP WITHOUT TIME ZONE" => "TIMESTAMP",
+            "TIME" | "TIMETZ" | "TIME WITH TIME ZONE" | "TIME WITHOUT TIME ZONE" => "TIME",
+            "DATE" => "DATE",
+            "BLOB" | "BYTEA" | "BYTES" => "BLOB",
+            "JSON" | "JSONB" => "JSON",
             other => other,
         }
         .to_string()
@@ -545,9 +556,9 @@ fn json_to_sql_literal(v: &serde_json::Value) -> String {
         serde_json::Value::Number(n) => n.to_string(),
         serde_json::Value::Bool(b) => {
             if *b {
-                "1".into()
+                "TRUE".into()
             } else {
-                "0".into()
+                "FALSE".into()
             }
         }
         serde_json::Value::Null => "NULL".into(),
@@ -707,7 +718,7 @@ default = false
         assert!(
             stmts
                 .iter()
-                .any(|s| s.contains("is_pinned BOOLEAN DEFAULT 0"))
+                .any(|s| s.contains("is_pinned BOOLEAN DEFAULT FALSE"))
         );
     }
 
@@ -831,8 +842,8 @@ foreign_key = "author_id"
         assert_eq!(json_to_sql_literal(&serde_json::json!("hello")), "'hello'");
         assert_eq!(json_to_sql_literal(&serde_json::json!("it's")), "'it''s'");
         assert_eq!(json_to_sql_literal(&serde_json::json!(42)), "42");
-        assert_eq!(json_to_sql_literal(&serde_json::json!(true)), "1");
-        assert_eq!(json_to_sql_literal(&serde_json::json!(false)), "0");
+        assert_eq!(json_to_sql_literal(&serde_json::json!(true)), "TRUE");
+        assert_eq!(json_to_sql_literal(&serde_json::json!(false)), "FALSE");
         assert_eq!(json_to_sql_literal(&serde_json::json!(null)), "NULL");
         assert_eq!(json_to_sql_literal(&serde_json::json!([1, 2])), "'[1,2]'");
     }
@@ -1092,7 +1103,7 @@ default = true
         )
         .unwrap();
         let sql = generate_create_table(&ct, &[]);
-        assert!(sql.contains("active BOOLEAN DEFAULT 1"));
+        assert!(sql.contains("active BOOLEAN DEFAULT TRUE"));
         let active_line = sql.lines().find(|l| l.contains("active BOOLEAN")).unwrap();
         assert!(!active_line.contains("NOT NULL"));
     }

@@ -107,8 +107,8 @@ pub async fn insert(
             "max_uses" => cmd.max_uses,
             "used_count" => 0i64,
             "max_uses_per_user" => cmd.max_uses_per_user,
-            "starts_at" => &cmd.starts_at,
-            "expires_at" => &cmd.expires_at,
+            "starts_at" => crate::utils::tz::parse_rfc3339_opt(cmd.starts_at.as_deref()),
+            "expires_at" => crate::utils::tz::parse_rfc3339_opt(cmd.expires_at.as_deref()),
             "created_at" => &now,
             "updated_at" => &now
         ],
