@@ -14,6 +14,9 @@ pub mod handlers;
 mod job_queue;
 mod runner;
 mod scheduler;
+mod sweeper;
+
+use std::time::Duration;
 
 use crate::types::snowflake_id::SnowflakeId;
 use serde::{Deserialize, Serialize};
@@ -51,6 +54,7 @@ pub use scheduler::{
     recent_execution_logs, remove_plugin_crons, seed_defaults, sync_plugin_crons, toggle_schedule,
     update_schedule,
 };
+pub use sweeper::StuckJobSweeper;
 
 #[cfg(feature = "export-types")]
 export_types!(JobStatus, CronExecStatus, CronSchedule, CronExecutionLog,);
@@ -185,6 +189,12 @@ pub trait JobQueue: Send + Sync {
     async fn retry(&self, id: &str) -> AppResult<()>;
     async fn remove(&self, id: &str) -> AppResult<()>;
     async fn cleanup(&self) -> AppResult<u64>;
+
+    /// Requeue jobs stuck in `running` past the visibility timeout.
+    ///
+    /// Jobs still under `max_attempts` go back to `pending`; those that have
+    /// exhausted their retries are marked `dead`.
+    async fn requeue_stuck(&self, timeout: Duration) -> AppResult<u64>;
 }
 
 /// Job statistics

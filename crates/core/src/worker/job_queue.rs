@@ -112,76 +112,81 @@ impl JobQueue for DefaultJobQueue {
 
         #[cfg(feature = "db-mysql")]
         {
+            // MySQL lacks RETURNING, but supports `FOR UPDATE SKIP LOCKED` (8.0+).
+            // Single transaction: SELECT ... FOR UPDATE SKIP LOCKED → UPDATE → fetch.
+            // This is atomic, race-free, and avoids the N+1 query problem.
+            let mut tx = self.pool.begin().await?;
+
             let select_sql = format!(
-                "SELECT {COL_ID} FROM jobs \
+                "SELECT {COL_ID}, job_type, payload, attempts, max_attempts, created_at \
+                 FROM jobs \
                  WHERE status = {} AND (run_after IS NULL OR run_after <= {}) \
-                 ORDER BY created_at ASC LIMIT {}",
+                 ORDER BY created_at ASC \
+                 LIMIT {} \
+                 FOR UPDATE SKIP LOCKED",
                 Driver::ph(1),
                 Driver::ph(2),
                 Driver::ph(3)
             );
-            let ids: Vec<i64> = sqlx::query_scalar::<crate::db::pool::Db, i64>(&select_sql)
+            let rows: Vec<crate::db::pool::DbRow> = sqlx::query::<crate::db::pool::Db>(&select_sql)
                 .bind(JobStatus::Pending)
                 .bind(now)
                 .bind(limit_i64)
-                .fetch_all(&self.pool)
+                .fetch_all(&mut *tx)
                 .await?;
 
-            if ids.is_empty() {
+            if rows.is_empty() {
+                tx.commit().await?;
                 return Ok(Vec::new());
             }
 
-            let mut jobs = Vec::with_capacity(ids.len());
-            for job_id in ids {
-                let update_sql = format!(
-                    "UPDATE jobs SET status = {}, attempts = attempts + 1, updated_at = {} \
-                     WHERE {COL_ID} = {} AND status = {}",
-                    Driver::ph(1),
-                    Driver::ph(2),
-                    Driver::ph(3),
-                    Driver::ph(4)
-                );
-                let row = sqlx::query::<crate::db::pool::Db>(&update_sql)
-                    .bind(JobStatus::Running)
-                    .bind(now)
-                    .bind(job_id)
-                    .bind(JobStatus::Pending)
-                    .execute(&self.pool)
-                    .await;
+            // Collect IDs for a single bulk UPDATE
+            let ids: Vec<i64> = rows.iter().map(|r| r.get::<i64, _>(COL_ID)).collect();
 
-                if let Err(e) = row {
-                    tracing::debug!("dequeue race lost for job {job_id}: {e}");
-                    continue;
-                }
+            // Bulk UPDATE all selected rows at once (they're already locked by FOR UPDATE)
+            let placeholders: Vec<String> = (0..ids.len()).map(|i| Driver::ph(4 + i)).collect();
+            let update_sql = format!(
+                "UPDATE jobs SET status = {}, attempts = attempts + 1, updated_at = {} \
+                 WHERE {COL_ID} IN ({}) AND status = {}",
+                Driver::ph(1),
+                Driver::ph(2),
+                placeholders.join(", "),
+                Driver::ph(3)
+            );
 
-                let fetch_sql = format!(
-                    "SELECT job_type, payload, attempts, max_attempts, created_at FROM jobs WHERE {COL_ID} = {}",
-                    Driver::ph(1)
-                );
-                let fetched: crate::db::pool::DbRow =
-                    sqlx::query::<crate::db::pool::Db>(&fetch_sql)
-                        .bind(job_id)
-                        .fetch_one(&self.pool)
-                        .await?;
+            let mut q = sqlx::query::<crate::db::pool::Db>(&update_sql)
+                .bind(JobStatus::Running)
+                .bind(now)
+                .bind(JobStatus::Pending);
+            for id in &ids {
+                q = q.bind(id);
+            }
+            q.execute(&mut *tx).await?;
 
-                let job_type: String = fetched.get::<String, _>("job_type");
-                let payload: String = fetched.get::<String, _>("payload");
-                let attempts: i32 = fetched.get::<i32, _>("attempts");
-                let max_attempts: i32 = fetched.get::<i32, _>("max_attempts");
-                let created_at: Timestamp = fetched.get::<Timestamp, _>("created_at");
+            tx.commit().await?;
+
+            // Parse rows fetched earlier (data already in hand, no second SELECT needed)
+            let mut jobs = Vec::with_capacity(rows.len());
+            for row in rows {
+                let id: i64 = row.get::<i64, _>(COL_ID);
+                let job_type: String = row.get::<String, _>("job_type");
+                let payload: String = row.get::<String, _>("payload");
+                let attempts: i32 = row.get::<i32, _>("attempts");
+                let max_attempts: i32 = row.get::<i32, _>("max_attempts");
+                let created_at: Timestamp = row.get::<Timestamp, _>("created_at");
 
                 match parse_job(&job_type, &payload) {
                     Ok(job) => jobs.push(QueuedJob {
-                        id: job_id.to_string(),
+                        id: id.to_string(),
                         job,
-                        attempts: attempts as u32,
+                        attempts: (attempts + 1) as u32, // +1 because bulk UPDATE incremented it
                         max_attempts: max_attempts as u32,
                         created_at,
                     }),
                     Err(e) => {
-                        tracing::error!("failed to parse job {job_id}: {e}");
+                        tracing::error!("failed to parse job {id}: {e}");
                         let _ = self
-                            .dead(&job_id.to_string(), &format!("parse error: {e}"))
+                            .dead(&id.to_string(), &format!("parse error: {e}"))
                             .await;
                     }
                 }
@@ -444,6 +449,64 @@ impl JobQueue for DefaultJobQueue {
             tracing::info!("cleaned up {count} old jobs");
         }
         Ok(count)
+    }
+
+    async fn requeue_stuck(&self, timeout: std::time::Duration) -> AppResult<u64> {
+        let now = crate::utils::tz::now_utc();
+        let cutoff =
+            now - chrono::Duration::from_std(timeout).unwrap_or(chrono::Duration::minutes(5));
+
+        // Jobs that exhausted retries → dead
+        let dead_sql = format!(
+            "UPDATE jobs SET status = {}, error = {}, updated_at = {}\
+             WHERE status = {} AND updated_at < {} AND attempts >= max_attempts",
+            Driver::ph(1),
+            Driver::ph(2),
+            Driver::ph(3),
+            Driver::ph(4),
+            Driver::ph(5)
+        );
+        let dead_result: crate::db::pool::DbQueryResult =
+            sqlx::query::<crate::db::pool::Db>(&dead_sql)
+                .bind(JobStatus::Dead)
+                .bind("visibility timeout exceeded")
+                .bind(now)
+                .bind(JobStatus::Running)
+                .bind(cutoff)
+                .execute(&self.pool)
+                .await?;
+        let dead_count = dead_result.rows_affected();
+
+        // Jobs still retryable → back to pending
+        let requeue_sql = format!(
+            "UPDATE jobs SET status = {}, error = {}, updated_at = {}\
+             WHERE status = {} AND updated_at < {} AND attempts < max_attempts",
+            Driver::ph(1),
+            Driver::ph(2),
+            Driver::ph(3),
+            Driver::ph(4),
+            Driver::ph(5)
+        );
+        let requeue_result: crate::db::pool::DbQueryResult =
+            sqlx::query::<crate::db::pool::Db>(&requeue_sql)
+                .bind(JobStatus::Pending)
+                .bind("visibility timeout exceeded")
+                .bind(now)
+                .bind(JobStatus::Running)
+                .bind(cutoff)
+                .execute(&self.pool)
+                .await?;
+        let requeue_count = requeue_result.rows_affected();
+
+        let total = dead_count + requeue_count;
+        if total > 0 {
+            tracing::warn!(
+                "requeued {requeue_count} stuck jobs, marked {dead_count} dead \
+                 (visibility timeout {}s)",
+                timeout.as_secs()
+            );
+        }
+        Ok(total)
     }
 }
 

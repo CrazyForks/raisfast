@@ -937,7 +937,7 @@ async fn spawn_workers(
 ) {
     use crate::worker::{
         CronScheduler, DefaultJobQueue, JobEnqueuer, JobHandlerRegistry, PluginCronDispatcher,
-        WorkerRunner, seed_defaults,
+        StuckJobSweeper, WorkerRunner, seed_defaults,
     };
 
     let queue = Arc::new(DefaultJobQueue::new(pool.clone()));
@@ -975,7 +975,7 @@ async fn spawn_workers(
     JobEnqueuer::spawn(eventbus, queue.clone());
 
     let runner = WorkerRunner::new(
-        queue,
+        queue.clone(),
         Arc::new(registry),
         Duration::from_millis(config.worker_poll_interval_ms),
         config.worker_batch_size,
@@ -983,11 +983,20 @@ async fn spawn_workers(
     .with_plugin_dispatcher(Arc::new(PluginCronDispatcher::new(plugins)));
     runner.spawn(config.worker_concurrency);
 
+    StuckJobSweeper::new(
+        queue,
+        Duration::from_secs(config.worker_sweep_interval_secs),
+        Duration::from_secs(config.worker_visibility_timeout_secs),
+    )
+    .spawn();
+
     tracing::info!(
-        "worker system started: concurrency={}, poll={}ms, batch={}",
+        "worker system started: concurrency={}, poll={}ms, batch={}, visibility={}s, sweep={}s",
         config.worker_concurrency,
         config.worker_poll_interval_ms,
         config.worker_batch_size,
+        config.worker_visibility_timeout_secs,
+        config.worker_sweep_interval_secs,
     );
 }
 

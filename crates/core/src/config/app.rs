@@ -124,6 +124,10 @@ pub struct AppConfig {
     pub worker_default_max_attempts: u32,
     #[serde(default = "default_worker_cron_tick_ms")]
     pub worker_cron_tick_ms: u64,
+    #[serde(default = "default_worker_visibility_timeout_secs")]
+    pub worker_visibility_timeout_secs: u64,
+    #[serde(default = "default_worker_sweep_interval_secs")]
+    pub worker_sweep_interval_secs: u64,
     #[serde(default)]
     pub cron_seed_enabled: bool,
     #[serde(default = "default_cron_schedules")]
@@ -558,6 +562,14 @@ fn default_worker_cron_tick_ms() -> u64 {
     60000
 }
 
+fn default_worker_visibility_timeout_secs() -> u64 {
+    300
+}
+
+fn default_worker_sweep_interval_secs() -> u64 {
+    60
+}
+
 fn default_cron_log_retention_days() -> i64 {
     30
 }
@@ -985,6 +997,14 @@ impl AppConfig {
                 .ok()
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(default_worker_cron_tick_ms()),
+            worker_visibility_timeout_secs: env::var("WORKER_VISIBILITY_TIMEOUT_SECS")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(default_worker_visibility_timeout_secs()),
+            worker_sweep_interval_secs: env::var("WORKER_SWEEP_INTERVAL_SECS")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(default_worker_sweep_interval_secs()),
             cron_seed_enabled: env::var("CRON_SEED_ENABLED")
                 .ok()
                 .and_then(|v| v.parse().ok())
@@ -1180,6 +1200,8 @@ impl AppConfig {
             worker_batch_size: default_worker_batch_size(),
             worker_default_max_attempts: default_worker_max_attempts(),
             worker_cron_tick_ms: default_worker_cron_tick_ms(),
+            worker_visibility_timeout_secs: default_worker_visibility_timeout_secs(),
+            worker_sweep_interval_secs: default_worker_sweep_interval_secs(),
             cron_seed_enabled: false,
             cron_schedules: vec![],
             cron_log_retention_days: default_cron_log_retention_days(),
