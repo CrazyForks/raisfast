@@ -57,6 +57,7 @@ impl QueryRoot {
             search,
             include,
             skip_total,
+            filter: None,
             extra: std::collections::HashMap::new(),
         };
 

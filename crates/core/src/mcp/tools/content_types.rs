@@ -132,6 +132,7 @@ impl CreateContentType {
             color: req.color,
             kind: req.kind,
             slug_field: req.slug_field,
+            search_fields: req.search_fields,
             builtin: req.builtin,
             implements: req.implements,
             fields: req.fields,

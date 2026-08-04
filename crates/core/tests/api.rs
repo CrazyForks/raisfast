@@ -45,6 +45,12 @@ pub(crate) fn test_config() -> AppConfig {
         .join("hello-axum-test-uploads")
         .to_string_lossy()
         .into();
+    // Never write test content types into the repo's `extensions/content_types`
+    // dir; use a temp dir so tests don't pollute real schema files.
+    cfg.content_type_dir = std::env::temp_dir()
+        .join("raisfast-test-content-types")
+        .to_string_lossy()
+        .into();
     cfg.base_url = "http://localhost:9000".into();
     let mut key_bytes = [0u8; 32];
     getrandom::getrandom(&mut key_bytes).unwrap();
@@ -1083,7 +1089,7 @@ async fn content_type_blob_media_set_crud_api() {
         "singular": "doc",
         "plural": "docs",
         "table": "docs",
-        "implements": ["timestampable"],
+        "implements": ["ownable", "timestampable"],
         "fields": [
             { "name": "title", "label": "Title", "field_type": "text", "required": true },
             { "name": "payload", "label": "Payload", "field_type": "blob" },
@@ -1340,4 +1346,374 @@ type = "mediaset"
     )
     .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+// ── Content type: ?filter= expression query ─────────────────────────
+
+#[tokio::test]
+async fn cms_list_filter_expression_query_param() {
+    let (mut app, state) = test_app().await;
+    create_admin(&state.pool).await;
+
+    let (status, body) = send(
+        &mut app,
+        post_json(
+            "/api/v1/auth/login",
+            json!({ "email": "admin@test.com", "password": "AdminPass123!" }),
+        ),
+    )
+    .await;
+    assert!(status.is_success(), "admin login failed: {status} {body:?}");
+    let token = body["data"]["access_token"].as_str().unwrap().to_string();
+
+    let schema = json!({
+        "name": "Gadget",
+        "singular": "gadget",
+        "plural": "gadgets",
+        "table": "gadgets",
+        "implements": ["ownable", "timestampable"],
+        "api": {
+            "list": { "access": "public" },
+            "get": { "access": "public" }
+        },
+        "fields": [
+            { "name": "title", "field_type": "text", "required": true },
+            { "name": "price", "field_type": "integer", "required": true }
+        ]
+    });
+    let (status, body) = send(
+        &mut app,
+        post_json_auth("/api/v1/admin/content-types", schema, &token),
+    )
+    .await;
+    assert!(
+        status.is_success(),
+        "create schema failed: {status} {body:?}"
+    );
+
+    for (title, price) in [("Cheap", 10), ("Mid", 300), ("Mid2", 450), ("Pricey", 900)] {
+        let (status, body) = send(
+            &mut app,
+            post_json_auth(
+                "/api/v1/admin/cms/gadgets",
+                json!({ "title": title, "price": price }),
+                &token,
+            ),
+        )
+        .await;
+        assert!(
+            status.is_success(),
+            "create {title} failed: {status} {body:?}"
+        );
+    }
+
+    // filter=price>=100&&price<=500  → only Mid and Mid2
+    let (status, body) = send(
+        &mut app,
+        get_req("/api/v1/cms/gadgets?filter=price%3E%3D100%26%26price%3C%3D500"),
+    )
+    .await;
+    assert!(status.is_success(), "filter list failed: {status} {body:?}");
+    assert_eq!(body["data"]["total"], 2);
+    let titles: Vec<String> = body["data"]["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v["title"].as_str().unwrap().to_string())
+        .collect();
+    assert!(titles.contains(&"Mid".to_string()));
+    assert!(titles.contains(&"Mid2".to_string()));
+
+    // filter=title="Mid" → exactly one
+    let (status, body) = send(
+        &mut app,
+        get_req("/api/v1/cms/gadgets?filter=title%3D%22Mid%22"),
+    )
+    .await;
+    assert!(
+        status.is_success(),
+        "filter title failed: {status} {body:?}"
+    );
+    assert_eq!(body["data"]["total"], 1);
+    assert_eq!(body["data"]["items"][0]["title"], "Mid");
+
+    // malformed filter is ignored (returns all)
+    let (status, body) = send(
+        &mut app,
+        get_req("/api/v1/cms/gadgets?filter=price%3E%3E%3E100"),
+    )
+    .await;
+    assert!(
+        status.is_success(),
+        "malformed filter failed: {status} {body:?}"
+    );
+    assert_eq!(body["data"]["total"], 4);
+
+    // combine filter with bracket operator params (AND)
+    let (status, body) = send(
+        &mut app,
+        get_req("/api/v1/cms/gadgets?filter=price%3E%3D100&price%5B%24lt%5D=500"),
+    )
+    .await;
+    assert!(
+        status.is_success(),
+        "combined filter failed: {status} {body:?}"
+    );
+    assert_eq!(body["data"]["total"], 2);
+}
+
+// ── Content type: full-table export ──────────────────────────────
+
+/// Test app backed by a temp-file SQLite DB.
+///
+/// The export pipeline runs on a dedicated thread + single-threaded runtime,
+/// which exposes SQLite `:memory:`'s per-connection isolation. A real file
+/// (as in production) shares the schema across every pool connection.
+async fn test_app_export() -> (axum::Router, AppState, std::path::PathBuf) {
+    let path = std::env::temp_dir().join(format!(
+        "raisfast-export-{}-{}.db",
+        std::process::id(),
+        uuid::Uuid::new_v4().simple()
+    ));
+    let url = format!("sqlite:{}?mode=rwc", path.display());
+    let pool = raisfast::db::Pool::connect(&url).await.unwrap();
+    sqlx::query(raisfast::db::schema::SCHEMA_SQL)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let (app, state) = build_test_app(pool).await;
+    (app, state, path)
+}
+
+#[tokio::test]
+async fn cms_export_streams_all_formats() {
+    let (mut app, state, db_path) = test_app_export().await;
+    create_admin(&state.pool).await;
+
+    let (status, body) = send(
+        &mut app,
+        post_json(
+            "/api/v1/auth/login",
+            json!({ "email": "admin@test.com", "password": "AdminPass123!" }),
+        ),
+    )
+    .await;
+    assert!(status.is_success(), "admin login failed: {status} {body:?}");
+    let token = body["data"]["access_token"].as_str().unwrap().to_string();
+
+    let schema = json!({
+        "name": "Widget",
+        "singular": "widget",
+        "plural": "widgets",
+        "table": "widgets",
+        "implements": ["ownable", "timestampable"],
+        "fields": [
+            { "name": "title", "field_type": "text", "required": true },
+            { "name": "price", "field_type": "integer", "required": true }
+        ]
+    });
+    let (status, body) = send(
+        &mut app,
+        post_json_auth("/api/v1/admin/content-types", schema, &token),
+    )
+    .await;
+    assert!(
+        status.is_success(),
+        "create schema failed: {status} {body:?}"
+    );
+
+    for (title, price) in [("A", 1), ("B", 2), ("C", 3)] {
+        let (status, body) = send(
+            &mut app,
+            post_json_auth(
+                "/api/v1/admin/cms/widgets",
+                json!({ "title": title, "price": price }),
+                &token,
+            ),
+        )
+        .await;
+        assert!(
+            status.is_success(),
+            "create {title} failed: {status} {body:?}"
+        );
+    }
+
+    // JSON export → valid array of 3
+    let (status, bytes) = send_raw(
+        &mut app,
+        get_auth("/api/v1/admin/cms/widgets/export?format=json", &token),
+    )
+    .await;
+    assert!(status.is_success(), "json export failed: {status}");
+    let parsed: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(parsed.as_array().unwrap().len(), 3);
+
+    // CSV export → header + rows
+    let (status, bytes) = send_raw(
+        &mut app,
+        get_auth("/api/v1/admin/cms/widgets/export?format=csv", &token),
+    )
+    .await;
+    assert!(status.is_success(), "csv export failed: {status}");
+    let csv_text = String::from_utf8(bytes).unwrap();
+    assert!(csv_text.contains("title"));
+    assert!(csv_text.contains("price"));
+    assert!(csv_text.contains("A"));
+
+    // SQL export → INSERT statements
+    let (status, bytes) = send_raw(
+        &mut app,
+        get_auth("/api/v1/admin/cms/widgets/export?format=sql", &token),
+    )
+    .await;
+    assert!(status.is_success(), "sql export failed: {status}");
+    let sql_text = String::from_utf8(bytes).unwrap();
+    assert!(sql_text.contains("INSERT INTO `widgets`"));
+
+    // XLSX export → zip magic bytes
+    let (status, bytes) = send_raw(
+        &mut app,
+        get_auth("/api/v1/admin/cms/widgets/export?format=xlsx", &token),
+    )
+    .await;
+    assert!(status.is_success(), "xlsx export failed: {status}");
+    assert!(bytes.starts_with(b"PK"));
+
+    // unsupported format → 400
+    let (status, _) = send_raw(
+        &mut app,
+        get_auth("/api/v1/admin/cms/widgets/export?format=txt", &token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+
+    // empty table → 400
+    let (status, body) = send(
+        &mut app,
+        post_json_auth(
+            "/api/v1/admin/content-types",
+            json!({
+                "name": "Empty",
+                "singular": "empty",
+                "plural": "empties",
+                "table": "empties",
+                "implements": ["ownable"],
+                "fields": [{ "name": "title", "field_type": "text" }]
+            }),
+            &token,
+        ),
+    )
+    .await;
+    assert!(
+        status.is_success(),
+        "create empty schema failed: {status} {body:?}"
+    );
+    let (status, _) = send_raw(
+        &mut app,
+        get_auth("/api/v1/admin/cms/empties/export?format=json", &token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+
+    let _ = std::fs::remove_file(&db_path);
+}
+
+// ── Content type: API config update ─────────────────────────────
+
+#[tokio::test]
+async fn cms_content_type_api_config_update() {
+    let (mut app, state, db_path) = test_app_export().await;
+    create_admin(&state.pool).await;
+
+    let (status, body) = send(
+        &mut app,
+        post_json(
+            "/api/v1/auth/login",
+            json!({ "email": "admin@test.com", "password": "AdminPass123!" }),
+        ),
+    )
+    .await;
+    assert!(status.is_success(), "admin login failed: {status} {body:?}");
+    let token = body["data"]["access_token"].as_str().unwrap().to_string();
+
+    let uid = uuid::Uuid::new_v4().simple().to_string();
+    let name = format!("Apicfg{uid}");
+    let singular = format!("apicfg{uid}");
+    let plural = format!("apicfgs{uid}");
+
+    let schema = json!({
+        "name": name,
+        "singular": singular,
+        "plural": plural,
+        "table": plural,
+        "implements": ["ownable"],
+        "fields": [{ "name": "title", "field_type": "text" }]
+    });
+    let (status, body) = send(
+        &mut app,
+        post_json_auth("/api/v1/admin/content-types", schema, &token),
+    )
+    .await;
+    if !status.is_success() {
+        let keys: Vec<String> = state
+            .content_type_registry
+            .all()
+            .iter()
+            .map(|ct| ct.registry_key())
+            .collect();
+        panic!("create schema failed: {status} {body:?} registry={keys:?}");
+    }
+
+    // Defaults: list/get/create=authed, update=owner, delete=admin
+    let (status, body) = send(
+        &mut app,
+        get_auth(&format!("/api/v1/admin/content-types/{singular}"), &token),
+    )
+    .await;
+    assert!(status.is_success(), "get schema failed: {status}");
+    assert_eq!(body["data"]["api"]["list"]["access"], "authed");
+    assert_eq!(body["data"]["api"]["create"]["access"], "authed");
+    assert_eq!(body["data"]["api"]["update"]["access"], "owner");
+    assert_eq!(body["data"]["api"]["delete"]["access"], "admin");
+
+    // Update only the api config
+    let (status, body) = send(
+        &mut app,
+        put_json_auth(
+            &format!("/api/v1/admin/content-types/{singular}"),
+            json!({
+                "api": {
+                    "list": { "access": "owner", "filter": "status = \"published\"", "cache": true, "fields": ["id", "title"] },
+                    "get": { "access": "public" },
+                    "create": { "access": "admin" },
+                    "update": { "access": "owner" },
+                    "delete": { "access": "admin" }
+                }
+            }),
+            &token,
+        ),
+    )
+    .await;
+    assert!(status.is_success(), "update api failed: {status} {body:?}");
+
+    let (status, body) = send(
+        &mut app,
+        get_auth(&format!("/api/v1/admin/content-types/{singular}"), &token),
+    )
+    .await;
+    assert!(
+        status.is_success(),
+        "get schema after update failed: {status}"
+    );
+    assert_eq!(body["data"]["api"]["list"]["access"], "owner");
+    assert_eq!(
+        body["data"]["api"]["list"]["filter"],
+        "status = \"published\""
+    );
+    assert_eq!(body["data"]["api"]["list"]["cache"], true);
+    assert_eq!(body["data"]["api"]["list"]["fields"][0], "id");
+    assert_eq!(body["data"]["api"]["get"]["access"], "public");
+    assert_eq!(body["data"]["api"]["create"]["access"], "admin");
+
+    let _ = std::fs::remove_file(&db_path);
 }

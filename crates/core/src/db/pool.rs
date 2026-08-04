@@ -57,7 +57,7 @@ define_db_types!(sqlx::Postgres {
     Transaction = sqlx::Transaction<'a, sqlx::Postgres>,
     Row = sqlx::postgres::PgRow,
     Connection = sqlx::postgres::PgConnection,
-    Arguments = sqlx::postgres::PgArguments<'q>,
+    Arguments = sqlx::postgres::PgArguments,
     QueryResult = sqlx::postgres::PgQueryResult,
     PoolConnection = sqlx::pool::PoolConnection<sqlx::Postgres>,
 });

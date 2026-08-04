@@ -7,7 +7,6 @@
 //! directly, avoiding the performance overhead of `json_object()` double serialization.
 
 use crate::types::snowflake_id::SnowflakeId;
-use std::collections::HashMap;
 
 use serde_json::{Value, json};
 
@@ -126,14 +125,102 @@ impl SaveContext {
     }
 }
 
+/// Field comparison operator for list query filters.
+///
+/// Matches the PocketBase-style `field[$op]` query key suffix.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FilterOp {
+    Eq,
+    Ne,
+    Gt,
+    Gte,
+    Lt,
+    Lte,
+    In,
+    Nin,
+    Contains,
+    NotContains,
+    Like,
+    NotLike,
+    StartsWith,
+    EndsWith,
+    Between,
+    IsNull,
+    IsNotNull,
+}
+
+impl FilterOp {
+    /// Parse the `$op` suffix from a query key like `price[$gt]`.
+    pub fn from_suffix(s: &str) -> Option<Self> {
+        match s {
+            "$eq" => Some(Self::Eq),
+            "$ne" => Some(Self::Ne),
+            "$gt" => Some(Self::Gt),
+            "$gte" => Some(Self::Gte),
+            "$lt" => Some(Self::Lt),
+            "$lte" => Some(Self::Lte),
+            "$in" => Some(Self::In),
+            "$nin" => Some(Self::Nin),
+            "$contains" => Some(Self::Contains),
+            "$not_contains" => Some(Self::NotContains),
+            "$like" => Some(Self::Like),
+            "$not_like" => Some(Self::NotLike),
+            "$starts_with" => Some(Self::StartsWith),
+            "$ends_with" => Some(Self::EndsWith),
+            "$between" => Some(Self::Between),
+            "$is_null" => Some(Self::IsNull),
+            "$not_null" => Some(Self::IsNotNull),
+            _ => None,
+        }
+    }
+
+    /// The SQL comparison operator (without `IS NULL`-style suffixes).
+    fn sql_op(self) -> &'static str {
+        match self {
+            Self::Eq => "=",
+            Self::Ne => "!=",
+            Self::Gt => ">",
+            Self::Gte => ">=",
+            Self::Lt => "<",
+            Self::Lte => "<=",
+            Self::Like => "LIKE",
+            Self::NotLike => "NOT LIKE",
+            Self::Contains => "LIKE",
+            Self::NotContains => "NOT LIKE",
+            Self::StartsWith => "LIKE",
+            Self::EndsWith => "LIKE",
+            Self::In => "IN",
+            Self::Nin => "NOT IN",
+            Self::Between => "BETWEEN",
+            Self::IsNull | Self::IsNotNull => "",
+        }
+    }
+}
+
+/// A single field filter with a comparison operator.
+#[derive(Debug, Clone)]
+pub struct FieldFilter {
+    pub field: String,
+    pub op: FilterOp,
+    pub value: Value,
+}
+
+/// A `__meta.<path>` JSON filter with a comparison operator.
+#[derive(Debug, Clone)]
+pub struct MetaFilter {
+    pub path: String,
+    pub op: FilterOp,
+    pub value: String,
+}
+
 /// Common query parameters
 #[derive(Debug, Clone, Default)]
 pub struct ContentQuery {
     pub page: i64,
     pub page_size: i64,
     pub sort: Option<String>,
-    pub filters: HashMap<String, Value>,
-    pub status: Option<String>,
+    /// Field filters (equality or comparison operator)
+    pub filters: Vec<FieldFilter>,
     pub search: Option<String>,
     pub fields: Option<Vec<String>>,
     pub tenant_id: Option<String>,
@@ -147,8 +234,8 @@ pub struct ContentQuery {
     pub max_page_size: i64,
     /// Whether to include private fields (admin API sets this to true)
     pub include_private: bool,
-    /// __meta JSON path query conditions: (json_path, value)
-    pub meta_filters: Vec<(String, String)>,
+    /// __meta JSON path query conditions
+    pub meta_filters: Vec<MetaFilter>,
 }
 
 /// Generic content repository
@@ -200,30 +287,75 @@ impl ContentRepository {
             param_idx += 1;
         }
 
-        for (key, val) in &query.filters {
-            let matches_field = ct.get_field(key).is_some();
-            let matches_fk = ct.fields.iter().any(|f| {
-                f.relation
-                    .as_ref()
-                    .is_some_and(|r| r.foreign_key.as_deref() == Some(key.as_str()))
-            });
-            if (matches_field || matches_fk) && crate::db::driver::is_safe_identifier(key) {
-                where_clauses.push(format!("{key} = {}", crate::db::Driver::ph(param_idx)));
-                params.push(val.clone());
-                param_idx += 1;
+        for f in &query.filters {
+            if !crate::db::driver::is_safe_identifier(&f.field) {
+                continue;
+            }
+            let field_exists = ct.get_field(&f.field).is_some()
+                || ct.has_protocol_column(&f.field)
+                || f.field == COL_ID;
+            if !field_exists {
+                continue;
+            }
+            append_filter_clause(&mut where_clauses, &mut params, &mut param_idx, f);
+        }
+
+        for mf in &query.meta_filters {
+            let path = crate::db::Driver::ph(param_idx);
+            param_idx += 1;
+            params.push(json!(format!("$.{}", mf.path)));
+            match mf.op {
+                FilterOp::IsNull => {
+                    where_clauses.push(format!("json_extract({}, {path}) IS NULL", COL_META));
+                }
+                FilterOp::IsNotNull => {
+                    where_clauses.push(format!("json_extract({}, {path}) IS NOT NULL", COL_META));
+                }
+                _ => {
+                    let value_ph = crate::db::Driver::ph(param_idx);
+                    param_idx += 1;
+                    let wrapped = match mf.op {
+                        FilterOp::Contains => format!("%{}%", mf.value),
+                        FilterOp::NotContains => format!("%{}%", mf.value),
+                        FilterOp::StartsWith => format!("{}%", mf.value),
+                        FilterOp::EndsWith => format!("%{}", mf.value),
+                        _ => mf.value.clone(),
+                    };
+                    let op_sql = match mf.op {
+                        FilterOp::NotContains => format!("NOT {}", crate::db::Driver::like_op()),
+                        FilterOp::Contains
+                        | FilterOp::StartsWith
+                        | FilterOp::EndsWith
+                        | FilterOp::Like => crate::db::Driver::like_op().to_string(),
+                        FilterOp::NotLike => format!("NOT {}", crate::db::Driver::like_op()),
+                        _ => mf.op.sql_op().to_string(),
+                    };
+                    where_clauses.push(format!(
+                        "json_extract({}, {path}) {op_sql} {value_ph}",
+                        COL_META,
+                    ));
+                    params.push(json!(wrapped));
+                }
             }
         }
 
-        for (path, val) in &query.meta_filters {
-            where_clauses.push(format!(
-                "json_extract({}, {}) = {}",
-                COL_META,
-                crate::db::Driver::ph(param_idx),
-                crate::db::Driver::ph(param_idx + 1)
-            ));
-            params.push(json!(format!("$.{path}")));
-            params.push(json!(val));
-            param_idx += 2;
+        if let Some(ref keyword) = query.search {
+            let kw = keyword.trim();
+            if kw.len() >= crate::content_type::MIN_SEARCH_LEN {
+                let searchable = ct.searchable_fields();
+                if !searchable.is_empty() {
+                    let like = crate::db::Driver::like_op();
+                    let mut ors = Vec::new();
+                    for field in searchable {
+                        let col = crate::db::Driver::text_col(&field);
+                        let p = crate::db::Driver::ph(param_idx);
+                        param_idx += 1;
+                        ors.push(format!("{col} {like} {p}"));
+                        params.push(json!(format!("%{kw}%")));
+                    }
+                    where_clauses.push(format!("({})", ors.join(" OR ")));
+                }
+            }
         }
 
         let mut where_sql = if where_clauses.is_empty() {
@@ -305,6 +437,84 @@ impl ContentRepository {
         }
 
         Ok((items, count_row))
+    }
+
+    /// Stream every row of a content type to a callback, one at a time.
+    ///
+    /// Used by full-table export so that large tables are never materialized
+    /// in memory as a whole. The callback is `async` so it can push chunks to
+    /// a downstream channel; the DB stream is advanced one row per await.
+    ///
+    /// Note: `F`/`Fut` are intentionally **not** required to be `Send`. The
+    /// export sink holds non-`Send` state (e.g. the XLSX workbook), so callers
+    /// drive this on a single-threaded runtime.
+    ///
+    /// Returns the number of rows yielded.
+    pub async fn stream_all<F, Fut>(
+        &self,
+        ct: &ContentTypeSchema,
+        tenant_id: Option<String>,
+        f: F,
+    ) -> Result<usize, AppError>
+    where
+        F: FnMut(Value) -> Fut,
+        Fut: std::future::Future<Output = Result<(), AppError>>,
+    {
+        let columns = ct.column_names(None, true);
+        let select_cols = columns.join(", ");
+        let table = &ct.table;
+
+        let mut where_clauses = Vec::new();
+        let mut params: Vec<Value> = Vec::new();
+        for (column, condition) in ct.query_filters() {
+            where_clauses.push(format!("{} {}", column, condition));
+        }
+        if ct.query_filters().is_empty() && ct.is_soft_delete() {
+            where_clauses.push(format!("{} IS NULL", COL_DELETED_AT));
+        }
+        let tid = self.resolve_tenant(ct, tenant_id.as_deref());
+        if let Some(ref tid) = tid {
+            let ph = crate::db::Driver::ph(params.len() + 1);
+            where_clauses.push(format!("{COL_TENANT_ID} = {ph}"));
+            params.push(json!(tid));
+        }
+
+        let where_sql = if where_clauses.is_empty() {
+            String::new()
+        } else {
+            format!(" WHERE {}", where_clauses.join(" AND "))
+        };
+        let sql = format!("SELECT {select_cols} FROM {table}{where_sql}");
+
+        let mut stream = {
+            let mut query = sqlx::query(&sql);
+            for p in &params {
+                query = query.bind(value_to_string(p));
+            }
+            query.fetch(&self.pool)
+        };
+
+        let id_cols = ct.id_column_set();
+        let blob_cols = ct.blob_column_set();
+        let blob_meta_map = ct.blob_meta_column_map();
+        let media_set_cols = ct.media_set_column_set();
+
+        let mut f = f;
+        let mut count = 0usize;
+        use futures::TryStreamExt;
+        while let Some(row) = stream.try_next().await? {
+            let value = row_to_value(
+                &row,
+                &columns,
+                &id_cols,
+                &blob_cols,
+                &blob_meta_map,
+                &media_set_cols,
+            );
+            f(value).await?;
+            count += 1;
+        }
+        Ok(count)
     }
 
     /// Find by ID
@@ -1771,6 +1981,111 @@ fn value_to_string(v: &Value) -> String {
     }
 }
 
+/// Split a filter value into a list (used by `$in` / `$nin` / `$between`).
+///
+/// Accepts a comma-separated string (`"draft,published"`) or a JSON array.
+fn split_csv(v: &Value) -> Vec<String> {
+    match v {
+        Value::String(s) => s
+            .split(',')
+            .map(str::trim)
+            .filter(|p| !p.is_empty())
+            .map(String::from)
+            .collect(),
+        Value::Array(arr) => arr.iter().map(value_to_string).collect(),
+        other => vec![value_to_string(other)],
+    }
+}
+
+/// Append the SQL clause for a single field filter to `where_clauses`.
+///
+/// Values are always bound as parameters; `field` must already be validated
+/// as a safe identifier by the caller. `param_idx` is advanced for each
+/// placeholder consumed.
+fn append_filter_clause(
+    where_clauses: &mut Vec<String>,
+    params: &mut Vec<Value>,
+    param_idx: &mut usize,
+    f: &FieldFilter,
+) {
+    let field = &f.field;
+    let mut wrap = |op: FilterOp, v: &Value| {
+        let p = crate::db::Driver::ph(*param_idx);
+        *param_idx += 1;
+        let wrapped = match op {
+            FilterOp::Contains | FilterOp::NotContains => format!("%{}%", value_to_string(v)),
+            FilterOp::StartsWith => format!("{}%", value_to_string(v)),
+            FilterOp::EndsWith => format!("%{}", value_to_string(v)),
+            _ => value_to_string(v),
+        };
+        (p, wrapped)
+    };
+
+    match f.op {
+        FilterOp::IsNull => {
+            where_clauses.push(format!("{field} IS NULL"));
+        }
+        FilterOp::IsNotNull => {
+            where_clauses.push(format!("{field} IS NOT NULL"));
+        }
+        FilterOp::In | FilterOp::Nin => {
+            let values = split_csv(&f.value);
+            if values.is_empty() {
+                return;
+            }
+            let phs: Vec<String> = values
+                .iter()
+                .map(|_| {
+                    let p = crate::db::Driver::ph(*param_idx);
+                    *param_idx += 1;
+                    p
+                })
+                .collect();
+            where_clauses.push(format!("{field} {} ({})", f.op.sql_op(), phs.join(", ")));
+            for v in values {
+                params.push(json!(v));
+            }
+        }
+        FilterOp::Between => {
+            let values = split_csv(&f.value);
+            let lo = crate::db::Driver::ph(*param_idx);
+            *param_idx += 1;
+            let hi = crate::db::Driver::ph(*param_idx);
+            *param_idx += 1;
+            where_clauses.push(format!("{field} BETWEEN {lo} AND {hi}"));
+            params.push(json!(values.first().cloned().unwrap_or_default()));
+            params.push(json!(values.get(1).cloned().unwrap_or_default()));
+        }
+        FilterOp::Contains
+        | FilterOp::NotContains
+        | FilterOp::StartsWith
+        | FilterOp::EndsWith
+        | FilterOp::Like
+        | FilterOp::NotLike => {
+            let (p, wrapped) = wrap(f.op, &f.value);
+            let like = crate::db::Driver::like_op();
+            let op_sql = match f.op {
+                FilterOp::NotContains | FilterOp::NotLike => format!("NOT {like}"),
+                _ => like.to_string(),
+            };
+            let col = crate::db::Driver::text_col(field);
+            where_clauses.push(format!("{col} {op_sql} {p}"));
+            params.push(json!(wrapped));
+        }
+        FilterOp::Eq
+        | FilterOp::Ne
+        | FilterOp::Gt
+        | FilterOp::Gte
+        | FilterOp::Lt
+        | FilterOp::Lte => {
+            let p = crate::db::Driver::ph(*param_idx);
+            *param_idx += 1;
+            where_clauses.push(format!("{field} {} {p}", f.op.sql_op()));
+            params.push(f.value.clone());
+        }
+    }
+}
+
 fn extract_ids(val: &Value) -> Vec<String> {
     match val {
         Value::String(s) if !s.is_empty() => vec![s.clone()],
@@ -1806,6 +2121,49 @@ pub(crate) fn fetch_columns_sql(table: &str) -> Result<(String, usize), AppError
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn filter_op_from_suffix_all_ops() {
+        assert_eq!(FilterOp::from_suffix("$eq"), Some(FilterOp::Eq));
+        assert_eq!(FilterOp::from_suffix("$ne"), Some(FilterOp::Ne));
+        assert_eq!(FilterOp::from_suffix("$gt"), Some(FilterOp::Gt));
+        assert_eq!(FilterOp::from_suffix("$gte"), Some(FilterOp::Gte));
+        assert_eq!(FilterOp::from_suffix("$lt"), Some(FilterOp::Lt));
+        assert_eq!(FilterOp::from_suffix("$lte"), Some(FilterOp::Lte));
+        assert_eq!(FilterOp::from_suffix("$in"), Some(FilterOp::In));
+        assert_eq!(FilterOp::from_suffix("$nin"), Some(FilterOp::Nin));
+        assert_eq!(FilterOp::from_suffix("$contains"), Some(FilterOp::Contains));
+        assert_eq!(
+            FilterOp::from_suffix("$not_contains"),
+            Some(FilterOp::NotContains)
+        );
+        assert_eq!(FilterOp::from_suffix("$like"), Some(FilterOp::Like));
+        assert_eq!(FilterOp::from_suffix("$not_like"), Some(FilterOp::NotLike));
+        assert_eq!(
+            FilterOp::from_suffix("$starts_with"),
+            Some(FilterOp::StartsWith)
+        );
+        assert_eq!(
+            FilterOp::from_suffix("$ends_with"),
+            Some(FilterOp::EndsWith)
+        );
+        assert_eq!(FilterOp::from_suffix("$between"), Some(FilterOp::Between));
+        assert_eq!(FilterOp::from_suffix("$is_null"), Some(FilterOp::IsNull));
+        assert_eq!(
+            FilterOp::from_suffix("$not_null"),
+            Some(FilterOp::IsNotNull)
+        );
+        assert_eq!(FilterOp::from_suffix("$nope"), None);
+    }
+
+    #[test]
+    fn split_csv_handles_string_and_array() {
+        assert_eq!(split_csv(&json!("a,b,c")), vec!["a", "b", "c"]);
+        assert_eq!(split_csv(&json!("  a , b ")), vec!["a", "b"]);
+        assert_eq!(split_csv(&json!("")), Vec::<String>::new());
+        assert_eq!(split_csv(&json!([1, 2, 3])), vec!["1", "2", "3"]);
+        assert_eq!(split_csv(&json!(42)), vec!["42"]);
+    }
 
     fn test_protocol_registry() -> crate::protocols::ProtocolRegistry {
         let mut reg = crate::protocols::ProtocolRegistry::new();

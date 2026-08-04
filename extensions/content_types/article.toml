@@ -1,0 +1,101 @@
+[content_type]
+name = "Article"
+singular = "article"
+plural = "articles"
+table = "articles"
+description = "文章"
+slug_field = "title"
+implements = [
+    "ownable",
+    "timestampable",
+]
+
+[fields.title]
+type = "text"
+required = true
+label = "标题"
+max_length = 200
+
+[fields.slug]
+type = "uid"
+unique = true
+label = "URL 标识"
+
+[fields.content]
+type = "richtext"
+required = true
+label = "正文"
+
+[fields.excerpt]
+type = "text"
+label = "摘要"
+max_length = 500
+
+[fields.cover_image]
+type = "media"
+label = "封面图片"
+accept = ["image/*"]
+
+[fields.author]
+type = "relation"
+label = "作者"
+relation_type = "manytoone"
+target = "users"
+foreign_key = "author_id"
+
+[fields.category]
+type = "relation"
+label = "分类"
+relation_type = "manytoone"
+target = "categories"
+foreign_key = "category_id"
+
+[fields.tags]
+type = "relation"
+label = "标签"
+relation_type = "manytomany"
+target = "tags"
+through = "articles_tags"
+
+[fields.view_count]
+type = "integer"
+label = "浏览量"
+default = 0
+private = true
+
+[fields.is_pinned]
+type = "boolean"
+label = "是否置顶"
+default = false
+
+[[indexes]]
+fields = ["slug"]
+unique = true
+
+[[indexes]]
+fields = [
+    "status",
+    "created_at",
+]
+
+[api.list]
+access = "authed"
+filter = 'status = "published"'
+cache = true
+
+[api.get]
+access = "authed"
+filter = 'status = "published"'
+cache = true
+
+[api.create]
+access = "admin"
+cache = false
+
+[api.update]
+access = "admin"
+cache = false
+
+[api.delete]
+access = "admin"
+cache = false

@@ -171,11 +171,13 @@ impl AuthUser {
     }
 
     /// Guard: ensure the token scope grants `resource:action`.
+    ///
+    /// This is a scope-only check: it does not gate authentication. Anonymous
+    /// requests (no token) have empty scopes and pass here; the actual access
+    /// level (`public`/`authed`/`admin`) is enforced separately by the handler
+    /// (e.g. `check_api_access` / `ensure_admin`).
     pub fn ensure_scope(&self, resource: &str, action: TokenAction) -> AppResult<()> {
         if self.0.token_present_but_invalid {
-            return Err(AppError::Unauthorized);
-        }
-        if !self.is_authenticated() {
             return Err(AppError::Unauthorized);
         }
         if !self.has_scope(resource, action) {

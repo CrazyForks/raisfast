@@ -13,10 +13,13 @@ use axum::response::IntoResponse;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::collections::HashMap;
+use std::str::FromStr;
 use std::sync::Arc;
 
-use super::repository::{ContentQuery, ContentRepository, SaveContext};
-use super::rule_engine::compile_rule_sql;
+use super::repository::{
+    ContentQuery, ContentRepository, FieldFilter, FilterOp, MetaFilter, SaveContext,
+};
+use super::rule_engine::{Rule, compile_rule_sql};
 use super::schema::{
     ApiAccess, ContentKind, ContentTypeSchema, FieldType, RelationType, check_api_access,
 };
@@ -151,6 +154,123 @@ fn is_owner(record: &serde_json::Value, auth: &AuthUser) -> bool {
     }
 }
 
+/// Parse a query key like `price[$gt]` into `("price", FilterOp::Gt)`.
+///
+/// Plain field names (no bracket suffix) fall back to equality via the caller.
+fn parse_op_key(key: &str) -> Option<(&str, FilterOp)> {
+    let (field, rest) = key.split_once("[$")?;
+    let op_name = rest.strip_suffix(']')?;
+    Some((field, FilterOp::from_suffix(&format!("${op_name}"))?))
+}
+
+/// Build field filters from raw query parameters.
+///
+/// Supports PocketBase-style operator keys (`price[$gt]=100`) plus legacy
+/// equality (`price=100`). Relation fields are resolved to FK columns.
+/// The `status` query parameter is folded in as an equality filter when the
+/// content type actually has a `status` column.
+async fn parse_field_filters(
+    ct: &ContentTypeSchema,
+    state: &AppState,
+    extra: &HashMap<String, String>,
+    status: Option<String>,
+) -> Vec<FieldFilter> {
+    let mut filters: Vec<FieldFilter> = Vec::new();
+    for (key, v) in extra {
+        if key.starts_with(&format!("{COL_META}.")) {
+            continue;
+        }
+        let (field, op) = parse_op_key(key).unwrap_or((key.as_str(), FilterOp::Eq));
+        let Some(field_schema) = ct.get_field(field) else {
+            if ct.has_column(field) {
+                filters.push(FieldFilter {
+                    field: field.to_string(),
+                    op,
+                    value: Value::String(v.clone()),
+                });
+            }
+            continue;
+        };
+
+        if field_schema.field_type == FieldType::Relation {
+            let resolved = resolve_relation_filter(state, field_schema, op, v).await;
+            filters.push(match resolved {
+                Some((fk_col, value)) => FieldFilter {
+                    field: fk_col,
+                    op,
+                    value,
+                },
+                None => FieldFilter {
+                    field: field.to_string(),
+                    op,
+                    value: Value::String(v.clone()),
+                },
+            });
+        } else {
+            filters.push(FieldFilter {
+                field: field.to_string(),
+                op,
+                value: Value::String(v.clone()),
+            });
+        }
+    }
+
+    if let Some(ref status) = status
+        && ct.has_column(COL_STATUS)
+    {
+        filters.push(FieldFilter {
+            field: COL_STATUS.into(),
+            op: FilterOp::Eq,
+            value: Value::String(status.clone()),
+        });
+    }
+    filters
+}
+
+/// Resolve a relation field filter to its FK column + numeric id value.
+///
+/// For `$in` / `$nin` the comma-separated slugs are each resolved. Returns
+/// `None` for relation types that do not store a local FK column.
+async fn resolve_relation_filter(
+    state: &AppState,
+    field_schema: &super::schema::FieldSchema,
+    op: FilterOp,
+    v: &str,
+) -> Option<(String, Value)> {
+    let rel = field_schema.relation.as_ref()?;
+    if !matches!(
+        rel.relation_type,
+        RelationType::ManyToOne | RelationType::OneToOne | RelationType::OneWay
+    ) {
+        return None;
+    }
+    let fk_col = rel
+        .foreign_key
+        .clone()
+        .unwrap_or_else(|| format!("{}_id", field_schema.name));
+    if op == FilterOp::In || op == FilterOp::Nin {
+        let mut ids: Vec<String> = Vec::new();
+        for part in v.split(',') {
+            let parsed =
+                crate::types::snowflake_id::parse_id(part.trim()).unwrap_or(SnowflakeId(-1));
+            if let Some(id) = raisfast_derive::crud_resolve_id!(&state.pool, &rel.target, *parsed)
+                .ok()
+                .flatten()
+            {
+                ids.push(id.to_string());
+            }
+        }
+        Some((fk_col, json!(ids.join(","))))
+    } else {
+        let parsed_id = crate::types::snowflake_id::parse_id(v).unwrap_or(SnowflakeId(-1));
+        let int_id = raisfast_derive::crud_resolve_id!(&state.pool, &rel.target, *parsed_id)
+            .ok()
+            .flatten()
+            .unwrap_or(-1);
+        Some((fk_col, json!(int_id)))
+    }
+}
+
 fn build_rule_sql(
     endpoint: &super::schema::CachedEndpointRules,
     auth: &AuthUser,
@@ -177,6 +297,49 @@ fn build_rule_sql(
     }
 }
 
+/// Compile a user-supplied `?filter=` expression into SQL.
+///
+/// Reuses the API Rule engine. Returns `None` when the filter is empty,
+/// malformed, or references `@request.auth` while unauthenticated.
+fn compile_query_filter(
+    expr: Option<&str>,
+    offset: usize,
+    auth: &AuthUser,
+    config: &crate::config::app::RuleEngineConfig,
+) -> Option<(String, Vec<String>)> {
+    let expr = expr?.trim();
+    if expr.is_empty() {
+        return None;
+    }
+    let rule = Rule::parse(expr, config).ok()?;
+    compile_rule_sql(&rule, offset, auth, config)
+}
+
+/// Merge the endpoint's cached API Rule (filter/filter_auth) with the
+/// user-supplied `?filter=` expression. Both compile to SQL and are AND-ed.
+fn compile_list_filters(
+    cached: Option<(String, Vec<String>)>,
+    filter: Option<&str>,
+    auth: &AuthUser,
+    config: &crate::config::app::RuleEngineConfig,
+) -> (Option<String>, Vec<String>) {
+    let (cached_where, mut all_params) = cached
+        .map(|(w, p)| (Some(w), p))
+        .unwrap_or((None, Vec::new()));
+
+    let user_sql = compile_query_filter(filter, all_params.len(), auth, config);
+
+    match (cached_where, user_sql) {
+        (Some(w1), Some((w2, p2))) => {
+            all_params.extend(p2);
+            (Some(format!("({w1}) AND ({w2})")), all_params)
+        }
+        (Some(w1), None) => (Some(w1), all_params),
+        (None, Some((w2, p2))) => (Some(w2), p2),
+        (None, None) => (None, all_params),
+    }
+}
+
 /// Pagination query parameters
 #[derive(Debug, Deserialize)]
 pub struct ListParams {
@@ -186,6 +349,10 @@ pub struct ListParams {
     pub status: Option<String>,
     pub search: Option<String>,
     pub include: Option<String>,
+    /// PocketBase-style filter expression, e.g. `price>=100&&price<=500`
+    /// or `status="published"||author_id=123`. Reuses the API Rule engine
+    /// and compiles to a SQL WHERE clause.
+    pub filter: Option<String>,
     /// Skip COUNT(*) query for performance, total returns -1
     #[serde(default)]
     pub skip_total: Option<bool>,
@@ -355,6 +522,15 @@ pub fn register_content_routes(
                         let key = registry_key.clone();
                         move |auth, state, query, body| {
                             admin_import_handler(auth, state, key.clone(), query, body)
+                        }
+                    }),
+                )
+                .route(
+                    &format!("{admin_prefix}/export"),
+                    axum::routing::get({
+                        let key = registry_key.clone();
+                        move |auth, state, query| {
+                            admin_export_handler(auth, state, key.clone(), query)
                         }
                     }),
                 );
@@ -756,6 +932,17 @@ async fn dynamic_admin_cms_dispatch_restful(
                 let data = do_admin_list(state, &ct, params).await?;
                 Ok(Json(crate::errors::response::ApiResponse::success(data)).into_response())
             }
+            (axum::http::Method::GET, Some(id)) if id == "export" => {
+                let format = super::export::ExportFormat::from_str(
+                    params
+                        .extra
+                        .get("format")
+                        .map(String::as_str)
+                        .unwrap_or("json"),
+                )
+                .map_err(|_| AppError::BadRequest("unsupported export format".into()))?;
+                Ok(do_export(state, &ct, format).await?.into_response())
+            }
             (axum::http::Method::GET, Some(id)) => {
                 let int_id = crate::types::snowflake_id::parse_id(&id)?;
                 let data = do_admin_get(state, &ct, int_id).await?;
@@ -855,6 +1042,17 @@ async fn dynamic_admin_cms_dispatch_simple(
                 let data = do_admin_list(state, &ct, params).await?;
                 Ok(Json(crate::errors::response::ApiResponse::success(data)).into_response())
             }
+            (axum::http::Method::GET, Some(id)) if id == "export" => {
+                let format = super::export::ExportFormat::from_str(
+                    params
+                        .extra
+                        .get("format")
+                        .map(String::as_str)
+                        .unwrap_or("json"),
+                )
+                .map_err(|_| AppError::BadRequest("unsupported export format".into()))?;
+                Ok(do_export(state, &ct, format).await?.into_response())
+            }
             (axum::http::Method::GET, Some(id)) => {
                 let int_id = crate::types::snowflake_id::parse_id(&id)?;
                 let data = do_admin_get(state, &ct, int_id).await?;
@@ -937,14 +1135,25 @@ pub fn cms_list_cache_key(ct: &ContentTypeSchema, query: &ContentQuery) -> Strin
     use std::hash::{Hash, Hasher};
 
     let mut hasher = DefaultHasher::new();
-    query.status.hash(&mut hasher);
     query.page.hash(&mut hasher);
     query.page_size.hash(&mut hasher);
     query.search.hash(&mut hasher);
     query.sort.hash(&mut hasher);
-    for (k, v) in &query.filters {
-        k.hash(&mut hasher);
-        v.to_string().hash(&mut hasher);
+    for f in &query.filters {
+        f.field.hash(&mut hasher);
+        std::mem::discriminant(&f.op).hash(&mut hasher);
+        f.value.to_string().hash(&mut hasher);
+    }
+    for mf in &query.meta_filters {
+        mf.path.hash(&mut hasher);
+        std::mem::discriminant(&mf.op).hash(&mut hasher);
+        mf.value.hash(&mut hasher);
+    }
+    if let Some(ref rw) = query.rule_where {
+        rw.hash(&mut hasher);
+        for p in &query.rule_params {
+            p.hash(&mut hasher);
+        }
     }
     if let Some(ref inc) = query.include {
         for i in inc {
@@ -974,12 +1183,16 @@ pub async fn do_list(
     let repo = ContentRepository::new(state.pool.clone());
     let include = params.include.as_deref().map(parse_include);
 
-    let (mut rule_where, mut rule_params) = ct
+    let cached_rule = ct
         .cached_rules
         .as_ref()
-        .and_then(|r| build_rule_sql(&r.list, auth, &state.config.rule_engine))
-        .map(|(w, p)| (Some(w), p))
-        .unwrap_or_default();
+        .and_then(|r| build_rule_sql(&r.list, auth, &state.config.rule_engine));
+    let (mut rule_where, mut rule_params) = compile_list_filters(
+        cached_rule,
+        params.filter.as_deref(),
+        auth,
+        &state.config.rule_engine,
+    );
 
     // Owner access: auto-inject `created_by = <auth_id>`
     if ct.api.list.access == ApiAccess::Owner {
@@ -993,50 +1206,27 @@ pub async fn do_list(
         rule_params.push(uid.to_string());
     }
 
-    let mut meta_filters: Vec<(String, String)> = Vec::new();
+    let mut meta_filters: Vec<MetaFilter> = Vec::new();
     let meta_prefix = format!("{COL_META}.");
-    let mut filters: HashMap<String, Value> = HashMap::new();
 
     for (key, v) in &params.extra {
         if let Some(path) = key.strip_prefix(&meta_prefix) {
-            meta_filters.push((path.to_string(), v.clone()));
-            continue;
-        }
-        let Some(field) = ct.get_field(key) else {
-            continue;
-        };
-
-        if field.field_type == FieldType::Relation {
-            if let Some(ref rel) = field.relation {
-                match rel.relation_type {
-                    RelationType::ManyToOne | RelationType::OneToOne | RelationType::OneWay => {
-                        let fk_col = rel
-                            .foreign_key
-                            .clone()
-                            .unwrap_or_else(|| format!("{}_id", field.name));
-                        let parsed_id =
-                            crate::types::snowflake_id::parse_id(v).unwrap_or(SnowflakeId(-1));
-                        let int_id =
-                            raisfast_derive::crud_resolve_id!(&state.pool, &rel.target, *parsed_id)
-                                .ok()
-                                .flatten()
-                                .unwrap_or(-1);
-                        filters.insert(fk_col, json!(int_id));
-                    }
-                    _ => {}
-                }
-            }
-        } else {
-            filters.insert(key.clone(), Value::String(v.clone()));
+            let (path, op) = parse_op_key(path).unwrap_or((path, FilterOp::Eq));
+            meta_filters.push(MetaFilter {
+                path: path.to_string(),
+                op,
+                value: v.clone(),
+            });
         }
     }
+
+    let filters = parse_field_filters(ct, state, &params.extra, params.status).await;
 
     let query = ContentQuery {
         page: params.page.unwrap_or(1),
         page_size: params.page_size.unwrap_or(20),
         sort: params.sort,
         filters,
-        status: None,
         search: params.search,
         fields: ct.api.list.fields.clone(),
         tenant_id: None,
@@ -1470,57 +1660,40 @@ async fn do_admin_list(
     let repo = ContentRepository::new(state.pool.clone());
     let include = params.include.as_deref().map(parse_include);
 
-    let mut meta_filters: Vec<(String, String)> = Vec::new();
+    let mut meta_filters: Vec<MetaFilter> = Vec::new();
     let meta_prefix = format!("{COL_META}.");
-    let mut filters: HashMap<String, Value> = HashMap::new();
 
     for (key, v) in &params.extra {
         if let Some(path) = key.strip_prefix(&meta_prefix) {
-            meta_filters.push((path.to_string(), v.clone()));
-            continue;
-        }
-        let Some(field) = ct.get_field(key) else {
-            continue;
-        };
-
-        if field.field_type == FieldType::Relation {
-            if let Some(ref rel) = field.relation {
-                match rel.relation_type {
-                    RelationType::ManyToOne | RelationType::OneToOne | RelationType::OneWay => {
-                        let fk_col = rel
-                            .foreign_key
-                            .clone()
-                            .unwrap_or_else(|| format!("{}_id", field.name));
-                        let parsed_id =
-                            crate::types::snowflake_id::parse_id(v).unwrap_or(SnowflakeId(-1));
-                        let int_id =
-                            raisfast_derive::crud_resolve_id!(&state.pool, &rel.target, *parsed_id)
-                                .ok()
-                                .flatten()
-                                .unwrap_or(-1);
-                        filters.insert(fk_col, json!(int_id));
-                    }
-                    _ => {}
-                }
-            }
-        } else {
-            filters.insert(key.clone(), Value::String(v.clone()));
+            let (path, op) = parse_op_key(path).unwrap_or((path, FilterOp::Eq));
+            meta_filters.push(MetaFilter {
+                path: path.to_string(),
+                op,
+                value: v.clone(),
+            });
         }
     }
+
+    let filters = parse_field_filters(ct, state, &params.extra, params.status).await;
+    let (rule_where, rule_params) = compile_list_filters(
+        None,
+        params.filter.as_deref(),
+        &AuthUser::from_parts(None, crate::models::user::UserRole::Admin, None),
+        &state.config.rule_engine,
+    );
 
     let query = ContentQuery {
         page: params.page.unwrap_or(1),
         page_size: params.page_size.unwrap_or(20),
         sort: params.sort,
         filters,
-        status: params.status,
         search: params.search,
         fields: None,
         tenant_id: None,
         include,
         skip_total: params.skip_total.unwrap_or(false),
-        rule_where: None,
-        rule_params: Vec::new(),
+        rule_where,
+        rule_params,
         max_page_size: state.config.rule_engine.cms_max_page_size as i64,
         include_private: true,
         meta_filters,
@@ -1885,6 +2058,136 @@ pub async fn admin_import_handler(
     Ok(Json(crate::errors::response::ApiResponse::success(result)))
 }
 
+/// Query parameters for the CMS full-table export endpoint.
+#[derive(Debug, Deserialize)]
+pub struct ExportQuery {
+    /// Format: `json`, `csv`, `sql` or `xlsx`. Defaults to `json`.
+    pub format: Option<String>,
+}
+
+/// Response tuple for a streamed export: content-type + content-disposition
+/// headers and the chunked body.
+type ExportResponse = (
+    [(axum::http::header::HeaderName, String); 2],
+    axum::body::Body,
+);
+
+/// Stream every record of a content type to the response.
+///
+/// Rows are streamed from the database one at a time and pushed to the
+/// response as chunks fill, so tables with hundreds of thousands of records
+/// export without buffering everything in memory. The first chunk is awaited
+/// before returning so an empty or failed export becomes a normal JSON error
+/// instead of an empty download.
+pub async fn do_export(
+    state: &AppState,
+    ct: &ContentTypeSchema,
+    format: super::export::ExportFormat,
+) -> Result<ExportResponse, AppError> {
+    let (tx, mut rx) = tokio::sync::mpsc::channel::<Result<Vec<u8>, AppError>>(4);
+    let pool = state.pool.clone();
+    let ct_thread = ct.clone();
+
+    // The export sink holds non-`Send` state (rust_xlsxwriter uses `Rc`
+    // internally), so the whole pipeline runs on a dedicated OS thread with a
+    // single-threaded tokio runtime. Chunks are handed back over the channel.
+    std::thread::spawn(move || {
+        let rt = match tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+        {
+            Ok(rt) => rt,
+            Err(e) => {
+                let _ = tx.blocking_send(Err(AppError::Internal(e.into())));
+                return;
+            }
+        };
+        rt.block_on(async move {
+            let repo = ContentRepository::new(pool);
+            let result: Result<usize, AppError> = (async {
+                let mut sink = super::export::ExportSink::new(&ct_thread, format);
+                let count = repo
+                    .stream_all(&ct_thread, None, |row| {
+                        let tx = tx.clone();
+                        let send: Result<Vec<u8>, AppError> = sink.write_row(&row);
+                        async move {
+                            match send {
+                                Ok(chunk) if !chunk.is_empty() => {
+                                    tx.send(Ok(chunk)).await.map_err(|_| {
+                                        AppError::Internal(anyhow::anyhow!("export channel closed"))
+                                    })?;
+                                }
+                                Ok(_) => {}
+                                Err(e) => {
+                                    let _ = tx.send(Err(e)).await;
+                                }
+                            }
+                            Ok(())
+                        }
+                    })
+                    .await?;
+                if count == 0 {
+                    return Err(AppError::BadRequest("no records to export".into()));
+                }
+                let tail = sink.finish()?;
+                if !tail.is_empty() {
+                    tx.send(Ok(tail)).await.map_err(|_| {
+                        AppError::Internal(anyhow::anyhow!("export channel closed"))
+                    })?;
+                }
+                Ok(count)
+            })
+            .await;
+            if let Err(e) = result {
+                let _ = tx.send(Err(e)).await;
+            }
+        });
+    });
+
+    // Await the first chunk so an empty/errored export returns a proper JSON
+    // error response rather than a streamed empty file.
+    let first = match rx.recv().await {
+        Some(Ok(chunk)) => chunk,
+        Some(Err(e)) => return Err(e),
+        None => return Err(AppError::BadRequest("no records to export".into())),
+    };
+
+    use futures::StreamExt;
+    let rest = tokio_stream::wrappers::ReceiverStream::new(rx);
+    let stream = futures::stream::once(async { Ok(axum::body::Bytes::from(first)) })
+        .chain(rest.map(|item| item.map(axum::body::Bytes::from)));
+    let body = Body::from_stream(stream);
+
+    let filename = super::export::suggested_filename(ct, format);
+    let headers = [
+        (axum::http::header::CONTENT_TYPE, format.mime().to_string()),
+        (
+            axum::http::header::CONTENT_DISPOSITION,
+            format!("attachment; filename=\"{filename}\""),
+        ),
+    ];
+    Ok((headers, body))
+}
+
+/// Admin: export every record of a content type, streamed.
+///
+/// GET `/admin/cms/{group}/{plural}/export?format=json`. See [`do_export`].
+pub async fn admin_export_handler(
+    auth: AuthUser,
+    State(state): State<AppState>,
+    type_name: String,
+    Query(query): Query<ExportQuery>,
+) -> Result<impl IntoResponse, AppError> {
+    auth.ensure_admin()?;
+    let ct = state
+        .content_type_registry
+        .get(&type_name)
+        .ok_or_else(|| AppError::not_found(&type_name))?;
+    let format = super::export::ExportFormat::from_str(query.format.as_deref().unwrap_or("json"))
+        .map_err(|_| AppError::BadRequest("unsupported export format".into()))?;
+    do_export(&state, &ct, format).await
+}
+
 /// Execute a bulk create over CMS records, running each through `do_create`.
 ///
 /// Returns created/failed counts plus per-record error details (capped at 20).
@@ -1993,11 +2296,12 @@ pub async fn create_schema(
         color: req.color,
         kind: req.kind,
         slug_field: req.slug_field,
+        search_fields: req.search_fields,
         builtin: req.builtin,
         implements: req.implements,
         fields: req.fields,
         indexes: vec![],
-        api: super::schema::ApiConfig::default(),
+        api: req.api.unwrap_or_default(),
         cached_column_names: None,
         cached_protocol_column_names: None,
         cached_behaviors: None,
@@ -2035,16 +2339,13 @@ pub async fn create_schema(
 
     let reserved = state.config.builtins.reserved_route_segments();
     let protocol_names: Vec<&str> = state.protocol_registry.names();
-    state
-        .content_type_registry
-        .register(
-            schema.clone(),
-            &state.config.rule_engine,
-            &reserved,
-            &protocol_names,
-            &state.protocol_registry,
-        )
-        .map_err(|e| AppError::Conflict(e.to_string()))?;
+    state.content_type_registry.register(
+        schema.clone(),
+        &state.config.rule_engine,
+        &reserved,
+        &protocol_names,
+        &state.protocol_registry,
+    )?;
 
     tracing::info!(
         "registered content type: {} (table={}, hot-reload)",
@@ -2126,6 +2427,9 @@ pub async fn update_schema(
     if let Some(slug_field) = req.slug_field {
         updated.slug_field = slug_field;
     }
+    if let Some(search_fields) = req.search_fields {
+        updated.search_fields = search_fields;
+    }
     if let Some(implements) = req.implements {
         updated.implements = implements;
     }
@@ -2134,6 +2438,9 @@ pub async fn update_schema(
     }
     if let Some(indexes) = req.indexes {
         updated.indexes = indexes;
+    }
+    if let Some(api) = req.api {
+        updated.api = api;
     }
 
     let dir = std::path::Path::new(&state.config.content_type_dir);
@@ -2216,6 +2523,7 @@ name = "Product"
 singular = "product"
 plural = "products"
 table = "products"
+implements = ["ownable"]
 
 [fields.title]
 type = "text"
@@ -2283,14 +2591,16 @@ singular = "poll"
 plural = "polls"
 table = "forum_polls"
 group = "forum"
+implements = ["ownable"]
 
 [fields.title]
 type = "text"
 "#,
         )
         .unwrap();
-        let preg = crate::protocols::ProtocolRegistry::new();
-        reg.register(ct, &Default::default(), &[], &[], &preg)
+        let mut preg = crate::protocols::ProtocolRegistry::new();
+        preg.register(crate::protocols::ownable::OwnableProtocol);
+        reg.register(ct, &Default::default(), &[], &["ownable"], &preg)
             .unwrap();
         let (group, seg, id) = resolve_path_segments(&reg, "forum/polls/batch").unwrap();
         assert_eq!(group, "forum");
@@ -2310,14 +2620,16 @@ singular = "poll"
 plural = "polls"
 table = "forum_polls"
 group = "forum"
+implements = ["ownable"]
 
 [fields.title]
 type = "text"
 "#,
         )
         .unwrap();
-        let preg = crate::protocols::ProtocolRegistry::new();
-        reg.register(ct, &Default::default(), &[], &[], &preg)
+        let mut preg = crate::protocols::ProtocolRegistry::new();
+        preg.register(crate::protocols::ownable::OwnableProtocol);
+        reg.register(ct, &Default::default(), &[], &["ownable"], &preg)
             .unwrap();
 
         let (group, seg, id) = resolve_path_segments(&reg, "forum/polls").unwrap();
@@ -2370,14 +2682,16 @@ singular = "setting"
 plural = "settings"
 table = "settings"
 kind = "single"
+implements = ["ownable"]
 
 [fields.key]
 type = "text"
 "#,
         )
         .unwrap();
-        let reg = crate::protocols::ProtocolRegistry::new();
-        let _ = registry.register(ct, &Default::default(), &[], &[], &reg);
+        let mut reg = crate::protocols::ProtocolRegistry::new();
+        reg.register(crate::protocols::ownable::OwnableProtocol);
+        let _ = registry.register(ct, &Default::default(), &[], &["ownable"], &reg);
         let (found, is_single) = resolve_content_type(&registry, "", "setting").unwrap();
         assert!(is_single);
         assert_eq!(found.singular, "setting");
@@ -2387,8 +2701,9 @@ type = "text"
     fn resolve_content_type_by_plural() {
         let registry = crate::content_type::ContentTypeRegistry::new();
         let ct = parse_ct();
-        let reg = crate::protocols::ProtocolRegistry::new();
-        let _ = registry.register(ct, &Default::default(), &[], &[], &reg);
+        let mut reg = crate::protocols::ProtocolRegistry::new();
+        reg.register(crate::protocols::ownable::OwnableProtocol);
+        let _ = registry.register(ct, &Default::default(), &[], &["ownable"], &reg);
         let (found, is_single) = resolve_content_type(&registry, "", "products").unwrap();
         assert!(!is_single);
         assert_eq!(found.singular, "product");
@@ -2411,15 +2726,17 @@ singular = "poll"
 plural = "polls"
 table = "forum_polls"
 group = "forum"
+implements = ["ownable"]
 
 [fields.title]
 type = "text"
 "#,
         )
         .unwrap();
-        let reg = crate::protocols::ProtocolRegistry::new();
+        let mut reg = crate::protocols::ProtocolRegistry::new();
+        reg.register(crate::protocols::ownable::OwnableProtocol);
         registry
-            .register(ct, &Default::default(), &[], &[], &reg)
+            .register(ct, &Default::default(), &[], &["ownable"], &reg)
             .unwrap();
 
         let (found, is_single) = resolve_content_type(&registry, "forum", "polls").unwrap();
@@ -2506,6 +2823,7 @@ singular = "poll"
 plural = "polls"
 table = "forum_polls"
 group = "forum"
+implements = ["ownable"]
 
 [fields.title]
 type = "text"
@@ -2526,7 +2844,6 @@ type = "text"
             page_size: 20,
             sort: None,
             filters: Default::default(),
-            status: None,
             search: None,
             fields: None,
             tenant_id: None,
@@ -2550,7 +2867,6 @@ type = "text"
             page_size: 20,
             sort: None,
             filters: Default::default(),
-            status: None,
             search: None,
             fields: None,
             tenant_id: None,
@@ -2569,5 +2885,64 @@ type = "text"
         let k1 = cms_list_cache_key(&ct, &q1);
         let k2 = cms_list_cache_key(&ct, &q2);
         assert_ne!(k1, k2);
+    }
+
+    #[test]
+    fn parse_op_key_parses_operator_suffix() {
+        assert_eq!(parse_op_key("price[$gt]"), Some(("price", FilterOp::Gt)));
+        assert_eq!(parse_op_key("status[$in]"), Some(("status", FilterOp::In)));
+        assert_eq!(
+            parse_op_key("title[$contains]"),
+            Some(("title", FilterOp::Contains))
+        );
+        assert_eq!(
+            parse_op_key("price[$between]"),
+            Some(("price", FilterOp::Between))
+        );
+        assert_eq!(
+            parse_op_key("created_at[$is_null]"),
+            Some(("created_at", FilterOp::IsNull))
+        );
+        assert_eq!(parse_op_key("name"), None);
+        assert_eq!(parse_op_key("bad[$unknown]"), None);
+        assert_eq!(parse_op_key("bad[$gt"), None);
+    }
+
+    #[test]
+    fn parse_op_key_does_not_treat_meta_as_field() {
+        // Meta keys are handled separately; bracket suffix still parsed.
+        let ct = parse_ct();
+        assert!(!ct.has_column("__meta.views"));
+    }
+
+    #[test]
+    fn compile_list_filters_merges_cached_and_user_filter() {
+        let config = crate::config::app::RuleEngineConfig::default();
+        let anon = AuthUser::from_parts(None, crate::models::user::UserRole::Reader, None);
+
+        // cached rule only
+        let cached = Some(("status = 'published'".to_string(), vec!["published".into()]));
+        let (w, p) = compile_list_filters(cached, None, &anon, &config);
+        assert_eq!(w.as_deref(), Some("status = 'published'"));
+        assert_eq!(p.len(), 1);
+
+        // user filter only
+        let (w, p) = compile_list_filters(None, Some("price >= 100"), &anon, &config);
+        let w = w.unwrap();
+        assert!(w.contains("\"price\" >= "));
+        assert_eq!(p.len(), 1);
+
+        // both — AND-ed with param offset preserved
+        let cached = Some(("status = 'published'".to_string(), vec!["published".into()]));
+        let (w, p) = compile_list_filters(cached, Some("price >= 100"), &anon, &config);
+        let w = w.unwrap();
+        assert!(w.starts_with("(status = 'published') AND (\"price\" >= "));
+        assert_eq!(p.len(), 2);
+
+        // malformed filter is ignored
+        let cached = Some(("status = 'published'".to_string(), vec!["published".into()]));
+        let (w, p) = compile_list_filters(cached, Some("price >=> 100"), &anon, &config);
+        assert_eq!(w.as_deref(), Some("status = 'published'"));
+        assert_eq!(p.len(), 1);
     }
 }

@@ -3,12 +3,12 @@
 //! 验证动态内容类型系统的完整链路：
 //! Schema 解析 → Migration 建表 → CRUD → 租户隔离
 
-use std::collections::HashMap;
-
 use serde_json::json;
 
 use raisfast::content_type::ContentTypeRegistry;
-use raisfast::content_type::repository::{ContentQuery, ContentRepository, SaveContext};
+use raisfast::content_type::repository::{
+    ContentQuery, ContentRepository, FieldFilter, FilterOp, SaveContext,
+};
 use raisfast::content_type::schema::ContentTypeSchema;
 use raisfast::db::tenant;
 use raisfast::types::snowflake_id::SnowflakeId;
@@ -542,8 +542,8 @@ async fn find_paginated() {
         page: 1,
         page_size: 10,
         sort: None,
-        filters: HashMap::new(),
-        status: None,
+
+        filters: Vec::new(),
         search: None,
         fields: None,
         tenant_id: None,
@@ -563,8 +563,8 @@ async fn find_paginated() {
         page: 2,
         page_size: 10,
         sort: None,
-        filters: HashMap::new(),
-        status: None,
+
+        filters: Vec::new(),
         search: None,
         fields: None,
         tenant_id: None,
@@ -789,8 +789,8 @@ async fn tenant_isolation() {
         page: 1,
         page_size: 20,
         sort: None,
-        filters: HashMap::new(),
-        status: None,
+
+        filters: Vec::new(),
         search: None,
         fields: None,
         tenant_id: Some("tenant_a".into()),
@@ -883,8 +883,8 @@ async fn find_with_custom_sort() {
         page: 1,
         page_size: 20,
         sort: Some("price:asc".into()),
-        filters: HashMap::new(),
-        status: None,
+
+        filters: Vec::new(),
         search: None,
         fields: None,
         tenant_id: None,
@@ -926,15 +926,17 @@ async fn find_with_field_filter() {
     .await
     .unwrap();
 
-    let mut filters = HashMap::new();
-    filters.insert("title".into(), json!("Cheap"));
+    let filters = vec![FieldFilter {
+        field: "title".into(),
+        op: FilterOp::Eq,
+        value: json!("Cheap"),
+    }];
 
     let query = ContentQuery {
         page: 1,
         page_size: 20,
         sort: None,
         filters,
-        status: None,
         search: None,
         fields: None,
         tenant_id: None,
@@ -971,8 +973,8 @@ async fn partial_field_selection() {
         page: 1,
         page_size: 20,
         sort: None,
-        filters: HashMap::new(),
-        status: None,
+
+        filters: Vec::new(),
         search: None,
         fields: Some(vec!["title".into()]),
         tenant_id: None,
@@ -1460,8 +1462,8 @@ target_field = "title"
         page: 1,
         page_size: 10,
         sort: None,
-        filters: HashMap::new(),
-        status: None,
+
+        filters: Vec::new(),
         search: None,
         fields: None,
         tenant_id: None,
@@ -1673,8 +1675,8 @@ required = true
         page: 1,
         page_size: 10,
         sort: None,
-        filters: HashMap::new(),
-        status: None,
+
+        filters: Vec::new(),
         search: None,
         fields: None,
         tenant_id: None,
@@ -1689,4 +1691,406 @@ required = true
     let (items, total) = repo.find(&ct, query).await.unwrap();
     assert_eq!(total, 0);
     assert!(items.is_empty());
+}
+
+#[tokio::test]
+async fn filter_comparison_operators() {
+    let pool = setup_pool().await;
+    let ct = parse_product();
+    let repo = ContentRepository::new(pool);
+    repo.migrate(&ct, &test_protocol_registry()).await.unwrap();
+
+    for (title, price) in [
+        ("Laptop", 999),
+        ("Phone", 499),
+        ("Mouse", 25),
+        ("Keyboard", 80),
+    ] {
+        repo.create(
+            &ct,
+            with_timestamps(json!({"title": title, "slug": title.to_lowercase(), "price": price})),
+            None,
+            &SaveContext::default(),
+        )
+        .await
+        .unwrap();
+    }
+
+    let query = ContentQuery {
+        page: 1,
+        page_size: 20,
+        sort: None,
+        filters: vec![FieldFilter {
+            field: "price".into(),
+            op: FilterOp::Gt,
+            value: json!("100"),
+        }],
+        search: None,
+        fields: None,
+        tenant_id: None,
+        include: None,
+        skip_total: false,
+        rule_where: None,
+        rule_params: Vec::new(),
+        max_page_size: 100,
+        include_private: false,
+        meta_filters: Vec::new(),
+    };
+    let (items, total) = repo.find(&ct, query).await.unwrap();
+    assert_eq!(total, 2);
+    let titles: Vec<&str> = items.iter().map(|v| v["title"].as_str().unwrap()).collect();
+    assert!(titles.contains(&"Laptop"));
+    assert!(titles.contains(&"Phone"));
+
+    let query = ContentQuery {
+        filters: vec![FieldFilter {
+            field: "price".into(),
+            op: FilterOp::Gte,
+            value: json!("80"),
+        }],
+        page: 1,
+        page_size: 20,
+        max_page_size: 100,
+        ..ContentQuery::default()
+    };
+    let (items, total) = repo.find(&ct, query).await.unwrap();
+    assert_eq!(total, 3);
+    let titles: Vec<&str> = items.iter().map(|v| v["title"].as_str().unwrap()).collect();
+    assert!(titles.contains(&"Phone"));
+    assert!(titles.contains(&"Keyboard"));
+    assert!(titles.contains(&"Laptop"));
+
+    let query = ContentQuery {
+        filters: vec![FieldFilter {
+            field: "price".into(),
+            op: FilterOp::Lt,
+            value: json!("100"),
+        }],
+        page: 1,
+        page_size: 20,
+        max_page_size: 100,
+        ..ContentQuery::default()
+    };
+    let (_, total) = repo.find(&ct, query).await.unwrap();
+    assert_eq!(total, 2);
+}
+
+#[tokio::test]
+async fn filter_in_and_contains() {
+    let pool = setup_pool().await;
+    let ct = parse_product();
+    let repo = ContentRepository::new(pool);
+    repo.migrate(&ct, &test_protocol_registry()).await.unwrap();
+
+    repo.create(
+        &ct,
+        with_timestamps(json!({"title": "Rust Guide", "slug": "rust-guide", "price": 10})),
+        None,
+        &SaveContext::default(),
+    )
+    .await
+    .unwrap();
+    repo.create(
+        &ct,
+        with_timestamps(json!({"title": "Go Guide", "slug": "go-guide", "price": 20})),
+        None,
+        &SaveContext::default(),
+    )
+    .await
+    .unwrap();
+
+    let query = ContentQuery {
+        filters: vec![FieldFilter {
+            field: "title".into(),
+            op: FilterOp::In,
+            value: json!("Rust Guide,Go Guide"),
+        }],
+        page: 1,
+        page_size: 20,
+        max_page_size: 100,
+        ..ContentQuery::default()
+    };
+    let (_, total) = repo.find(&ct, query).await.unwrap();
+    assert_eq!(total, 2);
+
+    let query = ContentQuery {
+        filters: vec![FieldFilter {
+            field: "title".into(),
+            op: FilterOp::Contains,
+            value: json!("rust"),
+        }],
+        page: 1,
+        page_size: 20,
+        max_page_size: 100,
+        ..ContentQuery::default()
+    };
+    let (items, total) = repo.find(&ct, query).await.unwrap();
+    assert_eq!(total, 1);
+    assert_eq!(items[0]["title"], "Rust Guide");
+}
+
+#[tokio::test]
+async fn filter_between_and_is_null() {
+    let pool = setup_pool().await;
+    let ct = parse_product();
+    let repo = ContentRepository::new(pool);
+    repo.migrate(&ct, &test_protocol_registry()).await.unwrap();
+
+    repo.create(
+        &ct,
+        with_timestamps(json!({"title": "A", "slug": "a", "price": 5})),
+        None,
+        &SaveContext::default(),
+    )
+    .await
+    .unwrap();
+    repo.create(
+        &ct,
+        with_timestamps(json!({"title": "B", "slug": "b", "price": 50})),
+        None,
+        &SaveContext::default(),
+    )
+    .await
+    .unwrap();
+    repo.create(
+        &ct,
+        with_timestamps(json!({"title": "C", "slug": "c", "price": 500})),
+        None,
+        &SaveContext::default(),
+    )
+    .await
+    .unwrap();
+
+    let query = ContentQuery {
+        filters: vec![FieldFilter {
+            field: "price".into(),
+            op: FilterOp::Between,
+            value: json!("10,100"),
+        }],
+        page: 1,
+        page_size: 20,
+        max_page_size: 100,
+        ..ContentQuery::default()
+    };
+    let (items, total) = repo.find(&ct, query).await.unwrap();
+    assert_eq!(total, 1);
+    assert_eq!(items[0]["title"], "B");
+
+    let query = ContentQuery {
+        filters: vec![FieldFilter {
+            field: "description".into(),
+            op: FilterOp::IsNull,
+            value: json!(null),
+        }],
+        page: 1,
+        page_size: 20,
+        max_page_size: 100,
+        ..ContentQuery::default()
+    };
+    let (_, total) = repo.find(&ct, query).await.unwrap();
+    assert_eq!(total, 3);
+}
+
+#[tokio::test]
+async fn search_matches_text_fields() {
+    let pool = setup_pool().await;
+    let ct = parse_product();
+    let repo = ContentRepository::new(pool);
+    repo.migrate(&ct, &test_protocol_registry()).await.unwrap();
+
+    repo.create(
+        &ct,
+        with_timestamps(json!({"title": "Rust Book", "slug": "rust-book", "price": 30, "description": "systems programming"})),
+        None,
+        &SaveContext::default(),
+    )
+    .await
+    .unwrap();
+    repo.create(
+        &ct,
+        with_timestamps(json!({"title": "Go Book", "slug": "go-book", "price": 40, "description": "concurrency"})),
+        None,
+        &SaveContext::default(),
+    )
+    .await
+    .unwrap();
+
+    let query = ContentQuery {
+        page: 1,
+        page_size: 20,
+        sort: None,
+        filters: Vec::new(),
+        search: Some("rust".into()),
+        fields: None,
+        tenant_id: None,
+        include: None,
+        skip_total: false,
+        rule_where: None,
+        rule_params: Vec::new(),
+        max_page_size: 100,
+        include_private: false,
+        meta_filters: Vec::new(),
+    };
+    let (items, total) = repo.find(&ct, query).await.unwrap();
+    assert_eq!(total, 1);
+    assert_eq!(items[0]["title"], "Rust Book");
+
+    let query = ContentQuery {
+        search: Some("concurrency".into()),
+        page: 1,
+        page_size: 20,
+        max_page_size: 100,
+        ..ContentQuery::default()
+    };
+    let (items, total) = repo.find(&ct, query).await.unwrap();
+    assert_eq!(total, 1);
+    assert_eq!(items[0]["title"], "Go Book");
+}
+
+#[tokio::test]
+async fn search_respects_search_fields_config() {
+    let pool = setup_pool().await;
+    let mut ct = ContentTypeSchema::parse_from_str(
+        r#"
+[content_type]
+name = "Doc"
+singular = "doc"
+plural = "docs"
+table = "ct_docs"
+search_fields = ["title"]
+
+[fields.title]
+type = "text"
+
+[fields.slug]
+type = "uid"
+target_field = "title"
+"#,
+    )
+    .unwrap();
+    ct.search_fields = Some(vec!["title".into()]);
+    cache_ct(&mut ct);
+
+    let repo = ContentRepository::new(pool);
+    repo.migrate(&ct, &test_protocol_registry()).await.unwrap();
+
+    repo.create(
+        &ct,
+        json!({"title": "Alpha", "slug": "alpha"}),
+        None,
+        &SaveContext::default(),
+    )
+    .await
+    .unwrap();
+    repo.create(
+        &ct,
+        json!({"title": "Beta", "slug": "beta"}),
+        None,
+        &SaveContext::default(),
+    )
+    .await
+    .unwrap();
+
+    let query = ContentQuery {
+        search: Some("alpha".into()),
+        page: 1,
+        page_size: 20,
+        max_page_size: 100,
+        ..ContentQuery::default()
+    };
+    let (items, total) = repo.find(&ct, query).await.unwrap();
+    assert_eq!(total, 1);
+    assert_eq!(items[0]["title"], "Alpha");
+}
+
+#[tokio::test]
+async fn search_ignores_short_keywords() {
+    let pool = setup_pool().await;
+    let ct = parse_product();
+    let repo = ContentRepository::new(pool);
+    repo.migrate(&ct, &test_protocol_registry()).await.unwrap();
+
+    repo.create(
+        &ct,
+        with_timestamps(json!({"title": "A Laptop", "slug": "a-laptop", "price": 1})),
+        None,
+        &SaveContext::default(),
+    )
+    .await
+    .unwrap();
+    repo.create(
+        &ct,
+        with_timestamps(json!({"title": "A Phone", "slug": "a-phone", "price": 2})),
+        None,
+        &SaveContext::default(),
+    )
+    .await
+    .unwrap();
+
+    // 1-char keyword is below MIN_SEARCH_LEN → ignored, returns all
+    let query = ContentQuery {
+        search: Some("a".into()),
+        page: 1,
+        page_size: 20,
+        max_page_size: 100,
+        ..ContentQuery::default()
+    };
+    let (items, total) = repo.find(&ct, query).await.unwrap();
+    assert_eq!(total, 2);
+    assert_eq!(items.len(), 2);
+
+    // 2-char keyword is honored
+    let query = ContentQuery {
+        search: Some("ph".into()),
+        page: 1,
+        page_size: 20,
+        max_page_size: 100,
+        ..ContentQuery::default()
+    };
+    let (items, total) = repo.find(&ct, query).await.unwrap();
+    assert_eq!(total, 1);
+    assert_eq!(items[0]["title"], "A Phone");
+}
+
+#[tokio::test]
+async fn search_matches_id() {
+    let pool = setup_pool().await;
+    let ct = parse_product();
+    let repo = ContentRepository::new(pool);
+    repo.migrate(&ct, &test_protocol_registry()).await.unwrap();
+
+    let created = repo
+        .create(
+            &ct,
+            with_timestamps(json!({"title": "Unique", "slug": "unique", "price": 7})),
+            None,
+            &SaveContext::default(),
+        )
+        .await
+        .unwrap();
+    let id = created["id"].as_str().unwrap().to_string();
+
+    // search by a partial id substring
+    let query = ContentQuery {
+        search: Some(id[0..6].to_string()),
+        page: 1,
+        page_size: 20,
+        max_page_size: 100,
+        ..ContentQuery::default()
+    };
+    let (items, total) = repo.find(&ct, query).await.unwrap();
+    assert!(total >= 1, "expected at least the created record to match");
+    assert_eq!(items[0]["id"], json!(id));
+
+    // search by the full id
+    let query = ContentQuery {
+        search: Some(id.clone()),
+        page: 1,
+        page_size: 20,
+        max_page_size: 100,
+        ..ContentQuery::default()
+    };
+    let (items, total) = repo.find(&ct, query).await.unwrap();
+    assert_eq!(total, 1);
+    assert_eq!(items[0]["id"], json!(id));
 }

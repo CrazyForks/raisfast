@@ -65,6 +65,19 @@ pub trait DbDriver: sealed::Sealed {
     /// Positional placeholder (`?` or `$N`).
     fn ph(idx: usize) -> String;
 
+    /// Case-insensitive LIKE operator.
+    ///
+    /// PostgreSQL is case-sensitive for plain `LIKE`, so it uses `ILIKE`;
+    /// SQLite (ASCII) and MySQL (default `_ci` collation) are case-insensitive
+    /// with plain `LIKE`, avoiding per-row function calls on the column.
+    fn like_op() -> &'static str;
+
+    /// Wrap an expression for use in a `LIKE` comparison.
+    ///
+    /// PostgreSQL cannot apply `LIKE`/`ILIKE` to integer columns directly, so
+    /// the expression is cast to TEXT there; SQLite and MySQL coerce implicitly.
+    fn text_col(expr: &str) -> String;
+
     /// Current timestamp function.
     fn now_fn() -> &'static str;
 
@@ -157,6 +170,14 @@ impl DbDriver for Sqlite {
     fn ph(idx: usize) -> String {
         let _ = idx;
         "?".to_string()
+    }
+
+    fn like_op() -> &'static str {
+        "LIKE"
+    }
+
+    fn text_col(expr: &str) -> String {
+        expr.to_string()
     }
 
     fn now_fn() -> &'static str {
@@ -300,6 +321,14 @@ impl DbDriver for Postgres {
         format!("${idx}")
     }
 
+    fn like_op() -> &'static str {
+        "ILIKE"
+    }
+
+    fn text_col(expr: &str) -> String {
+        format!("CAST({expr} AS TEXT)")
+    }
+
     fn now_fn() -> &'static str {
         "NOW()"
     }
@@ -381,7 +410,7 @@ impl DbDriver for Postgres {
 
     async fn has_column(pool: &Pool, table: &str, column: &str) -> bool {
         assert!(is_safe_identifier(table), "unsafe table: {table}");
-        sqlx::query_scalar(
+        sqlx::query_scalar::<_, bool>(
             "SELECT 1 FROM information_schema.columns WHERE table_name = $1 AND column_name = $2",
         )
         .bind(table)
@@ -453,6 +482,14 @@ impl DbDriver for MySql {
     fn ph(idx: usize) -> String {
         let _ = idx;
         "?".to_string()
+    }
+
+    fn like_op() -> &'static str {
+        "LIKE"
+    }
+
+    fn text_col(expr: &str) -> String {
+        expr.to_string()
     }
 
     fn now_fn() -> &'static str {

@@ -100,6 +100,12 @@ pub struct ContentTypeSchema {
     pub fields: Vec<FieldSchema>,
     /// Which field to auto-generate slug from
     pub slug_field: Option<String>,
+    /// Fields searchable via the `search` query parameter.
+    ///
+    /// Empty/None = all text-like fields (`text`, `richtext`, `email`, `enum`, `uid`)
+    /// are searchable via SQL `LOWER() LIKE` matching.
+    #[serde(default)]
+    pub search_fields: Option<Vec<String>>,
     /// Whether this is a built-in content type (built-in CTs don't inject default fields; all fields are explicitly defined)
     #[serde(default)]
     pub builtin: bool,
@@ -305,7 +311,7 @@ pub enum ApiAccess {
 /// cache = true
 /// ```
 #[cfg_attr(feature = "export-types", derive(TS))]
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ApiEndpointConfig {
     /// Access level: none / public / authed / owner / admin
     #[serde(default)]
@@ -337,19 +343,19 @@ impl Default for ApiEndpointConfig {
 
 /// API endpoint access configuration
 #[cfg_attr(feature = "export-types", derive(TS))]
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ApiConfig {
     /// List query (GET /cms/{plural})
-    #[serde(default)]
+    #[serde(default = "api_endpoint_authed")]
     pub list: ApiEndpointConfig,
     /// Single query (GET /cms/{plural}/{id})
-    #[serde(default)]
+    #[serde(default = "api_endpoint_authed")]
     pub get: ApiEndpointConfig,
     /// Create (POST /cms/{plural})
     #[serde(default = "api_endpoint_authed")]
     pub create: ApiEndpointConfig,
     /// Update (PUT /cms/{plural}/{id})
-    #[serde(default = "api_endpoint_authed")]
+    #[serde(default = "api_endpoint_owner")]
     pub update: ApiEndpointConfig,
     /// Delete (DELETE /cms/{plural}/{id})
     #[serde(default = "api_endpoint_admin")]
@@ -361,7 +367,17 @@ fn api_endpoint_authed() -> ApiEndpointConfig {
         access: ApiAccess::Authed,
         filter: None,
         filter_auth: None,
-        cache: true,
+        cache: false,
+        fields: None,
+    }
+}
+
+fn api_endpoint_owner() -> ApiEndpointConfig {
+    ApiEndpointConfig {
+        access: ApiAccess::Owner,
+        filter: None,
+        filter_auth: None,
+        cache: false,
         fields: None,
     }
 }
@@ -371,7 +387,7 @@ fn api_endpoint_admin() -> ApiEndpointConfig {
         access: ApiAccess::Admin,
         filter: None,
         filter_auth: None,
-        cache: true,
+        cache: false,
         fields: None,
     }
 }
@@ -379,10 +395,10 @@ fn api_endpoint_admin() -> ApiEndpointConfig {
 impl Default for ApiConfig {
     fn default() -> Self {
         Self {
-            list: ApiEndpointConfig::default(),
-            get: ApiEndpointConfig::default(),
+            list: api_endpoint_authed(),
+            get: api_endpoint_authed(),
             create: api_endpoint_authed(),
-            update: api_endpoint_authed(),
+            update: api_endpoint_owner(),
             delete: api_endpoint_admin(),
         }
     }
@@ -443,6 +459,8 @@ struct ContentTypeHeader {
     #[serde(default)]
     color: Option<String>,
     slug_field: Option<String>,
+    #[serde(default)]
+    search_fields: Option<Vec<String>>,
     #[serde(default)]
     kind: ContentKind,
     #[serde(default)]
@@ -592,6 +610,7 @@ impl ContentTypeSchema {
             kind: toml.content_type.kind,
             fields,
             slug_field: toml.content_type.slug_field,
+            search_fields: toml.content_type.search_fields,
             builtin: toml.content_type.builtin,
             implements: toml.content_type.implements,
             indexes: Self::validate_indexes(toml.indexes.unwrap_or_default())?,
@@ -953,6 +972,55 @@ impl ContentTypeSchema {
         self.implements.iter().any(|p| p.name() == name)
     }
 
+    /// Whether a protocol provides the given column.
+    #[must_use]
+    pub fn has_protocol_column(&self, name: &str) -> bool {
+        self.protocol_column_names().contains(&name)
+    }
+
+    /// Whether the given column exists in this content type
+    /// (user field, protocol column, or the primary key).
+    #[must_use]
+    pub fn has_column(&self, name: &str) -> bool {
+        self.fields.iter().any(|f| f.name == name)
+            || self.has_protocol_column(name)
+            || name == crate::constants::COL_ID
+    }
+
+    /// Fields used by the `search` query parameter.
+    ///
+    /// When `search_fields` is configured, returns those (filtered to columns
+    /// that actually exist). Otherwise defaults to all text-like fields:
+    /// `text`, `richtext`, `email`, `enum`, `uid`.
+    #[must_use]
+    pub fn searchable_fields(&self) -> Vec<String> {
+        if let Some(fields) = &self.search_fields {
+            return fields
+                .iter()
+                .filter(|f| self.has_column(f))
+                .cloned()
+                .collect();
+        }
+        let mut fields: Vec<String> = Vec::with_capacity(self.fields.len() + 1);
+        fields.push(crate::constants::COL_ID.to_string());
+        fields.extend(
+            self.fields
+                .iter()
+                .filter(|f| {
+                    matches!(
+                        f.field_type,
+                        FieldType::Text
+                            | FieldType::RichText
+                            | FieldType::Email
+                            | FieldType::Enum
+                            | FieldType::Uid
+                    )
+                })
+                .map(|f| f.name.clone()),
+        );
+        fields
+    }
+
     /// Get the UID field (used for slug)
     #[must_use]
     pub fn uid_field(&self) -> Option<&FieldSchema> {
@@ -986,6 +1054,12 @@ impl ContentTypeSchema {
         }
         if let Some(ref sf) = self.slug_field {
             header.insert("slug_field".into(), toml::Value::String(sf.clone()));
+        }
+        if let Some(ref sfs) = self.search_fields {
+            header.insert(
+                "search_fields".into(),
+                toml::Value::Array(sfs.iter().map(|f| toml::Value::String(f.clone())).collect()),
+            );
         }
         if self.builtin {
             header.insert("builtin".into(), toml::Value::Boolean(true));
@@ -1048,6 +1122,8 @@ impl ContentTypeSchema {
             root.insert("indexes".into(), toml::Value::Array(indexes));
         }
 
+        root.insert("api".into(), api_to_toml(&self.api));
+
         toml::to_string_pretty(&root)
             .map_err(|e| AppError::Internal(anyhow::anyhow!("TOML serialize error: {e}")))
     }
@@ -1063,6 +1139,48 @@ impl ContentTypeSchema {
             .map_err(|e| AppError::Internal(anyhow::anyhow!("cannot write {:?}: {e}", path)))?;
         Ok(())
     }
+}
+
+fn api_access_to_str(a: &ApiAccess) -> &'static str {
+    match a {
+        ApiAccess::None => "none",
+        ApiAccess::Public => "public",
+        ApiAccess::Authed => "authed",
+        ApiAccess::Owner => "owner",
+        ApiAccess::Admin => "admin",
+    }
+}
+
+fn api_endpoint_to_toml(ep: &ApiEndpointConfig) -> toml::Value {
+    let mut t = toml::Table::new();
+    t.insert(
+        "access".into(),
+        toml::Value::String(api_access_to_str(&ep.access).into()),
+    );
+    if let Some(ref f) = ep.filter {
+        t.insert("filter".into(), toml::Value::String(f.clone()));
+    }
+    if let Some(ref fa) = ep.filter_auth {
+        t.insert("filter_auth".into(), toml::Value::String(fa.clone()));
+    }
+    t.insert("cache".into(), toml::Value::Boolean(ep.cache));
+    if let Some(ref fl) = ep.fields {
+        t.insert(
+            "fields".into(),
+            toml::Value::Array(fl.iter().map(|f| toml::Value::String(f.clone())).collect()),
+        );
+    }
+    toml::Value::Table(t)
+}
+
+fn api_to_toml(api: &ApiConfig) -> toml::Value {
+    let mut t = toml::Table::new();
+    t.insert("list".into(), api_endpoint_to_toml(&api.list));
+    t.insert("get".into(), api_endpoint_to_toml(&api.get));
+    t.insert("create".into(), api_endpoint_to_toml(&api.create));
+    t.insert("update".into(), api_endpoint_to_toml(&api.update));
+    t.insert("delete".into(), api_endpoint_to_toml(&api.delete));
+    toml::Value::Table(t)
 }
 
 fn field_to_toml(field: &FieldSchema) -> toml::Value {
@@ -1294,11 +1412,27 @@ pub struct CreateContentTypeRequest {
     pub kind: ContentKind,
     pub slug_field: Option<String>,
     #[serde(default)]
-    pub builtin: bool,
+    pub search_fields: Option<Vec<String>>,
     #[serde(default)]
+    pub builtin: bool,
+    /// Declared Protocol list. New content types default to
+    /// `ownable` + `timestampable` (provides `created_by`/`created_at`).
+    #[serde(default = "default_create_implements")]
     pub implements: Vec<ProtocolRef>,
     #[serde(default)]
     pub fields: Vec<FieldSchema>,
+    /// API access control configuration (per-endpoint). Defaults to the
+    /// built-in defaults when omitted.
+    #[serde(default)]
+    pub api: Option<ApiConfig>,
+}
+
+/// Default protocol list for newly created content types.
+fn default_create_implements() -> Vec<ProtocolRef> {
+    vec![
+        ProtocolRef::Simple("ownable".into()),
+        ProtocolRef::Simple("timestampable".into()),
+    ]
 }
 
 /// Update form fields (for API)
@@ -1318,11 +1452,15 @@ pub struct UpdateContentTypeRequest {
     #[serde(default)]
     pub slug_field: Option<Option<String>>,
     #[serde(default)]
+    pub search_fields: Option<Option<Vec<String>>>,
+    #[serde(default)]
     pub implements: Option<Vec<ProtocolRef>>,
     #[serde(default)]
     pub fields: Option<Vec<FieldSchema>>,
     #[serde(default)]
     pub indexes: Option<Vec<IndexDef>>,
+    #[serde(default)]
+    pub api: Option<ApiConfig>,
 }
 
 #[cfg(test)]
@@ -1612,6 +1750,7 @@ name = "Article"
 singular = "article"
 plural = "articles"
 table = "articles"
+implements = ["ownable"]
 
 [fields.title]
 type = "text"
@@ -1626,6 +1765,7 @@ name = "Document"
 singular = "document"
 plural = "documents"
 table = "documents"
+implements = ["ownable"]
 
 [fields.title]
 type = "text"
@@ -1917,10 +2057,10 @@ fields = ["a; DROP TABLE"]
     #[test]
     fn api_config_defaults() {
         let api = ApiConfig::default();
-        assert_eq!(api.list.access, ApiAccess::Public);
-        assert_eq!(api.get.access, ApiAccess::Public);
+        assert_eq!(api.list.access, ApiAccess::Authed);
+        assert_eq!(api.get.access, ApiAccess::Authed);
         assert_eq!(api.create.access, ApiAccess::Authed);
-        assert_eq!(api.update.access, ApiAccess::Authed);
+        assert_eq!(api.update.access, ApiAccess::Owner);
         assert_eq!(api.delete.access, ApiAccess::Admin);
     }
 
@@ -1964,6 +2104,59 @@ unique = true
         assert_eq!(reparsed.name, ct.name);
         assert_eq!(reparsed.fields.len(), ct.fields.len());
         assert_eq!(reparsed.indexes.len(), ct.indexes.len());
+    }
+
+    #[test]
+    fn to_toml_round_trips_api_config() {
+        let mut ct = ContentTypeSchema::parse_from_str(
+            r#"
+[content_type]
+name = "Post"
+singular = "post"
+plural = "posts"
+table = "posts"
+implements = ["ownable"]
+
+[fields.title]
+type = "text"
+"#,
+        )
+        .unwrap();
+        ct.api.list = ApiEndpointConfig {
+            access: ApiAccess::Owner,
+            filter: Some("status = \"published\"".into()),
+            filter_auth: Some("author_id = @request.auth.id".into()),
+            cache: true,
+            fields: Some(vec!["id".into(), "title".into()]),
+        };
+        ct.api.update = ApiEndpointConfig {
+            access: ApiAccess::Owner,
+            ..ApiEndpointConfig::default()
+        };
+        ct.api.delete = ApiEndpointConfig {
+            access: ApiAccess::Admin,
+            ..ApiEndpointConfig::default()
+        };
+
+        let serialized = ct.to_toml().unwrap();
+        assert!(serialized.contains("[api.list]"));
+        assert!(serialized.contains("access = \"owner\""));
+        assert!(serialized.contains("cache = true"));
+        assert!(serialized.contains("filter = 'status = \"published\"'"));
+
+        let reparsed = ContentTypeSchema::parse_from_str(&serialized).unwrap();
+        assert_eq!(reparsed.api.list.access, ApiAccess::Owner);
+        assert_eq!(
+            reparsed.api.list.filter.as_deref(),
+            Some("status = \"published\"")
+        );
+        assert!(reparsed.api.list.cache);
+        assert_eq!(
+            reparsed.api.list.fields.as_deref(),
+            Some(&["id".to_string(), "title".to_string()][..])
+        );
+        assert_eq!(reparsed.api.update.access, ApiAccess::Owner);
+        assert_eq!(reparsed.api.delete.access, ApiAccess::Admin);
     }
 
     #[test]

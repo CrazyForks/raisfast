@@ -7,8 +7,10 @@ set dotenv-load
 
 #db        := "sqlite"
 #db_url    := "sqlite:./storage/db/raisfast.db?mode=rwc"
-db        := "mysql"
-db_url    := "mysql://root:root@localhost:3306/raisfast"
+#db        := "mysql"
+#db_url    := "mysql://root:root@localhost:3306/raisfast"
+db        := "postgres"
+db_url    := "postgres://postgres:postgres@localhost:5432/raisfast"
 plugin_type := "all"
 
 # ── Default ───────────────────────────────────────────────────────

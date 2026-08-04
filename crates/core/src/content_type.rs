@@ -22,6 +22,7 @@
 //! `ContentTypeRegistry` uses `RwLock` internally, supporting runtime add/remove/update of schemas.
 //! Newly added content types are handled via catch-all dynamic routes without server restart.
 
+pub mod export;
 pub mod handler;
 pub mod import;
 pub mod migration;
@@ -55,6 +56,12 @@ use crate::errors::app_error::AppError;
 use arc_swap::ArcSwap;
 use schema::ApiAccess as ContentTypeApiAccess;
 use schema::ContentTypeSchema;
+
+/// Minimum length for the `search` query parameter to take effect.
+///
+/// Shorter keywords are ignored to avoid paying a full-table `LIKE` scan for
+/// near-empty input (e.g. a single keystroke in a debounced search box).
+pub const MIN_SEARCH_LEN: usize = 2;
 
 /// Content type registry
 ///
@@ -278,6 +285,19 @@ impl ContentTypeRegistry {
         schema.cache_protocol_columns(protocol_registry);
         schema.cache_select_columns();
 
+        // Smart default: `update = "owner"` only makes sense when the content
+        // type can resolve the record creator. When the api config is the
+        // untouched default and no `created_by` column exists (no ownable /
+        // explicit field), downgrade update to `authed` so minimal content
+        // types (e.g. timestampable-only) still load.
+        if schema.api == schema::ApiConfig::default()
+            && schema.api.update.access == ContentTypeApiAccess::Owner
+            && !schema.is_protocol_column(COL_CREATED_BY)
+            && schema.get_field(COL_CREATED_BY).is_none()
+        {
+            schema.api.update.access = ContentTypeApiAccess::Authed;
+        }
+
         // Validate: `owner` access requires a `created_by` column
         let needs_owner = [
             schema.api.list.access,
@@ -292,7 +312,7 @@ impl ContentTypeRegistry {
             && schema.get_field(COL_CREATED_BY).is_none()
         {
             return Err(AppError::BadRequest(format!(
-                "content type '{}' uses `access = \"owner\"` but has no `created_by` column; add `implements = [\"ownable\"]` or `\"timestampable\"`",
+                "content type '{}' uses `access = \"owner\"` but has no `created_by` column; add `implements = [\"ownable\"]` or define a `created_by` field",
                 schema.name
             )));
         }
@@ -561,6 +581,7 @@ name = "{singular}"
 singular = "{singular}"
 plural = "{plural}"
 table = "{table}"
+implements = ["ownable"]
 
 [fields.title]
 type = "text"
@@ -584,6 +605,37 @@ type = "text"
     }
 
     #[test]
+    fn owner_default_downgrades_without_created_by() {
+        let reg = ContentTypeRegistry::new();
+        // timestampable-only: no created_by, so default `update = "owner"`
+        // must downgrade to authed instead of rejecting the content type.
+        let toml = r#"
+[content_type]
+name = "Minimal"
+singular = "minimal"
+plural = "minimals"
+table = "minimals"
+implements = ["timestampable"]
+
+[fields.title]
+type = "text"
+"#;
+        let schema = schema::ContentTypeSchema::parse_from_str(toml).unwrap();
+        reg.register(
+            schema,
+            &RuleEngineConfig::default(),
+            &[],
+            &valid_protocols(),
+            &test_protocol_registry(),
+        )
+        .unwrap();
+        let ct = reg.get("minimal").unwrap();
+        assert_eq!(ct.api.update.access, ContentTypeApiAccess::Authed);
+        assert_eq!(ct.api.list.access, ContentTypeApiAccess::Authed);
+        assert_eq!(ct.api.delete.access, ContentTypeApiAccess::Admin);
+    }
+
+    #[test]
     fn register_and_lookup() {
         let reg = ContentTypeRegistry::new();
         register_ct(&reg, "product", "products", "products").unwrap();
@@ -604,6 +656,7 @@ name = "User"
 singular = "custom_user"
 plural = "custom_users"
 table = "users"
+implements = ["ownable"]
 
 [fields.name]
 type = "text"
@@ -628,6 +681,7 @@ name = "Auth"
 singular = "auth"
 plural = "auths"
 table = "auth_stuff"
+implements = ["ownable"]
 
 [fields.name]
 type = "text"
@@ -652,7 +706,7 @@ name = "X"
 singular = "x"
 plural = "xs"
 table = "xs"
-implements = ["nonexistent_protocol"]
+implements = ["ownable", "nonexistent_protocol"]
 
 [fields.title]
 type = "text"
@@ -705,6 +759,7 @@ name = "P"
 singular = "p"
 plural = "ps"
 table = "posts"
+implements = ["ownable"]
 
 [fields.title]
 type = "text"
@@ -730,6 +785,7 @@ name = "Product2"
 singular = "product"
 plural = "product2s"
 table = "product2s"
+implements = ["ownable"]
 
 [fields.title]
 type = "text"
@@ -758,6 +814,7 @@ singular = "poll"
 plural = "polls"
 table = "forum_polls"
 group = "forum"
+implements = ["ownable"]
 
 [fields.title]
 type = "text"
@@ -791,6 +848,7 @@ singular = "poll"
 plural = "polls"
 table = "shared_polls"
 group = "forum"
+implements = ["ownable"]
 
 [fields.title]
 type = "text"
@@ -813,6 +871,7 @@ singular = "poll"
 plural = "polls"
 table = "shared_polls"
 group = "shop"
+implements = ["ownable"]
 
 [fields.title]
 type = "text"
@@ -838,6 +897,7 @@ singular = "poll"
 plural = "polls"
 table = "forum_polls"
 group = "forum"
+implements = ["ownable"]
 
 [fields.title]
 type = "text"
@@ -869,6 +929,7 @@ singular = "poll"
 plural = "polls"
 table = "forum_polls"
 group = "forum"
+implements = ["ownable"]
 
 [fields.title]
 type = "text"
@@ -880,6 +941,7 @@ singular = "poll"
 plural = "polls"
 table = "shop_polls"
 group = "shop"
+implements = ["ownable"]
 
 [fields.title]
 type = "text"
@@ -925,6 +987,7 @@ singular = "poll"
 plural = "polls"
 table = "forum_polls"
 group = "forum"
+implements = ["ownable"]
 
 [fields.title]
 type = "text"
@@ -957,6 +1020,7 @@ name = "{singular}"
 singular = "{singular}"
 plural = "{plural}"
 table = "{table}"
+implements = ["ownable"]
 
 [fields.title]
 type = "text"
@@ -988,6 +1052,7 @@ name = "Post"
 singular = "post"
 plural = "posts"
 table = "posts"
+implements = ["ownable"]
 
 [fields.author]
 type = "relation"
@@ -1007,6 +1072,7 @@ name = "Post"
 singular = "post"
 plural = "posts"
 table = "posts"
+implements = ["ownable"]
 
 [fields.author]
 type = "relation"
