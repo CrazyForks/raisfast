@@ -219,6 +219,8 @@ async fn build_test_app(pool: raisfast::db::Pool) -> (axum::Router, AppState) {
     };
     let max_upload = state.config.max_upload_size;
 
+    let mut ct_route_registry = raisfast::server::RouteRegistry::default();
+
     let api_v1 = axum::Router::new()
         .route(
             "/auth/register",
@@ -557,6 +559,10 @@ async fn build_test_app(pool: raisfast::db::Pool) -> (axum::Router, AppState) {
             "/user/addresses/{id}",
             delete(h_user_address::delete_address),
         )
+        .merge(raisfast::content_type::handler::routes(
+            &mut ct_route_registry,
+            &config,
+        ))
         .layer(from_fn_with_state(
             state.clone(),
             raisfast::middleware::permission_guard::permission_guard,
@@ -1052,4 +1058,286 @@ fn test_route_permissions() -> Vec<raisfast::server::RouteInfo> {
         // ── Admin (heuristic covers these, but explicit for clarity) ──
         // All /admin/ routes without explicit permission above are caught by heuristic
     ]
+}
+
+// ── Content type: blob + media_set CRUD via HTTP ────────────────────
+
+#[tokio::test]
+async fn content_type_blob_media_set_crud_api() {
+    let (mut app, state) = test_app().await;
+    create_admin(&state.pool).await;
+
+    let (status, body) = send(
+        &mut app,
+        post_json(
+            "/api/v1/auth/login",
+            json!({ "email": "admin@test.com", "password": "AdminPass123!" }),
+        ),
+    )
+    .await;
+    assert!(status.is_success(), "admin login failed: {status} {body:?}");
+    let token = body["data"]["access_token"].as_str().unwrap().to_string();
+
+    let schema = json!({
+        "name": "Docs",
+        "singular": "doc",
+        "plural": "docs",
+        "table": "docs",
+        "implements": ["timestampable"],
+        "fields": [
+            { "name": "title", "label": "Title", "field_type": "text", "required": true },
+            { "name": "payload", "label": "Payload", "field_type": "blob" },
+            { "name": "gallery", "label": "Gallery", "field_type": "media_set", "media_config": { "accept": [], "max_count": 5 } }
+        ]
+    });
+    let (status, body) = send(
+        &mut app,
+        post_json_auth("/api/v1/admin/content-types", schema, &token),
+    )
+    .await;
+    assert!(
+        status.is_success(),
+        "create schema failed: {status} {body:?}"
+    );
+
+    let b64 = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, b"hello blob");
+    let (status, body) = send(
+        &mut app,
+        post_json_auth(
+            "/api/v1/admin/cms/docs",
+            json!({
+                "title": "Doc One",
+                "payload": { "data": b64, "filename": "a.json", "mimetype": "application/json" },
+                "gallery": ["10001", "10002"]
+            }),
+            &token,
+        ),
+    )
+    .await;
+    assert!(
+        status.is_success(),
+        "create record failed: {status} {body:?}"
+    );
+    let id = body["data"]["id"].as_str().unwrap().to_string();
+    assert_eq!(body["data"]["payload"]["filename"], "a.json");
+    assert_eq!(body["data"]["payload"]["data"], json!(b64));
+    assert_eq!(body["data"]["gallery"].as_array().unwrap().len(), 2);
+    assert!(body["data"].get("payload_meta").is_none());
+    assert!(body["data"].get("gallery_meta").is_none());
+
+    let (status, body) = send(
+        &mut app,
+        get_auth(&format!("/api/v1/admin/cms/docs/{id}"), &token),
+    )
+    .await;
+    assert!(status.is_success(), "get failed: {status} {body:?}");
+    assert_eq!(body["data"]["payload"]["filename"], "a.json");
+    assert_eq!(body["data"]["gallery"].as_array().unwrap().len(), 2);
+
+    let b64b = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, b"updated");
+    let (status, body) = send(
+        &mut app,
+        put_json_auth(
+            &format!("/api/v1/admin/cms/docs/{id}"),
+            json!({
+                "payload": { "data": b64b, "filename": "b.bin", "mimetype": "application/octet-stream" },
+                "gallery": ["10003"]
+            }),
+            &token,
+        ),
+    )
+    .await;
+    assert!(status.is_success(), "update failed: {status} {body:?}");
+    assert_eq!(body["data"]["payload"]["data"], json!(b64b));
+    assert_eq!(body["data"]["payload"]["filename"], "b.bin");
+    assert_eq!(body["data"]["gallery"].as_array().unwrap().len(), 1);
+
+    let (status, _) = send(
+        &mut app,
+        delete_auth(&format!("/api/v1/admin/cms/docs/{id}"), &token),
+    )
+    .await;
+    assert!(status.is_success(), "delete failed: {status}");
+
+    let (status, _) = send(
+        &mut app,
+        get_auth(&format!("/api/v1/admin/cms/docs/{id}"), &token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+// ── Content type: blob + media_set via public (non-admin) API ─────────
+
+#[tokio::test]
+async fn cms_public_api_blob_media_set_crud_non_admin() {
+    let (mut app, state) = test_app().await;
+
+    let toml = r#"
+[content_type]
+name = "ApiDocs"
+singular = "api_doc"
+plural = "api_docs"
+table = "api_docs"
+implements = ["timestampable"]
+
+[api]
+[api.list]
+access = "authed"
+[api.get]
+access = "authed"
+[api.create]
+access = "authed"
+[api.update]
+access = "authed"
+[api.delete]
+access = "authed"
+
+[fields.title]
+type = "text"
+required = true
+
+[fields.payload]
+type = "blob"
+
+[fields.cover]
+type = "media"
+
+[fields.gallery]
+type = "mediaset"
+"#;
+    let mut schema =
+        raisfast::content_type::schema::ContentTypeSchema::parse_from_str(toml).unwrap();
+    schema.cache_protocol_columns(&state.protocol_registry);
+    let repo = raisfast::content_type::repository::ContentRepository::new(state.pool.clone());
+    repo.migrate(&schema, &state.protocol_registry)
+        .await
+        .unwrap();
+    state
+        .content_type_registry
+        .register(
+            schema.clone(),
+            &state.config.rule_engine,
+            &state.config.builtins.reserved_route_segments(),
+            &state.protocol_registry.names(),
+            &state.protocol_registry,
+        )
+        .unwrap();
+
+    let (status, body) = send(
+        &mut app,
+        post_json(
+            "/api/v1/auth/register",
+            json!({ "email": "api@test.com", "username": "apiuser", "password": "ApiPass123!" }),
+        ),
+    )
+    .await;
+    assert!(status.is_success(), "register failed: {status} {body:?}");
+    let (status, body) = send(
+        &mut app,
+        post_json(
+            "/api/v1/auth/login",
+            json!({ "email": "api@test.com", "password": "ApiPass123!" }),
+        ),
+    )
+    .await;
+    assert!(status.is_success(), "login failed: {status} {body:?}");
+    let token = body["data"]["access_token"].as_str().unwrap().to_string();
+
+    let user_id: i64 = sqlx::query_scalar("SELECT id FROM users WHERE username = 'apiuser'")
+        .fetch_one(&state.pool)
+        .await
+        .unwrap();
+    let user_pk = raisfast::types::snowflake_id::SnowflakeId(user_id);
+    let mut media_ids = Vec::new();
+    for (name, mime) in [
+        ("a.png", "image/png"),
+        ("b.pdf", "application/pdf"),
+        ("c.bin", "application/octet-stream"),
+    ] {
+        let cmd = raisfast::commands::CreateMediaCmd {
+            user_id: user_pk,
+            filename: name.to_string(),
+            filepath: format!("/uploads/{name}"),
+            mimetype: mime.to_string(),
+            size: 42,
+            width: None,
+            height: None,
+        };
+        let media = raisfast::models::media::create(&state.pool, &cmd, None)
+            .await
+            .unwrap();
+        media_ids.push(media.id.to_string());
+    }
+    let cover_id = media_ids[0].clone();
+    let gallery_ids = vec![media_ids[1].clone(), media_ids[2].clone()];
+
+    let b64 = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, b"api blob");
+    let (status, body) = send(
+        &mut app,
+        post_json_auth(
+            "/api/v1/cms/api_docs",
+            json!({
+                "title": "Api Doc",
+                "payload": { "data": b64, "filename": "api.json", "mimetype": "application/json" },
+                "cover": cover_id,
+                "gallery": gallery_ids
+            }),
+            &token,
+        ),
+    )
+    .await;
+    assert!(
+        status.is_success(),
+        "public create failed: {status} {body:?}"
+    );
+    let id = body["data"]["id"].as_str().unwrap().to_string();
+    assert_eq!(body["data"]["payload"]["filename"], "api.json");
+    assert_eq!(body["data"]["cover"], json!(cover_id));
+    assert_eq!(body["data"]["gallery"].as_array().unwrap().len(), 2);
+    assert!(body["data"].get("payload_meta").is_none());
+
+    let (status, body) = send(
+        &mut app,
+        get_auth(&format!("/api/v1/cms/api_docs/{id}"), &token),
+    )
+    .await;
+    assert!(status.is_success(), "public get failed: {status} {body:?}");
+    assert_eq!(body["data"]["payload"]["filename"], "api.json");
+    assert_eq!(body["data"]["cover"], json!(cover_id));
+
+    let b64b = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, b"api updated");
+    let (status, body) = send(
+        &mut app,
+        put_json_auth(
+            &format!("/api/v1/cms/api_docs/{id}"),
+            json!({
+                "payload": { "data": b64b, "filename": "u.bin", "mimetype": "application/octet-stream" },
+                "cover": media_ids[2],
+                "gallery": [media_ids[0]]
+            }),
+            &token,
+        ),
+    )
+    .await;
+    assert!(
+        status.is_success(),
+        "public update failed: {status} {body:?}"
+    );
+    assert_eq!(body["data"]["payload"]["data"], json!(b64b));
+    assert_eq!(body["data"]["cover"], json!(media_ids[2]));
+    assert_eq!(body["data"]["gallery"].as_array().unwrap().len(), 1);
+
+    let (status, _) = send(
+        &mut app,
+        delete_auth(&format!("/api/v1/cms/api_docs/{id}"), &token),
+    )
+    .await;
+    assert!(status.is_success(), "public delete failed: {status}");
+    let (status, _) = send(
+        &mut app,
+        get_auth(&format!("/api/v1/cms/api_docs/{id}"), &token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
 }

@@ -128,6 +128,8 @@ impl CreateContentType {
             group: crate::content_type::schema::ContentTypeSchema::validate_group_name(&req.group)
                 .map_err(|e| ErrorObject::invalid_params(e.to_string()))?,
             description: req.description,
+            icon: req.icon,
+            color: req.color,
             kind: req.kind,
             slug_field: req.slug_field,
             builtin: req.builtin,

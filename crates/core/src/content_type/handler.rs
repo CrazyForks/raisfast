@@ -761,6 +761,39 @@ async fn dynamic_admin_cms_dispatch_restful(
                 let data = do_admin_get(state, &ct, int_id).await?;
                 Ok(Json(crate::errors::response::ApiResponse::success(data)).into_response())
             }
+            (axum::http::Method::POST, None) => {
+                let bytes = axum::body::to_bytes(body, 16 * 1024 * 1024)
+                    .await
+                    .map_err(|e| AppError::BadRequest(format!("invalid request body: {e}")))?;
+                let data: serde_json::Value = serde_json::from_slice(&bytes)
+                    .map_err(|e| AppError::BadRequest(format!("invalid JSON body: {e}")))?;
+                let save_ctx = SaveContext::from_auth(auth);
+                let result = do_create(state, &ct, data, &save_ctx, auth).await?;
+                Ok((
+                    StatusCode::CREATED,
+                    Json(crate::errors::response::ApiResponse::success(result)),
+                )
+                    .into_response())
+            }
+            (axum::http::Method::PUT, Some(id)) => {
+                let int_id = crate::types::snowflake_id::parse_id(&id)?;
+                let bytes = axum::body::to_bytes(body, 16 * 1024 * 1024)
+                    .await
+                    .map_err(|e| AppError::BadRequest(format!("invalid request body: {e}")))?;
+                let data: serde_json::Value = serde_json::from_slice(&bytes)
+                    .map_err(|e| AppError::BadRequest(format!("invalid JSON body: {e}")))?;
+                let save_ctx = SaveContext::from_auth(auth);
+                let result = do_update(state, &ct, int_id, data, &save_ctx, auth).await?;
+                Ok(Json(crate::errors::response::ApiResponse::success(result)).into_response())
+            }
+            (axum::http::Method::DELETE, Some(id)) => {
+                let int_id = crate::types::snowflake_id::parse_id(&id)?;
+                do_delete(state, &ct, int_id, auth).await?;
+                Ok(Json(crate::errors::response::ApiResponse::success(
+                    json!({"deleted": true}),
+                ))
+                .into_response())
+            }
             (axum::http::Method::POST, Some(id)) if id == "batch" => {
                 let req = parse_batch_request(body).await?;
                 let affected = do_admin_batch(state, &ct, &req.action, &req.ids, auth).await?;
@@ -1956,6 +1989,8 @@ pub async fn create_schema(
         group: super::schema::ContentTypeSchema::validate_group_name(&req.group)
             .map_err(|e| AppError::BadRequest(e.to_string()))?,
         description: req.description,
+        icon: req.icon,
+        color: req.color,
         kind: req.kind,
         slug_field: req.slug_field,
         builtin: req.builtin,
@@ -2081,6 +2116,12 @@ pub async fn update_schema(
     }
     if let Some(description) = req.description {
         updated.description = description;
+    }
+    if let Some(icon) = req.icon {
+        updated.icon = icon;
+    }
+    if let Some(color) = req.color {
+        updated.color = color;
     }
     if let Some(slug_field) = req.slug_field {
         updated.slug_field = slug_field;

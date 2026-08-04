@@ -245,14 +245,14 @@ async fn blob_round_trip() {
 
     let raw = b"\x00\x01\x02hello\xff\xfe";
     let b64 = |bytes: &[u8]| base64::engine::general_purpose::STANDARD.encode(bytes);
-    let blob = |bytes: &[u8], filename: &str, mimetype: &str| json!({ "data": b64(bytes), "filename": filename, "mimetype": mimetype });
+    let blob = |bytes: &[u8]| json!({ "data": b64(bytes) });
 
     let created = repo
         .create(
             &ct,
             with_timestamps(json!({
                 "title": "doc1",
-                "payload": blob(raw, "hello.bin", "application/octet-stream"),
+                "payload": blob(raw),
             })),
             None,
             &SaveContext::default(),
@@ -260,7 +260,7 @@ async fn blob_round_trip() {
         .await
         .unwrap();
     assert_eq!(created["payload"]["data"], b64(raw));
-    assert_eq!(created["payload"]["filename"], "hello.bin");
+    assert_eq!(created["payload"]["filename"], "payload.bin");
     assert_eq!(created["payload"]["mimetype"], "application/octet-stream");
     assert!(created["payload"].get("_filename").is_none());
     assert!(created["payload"].get("_mimetype").is_none());
@@ -268,13 +268,13 @@ async fn blob_round_trip() {
     let id: SnowflakeId = created["id"].as_str().unwrap().parse().unwrap();
     let found = repo.find_by_id(&ct, id, None, true).await.unwrap().unwrap();
     assert_eq!(found["payload"]["data"], b64(raw));
-    assert_eq!(found["payload"]["filename"], "hello.bin");
+    assert_eq!(found["payload"]["filename"], "payload.bin");
 
     let updated = b"updated-bytes-42";
     repo.update(
         &ct,
         id,
-        json!({ "payload": blob(updated, "v2.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet") }),
+        json!({ "payload": blob(updated) }),
         None,
         &SaveContext::default(),
     )
@@ -282,14 +282,23 @@ async fn blob_round_trip() {
     .unwrap();
     let found = repo.find_by_id(&ct, id, None, true).await.unwrap().unwrap();
     assert_eq!(found["payload"]["data"], b64(updated));
-    assert_eq!(found["payload"]["filename"], "v2.xlsx");
-    assert_eq!(
-        found["payload"]["mimetype"],
-        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    );
+    assert_eq!(found["payload"]["filename"], "payload.txt");
+    assert_eq!(found["payload"]["mimetype"], "text/plain");
 
     let (items, _total) = repo.find(&ct, ContentQuery::default()).await.unwrap();
     assert_eq!(items[0]["payload"]["data"], b64(updated));
+
+    repo.update(
+        &ct,
+        id,
+        json!({ "payload": serde_json::Value::Null }),
+        None,
+        &SaveContext::default(),
+    )
+    .await
+    .unwrap();
+    let found = repo.find_by_id(&ct, id, None, true).await.unwrap().unwrap();
+    assert!(found["payload"].is_null());
 
     let big = base64::engine::general_purpose::STANDARD.encode(vec![0u8; 600 * 1024]);
     let err = repo
@@ -305,6 +314,69 @@ async fn blob_round_trip() {
         .await
         .unwrap_err();
     assert!(err.to_string().contains("max size"));
+
+    repo.delete(
+        &ct,
+        id,
+        None,
+        &test_protocol_registry(),
+        &test_ct_registry(),
+    )
+    .await
+    .unwrap();
+    assert!(
+        repo.find_by_id(&ct, id, None, true)
+            .await
+            .unwrap()
+            .is_none()
+    );
+}
+
+#[tokio::test]
+async fn blob_auto_detect() {
+    use base64::Engine;
+
+    let pool = setup_pool().await;
+    let mut ct = ContentTypeSchema::parse_from_str(BLOB_TOML).unwrap();
+    cache_ct(&mut ct);
+    let repo = ContentRepository::new(pool.clone());
+    repo.migrate(&ct, &test_protocol_registry()).await.unwrap();
+
+    let json_raw = br#"{"hello":"auto-detect"}"#;
+    let created = repo
+        .create(
+            &ct,
+            with_timestamps(json!({
+                "title": "auto",
+                "payload": {
+                    "data": base64::engine::general_purpose::STANDARD.encode(json_raw)
+                },
+            })),
+            None,
+            &SaveContext::default(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(created["payload"]["mimetype"], "application/json");
+    assert_eq!(created["payload"]["filename"], "payload.json");
+
+    let png_raw = b"\x89PNG\r\n\x1a\n\x00\x00\x00\x0dIHDR";
+    let created = repo
+        .create(
+            &ct,
+            with_timestamps(json!({
+                "title": "auto2",
+                "payload": {
+                    "data": base64::engine::general_purpose::STANDARD.encode(png_raw)
+                },
+            })),
+            None,
+            &SaveContext::default(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(created["payload"]["mimetype"], "image/png");
+    assert_eq!(created["payload"]["filename"], "payload.png");
 }
 
 const MEDIA_SET_TOML: &str = r#"
@@ -378,6 +450,22 @@ async fn media_set_round_trip() {
         .await
         .unwrap_err();
     assert!(err.to_string().contains("media_set"));
+
+    repo.delete(
+        &ct,
+        id,
+        None,
+        &test_protocol_registry(),
+        &test_ct_registry(),
+    )
+    .await
+    .unwrap();
+    assert!(
+        repo.find_by_id(&ct, id, None, true)
+            .await
+            .unwrap()
+            .is_none()
+    );
 }
 
 #[tokio::test]

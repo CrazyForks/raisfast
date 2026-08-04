@@ -495,6 +495,7 @@ fn check_type(ft: &FieldType, val: &Value) -> Result<(), String> {
         }
         FieldType::Blob => {
             let data = match val {
+                Value::Null => "",
                 Value::String(s) => s.as_str(),
                 Value::Object(obj) => obj
                     .get("data")

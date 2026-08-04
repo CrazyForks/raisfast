@@ -3,6 +3,7 @@ name = "some test"
 singular = "some_test"
 plural = "some_tests"
 table = "some_tests"
+color = "#06b6d4"
 implements = ["timestampable"]
 
 [fields.title]
@@ -11,3 +12,15 @@ max_length = 255
 
 [fields.bb]
 type = "blob"
+
+[fields.dwf]
+type = "enum"
+enum_values = [
+    "sdf",
+    "asdfad",
+    "fgdf",
+]
+
+[fields.gallery_test]
+type = "mediaset"
+max_count = 5

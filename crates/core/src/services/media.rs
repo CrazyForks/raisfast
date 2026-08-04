@@ -377,6 +377,41 @@ pub(crate) fn validate_magic_bytes(content_type: &str, data: &[u8]) -> bool {
         "application/vnd.ms-powerpoint",
         "audio/aac",
         "video/quicktime",
+        // Images without a reliable magic signature
+        "image/bmp",
+        "image/avif",
+        "image/tiff",
+        "image/x-icon",
+        "image/heic",
+        "image/heif",
+        // Video / audio
+        "video/x-matroska",
+        "audio/flac",
+        "audio/opus",
+        "audio/mp4",
+        // Documents
+        "application/epub+zip",
+        "application/rtf",
+        // Archives
+        "application/x-7z-compressed",
+        // Text & data
+        "application/json",
+        "text/html",
+        "application/xml",
+        "application/javascript",
+        "text/yaml",
+        "text/x-ini",
+        "application/toml",
+        "text/css",
+        "text/x-shellscript",
+        "application/x-httpd-php",
+        "application/sql",
+        "text/x-python",
+        // Fonts
+        "font/ttf",
+        "font/otf",
+        "font/woff",
+        "font/woff2",
     ];
     if SKIP_MAGIC_TYPES.contains(&content_type) {
         return true;
@@ -441,7 +476,7 @@ pub(crate) fn validate_magic_bytes(content_type: &str, data: &[u8]) -> bool {
 }
 
 /// Detect the true MIME type from file content magic bytes.
-fn detect_mime_from_magic(data: &[u8]) -> Option<&'static str> {
+pub(crate) fn detect_mime_from_magic(data: &[u8]) -> Option<&'static str> {
     if data.len() < 2 {
         return None;
     }
@@ -673,6 +708,13 @@ mod tests {
             "application/x-totally-fake",
             b"\x00\x01\x02"
         ));
+    }
+
+    #[test]
+    fn validate_magic_bytes_text_types_pass() {
+        assert!(validate_magic_bytes("application/json", b"[{\"a\":1}]"));
+        assert!(validate_magic_bytes("text/yaml", b"name: test\n"));
+        assert!(validate_magic_bytes("font/woff2", b"wOF2\x00\x01"));
     }
 
     #[test]

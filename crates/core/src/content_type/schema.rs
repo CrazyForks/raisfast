@@ -90,6 +90,12 @@ pub struct ContentTypeSchema {
     /// Description
     #[serde(default)]
     pub description: String,
+    /// Icon key for the admin card wall (e.g., "layout-grid", "package")
+    #[serde(default)]
+    pub icon: Option<String>,
+    /// Accent color key for the admin card wall (e.g., "blue", "emerald")
+    #[serde(default)]
+    pub color: Option<String>,
     /// Field list
     pub fields: Vec<FieldSchema>,
     /// Which field to auto-generate slug from
@@ -432,6 +438,10 @@ struct ContentTypeHeader {
     group: String,
     #[serde(default)]
     description: String,
+    #[serde(default)]
+    icon: Option<String>,
+    #[serde(default)]
+    color: Option<String>,
     slug_field: Option<String>,
     #[serde(default)]
     kind: ContentKind,
@@ -577,6 +587,8 @@ impl ContentTypeSchema {
             table: Self::validate_table_name(&toml.content_type.table)?,
             group: Self::validate_group_name(&toml.content_type.group)?,
             description: toml.content_type.description,
+            icon: toml.content_type.icon,
+            color: toml.content_type.color,
             kind: toml.content_type.kind,
             fields,
             slug_field: toml.content_type.slug_field,
@@ -966,6 +978,12 @@ impl ContentTypeSchema {
                 toml::Value::String(self.description.clone()),
             );
         }
+        if let Some(ref icon) = self.icon {
+            header.insert("icon".into(), toml::Value::String(icon.clone()));
+        }
+        if let Some(ref color) = self.color {
+            header.insert("color".into(), toml::Value::String(color.clone()));
+        }
         if let Some(ref sf) = self.slug_field {
             header.insert("slug_field".into(), toml::Value::String(sf.clone()));
         }
@@ -1269,6 +1287,10 @@ pub struct CreateContentTypeRequest {
     #[serde(default)]
     pub description: String,
     #[serde(default)]
+    pub icon: Option<String>,
+    #[serde(default)]
+    pub color: Option<String>,
+    #[serde(default)]
     pub kind: ContentKind,
     pub slug_field: Option<String>,
     #[serde(default)]
@@ -1289,6 +1311,10 @@ pub struct UpdateContentTypeRequest {
     pub name: Option<String>,
     #[serde(default)]
     pub description: Option<String>,
+    #[serde(default)]
+    pub icon: Option<Option<String>>,
+    #[serde(default)]
+    pub color: Option<Option<String>>,
     #[serde(default)]
     pub slug_field: Option<Option<String>>,
     #[serde(default)]
@@ -1526,6 +1552,28 @@ type = "blob"
             assert!(!field_names.contains(meta.as_str()));
         }
         assert_eq!(names.len(), 2);
+    }
+
+    #[test]
+    fn icon_color_round_trip() {
+        let toml = r#"
+[content_type]
+name = "IconTest"
+singular = "icon_test"
+plural = "icon_tests"
+table = "icon_tests"
+icon = "shopping-bag"
+color = "emerald"
+
+[fields.title]
+type = "text"
+"#;
+        let ct = ContentTypeSchema::parse_from_str(toml).unwrap();
+        assert_eq!(ct.icon.as_deref(), Some("shopping-bag"));
+        assert_eq!(ct.color.as_deref(), Some("emerald"));
+        let out = ct.to_toml().unwrap();
+        assert!(out.contains("icon = \"shopping-bag\""));
+        assert!(out.contains("color = \"emerald\""));
     }
 
     #[test]

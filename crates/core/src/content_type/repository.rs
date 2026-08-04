@@ -45,33 +45,49 @@ fn decode_blob_data(data: &str) -> Result<Vec<u8>, AppError> {
         .map_err(|e| AppError::BadRequest(format!("blob field: invalid base64: {e}")))
 }
 
-/// Parse a blob field value: either `{ data, filename, mimetype }` or a legacy
-/// plain base64 string. Returns `(data, filename, mimetype)`.
-fn parse_blob_value(val: &Value) -> Result<(String, String, String), AppError> {
+/// Parse a blob field value: `{ data }` or a legacy plain base64 string.
+/// filename/mimetype are always auto-detected by the backend.
+fn parse_blob_data(val: &Value) -> Result<String, AppError> {
     match val {
-        Value::Object(obj) => {
-            let data = obj
-                .get("data")
-                .and_then(|d| d.as_str())
-                .unwrap_or("")
-                .to_string();
-            let filename = obj
-                .get("filename")
-                .and_then(|f| f.as_str())
-                .unwrap_or("")
-                .to_string();
-            let mimetype = obj
-                .get("mimetype")
-                .and_then(|m| m.as_str())
-                .unwrap_or("")
-                .to_string();
-            Ok((data, filename, mimetype))
-        }
-        Value::String(s) => Ok((s.clone(), String::new(), String::new())),
+        Value::Null => Ok(String::new()),
+        Value::String(s) => Ok(s.clone()),
+        Value::Object(obj) => Ok(obj
+            .get("data")
+            .and_then(|d| d.as_str())
+            .unwrap_or("")
+            .to_string()),
         _ => Err(AppError::BadRequest(
-            "blob field: expected base64 string or { data, filename, mimetype }".into(),
+            "blob field: expected base64 string or { data }".into(),
         )),
     }
+}
+
+fn detect_blob_mimetype(bytes: &[u8]) -> String {
+    if let Some(m) = crate::services::media::detect_mime_from_magic(bytes) {
+        return m.to_string();
+    }
+    let head: String = bytes.iter().take(512).map(|&b| b as char).collect();
+    let head = head.trim_start();
+    if head.starts_with('{') || head.starts_with('[') {
+        return "application/json".to_string();
+    }
+    if head.starts_with("<?xml") {
+        return "application/xml".to_string();
+    }
+    if head.starts_with("<!DOCTYPE html") || head.starts_with("<html") {
+        return "text/html".to_string();
+    }
+    let sample = bytes.len().min(1024);
+    if sample > 0 {
+        let printable = bytes[..sample]
+            .iter()
+            .filter(|&&b| b == 9 || b == 10 || b == 13 || (32..=126).contains(&b))
+            .count();
+        if printable * 20 >= sample * 19 {
+            return "text/plain".to_string();
+        }
+    }
+    "application/octet-stream".to_string()
 }
 
 impl BindValue {
@@ -610,15 +626,22 @@ impl ContentRepository {
             if let Some(f) = ct.get_field(key)
                 && f.field_type == FieldType::Blob
             {
-                let (data, filename, mimetype) = parse_blob_value(val)?;
+                let data = parse_blob_data(val)?;
+                let bytes = decode_blob_data(&data)?;
+                let resolved_mime = detect_blob_mimetype(&bytes);
+                let resolved_filename = format!(
+                    "{}.{}",
+                    key,
+                    crate::services::media::mime_to_ext(&resolved_mime)
+                );
                 cols.push(key.clone());
                 placeholders.push(crate::db::Driver::ph(idx));
                 idx += 1;
-                values.push(BindValue::Blob(decode_blob_data(&data)?));
+                values.push(BindValue::Blob(bytes));
                 if let Some(meta) = ct.blob_meta_column_map().get(key) {
                     let meta_json = serde_json::json!({
-                        "filename": filename,
-                        "mimetype": mimetype,
+                        "filename": resolved_filename,
+                        "mimetype": resolved_mime,
                     });
                     cols.push(meta.clone());
                     placeholders.push(crate::db::Driver::ph(idx));
@@ -880,11 +903,18 @@ impl ContentRepository {
                     .get_field(key)
                     .is_some_and(|f| f.field_type == FieldType::Blob)
                 {
-                    let (data, filename, mimetype) = parse_blob_value(val)?;
+                    let data = parse_blob_data(val)?;
+                    let bytes = decode_blob_data(&data)?;
+                    let resolved_mime = detect_blob_mimetype(&bytes);
+                    let resolved_filename = format!(
+                        "{}.{}",
+                        key,
+                        crate::services::media::mime_to_ext(&resolved_mime)
+                    );
                     if let Some(meta) = ct.blob_meta_column_map().get(key) {
                         let meta_json = serde_json::json!({
-                            "filename": filename,
-                            "mimetype": mimetype,
+                            "filename": resolved_filename,
+                            "mimetype": resolved_mime,
                         });
                         set_clauses.push(format!(
                             "{key} = {}, {meta} = {}",
@@ -892,12 +922,12 @@ impl ContentRepository {
                             crate::db::Driver::ph(idx + 1)
                         ));
                         idx += 2;
-                        values.push(BindValue::Blob(decode_blob_data(&data)?));
+                        values.push(BindValue::Blob(bytes));
                         values.push(BindValue::Text(meta_json.to_string()));
                     } else {
                         set_clauses.push(format!("{key} = {}", crate::db::Driver::ph(idx)));
                         idx += 1;
-                        values.push(BindValue::Blob(decode_blob_data(&data)?));
+                        values.push(BindValue::Blob(bytes));
                     }
                 } else {
                     set_clauses.push(format!("{key} = {}", crate::db::Driver::ph(idx)));
