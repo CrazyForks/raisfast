@@ -3,6 +3,9 @@
 //! Provides scheduled task CRUD, start/stop, and execution history query endpoints.
 //! All endpoints require admin privileges.
 
+use std::sync::Arc;
+use std::time::Duration;
+
 use axum::Json;
 use axum::extract::{Path, Query, State};
 
@@ -16,8 +19,9 @@ use crate::middleware::auth::AuthUser;
 use crate::types::snowflake_id::SnowflakeId;
 use crate::utils::pagination::PaginationParams;
 use crate::worker::{
-    CronSchedule, cleanup_execution_logs, create_schedule, delete_schedule, find_by_id,
-    list_execution_logs, list_schedules, recent_execution_logs, toggle_schedule, update_schedule,
+    CronExecStatus, CronSchedule, CronScheduler, DefaultJobQueue, JobQueue, cleanup_execution_logs,
+    create_execution_log, create_schedule, delete_schedule, find_by_id, list_execution_logs,
+    list_schedules, recent_execution_logs, toggle_schedule, update_schedule,
 };
 
 pub fn routes(
@@ -107,6 +111,17 @@ pub fn routes(
         r,
         registry,
         restful,
+        "/admin/crons/{id}/run",
+        post,
+        self::run_now,
+        "system",
+        "admin/crons",
+        "admin"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        restful,
         "/admin/crons/logs",
         get,
         logs,
@@ -145,9 +160,11 @@ pub fn routes(
 )]
 pub async fn list_handlers(
     _auth: AuthUser,
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
 ) -> AppResult<ApiResponse<serde_json::Value>> {
-    let metas = crate::worker::handlers::cron_handler_metas();
+    let mut metas = state.handler_registry.list_meta();
+    // Sort by category then id for deterministic ordering
+    metas.sort_by(|a, b| a.category.cmp(b.category).then_with(|| a.id.cmp(b.id)));
 
     // Group by category
     use std::collections::BTreeMap;
@@ -230,6 +247,57 @@ pub async fn create(
 ) -> AppResult<ApiResponse<CronSchedule>> {
     crate::errors::validation::validate(&req)?;
 
+    // Validate exec_kind value
+    match req.exec_kind.as_str() {
+        "builtin" | "script" | "plugin" => {}
+        "system" => {
+            #[cfg(not(feature = "cron-system"))]
+            {
+                return Err(AppError::BadRequest(
+                    "system exec_kind requires the 'cron-system' cargo feature".into(),
+                ));
+            }
+            #[cfg(feature = "cron-system")]
+            {
+                if !state.config.cron_allow_system_scripts {
+                    return Err(AppError::BadRequest(
+                        "system scripts are disabled (cron_allow_system_scripts=false)".into(),
+                    ));
+                }
+            }
+        }
+        other => {
+            return Err(AppError::BadRequest(format!(
+                "invalid exec_kind: '{other}' (expected: builtin, script, system, plugin)"
+            )));
+        }
+    }
+
+    // Validate script fields when exec_kind=script
+    if req.exec_kind == "script" {
+        let lang = req.script_lang.as_deref().ok_or_else(|| {
+            AppError::BadRequest("script_lang is required for exec_kind=script".into())
+        })?;
+        match lang {
+            #[cfg(feature = "plugin-js")]
+            "js" => {}
+            #[cfg(feature = "plugin-lua")]
+            "lua" => {}
+            #[cfg(feature = "plugin-rhai")]
+            "rhai" => {}
+            other => {
+                return Err(AppError::BadRequest(format!(
+                    "unsupported script_lang: '{other}' (available: js, lua, rhai)"
+                )));
+            }
+        }
+        if req.script_source.as_deref().unwrap_or("").trim().is_empty() {
+            return Err(AppError::BadRequest(
+                "script_source is required for exec_kind=script".into(),
+            ));
+        }
+    }
+
     // Serialize params to string if present
     let params_str = req
         .params
@@ -240,12 +308,8 @@ pub async fn create(
 
     // Determine which constructor to use
     let schedule = if req.exec_kind == "script" {
-        let lang = req.script_lang.as_deref().ok_or_else(|| {
-            AppError::BadRequest("script_lang is required for exec_kind=script".into())
-        })?;
-        let source = req.script_source.as_deref().ok_or_else(|| {
-            AppError::BadRequest("script_source is required for exec_kind=script".into())
-        })?;
+        let lang = req.script_lang.as_deref().unwrap();
+        let source = req.script_source.as_deref().unwrap();
         crate::worker::create_script_schedule(
             &state.pool,
             &req.label,
@@ -254,6 +318,18 @@ pub async fn create(
             lang,
             source,
             req.script_entry.as_deref(),
+        )
+        .await?
+    } else if req.exec_kind == "system" {
+        let command = req.script_source.as_deref().unwrap_or("");
+        crate::worker::create_system_schedule(
+            &state.pool,
+            &req.label,
+            &req.cron_expr,
+            req.enabled,
+            command,
+            req.use_shell.unwrap_or(true),
+            req.timeout_secs,
         )
         .await?
     } else if req.exec_kind == "builtin" && req.handler_id.is_some() {
@@ -349,6 +425,61 @@ pub async fn toggle(
     Ok(ApiResponse::success(()))
 }
 
+/// POST /api/v1/admin/crons/{id}/run — Trigger immediate execution
+///
+/// Enqueues the schedule's job immediately regardless of its `next_run_at` or `enabled` status.
+/// Does NOT advance `next_run_at` — the regular tick will still fire at the scheduled time.
+#[utoipa::path(post, path = "/admin/crons/{id}/run", tag = "cron",
+    security(("bearer_auth" = [])),
+    params(("id" = String, Path, description = "Schedule ID")),
+    responses((status = 200, description = "Job enqueued for immediate execution"))
+)]
+pub async fn run_now(
+    _auth: AuthUser,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> AppResult<ApiResponse<()>> {
+    let sid = crate::types::snowflake_id::parse_id(&id)?;
+    let schedule = find_by_id(&state.pool, sid)
+        .await?
+        .ok_or_else(|| AppError::not_found("cron_schedule"))?;
+
+    // Build the job using the same logic as CronScheduler::dispatch
+    let scheduler = CronScheduler::new(
+        state.pool.clone(),
+        Arc::new(DefaultJobQueue::new(state.pool.clone())),
+        Duration::from_secs(60),
+    );
+    let job = scheduler.build_job(&schedule)?;
+    let mut new_job = crate::worker::NewJob::from(job);
+    new_job.cron_schedule_id = Some(schedule.id);
+
+    // Create execution log row + enqueue
+    let log_id = create_execution_log(
+        &state.pool,
+        schedule.id,
+        &schedule.job_type,
+        &schedule.label,
+    )
+    .await
+    .ok();
+    new_job.cron_log_id = log_id.map(crate::types::snowflake_id::SnowflakeId);
+
+    let queue = DefaultJobQueue::new(state.pool.clone());
+    queue.enqueue(new_job).await?;
+
+    // Mark log as dispatched
+    if let Some(lid) = log_id {
+        raisfast_derive::crud_update!(&state.pool, "cron_execution_log",
+            bind: ["status" => crate::worker::CronExecStatus::Dispatched],
+            where: ("id", lid)
+        )?;
+    }
+
+    tracing::info!("manual run triggered for schedule '{}'", schedule.label);
+    Ok(ApiResponse::success(()))
+}
+
 /// DELETE /api/v1/admin/crons/{id} — Delete a schedule
 #[utoipa::path(delete, path = "/admin/crons/{id}", tag = "cron",
     security(("bearer_auth" = [])),
@@ -388,17 +519,7 @@ pub async fn logs(
         let sid = crate::types::snowflake_id::parse_id(schedule_id)?;
         list_execution_logs(&state.pool, sid, page_size, offset).await?
     } else {
-        // Recent logs across all schedules — use limit = page_size, no offset pagination
-        let logs = recent_execution_logs(&state.pool, page_size).await?;
-        let count = logs.len() as i64;
-        return Ok(ApiResponse::success(
-            crate::errors::response::PaginatedData {
-                items: logs,
-                total: count,
-                page,
-                page_size,
-            },
-        ));
+        recent_execution_logs(&state.pool, page_size, offset).await?
     };
 
     Ok(ApiResponse::success(

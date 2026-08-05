@@ -18,7 +18,7 @@ plugin_type := "all"
 default:
     @just --list
 
-features := "db-" + db + " plugin-js plugin-rhai search-tantivy payment-all tunnel mcp"
+features := "db-" + db + " plugin-js plugin-rhai search-tantivy payment-all tunnel mcp cron-system"
 
 # ── Build ─────────────────────────────────────────────────────────
 

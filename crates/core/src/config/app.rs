@@ -134,6 +134,13 @@ pub struct AppConfig {
     pub cron_schedules: Vec<CronScheduleConfig>,
     #[serde(default = "default_cron_log_retention_days")]
     pub cron_log_retention_days: i64,
+    /// Global switch for exec_kind=system schedules. When false, system schedules
+    /// are rejected at creation time and silently skipped at dispatch.
+    #[serde(default)]
+    pub cron_allow_system_scripts: bool,
+    /// Working directory for system script execution. Defaults to storage_root_dir.
+    #[serde(default)]
+    pub cron_system_workdir: Option<String>,
     #[serde(default = "default_order_expire_minutes")]
     pub order_expire_minutes: i64,
     #[serde(default = "default_search_engine")]
@@ -1017,6 +1024,13 @@ impl AppConfig {
                 .ok()
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(default_cron_log_retention_days()),
+            cron_allow_system_scripts: env::var("CRON_ALLOW_SYSTEM_SCRIPTS")
+                .ok()
+                .map(|v| v != "false" && v != "0")
+                .unwrap_or(false),
+            cron_system_workdir: env::var("CRON_SYSTEM_WORKDIR")
+                .ok()
+                .filter(|s| !s.is_empty()),
             order_expire_minutes: env::var("ORDER_EXPIRE_MINUTES")
                 .ok()
                 .and_then(|v| v.parse().ok())
@@ -1205,6 +1219,8 @@ impl AppConfig {
             cron_seed_enabled: false,
             cron_schedules: vec![],
             cron_log_retention_days: default_cron_log_retention_days(),
+            cron_allow_system_scripts: false,
+            cron_system_workdir: None,
             order_expire_minutes: default_order_expire_minutes(),
             search_engine: default_search_engine(),
             search_index_dir: "./test-storage/search_index".into(),

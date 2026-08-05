@@ -61,6 +61,11 @@ tauri = ["dep:tauri"]
 # Zero extra dependencies — reuses axum + serde_json already in the tree.
 mcp = []
 
+# ── Cron system scripts (shell command execution) ──────────────────
+# When disabled, SystemJobHandler is not compiled and exec_kind=system
+# schedules are rejected at the API layer.
+cron-system = ["dep:shell-words"]
+
 [dependencies]
 indexmap = "2"
 # Web framework
@@ -196,6 +201,7 @@ ts-rs = { version = "12", optional = true, features = ["chrono-impl"] }
 inventory = "0.3.24"
 raisfast-derive = { version = "0.1.0", path = "../derive" }
 ferroid = { version = "2.0.0", features = ["snowflake", "atomic", "basic", "std", "alloc"] }
+shell-words = { version = "1.1", optional = true }
 
 [dev-dependencies]
 http-body-util = "0.1.3"

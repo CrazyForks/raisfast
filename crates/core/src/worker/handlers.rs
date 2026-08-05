@@ -17,6 +17,8 @@ pub mod script;
 pub mod search_index;
 pub mod sitemap;
 pub mod sms;
+#[cfg(feature = "cron-system")]
+pub mod system;
 pub mod thumbnail;
 pub mod wallet_outbox;
 pub mod webhook;
@@ -29,15 +31,6 @@ use crate::db::Pool;
 use crate::notifier::{EmailSender, SmsSender};
 use crate::search::SearchEngine;
 use crate::worker::JobHandlerRegistry;
-use crate::worker::handler::HandlerMeta;
-
-/// Returns metadata for all cron handlers registered with `register_with_meta`.
-///
-/// Called by the `GET /admin/cron-handlers` endpoint to populate the admin task menu.
-/// **NOTE**: Keep this list in sync with the `register_with_meta` calls in `register_all`.
-pub fn cron_handler_metas() -> Vec<&'static HandlerMeta> {
-    vec![&ping::META]
-}
 
 /// Registers all concrete Handlers with the Registry
 pub fn register_all(
@@ -170,5 +163,12 @@ pub fn register_all(
                 ..Default::default()
             },
         )),
+    );
+
+    // ── Cron system script handler (feature-gated) ─────────────────────
+    #[cfg(feature = "cron-system")]
+    registry.register(
+        "run_system",
+        Box::new(system::SystemJobHandler::new(pool.clone(), config.clone())),
     );
 }

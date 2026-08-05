@@ -387,6 +387,8 @@ CREATE TABLE IF NOT EXISTS cron_schedules (
     script_lang    VARCHAR(20),
     script_source  TEXT,
     script_entry   VARCHAR(100) NOT NULL DEFAULT 'on_cron_tick',
+    use_shell      BOOLEAN NOT NULL DEFAULT TRUE,
+    timeout_secs   INTEGER,
     created_at   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     INDEX idx_cron_enabled (enabled),

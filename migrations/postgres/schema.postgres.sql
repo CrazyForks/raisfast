@@ -403,6 +403,8 @@ CREATE TABLE IF NOT EXISTS cron_schedules (
     script_lang    VARCHAR(20),
     script_source  TEXT,
     script_entry   VARCHAR(100) NOT NULL DEFAULT 'on_cron_tick',
+    use_shell      BOOLEAN NOT NULL DEFAULT TRUE,
+    timeout_secs   INTEGER,
     created_at   TIMESTAMPTZ(0) NOT NULL DEFAULT NOW(),
     updated_at   TIMESTAMPTZ(0) NOT NULL DEFAULT NOW()
 );

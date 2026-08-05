@@ -142,7 +142,7 @@ async fn build_app(
 
     if config.worker_enabled {
         let cache_for_workers: Arc<dyn crate::cache::CacheStore> = Arc::new(MemoryCache::new());
-        spawn_workers(
+        state.handler_registry = spawn_workers(
             worker_pool,
             &eventbus,
             config,
@@ -986,7 +986,7 @@ async fn spawn_workers(
     plugins: Arc<crate::plugins::PluginManager>,
     search: Arc<dyn crate::search::SearchEngine>,
     cache: Arc<dyn crate::cache::CacheStore>,
-) {
+) -> Arc<crate::worker::JobHandlerRegistry> {
     use crate::worker::{
         CronScheduler, DefaultJobQueue, JobEnqueuer, JobHandlerRegistry, PluginCronDispatcher,
         StuckJobSweeper, WorkerRunner, seed_defaults,
@@ -1018,6 +1018,8 @@ async fn spawn_workers(
         plugins.clone(),
     );
 
+    let registry = Arc::new(registry);
+
     let cron = CronScheduler::new(
         pool.clone(),
         queue.clone(),
@@ -1029,7 +1031,7 @@ async fn spawn_workers(
 
     let runner = WorkerRunner::new(
         queue.clone(),
-        Arc::new(registry),
+        registry.clone(),
         pool.clone(),
         Duration::from_millis(config.worker_poll_interval_ms),
         config.worker_batch_size,
@@ -1044,14 +1046,7 @@ async fn spawn_workers(
     )
     .spawn();
 
-    tracing::info!(
-        "worker system started: concurrency={}, poll={}ms, batch={}, visibility={}s, sweep={}s",
-        config.worker_concurrency,
-        config.worker_poll_interval_ms,
-        config.worker_batch_size,
-        config.worker_visibility_timeout_secs,
-        config.worker_sweep_interval_secs,
-    );
+    registry
 }
 
 async fn list_routes(State(state): State<AppState>) -> impl IntoResponse {

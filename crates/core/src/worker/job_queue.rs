@@ -56,8 +56,86 @@ impl JobQueue for DefaultJobQueue {
         let now = crate::utils::tz::now_utc();
         let limit_i64 = limit as i64;
 
-        #[cfg(not(feature = "db-mysql"))]
+        #[cfg(feature = "db-postgres")]
         {
+            // PostgreSQL: atomically claim pending jobs with FOR UPDATE SKIP LOCKED.
+            // The UPDATE..IN(SELECT..LIMIT) approach has a race: two concurrent
+            // workers can both SELECT the same pending job and both UPDATE it
+            // (Postgres UPDATE does not skip rows locked by the subquery), so the
+            // job gets executed twice. SKIP LOCKED makes the claim atomic.
+            let mut tx = self.pool.begin().await?;
+
+            let select_sql = format!(
+                "SELECT {COL_ID} FROM jobs \
+                 WHERE status = {} AND (run_after IS NULL OR run_after <= {}) \
+                 ORDER BY created_at ASC LIMIT {} \
+                 FOR UPDATE SKIP LOCKED",
+                Driver::ph(1),
+                Driver::ph(2),
+                Driver::ph(3)
+            );
+            let ids: Vec<i64> = sqlx::query_scalar::<_, i64>(&select_sql)
+                .bind(JobStatus::Pending)
+                .bind(now)
+                .bind(limit_i64)
+                .fetch_all(&mut *tx)
+                .await?;
+
+            let mut jobs = Vec::with_capacity(ids.len());
+            for id in ids {
+                let update_sql = format!(
+                    "UPDATE jobs SET status = {}, attempts = attempts + 1, updated_at = {} \
+                     WHERE {COL_ID} = {} \
+                     RETURNING {COL_ID}, job_type, payload, attempts, max_attempts, created_at, cron_schedule_id, cron_log_id",
+                    Driver::ph(1),
+                    Driver::ph(2),
+                    Driver::ph(3)
+                );
+                let row: Option<crate::db::pool::DbRow> =
+                    sqlx::query::<crate::db::pool::Db>(&update_sql)
+                        .bind(JobStatus::Running)
+                        .bind(now)
+                        .bind(id)
+                        .fetch_optional(&mut *tx)
+                        .await?;
+
+                let Some(r) = row else {
+                    continue;
+                };
+                let id: i64 = r.get::<i64, _>("id");
+                let job_type: String = r.get::<String, _>("job_type");
+                let payload: String = r.get::<String, _>("payload");
+                let attempts: i32 = r.get::<i32, _>("attempts");
+                let max_attempts: i32 = r.get::<i32, _>("max_attempts");
+                let created_at: Timestamp = r.get::<Timestamp, _>("created_at");
+                let cron_schedule_id: Option<i64> = r.get::<Option<i64>, _>("cron_schedule_id");
+                let cron_log_id: Option<i64> = r.get::<Option<i64>, _>("cron_log_id");
+                match parse_job(&job_type, &payload) {
+                    Ok(job) => jobs.push(QueuedJob {
+                        id: id.to_string(),
+                        job,
+                        attempts: attempts as u32,
+                        max_attempts: max_attempts as u32,
+                        created_at,
+                        cron_schedule_id: cron_schedule_id.map(SnowflakeId),
+                        cron_log_id: cron_log_id.map(SnowflakeId),
+                    }),
+                    Err(e) => {
+                        tracing::error!("failed to parse job {id}: {e}");
+                        let _ = self
+                            .dead(&id.to_string(), &format!("parse error: {e}"))
+                            .await;
+                    }
+                }
+            }
+
+            tx.commit().await?;
+            Ok(jobs)
+        }
+
+        #[cfg(all(feature = "db-sqlite", not(feature = "db-mysql")))]
+        {
+            // SQLite: single-writer model with global write lock, UPDATE is atomic.
             let returning = crate::db::Driver::returning_col(&format!(
                 "{COL_ID}, job_type, payload, attempts, max_attempts, created_at, cron_schedule_id, cron_log_id"
             ));

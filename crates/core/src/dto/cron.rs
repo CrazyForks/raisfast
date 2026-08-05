@@ -17,13 +17,19 @@ pub struct CreateCronRequest {
     /// JSON params validated against the handler's params_schema
     pub params: Option<serde_json::Value>,
 
-    // ── Script fields (exec_kind = "script") ────────────────────────
-    /// Script language: "js", "lua", or "rhai"
+    // ── Script fields (exec_kind = "script" or "system") ────────────
+    /// Script language: "js", "lua", or "rhai" (script only)
     pub script_lang: Option<String>,
-    /// Raw script source code
+    /// Raw script source code (script) or shell command (system)
     pub script_source: Option<String>,
     /// Entry function name (default "on_cron_tick")
     pub script_entry: Option<String>,
+
+    // ── System fields (exec_kind = "system") ────────────────────────
+    /// Whether to wrap command in /bin/sh -c (default true)
+    pub use_shell: Option<bool>,
+    /// Timeout in seconds (default from config or 300)
+    pub timeout_secs: Option<i32>,
 
     // ── Legacy fields (backward compat) ──────────────────────────────
     /// Legacy: ignored if handler_id is set. Still used for plugin/old schedules.

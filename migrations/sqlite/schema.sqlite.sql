@@ -406,6 +406,8 @@ CREATE TABLE IF NOT EXISTS cron_schedules (
     script_lang    TEXT,
     script_source  TEXT,
     script_entry   TEXT NOT NULL DEFAULT 'on_cron_tick',
+    use_shell      INTEGER NOT NULL DEFAULT 1,
+    timeout_secs   INTEGER,
     created_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     updated_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );

@@ -64,6 +64,8 @@ macro_rules! cron_row_to_schedule {
             script_lang: r.script_lang,
             script_source: r.script_source,
             script_entry: r.script_entry,
+            use_shell: r.use_shell,
+            timeout_secs: r.timeout_secs,
             created_at: r.created_at,
             updated_at: r.updated_at,
         }
@@ -104,6 +106,8 @@ struct CronScheduleRow {
     script_lang: Option<String>,
     script_source: Option<String>,
     script_entry: String,
+    use_shell: bool,
+    timeout_secs: Option<i32>,
     created_at: Timestamp,
     updated_at: Timestamp,
 }
@@ -146,6 +150,8 @@ pub struct CronSchedule {
     pub script_lang: Option<String>,
     pub script_source: Option<String>,
     pub script_entry: String,
+    pub use_shell: bool,
+    pub timeout_secs: Option<i32>,
     pub created_at: Timestamp,
     pub updated_at: Timestamp,
 }
@@ -226,6 +232,8 @@ pub async fn create_schedule_with_plugin(
         script_lang: None,
         script_source: None,
         script_entry: "on_cron_tick".to_string(),
+        use_shell: true,
+        timeout_secs: None,
         created_at: now,
         updated_at: now,
     }))
@@ -285,6 +293,68 @@ pub async fn create_schedule_v2(
         script_lang: None,
         script_source: None,
         script_entry: "on_cron_tick".to_string(),
+        use_shell: true,
+        timeout_secs: None,
+        created_at: now,
+        updated_at: now,
+    }))
+}
+
+/// Create a cron schedule for a system command.
+///
+/// `command` is the shell command string (executed via `/bin/sh -c` if `use_shell=true`).
+pub async fn create_system_schedule(
+    pool: &Pool,
+    label: &str,
+    cron_expr: &str,
+    enabled: bool,
+    command: &str,
+    use_shell: bool,
+    timeout_secs: Option<i32>,
+) -> AppResult<CronSchedule> {
+    let now = crate::utils::tz::now_utc();
+    let next = next_run(cron_expr, now)?;
+    let id = crate::utils::id::new_snowflake_id();
+
+    raisfast_derive::crud_insert!(pool, "cron_schedules", [
+        "id" => id,
+        "label" => label,
+        "job_type" => "run_system",
+        "payload" => Option::<&str>::None,
+        "cron_expr" => cron_expr,
+        "enabled" => enabled,
+        "next_run_at" => next,
+        "plugin_id" => Option::<&str>::None,
+        "exec_kind" => "system",
+        "handler_id" => Option::<&str>::None,
+        "params" => Option::<&str>::None,
+        "script_lang" => Option::<&str>::None,
+        "script_source" => command,
+        "script_entry" => "on_cron_tick",
+        "use_shell" => use_shell,
+        "timeout_secs" => timeout_secs,
+        "created_at" => now,
+        "updated_at" => now
+    ])?;
+
+    Ok(find_by_id(pool, id).await?.unwrap_or(CronSchedule {
+        id,
+        label: label.to_string(),
+        job_type: "run_system".to_string(),
+        payload: None,
+        cron_expr: cron_expr.to_string(),
+        enabled,
+        last_run_at: None,
+        next_run_at: next,
+        plugin_id: None,
+        exec_kind: "system".to_string(),
+        handler_id: None,
+        params: None,
+        script_lang: None,
+        script_source: Some(command.to_string()),
+        script_entry: "on_cron_tick".to_string(),
+        use_shell,
+        timeout_secs,
         created_at: now,
         updated_at: now,
     }))
@@ -344,6 +414,8 @@ pub async fn create_script_schedule(
         script_lang: Some(script_lang.to_string()),
         script_source: Some(script_source.to_string()),
         script_entry: entry.to_string(),
+        use_shell: true,
+        timeout_secs: None,
         created_at: now,
         updated_at: now,
     }))
@@ -352,7 +424,7 @@ pub async fn create_script_schedule(
 /// Find by ID
 pub async fn find_by_id(pool: &Pool, id: SnowflakeId) -> AppResult<Option<CronSchedule>> {
     let row: Option<CronScheduleRow> = sqlx::query_as::<_, CronScheduleRow>(&format!(
-        "SELECT id, label, job_type, payload, cron_expr, enabled, last_run_at, next_run_at, plugin_id, exec_kind, handler_id, params, script_lang, script_source, script_entry, created_at, updated_at
+        "SELECT id, label, job_type, payload, cron_expr, enabled, last_run_at, next_run_at, plugin_id, exec_kind, handler_id, params, script_lang, script_source, script_entry, use_shell, timeout_secs, created_at, updated_at
          FROM cron_schedules WHERE id = {}",
         Driver::ph(1)
     ))
@@ -366,7 +438,7 @@ pub async fn find_by_id(pool: &Pool, id: SnowflakeId) -> AppResult<Option<CronSc
 /// List all schedules
 pub async fn list_schedules(pool: &Pool) -> AppResult<Vec<CronSchedule>> {
     let rows: Vec<CronScheduleRow> = sqlx::query_as::<_, CronScheduleRow>(
-        "SELECT id, label, job_type, payload, cron_expr, enabled, last_run_at, next_run_at, plugin_id, exec_kind, handler_id, params, script_lang, script_source, script_entry, created_at, updated_at
+        "SELECT id, label, job_type, payload, cron_expr, enabled, last_run_at, next_run_at, plugin_id, exec_kind, handler_id, params, script_lang, script_source, script_entry, use_shell, timeout_secs, created_at, updated_at
          FROM cron_schedules ORDER BY created_at ASC",
     )
     .fetch_all(pool)
@@ -543,7 +615,7 @@ impl CronScheduler {
         let now = crate::utils::tz::now_utc();
 
         let rows = sqlx::query_as::<_, CronScheduleRow>(&format!(
-            "SELECT id, label, job_type, payload, cron_expr, enabled, last_run_at, next_run_at, plugin_id, exec_kind, handler_id, params, script_lang, script_source, script_entry, created_at, updated_at
+            "SELECT id, label, job_type, payload, cron_expr, enabled, last_run_at, next_run_at, plugin_id, exec_kind, handler_id, params, script_lang, script_source, script_entry, use_shell, timeout_secs, created_at, updated_at
              FROM cron_schedules WHERE enabled = TRUE AND next_run_at <= {}",
             Driver::ph(1)
         ))
@@ -638,7 +710,7 @@ impl CronScheduler {
         dispatch_result
     }
 
-    fn build_job(&self, schedule: &CronSchedule) -> AppResult<Job> {
+    pub fn build_job(&self, schedule: &CronSchedule) -> AppResult<Job> {
         // For builtin exec_kind, use handler_id + params directly
         if schedule.exec_kind == "builtin" {
             let job_type = schedule.handler_id.as_deref().unwrap_or(&schedule.job_type);
@@ -672,6 +744,18 @@ impl CronScheduler {
             });
             return Ok(Job::Custom {
                 job_type: "run_script".to_string(),
+                payload,
+            });
+        }
+
+        // For system exec_kind, dispatch to run_system handler.
+        // The handler reads script_source (command) + use_shell + timeout from cron_schedules.
+        if schedule.exec_kind == "system" {
+            let payload = serde_json::json!({
+                "schedule_id": schedule.id.0,
+            });
+            return Ok(Job::Custom {
+                job_type: "run_system".to_string(),
                 payload,
             });
         }
@@ -884,21 +968,31 @@ pub async fn list_execution_logs(
 }
 
 /// Query recent execution records across all schedules
-pub async fn recent_execution_logs(pool: &Pool, limit: i64) -> AppResult<Vec<CronExecutionLog>> {
+pub async fn recent_execution_logs(
+    pool: &Pool,
+    limit: i64,
+    offset: i64,
+) -> AppResult<(Vec<CronExecutionLog>, i64)> {
+    let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM cron_execution_log")
+        .fetch_one(pool)
+        .await?;
+
     let rows: Vec<CronExecLogRow> = sqlx::query_as::<_, CronExecLogRow>(&format!(
         "SELECT id, schedule_id, job_type, label, status, duration_ms, error, started_at, finished_at
          FROM cron_execution_log
-         ORDER BY started_at DESC LIMIT {}",
-        Driver::ph(1)
+         ORDER BY started_at DESC LIMIT {} OFFSET {}",
+        Driver::ph(1), Driver::ph(2)
     ))
     .bind(limit)
+    .bind(offset)
     .fetch_all(pool)
     .await?;
 
-    Ok(rows
+    let logs = rows
         .into_iter()
         .map(|r| exec_log_row_to_struct!(r))
-        .collect())
+        .collect();
+    Ok((logs, total))
 }
 
 /// Clean up expired execution logs

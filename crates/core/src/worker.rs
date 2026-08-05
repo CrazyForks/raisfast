@@ -56,10 +56,10 @@ pub use runner::WorkerRunner;
 pub use scheduler::{
     CronExecutionLog, CronSchedule, CronScheduler, cleanup_execution_logs, complete_execution_log,
     complete_execution_log_with, create_execution_log, create_schedule, create_schedule_v2,
-    create_schedule_with_plugin, create_script_schedule, delete_schedule, fail_execution_log,
-    fail_execution_log_with, find_by_id, list_execution_logs, list_schedules, next_run,
-    recent_execution_logs, remove_plugin_crons, seed_defaults, sync_plugin_crons, toggle_schedule,
-    update_schedule,
+    create_schedule_with_plugin, create_script_schedule, create_system_schedule, delete_schedule,
+    fail_execution_log, fail_execution_log_with, find_by_id, list_execution_logs, list_schedules,
+    next_run, recent_execution_logs, remove_plugin_crons, seed_defaults, sync_plugin_crons,
+    toggle_schedule, update_schedule,
 };
 pub use sweeper::StuckJobSweeper;
 

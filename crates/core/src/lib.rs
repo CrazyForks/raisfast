@@ -145,6 +145,7 @@ pub struct AppState {
     pub route_registry: Arc<Vec<crate::server::RouteInfo>>,
     pub route_perms: Arc<crate::middleware::permission_guard::RoutePermissionMap>,
     pub services: ServiceRegistry,
+    pub handler_registry: Arc<crate::worker::JobHandlerRegistry>,
 }
 
 /// Build AppState (shared by HTTP server and Tauri)
@@ -373,6 +374,7 @@ pub async fn build_app_state(
             crate::middleware::permission_guard::RoutePermissionMap::from_routes(&[]),
         ),
         services,
+        handler_registry: Arc::new(crate::worker::JobHandlerRegistry::new()),
     };
 
     crate::server::spawn_audit_subscriber(
