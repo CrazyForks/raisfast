@@ -1,17 +1,21 @@
 //! Protocol layer — Declarative protocol definitions
 //!
-//! Protocol = Aspect composition + declarative effects (ProtocolDeclaration).
+//! Protocol = Column declarations + declarative effects (ProtocolDeclaration)
+//! + field-injection hooks (`before_create` / `before_update` / `before_delete`).
 //!
 //! ## Design
 //!
 //! ```text
 //! Protocol implementation
-//!   ├─ aspects()        → Aspect list (AOP data injection)
-//!   ├─ declaration()    → ProtocolDeclaration (pure data, compile-time safe)
+//!   ├─ columns()         → ColumnDef list (schema generation)
+//!   ├─ declaration()     → ProtocolDeclaration (pure data, compile-time safe)
 //!   │     ├─ query_filters     — automatically appended WHERE conditions
 //!   │     ├─ delete_strategy   — Soft / Hard
 //!   │     ├─ snapshot_before_update — snapshot old record before update
 //!   │     └─ revision_routes   — provide version history API
+//!   ├─ before_create()   → inject default field values (field injection hook)
+//!   ├─ before_update()   → inject/validate fields (field injection hook)
+//!   ├─ before_delete()   → choose Soft / Hard delete (field injection hook)
 //!   └─ on_after_delete() → async hook (the only non-pure-data method)
 //! ```
 //!
@@ -38,7 +42,36 @@ use crate::types::snowflake_id::SnowflakeId;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::aspects::{Aspect, ColumnDef};
+use crate::db::sql_type::ColumnDef;
+use async_trait::async_trait;
+use serde_json::Value;
+
+// ─── HookCtx / DeleteAction ───
+
+/// Unified context for protocol hooks.
+///
+/// Replaces the 8+ Context structs from the old Aspect system.
+pub struct HookCtx<'a> {
+    pub user_id: Option<i64>,
+    pub user_role: Option<String>,
+    pub tenant_id: &'a str,
+    pub now: &'a str,
+    pub schema: Option<&'a crate::content_type::schema::ContentTypeSchema>,
+    pub pool: Option<&'a crate::db::Pool>,
+}
+
+/// Delete action returned by `before_delete` hook.
+#[derive(Debug, Clone, Default)]
+pub enum DeleteAction {
+    /// Physical DELETE (default)
+    #[default]
+    Hard,
+    /// UPDATE SET deleted_at = now WHERE ...
+    Soft {
+        deleted_at: String,
+        deleted_by: Option<i64>,
+    },
+}
 
 // ─── DeleteStrategy ───
 
@@ -174,6 +207,7 @@ impl ProtocolDeclaration {
 
 // ─── Protocol Trait ───
 
+#[async_trait]
 pub trait Protocol: Send + Sync + 'static {
     fn name(&self) -> &str;
 
@@ -181,10 +215,8 @@ pub trait Protocol: Send + Sync + 'static {
         ""
     }
 
-    fn aspects(&self) -> Vec<Arc<dyn Aspect>>;
-
     fn columns(&self) -> Vec<ColumnDef> {
-        self.aspects().iter().flat_map(|a| a.columns()).collect()
+        vec![]
     }
 
     fn behaviors(&self) -> Vec<&'static str> {
@@ -238,6 +270,34 @@ pub trait Protocol: Send + Sync + 'static {
     {
         Box::pin(async { Ok(()) })
     }
+
+    /// Called before a record is created. Protocols can inject default field values.
+    async fn before_create(
+        &self,
+        _record: &mut serde_json::Map<String, Value>,
+        _ctx: &HookCtx<'_>,
+    ) -> anyhow::Result<()> {
+        Ok(())
+    }
+
+    /// Called before a record is updated. Protocols can inject/validate fields.
+    async fn before_update(
+        &self,
+        _new_record: &mut serde_json::Map<String, Value>,
+        _old_record: &serde_json::Map<String, Value>,
+        _ctx: &HookCtx<'_>,
+    ) -> anyhow::Result<()> {
+        Ok(())
+    }
+
+    /// Called before a record is deleted. Returns whether to soft-delete or hard-delete.
+    async fn before_delete(
+        &self,
+        _record: &serde_json::Map<String, Value>,
+        _ctx: &mut HookCtx<'_>,
+    ) -> anyhow::Result<DeleteAction> {
+        Ok(DeleteAction::Hard)
+    }
 }
 
 // ─── ProtocolEntry (inventory) ───
@@ -289,6 +349,19 @@ impl ProtocolRegistry {
         self.protocols.get(name)
     }
 
+    /// Resolve the protocol instances applicable to a content type schema,
+    /// in declaration order. Unknown names are silently skipped.
+    pub fn get_protocols_for(
+        &self,
+        schema: &crate::content_type::schema::ContentTypeSchema,
+    ) -> Vec<Arc<dyn Protocol>> {
+        schema
+            .implements
+            .iter()
+            .filter_map(|pref| self.protocols.get(pref.name()).cloned())
+            .collect()
+    }
+
     pub fn names(&self) -> Vec<&str> {
         self.protocols.keys().map(|s| s.as_str()).collect()
     }
@@ -318,21 +391,6 @@ impl ProtocolRegistry {
             }
         }
         cols
-    }
-
-    pub fn aspects_for(&self, names: &[String]) -> Vec<Arc<dyn Aspect>> {
-        let mut aspects = Vec::new();
-        let mut seen = std::collections::HashSet::new();
-        for name in names {
-            if let Some(protocol) = self.protocols.get(name.as_str()) {
-                for aspect in protocol.aspects() {
-                    if seen.insert(aspect.name().to_string()) {
-                        aspects.push(aspect);
-                    }
-                }
-            }
-        }
-        aspects
     }
 
     /// Aggregate declarations from multiple protocols
@@ -388,17 +446,6 @@ impl ProtocolRegistry {
         }
         Ok(())
     }
-
-    pub fn register_aspects_into(&self, engine: &crate::aspects::engine::AspectEngine) {
-        let mut seen = std::collections::HashSet::new();
-        for protocol in self.protocols.values() {
-            for aspect in protocol.aspects() {
-                if seen.insert(aspect.name().to_string()) {
-                    engine.register_from_arc(aspect);
-                }
-            }
-        }
-    }
 }
 
 impl Default for ProtocolRegistry {
@@ -449,15 +496,6 @@ mod tests {
         assert!(col_names.contains(&"updated_by"));
         assert!(col_names.contains(&"created_at"));
         assert!(col_names.contains(&"updated_at"));
-    }
-
-    #[test]
-    fn aspects_for_deduplicates() {
-        let mut reg = ProtocolRegistry::new();
-        reg.register(ownable::OwnableProtocol);
-        reg.register(timestampable::TimestampableProtocol);
-        let aspects = reg.aspects_for(&["ownable".into(), "timestampable".into()]);
-        assert_eq!(aspects.len(), 2);
     }
 
     #[test]

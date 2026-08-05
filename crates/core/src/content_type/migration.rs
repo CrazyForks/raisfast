@@ -4,7 +4,7 @@
 
 use super::schema::{ContentTypeSchema, FieldType, RelationType};
 
-use crate::aspects::ColumnDef;
+use crate::db::sql_type::ColumnDef;
 use crate::constants::COL_ID;
 use crate::db::DbDriver;
 

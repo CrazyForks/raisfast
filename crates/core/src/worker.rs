@@ -60,13 +60,22 @@ pub use scheduler::{
 pub use sweeper::StuckJobSweeper;
 
 #[cfg(feature = "export-types")]
-export_types!(Job, JobStatus, CronExecStatus, CronSchedule, CronExecutionLog,);
+export_types!(
+    Job,
+    JobStatus,
+    CronExecStatus,
+    CronSchedule,
+    CronExecutionLog,
+);
 
 /// Job types and parameters
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "export-types", derive(TS))]
 #[serde(tag = "type", content = "payload", rename_all = "snake_case")]
-#[cfg_attr(feature = "export-types", ts(tag = "type", content = "payload", rename_all = "snake_case"))]
+#[cfg_attr(
+    feature = "export-types",
+    ts(tag = "type", content = "payload", rename_all = "snake_case")
+)]
 #[non_exhaustive]
 pub enum Job {
     SendWelcomeEmail {

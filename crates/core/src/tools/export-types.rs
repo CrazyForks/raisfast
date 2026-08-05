@@ -1,6 +1,6 @@
 use raisfast::event::Event;
 use raisfast::export_type::collect_all;
-use raisfast::services::media::{mime_to_ext, ALL_MEDIA_MIMES};
+use raisfast::services::media::{ALL_MEDIA_MIMES, mime_to_ext};
 
 /// Extract job-type discriminant strings from the `Job` TS declaration.
 ///

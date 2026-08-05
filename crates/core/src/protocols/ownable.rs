@@ -1,47 +1,24 @@
 //! ownable Protocol — inject created_by on create, updated_by on update
 //!
 //! Built-in by default; automatically applies to all tables.
-//! Contains 1 Aspect: OwnableAspect (priority = -500).
 
-use std::sync::Arc;
+use serde_json::{Value, json};
 
-use async_trait::async_trait;
-use serde_json::json;
-
-use crate::aspects::{
-    Advice, Aspect, AspectResult, ColumnDef, DataBeforeCreateContext, DataBeforeUpdateContext,
-    Layer, Operation, Pointcut, SqlType, TargetMatcher, When,
-};
+use crate::db::sql_type::{ColumnDef, SqlType};
 use crate::constants::*;
-use crate::protocols::Protocol;
+use crate::protocols::{HookCtx, Protocol};
+use async_trait::async_trait;
 
-pub struct OwnableAspect;
+pub struct OwnableProtocol;
 
 #[async_trait]
-impl Aspect for OwnableAspect {
+impl Protocol for OwnableProtocol {
     fn name(&self) -> &str {
         "ownable"
     }
 
-    fn priority(&self) -> i32 {
-        -500
-    }
-
-    fn pointcuts(&self) -> Vec<Pointcut> {
-        vec![
-            Pointcut {
-                layer: Layer::Data,
-                operation: Operation::Create,
-                when: When::Before,
-                target: TargetMatcher::All,
-            },
-            Pointcut {
-                layer: Layer::Data,
-                operation: Operation::Update,
-                when: When::Before,
-                target: TargetMatcher::All,
-            },
-        ]
+    fn description(&self) -> &str {
+        "Automatically injects the operator ID on create and update"
     }
 
     fn columns(&self) -> Vec<ColumnDef> {
@@ -59,48 +36,6 @@ impl Aspect for OwnableAspect {
         ]
     }
 
-    async fn on_data_before_create(&self, ctx: &mut DataBeforeCreateContext) -> AspectResult {
-        if let Some(user_int_id) = ctx.base.user_int_id {
-            let schema = ctx.schema.as_ref();
-            if schema.is_none_or(|s| s.is_protocol_column(COL_CREATED_BY)) {
-                ctx.record.insert(COL_CREATED_BY.into(), json!(user_int_id));
-            }
-            if schema.is_none_or(|s| s.is_protocol_column(COL_UPDATED_BY)) {
-                ctx.record.insert(COL_UPDATED_BY.into(), json!(user_int_id));
-            }
-        }
-        Ok(Advice::Continue)
-    }
-
-    async fn on_data_before_update(&self, ctx: &mut DataBeforeUpdateContext) -> AspectResult {
-        if let Some(user_int_id) = ctx.base.user_int_id
-            && ctx
-                .schema
-                .as_ref()
-                .is_none_or(|s| s.is_protocol_column(COL_UPDATED_BY))
-        {
-            ctx.new_record
-                .insert(COL_UPDATED_BY.into(), json!(user_int_id));
-        }
-        Ok(Advice::Continue)
-    }
-}
-
-pub struct OwnableProtocol;
-
-impl Protocol for OwnableProtocol {
-    fn name(&self) -> &str {
-        "ownable"
-    }
-
-    fn description(&self) -> &str {
-        "Automatically injects the operator ID on create and update"
-    }
-
-    fn aspects(&self) -> Vec<Arc<dyn Aspect>> {
-        vec![Arc::new(OwnableAspect)]
-    }
-
     fn behaviors(&self) -> Vec<&'static str> {
         vec!["track_owner"]
     }
@@ -108,67 +43,89 @@ impl Protocol for OwnableProtocol {
     fn built_in(&self) -> bool {
         true
     }
+
+    async fn before_create(
+        &self,
+        record: &mut serde_json::Map<String, Value>,
+        ctx: &HookCtx<'_>,
+    ) -> anyhow::Result<()> {
+        if let Some(user_int_id) = ctx.user_id {
+            if ctx
+                .schema
+                .is_none_or(|s| s.is_protocol_column(COL_CREATED_BY))
+            {
+                record.insert(COL_CREATED_BY.into(), json!(user_int_id));
+            }
+            if ctx
+                .schema
+                .is_none_or(|s| s.is_protocol_column(COL_UPDATED_BY))
+            {
+                record.insert(COL_UPDATED_BY.into(), json!(user_int_id));
+            }
+        }
+        Ok(())
+    }
+
+    async fn before_update(
+        &self,
+        new_record: &mut serde_json::Map<String, Value>,
+        _old_record: &serde_json::Map<String, Value>,
+        ctx: &HookCtx<'_>,
+    ) -> anyhow::Result<()> {
+        if let Some(user_int_id) = ctx.user_id
+            && ctx
+                .schema
+                .is_none_or(|s| s.is_protocol_column(COL_UPDATED_BY))
+        {
+            new_record.insert(COL_UPDATED_BY.into(), json!(user_int_id));
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::aspects::engine::AspectEngine;
-    use crate::aspects::{BaseContext, DataBeforeCreateContext, Record};
-    use crate::protocols::timestampable::TimestampableAspect;
+    use crate::protocols::timestampable::TimestampableProtocol;
 
-    async fn dispatch_create(
-        engine: &AspectEngine,
-        table: &str,
-        ctx: &mut DataBeforeCreateContext,
-    ) -> Result<Option<serde_json::Value>, anyhow::Error> {
-        engine.dispatch_data_before_create(table, ctx).await
+    fn ctx_with_user(user_id: Option<i64>) -> HookCtx<'static> {
+        HookCtx {
+            user_id,
+            user_role: None,
+            tenant_id: "default",
+            now: "now",
+            schema: None,
+            pool: None,
+        }
     }
 
     #[tokio::test]
     async fn injects_created_by() {
-        let engine = AspectEngine::new();
-        engine.register(OwnableAspect);
+        let protocol = OwnableProtocol;
+        let mut record = serde_json::Map::new();
+        let ctx = ctx_with_user(Some(42));
 
-        let mut ctx = DataBeforeCreateContext {
-            base: BaseContext::new(Some("user-123".into()), "default".into(), "now".into())
-                .with_user_int_id(Some(42)),
-            table: "articles".into(),
-            record: Record::new(),
-            schema: None,
-        };
+        protocol.before_create(&mut record, &ctx).await.unwrap();
 
-        dispatch_create(&engine, "articles", &mut ctx)
-            .await
-            .unwrap();
-
-        assert_eq!(ctx.record.get("created_by").unwrap(), &json!(42));
-        assert_eq!(ctx.record.get("updated_by").unwrap(), &json!(42));
+        assert_eq!(record.get("created_by").unwrap(), &json!(42));
+        assert_eq!(record.get("updated_by").unwrap(), &json!(42));
     }
 
     #[tokio::test]
     async fn no_created_by_without_user() {
-        let engine = AspectEngine::new();
-        engine.register(OwnableAspect);
+        let protocol = OwnableProtocol;
+        let mut record = serde_json::Map::new();
+        let ctx = ctx_with_user(None);
 
-        let mut ctx = DataBeforeCreateContext {
-            base: BaseContext::new(None, "default".into(), "now".into()),
-            table: "articles".into(),
-            record: Record::new(),
-            schema: None,
-        };
+        protocol.before_create(&mut record, &ctx).await.unwrap();
 
-        dispatch_create(&engine, "articles", &mut ctx)
-            .await
-            .unwrap();
-
-        assert!(ctx.record.get("created_by").is_none());
-        assert!(ctx.record.get("updated_by").is_none());
+        assert!(record.get("created_by").is_none());
+        assert!(record.get("updated_by").is_none());
     }
 
     #[tokio::test]
     async fn provides_created_by_and_updated_by_columns() {
-        let cols = OwnableAspect.columns();
+        let cols = OwnableProtocol.columns();
         assert_eq!(cols.len(), 2);
         assert_eq!(cols[0].name, "created_by");
         assert_eq!(cols[1].name, "updated_by");
@@ -176,152 +133,78 @@ mod tests {
 
     #[tokio::test]
     async fn combined_with_timestampable() {
-        let engine = AspectEngine::new();
-        engine.register(OwnableAspect);
-        engine.register(TimestampableAspect);
+        let ownable = OwnableProtocol;
+        let timestampable = TimestampableProtocol;
 
-        let mut ctx = DataBeforeCreateContext {
-            base: BaseContext::new(
-                Some("user-1".into()),
-                "default".into(),
-                "2026-01-01T00:00:00Z".into(),
-            )
-            .with_user_int_id(Some(1)),
-            table: "articles".into(),
-            record: Record::new(),
+        let mut record = serde_json::Map::new();
+        let ctx = HookCtx {
+            user_id: Some(1),
+            user_role: None,
+            tenant_id: "default",
+            now: "2026-01-01T00:00:00Z",
             schema: None,
+            pool: None,
         };
 
-        dispatch_create(&engine, "articles", &mut ctx)
+        ownable.before_create(&mut record, &ctx).await.unwrap();
+        timestampable
+            .before_create(&mut record, &ctx)
             .await
             .unwrap();
 
-        assert_eq!(ctx.record.get("created_by").unwrap(), &json!(1));
+        assert_eq!(record.get("created_by").unwrap(), &json!(1));
         assert_eq!(
-            ctx.record.get("created_at").unwrap(),
+            record.get("created_at").unwrap(),
             &json!("2026-01-01T00:00:00Z")
         );
         assert_eq!(
-            ctx.record.get("updated_at").unwrap(),
+            record.get("updated_at").unwrap(),
             &json!("2026-01-01T00:00:00Z")
         );
     }
 
     #[tokio::test]
     async fn overwrites_existing_created_by() {
-        let engine = AspectEngine::new();
-        engine.register(OwnableAspect);
-
-        let mut record = Record::new();
+        let protocol = OwnableProtocol;
+        let mut record = serde_json::Map::new();
         record.insert("created_by".into(), json!("old-user"));
+        let ctx = ctx_with_user(Some(99));
 
-        let mut ctx = DataBeforeCreateContext {
-            base: BaseContext::new(Some("new-user".into()), "default".into(), "now".into())
-                .with_user_int_id(Some(99)),
-            table: "articles".into(),
-            record,
-            schema: None,
-        };
+        protocol.before_create(&mut record, &ctx).await.unwrap();
 
-        dispatch_create(&engine, "articles", &mut ctx)
-            .await
-            .unwrap();
-
-        assert_eq!(ctx.record.get("created_by").unwrap(), &json!(99));
+        assert_eq!(record.get("created_by").unwrap(), &json!(99));
     }
 
     #[tokio::test]
     async fn updates_updated_by_on_update() {
-        let engine = AspectEngine::new();
-        engine.register(OwnableAspect);
-
-        let mut new_record = Record::new();
+        let protocol = OwnableProtocol;
+        let mut new_record = serde_json::Map::new();
         new_record.insert("title".into(), json!("updated"));
+        let old_record = serde_json::Map::new();
+        let ctx = ctx_with_user(Some(1));
 
-        let mut ctx = DataBeforeUpdateContext {
-            base: BaseContext::new(Some("user-1".into()), "default".into(), "now".into())
-                .with_user_int_id(Some(1)),
-            table: "articles".into(),
-            old_record: {
-                let mut r = Record::new();
-                r.insert("created_by".into(), json!("original-user"));
-                r
-            },
-            new_record,
-            schema: None,
-        };
+        protocol
+            .before_update(&mut new_record, &old_record, &ctx)
+            .await
+            .unwrap();
 
-        let result: Result<Option<serde_json::Value>, _> = engine
-            .dispatch_data_before_update("articles", &mut ctx)
-            .await;
-        result.unwrap();
-
-        assert!(!ctx.new_record.contains_key("created_by"));
-        assert_eq!(ctx.new_record.get("updated_by").unwrap(), &json!(1));
-    }
-
-    #[tokio::test]
-    async fn dispatch_on_empty_table_name() {
-        let engine = AspectEngine::new();
-        engine.register(OwnableAspect);
-
-        let mut ctx = DataBeforeCreateContext {
-            base: BaseContext::new(Some("user-1".into()), "default".into(), "now".into())
-                .with_user_int_id(Some(1)),
-            table: String::new(),
-            record: Record::new(),
-            schema: None,
-        };
-
-        dispatch_create(&engine, "", &mut ctx).await.unwrap();
-
-        assert_eq!(ctx.record.get("created_by").unwrap(), &json!(1));
+        assert!(!new_record.contains_key("created_by"));
+        assert_eq!(new_record.get("updated_by").unwrap(), &json!(1));
     }
 
     #[tokio::test]
     async fn multiple_dispatches_accumulate() {
-        let engine = AspectEngine::new();
-        engine.register(OwnableAspect);
+        let protocol = OwnableProtocol;
 
-        let mut ctx1 = DataBeforeCreateContext {
-            base: BaseContext::new(Some("user-a".into()), "default".into(), "now".into())
-                .with_user_int_id(Some(10)),
-            table: "articles".into(),
-            record: Record::new(),
-            schema: None,
-        };
-        dispatch_create(&engine, "articles", &mut ctx1)
-            .await
-            .unwrap();
-        assert_eq!(ctx1.record.get("created_by").unwrap(), &json!(10));
+        let mut record1 = serde_json::Map::new();
+        let ctx1 = ctx_with_user(Some(10));
+        protocol.before_create(&mut record1, &ctx1).await.unwrap();
+        assert_eq!(record1.get("created_by").unwrap(), &json!(10));
 
-        let mut ctx2 = DataBeforeCreateContext {
-            base: BaseContext::new(Some("user-b".into()), "default".into(), "now".into())
-                .with_user_int_id(Some(20)),
-            table: "articles".into(),
-            record: Record::new(),
-            schema: None,
-        };
-        dispatch_create(&engine, "articles", &mut ctx2)
-            .await
-            .unwrap();
-        assert_eq!(ctx2.record.get("created_by").unwrap(), &json!(20));
-    }
-
-    #[tokio::test]
-    async fn priority_is_negative_500() {
-        assert_eq!(OwnableAspect.priority(), -500);
-    }
-
-    #[tokio::test]
-    async fn pointcut_targets_all() {
-        let pcs = OwnableAspect.pointcuts();
-        assert_eq!(pcs.len(), 2);
-        assert!(matches!(pcs[0].target, TargetMatcher::All));
-        assert_eq!(pcs[0].layer, Layer::Data);
-        assert_eq!(pcs[0].operation, Operation::Create);
-        assert_eq!(pcs[0].when, When::Before);
-        assert_eq!(pcs[1].operation, Operation::Update);
+        let mut record2 = serde_json::Map::new();
+        let ctx2 = ctx_with_user(Some(20));
+        protocol.before_create(&mut record2, &ctx2).await.unwrap();
+        assert_eq!(record2.get("created_by").unwrap(), &json!(20));
     }
 }
 

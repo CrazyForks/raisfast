@@ -14,10 +14,11 @@ use raisfast::services::post::{PostService, PostServiceImpl};
 use raisfast::services::{auth, options, stats, user};
 
 fn build_post_service(pool: Arc<sqlx::SqlitePool>) -> Arc<dyn PostService> {
-    let engine = Arc::new(raisfast::aspects::engine::AspectEngine::new());
+    let emitter =
+        raisfast::event::EventEmitter::eventbus_only(raisfast::eventbus::EventBus::new(16));
     let search: Arc<dyn raisfast::search::SearchEngine> =
         Arc::new(raisfast::search::NoopSearchEngine);
-    Arc::new(PostServiceImpl::new(pool, engine, search))
+    Arc::new(PostServiceImpl::new(pool, emitter, search))
 }
 
 fn with_timestamps(data: serde_json::Value) -> serde_json::Value {
@@ -67,13 +68,14 @@ async fn setup_pool() -> sqlx::SqlitePool {
     pool
 }
 async fn create_test_user(pool: &sqlx::SqlitePool, label: &str) -> (i64, String) {
-    let aspect_engine = raisfast::aspects::engine::AspectEngine::new();
+    let emitter =
+        raisfast::event::EventEmitter::eventbus_only(raisfast::eventbus::EventBus::new(16));
     let req = raisfast::dto::RegisterRequest {
         username: format!("user_{label}"),
         email: format!("{label}@test.com"),
         password: "Password123".into(),
     };
-    let user = auth::register(&aspect_engine, req, None, false, pool)
+    let user = auth::register(&emitter, req, None, false, pool)
         .await
         .unwrap();
     let row: (i64,) = sqlx::query_as("SELECT id FROM users WHERE id = ?")
@@ -122,7 +124,8 @@ label = "优先级"
 #[tokio::test]
 async fn tauri_auth_register_service() {
     let pool = setup_pool().await;
-    let aspect_engine = raisfast::aspects::engine::AspectEngine::new();
+    let emitter =
+        raisfast::event::EventEmitter::eventbus_only(raisfast::eventbus::EventBus::new(16));
 
     let req = raisfast::dto::RegisterRequest {
         username: "testuser".into(),
@@ -130,7 +133,7 @@ async fn tauri_auth_register_service() {
         password: "Password123".into(),
     };
 
-    let result = auth::register(&aspect_engine, req, None, false, &pool).await;
+    let result = auth::register(&emitter, req, None, false, &pool).await;
 
     assert!(
         result.is_ok(),
@@ -144,14 +147,15 @@ async fn tauri_auth_register_service() {
 #[tokio::test]
 async fn tauri_auth_register_duplicate_email() {
     let pool = setup_pool().await;
-    let aspect_engine = raisfast::aspects::engine::AspectEngine::new();
+    let emitter =
+        raisfast::event::EventEmitter::eventbus_only(raisfast::eventbus::EventBus::new(16));
 
     let req = raisfast::dto::RegisterRequest {
         username: "user1".into(),
         email: "dup@example.com".into(),
         password: "Password123".into(),
     };
-    auth::register(&aspect_engine, req, None, false, &pool)
+    auth::register(&emitter, req, None, false, &pool)
         .await
         .unwrap();
 
@@ -160,8 +164,9 @@ async fn tauri_auth_register_duplicate_email() {
         email: "dup@example.com".into(),
         password: "Password456".into(),
     };
-    let aspect_engine2 = raisfast::aspects::engine::AspectEngine::new();
-    let result = auth::register(&aspect_engine2, req2, None, false, &pool).await;
+    let emitter2 =
+        raisfast::event::EventEmitter::eventbus_only(raisfast::eventbus::EventBus::new(16));
+    let result = auth::register(&emitter2, req2, None, false, &pool).await;
     assert!(result.is_err(), "duplicate email should fail");
 }
 
@@ -169,14 +174,15 @@ async fn tauri_auth_register_duplicate_email() {
 async fn tauri_auth_login_service() {
     let pool = setup_pool().await;
     let config = test_config();
-    let aspect_engine = raisfast::aspects::engine::AspectEngine::new();
+    let emitter =
+        raisfast::event::EventEmitter::eventbus_only(raisfast::eventbus::EventBus::new(16));
 
     let reg_req = raisfast::dto::RegisterRequest {
         username: "loginuser".into(),
         email: "login@example.com".into(),
         password: "Password123".into(),
     };
-    auth::register(&aspect_engine, reg_req, None, false, &pool)
+    auth::register(&emitter, reg_req, None, false, &pool)
         .await
         .unwrap();
 
@@ -184,9 +190,10 @@ async fn tauri_auth_login_service() {
         email: "login@example.com".into(),
         password: "Password123".into(),
     };
-    let aspect_engine2 = raisfast::aspects::engine::AspectEngine::new();
+    let emitter2 =
+        raisfast::event::EventEmitter::eventbus_only(raisfast::eventbus::EventBus::new(16));
     let result = auth::login(
-        &aspect_engine2,
+        &emitter2,
         &pool,
         &login_req,
         &config.jwt_secret,
@@ -207,14 +214,15 @@ async fn tauri_auth_login_service() {
 async fn tauri_auth_login_wrong_password() {
     let pool = setup_pool().await;
     let config = test_config();
-    let aspect_engine = raisfast::aspects::engine::AspectEngine::new();
+    let emitter =
+        raisfast::event::EventEmitter::eventbus_only(raisfast::eventbus::EventBus::new(16));
 
     let reg_req = raisfast::dto::RegisterRequest {
         username: "wrongpw".into(),
         email: "wrong@example.com".into(),
         password: "Password123".into(),
     };
-    auth::register(&aspect_engine, reg_req, None, false, &pool)
+    auth::register(&emitter, reg_req, None, false, &pool)
         .await
         .unwrap();
 
@@ -222,9 +230,10 @@ async fn tauri_auth_login_wrong_password() {
         email: "wrong@example.com".into(),
         password: "WrongPassword".into(),
     };
-    let aspect_engine2 = raisfast::aspects::engine::AspectEngine::new();
+    let emitter2 =
+        raisfast::event::EventEmitter::eventbus_only(raisfast::eventbus::EventBus::new(16));
     let result = auth::login(
-        &aspect_engine2,
+        &emitter2,
         &pool,
         &login_req,
         &config.jwt_secret,
@@ -241,14 +250,15 @@ async fn tauri_auth_login_wrong_password() {
 #[tokio::test]
 async fn tauri_auth_get_me_service() {
     let pool = setup_pool().await;
-    let aspect_engine = raisfast::aspects::engine::AspectEngine::new();
+    let emitter =
+        raisfast::event::EventEmitter::eventbus_only(raisfast::eventbus::EventBus::new(16));
 
     let reg_req = raisfast::dto::RegisterRequest {
         username: "getme".into(),
         email: "getme@example.com".into(),
         password: "Password123".into(),
     };
-    let user = auth::register(&aspect_engine, reg_req, None, false, &pool)
+    let user = auth::register(&emitter, reg_req, None, false, &pool)
         .await
         .unwrap();
 

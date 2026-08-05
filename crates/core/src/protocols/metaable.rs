@@ -7,37 +7,23 @@
 //! implements = ["metaable"]
 //! ```
 
-use std::sync::Arc;
+use serde_json::{Value, json};
 
-use async_trait::async_trait;
-use serde_json::json;
-
-use crate::aspects::{
-    Advice, Aspect, AspectResult, ColumnDef, DataBeforeCreateContext, Layer, Operation, Pointcut,
-    SqlType, TargetMatcher, When,
-};
+use crate::db::sql_type::{ColumnDef, SqlType};
 use crate::constants::COL_META;
-use crate::protocols::Protocol;
+use crate::protocols::{HookCtx, Protocol};
+use async_trait::async_trait;
 
-pub struct MetaableAspect;
+pub struct MetaableProtocol;
 
 #[async_trait]
-impl Aspect for MetaableAspect {
+impl Protocol for MetaableProtocol {
     fn name(&self) -> &str {
         "metaable"
     }
 
-    fn priority(&self) -> i32 {
-        1000
-    }
-
-    fn pointcuts(&self) -> Vec<Pointcut> {
-        vec![Pointcut {
-            layer: Layer::Data,
-            operation: Operation::Create,
-            when: When::Before,
-            target: TargetMatcher::All,
-        }]
+    fn description(&self) -> &str {
+        "Dynamic JSON metadata column; extend data without adding table fields"
     }
 
     fn columns(&self) -> Vec<ColumnDef> {
@@ -48,34 +34,6 @@ impl Aspect for MetaableAspect {
         }]
     }
 
-    async fn on_data_before_create(&self, ctx: &mut DataBeforeCreateContext) -> AspectResult {
-        if ctx
-            .schema
-            .as_ref()
-            .is_none_or(|s| s.is_protocol_column(COL_META))
-            && !ctx.record.contains_key(COL_META)
-        {
-            ctx.record.insert(COL_META.into(), json!({}));
-        }
-        Ok(Advice::Continue)
-    }
-}
-
-pub struct MetaableProtocol;
-
-impl Protocol for MetaableProtocol {
-    fn name(&self) -> &str {
-        "metaable"
-    }
-
-    fn description(&self) -> &str {
-        "Dynamic JSON metadata column; extend data without adding table fields"
-    }
-
-    fn aspects(&self) -> Vec<Arc<dyn Aspect>> {
-        vec![Arc::new(MetaableAspect)]
-    }
-
     fn behaviors(&self) -> Vec<&'static str> {
         vec!["metaable"]
     }
@@ -83,37 +41,50 @@ impl Protocol for MetaableProtocol {
     fn built_in(&self) -> bool {
         true
     }
+
+    async fn before_create(
+        &self,
+        record: &mut serde_json::Map<String, Value>,
+        ctx: &HookCtx<'_>,
+    ) -> anyhow::Result<()> {
+        if ctx.schema.is_none_or(|s| s.is_protocol_column(COL_META))
+            && !record.contains_key(COL_META)
+        {
+            record.insert(COL_META.into(), json!({}));
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::aspects::engine::AspectEngine;
-    use crate::aspects::{BaseContext, Record};
+
+    fn ctx() -> HookCtx<'static> {
+        HookCtx {
+            user_id: None,
+            user_role: None,
+            tenant_id: "default",
+            now: "now",
+            schema: None,
+            pool: None,
+        }
+    }
 
     #[tokio::test]
     async fn injects_empty_meta_on_create() {
-        let engine = AspectEngine::new();
-        engine.register(MetaableAspect);
+        let protocol = MetaableProtocol;
+        let mut record = serde_json::Map::new();
+        let ctx = ctx();
 
-        let mut ctx = DataBeforeCreateContext {
-            base: BaseContext::new(None, "default".into(), "now".into()),
-            table: "posts".into(),
-            record: Record::new(),
-            schema: None,
-        };
+        protocol.before_create(&mut record, &ctx).await.unwrap();
 
-        engine
-            .dispatch_data_before_create("posts", &mut ctx)
-            .await
-            .unwrap();
-
-        assert_eq!(ctx.record.get(COL_META), Some(&json!({})));
+        assert_eq!(record.get(COL_META), Some(&json!({})));
     }
 
     #[test]
     fn provides_meta_column() {
-        let cols = MetaableAspect.columns();
+        let cols = MetaableProtocol.columns();
         assert_eq!(cols.len(), 1);
         assert_eq!(cols[0].name, COL_META);
     }

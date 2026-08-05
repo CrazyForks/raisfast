@@ -5,11 +5,11 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use raisfast_derive::aspect_service;
 
-use crate::aspects::engine::AspectEngine;
-use crate::aspects::slug_aspect;
+use crate::utils::slug;
 use crate::commands::{CreateCategoryCmd, UpdateCategoryCmd};
 use crate::dto::{CreateCategoryRequest, UpdateCategoryRequest};
 use crate::errors::app_error::AppResult;
+use crate::event::EventEmitter;
 use crate::middleware::auth::AuthUser;
 use crate::models::category::Category;
 use crate::policy::check_owner_opt;
@@ -38,16 +38,14 @@ pub trait CategoryService: Send + Sync {
 
 #[aspect_service(entity = "categories", model = Category)]
 pub struct CategoryServiceImpl {
-    #[engine]
-    aspect_engine: Arc<AspectEngine>,
+    emitter: EventEmitter,
     pool: Arc<crate::db::Pool>,
 }
 
 #[async_trait]
 impl CategoryService for CategoryServiceImpl {
     async fn create(&self, auth: &AuthUser, req: CreateCategoryRequest) -> AppResult<Category> {
-        let (req, _d) = self.before_create(auth, req).await?;
-        let slug = slug_aspect::generate_slug(&req.name);
+        let slug = slug::generate_slug(&req.name);
         let parent_id = if let Some(ref raw_id) = req.parent_id {
             if raw_id.parse::<i64>().is_ok() {
                 raw_id.parse::<i64>().ok()
@@ -89,15 +87,14 @@ impl CategoryService for CategoryServiceImpl {
         let existing =
             crate::models::category::find_by_id(&self.pool, id, auth.tenant_id()).await?;
         check_owner_opt(auth, existing.created_by, existing.tenant_id.as_deref())?;
-        let (req, _d) = self.before_update(auth, &existing, req).await?;
         let new_slug = if let Some(ref slug_val) = req.slug {
             if slug_val.is_empty() {
-                slug_aspect::generate_slug(existing.name.as_str())
+                slug::generate_slug(existing.name.as_str())
             } else {
-                slug_aspect::generate_slug(slug_val)
+                slug::generate_slug(slug_val)
             }
         } else if let Some(ref n) = req.name {
-            slug_aspect::generate_slug(n)
+            slug::generate_slug(n)
         } else {
             existing.slug
         };
@@ -139,7 +136,6 @@ impl CategoryService for CategoryServiceImpl {
         let existing =
             crate::models::category::find_by_id(&self.pool, id, auth.tenant_id()).await?;
         check_owner_opt(auth, existing.created_by, existing.tenant_id.as_deref())?;
-        self.before_delete(auth, &existing).await?;
         crate::models::category::ensure_safe_to_delete(&self.pool, existing.id, auth.tenant_id())
             .await?;
         crate::models::category::delete(&self.pool, existing.id, auth.tenant_id()).await?;
@@ -184,7 +180,7 @@ mod tests {
 
     fn make_service(pool: crate::db::Pool) -> Arc<dyn CategoryService> {
         Arc::new(CategoryServiceImpl::new(
-            Arc::new(AspectEngine::new()),
+            crate::event::EventEmitter::eventbus_only(crate::eventbus::EventBus::new(16)),
             Arc::new(pool),
         ))
     }

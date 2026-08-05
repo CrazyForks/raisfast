@@ -3,17 +3,16 @@
 //! Provides full CRUD business logic for posts, including:
 //!
 //! - Post creation, update, deletion, published listing, and detail retrieval
-//! - Slug generation via SlugAspect
-//! - Excerpt extraction via ExcerptAspect
+//! - Slug generation and excerpt extraction helpers
 //! - Post response assembly (with tags and author info)
 
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use slug::slugify;
+use ::slug::slugify;
 
-use crate::aspects::engine::AspectEngine;
-use crate::aspects::slug_aspect;
+use crate::utils::excerpt;
+use crate::utils::slug;
 use crate::commands::{CreatePostCmd, UpdatePostCmd};
 use crate::dto::{CreatePostRequest, PostResponse, UpdatePostRequest};
 use crate::errors::app_error::{AppError, AppResult};
@@ -75,66 +74,33 @@ pub trait PostService: Send + Sync {
 
 pub struct PostServiceImpl {
     pool: Arc<crate::db::Pool>,
-    aspect_engine: Arc<AspectEngine>,
+    emitter: EventEmitter,
     search: Arc<dyn SearchEngine>,
 }
 
 impl PostServiceImpl {
     pub fn new(
         pool: Arc<crate::db::Pool>,
-        aspect_engine: Arc<AspectEngine>,
+        emitter: EventEmitter,
         search: Arc<dyn SearchEngine>,
     ) -> Self {
         Self {
             pool,
-            aspect_engine,
+            emitter,
             search,
         }
     }
 
-    async fn before_create(
-        &self,
-        auth: &AuthUser,
-        req: CreatePostRequest,
-    ) -> AppResult<(CreatePostRequest, crate::aspects::Dispatched)> {
-        self.aspect_engine.before_create("posts", auth, req).await
-    }
-
-    async fn before_update(
-        &self,
-        auth: &AuthUser,
-        existing: &crate::models::post::Post,
-        req: UpdatePostRequest,
-    ) -> AppResult<(UpdatePostRequest, crate::aspects::Dispatched)> {
-        check_owner(auth, existing.created_by, existing.tenant_id.as_deref())?;
-        self.aspect_engine
-            .before_update("posts", auth, existing, req)
-            .await
-    }
-
-    async fn before_delete(
-        &self,
-        auth: &AuthUser,
-        existing: &crate::models::post::Post,
-    ) -> AppResult<crate::aspects::Dispatched> {
-        check_owner(auth, existing.created_by, existing.tenant_id.as_deref())?;
-        self.aspect_engine
-            .before_delete("posts", auth, existing)
-            .await
-    }
-
     fn after_created(&self, resp: &PostResponse) {
-        self.aspect_engine.emit(Event::PostCreated(resp.clone()));
+        self.emitter.emit(Event::PostCreated(resp.clone()));
     }
 
     fn after_updated(&self, existing: &crate::models::post::Post) {
-        self.aspect_engine
-            .emit(Event::PostUpdated(existing.clone()));
+        self.emitter.emit(Event::PostUpdated(existing.clone()));
     }
 
     fn after_deleted(&self, existing: &crate::models::post::Post) {
-        self.aspect_engine
-            .emit(Event::PostDeleted(existing.clone()));
+        self.emitter.emit(Event::PostDeleted(existing.clone()));
     }
 }
 
@@ -142,13 +108,13 @@ impl PostServiceImpl {
 impl PostService for PostServiceImpl {
     #[tracing::instrument(skip(self), fields(slug = tracing::field::Empty))]
     async fn create(&self, auth: &AuthUser, req: CreatePostRequest) -> AppResult<PostResponse> {
-        let (req, d) = self.before_create(auth, req).await?;
         let status = req.status.unwrap_or(PostStatus::Draft);
 
-        let slug = d.str_or("slug", || slug_aspect::make_unique_slug(&req.title));
-        let excerpt = d.str_or("excerpt", || {
-            crate::aspects::excerpt_aspect::extract_excerpt(&req.content, 200)
-        });
+        let slug = slug::make_unique_slug(&req.title);
+        let excerpt = req
+            .excerpt
+            .clone()
+            .unwrap_or_else(|| excerpt::extract_excerpt(&req.content, 200));
 
         let created_by = auth.user_id().ok_or(AppError::Unauthorized)?;
         let author_name =
@@ -239,10 +205,8 @@ impl PostService for PostServiceImpl {
             .ok_or_else(|| AppError::not_found("post"))?;
 
         let existing_id = existing.id;
-        let (req, d) = self.before_update(auth, &existing, req).await?;
-        let resp = self
-            .update_inner(existing_id, existing, req, d, auth)
-            .await?;
+        check_owner(auth, existing.created_by, existing.tenant_id.as_deref())?;
+        let resp = self.update_inner(existing_id, existing, req, auth).await?;
         let updated = crate::models::post::find_by_id(&self.pool, existing_id, auth.tenant_id())
             .await?
             .ok_or_else(|| AppError::not_found("post"))?;
@@ -255,8 +219,7 @@ impl PostService for PostServiceImpl {
             .await?
             .ok_or_else(|| AppError::not_found("post"))?;
 
-        self.before_delete(auth, &existing).await?;
-
+        check_owner(auth, existing.created_by, existing.tenant_id.as_deref())?;
         crate::models::post::delete(&self.pool, existing.id, auth.tenant_id()).await?;
         self.after_deleted(&existing);
         Ok(())
@@ -335,10 +298,8 @@ impl PostService for PostServiceImpl {
             .await?
             .ok_or_else(|| AppError::not_found("post"))?;
 
-        let (req, d) = self.before_update(auth, &existing, req).await?;
-        let resp = self
-            .update_inner(id, existing.clone(), req, d, auth)
-            .await?;
+        check_owner(auth, existing.created_by, existing.tenant_id.as_deref())?;
+        let resp = self.update_inner(id, existing.clone(), req, auth).await?;
         let updated = crate::models::post::find_by_id(&self.pool, id, auth.tenant_id())
             .await?
             .unwrap_or(existing);
@@ -351,8 +312,7 @@ impl PostService for PostServiceImpl {
             .await?
             .ok_or_else(|| AppError::not_found("post"))?;
 
-        self.before_delete(auth, &existing).await?;
-
+        check_owner(auth, existing.created_by, existing.tenant_id.as_deref())?;
         crate::models::post::delete(&self.pool, id, auth.tenant_id()).await?;
         self.after_deleted(&existing);
         Ok(())
@@ -380,7 +340,9 @@ impl PostService for PostServiceImpl {
                     else {
                         continue;
                     };
-                    if self.before_delete(auth, &existing).await.is_err() {
+                    if check_owner(auth, existing.created_by, existing.tenant_id.as_deref())
+                        .is_err()
+                    {
                         continue;
                     }
                     if crate::models::post::delete(
@@ -408,29 +370,6 @@ impl PostService for PostServiceImpl {
                     )
                     .await?
                     {
-                        let (req, _d) = self
-                            .before_update(
-                                auth,
-                                &post,
-                                UpdatePostRequest {
-                                    title: None,
-                                    slug: None,
-                                    content: None,
-                                    excerpt: None,
-                                    cover_image: None,
-                                    image_ids: None,
-                                    status: Some(status),
-                                    category_id: None,
-                                    tag_ids: None,
-                                    meta_title: None,
-                                    meta_description: None,
-                                    og_title: None,
-                                    og_description: None,
-                                    og_image: None,
-                                    canonical_url: None,
-                                },
-                            )
-                            .await?;
                         let cmd = UpdatePostCmd {
                             id: post.id,
                             title: None,
@@ -439,7 +378,7 @@ impl PostService for PostServiceImpl {
                             excerpt: None,
                             cover_image: None,
                             image_ids: None,
-                            status: req.status,
+                            status: Some(status),
                             category_id: None,
                             tag_ids: None,
                             updated_by: auth.user_id(),
@@ -484,33 +423,29 @@ impl PostServiceImpl {
         id: SnowflakeId,
         existing: crate::models::post::Post,
         req: UpdatePostRequest,
-        mut d: crate::aspects::Dispatched,
         auth: &AuthUser,
     ) -> AppResult<PostResponse> {
         let content = req.content.as_deref().unwrap_or(&existing.content);
-        if let Some(ref slug_val) = req.slug {
+        let slug = if let Some(ref slug_val) = req.slug {
             if !slug_val.is_empty() && slug_val != &existing.slug {
-                AspectEngine::set_dispatched_field(
-                    &mut d,
-                    "slug",
-                    slug_aspect::make_unique_slug(slug_val),
-                );
+                slug::make_unique_slug(slug_val)
+            } else {
+                existing.slug.clone()
             }
         } else if let Some(ref title_val) = req.title {
             let slugified = slugify(title_val);
             if slugified != existing.slug {
-                AspectEngine::set_dispatched_field(
-                    &mut d,
-                    "slug",
-                    slug_aspect::make_unique_slug(&slugified),
-                );
+                slug::make_unique_slug(&slugified)
+            } else {
+                existing.slug.clone()
             }
-        }
-
-        let slug = d.str("slug");
-        let excerpt = d.str_or("excerpt", || {
-            crate::aspects::excerpt_aspect::extract_excerpt(content, 200)
-        });
+        } else {
+            existing.slug.clone()
+        };
+        let excerpt = req
+            .excerpt
+            .clone()
+            .unwrap_or_else(|| excerpt::extract_excerpt(content, 200));
 
         let category_id = if let Some(ref raw_id) = req.category_id {
             let parsed = crate::types::snowflake_id::parse_id(raw_id)?;
@@ -536,7 +471,7 @@ impl PostServiceImpl {
         let cmd = UpdatePostCmd {
             id,
             title: req.title,
-            slug,
+            slug: Some(slug),
             content: Some(content.to_string()),
             excerpt: Some(excerpt),
             cover_image: req.cover_image,
@@ -917,14 +852,14 @@ mod tests {
     #[test]
     fn extract_excerpt_short_content() {
         let content = "short";
-        let result = crate::aspects::excerpt_aspect::extract_excerpt(content, 200);
+        let result = crate::utils::excerpt::extract_excerpt(content, 200);
         assert_eq!(result, "short");
     }
 
     #[test]
     fn extract_excerpt_truncates_long_content() {
         let content = "a".repeat(300);
-        let result = crate::aspects::excerpt_aspect::extract_excerpt(&content, 200);
+        let result = crate::utils::excerpt::extract_excerpt(&content, 200);
         assert!(result.ends_with("..."));
         assert_eq!(result.len(), 203);
     }
@@ -932,20 +867,20 @@ mod tests {
     #[test]
     fn extract_excerpt_exact_boundary() {
         let content = "a".repeat(200);
-        let result = crate::aspects::excerpt_aspect::extract_excerpt(&content, 200);
+        let result = crate::utils::excerpt::extract_excerpt(&content, 200);
         assert_eq!(result, "a".repeat(200));
     }
 
     #[test]
     fn extract_excerpt_unicode_safe() {
         let content = "你好世界".repeat(100);
-        let result = crate::aspects::excerpt_aspect::extract_excerpt(&content, 200);
+        let result = crate::utils::excerpt::extract_excerpt(&content, 200);
         assert!(result.ends_with("...") || result.len() <= 200);
     }
 
     #[test]
     fn make_unique_slug_has_suffix() {
-        let slug = slug_aspect::make_unique_slug("my-post");
+        let slug = slug::make_unique_slug("my-post");
         assert!(slug.starts_with("my-post-"));
         let suffix = &slug["my-post-".len()..];
         assert_eq!(suffix.len(), 4);
@@ -954,15 +889,15 @@ mod tests {
 
     #[test]
     fn make_unique_slug_different_each_call() {
-        let s1 = slug_aspect::make_unique_slug("test");
-        let s2 = slug_aspect::make_unique_slug("test");
+        let s1 = slug::make_unique_slug("test");
+        let s2 = slug::make_unique_slug("test");
         assert_ne!(s1, s2);
     }
 
     #[test]
     fn extract_excerpt_zero_max_len() {
         let content = "hello world";
-        let result = crate::aspects::excerpt_aspect::extract_excerpt(content, 0);
+        let result = crate::utils::excerpt::extract_excerpt(content, 0);
         assert!(result.is_empty() || result.ends_with("..."));
     }
 

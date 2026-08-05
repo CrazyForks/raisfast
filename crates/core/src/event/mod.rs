@@ -15,6 +15,10 @@
 use crate::types::snowflake_id::SnowflakeId;
 use serde::{Deserialize, Serialize};
 
+pub mod emitter;
+
+pub use emitter::EventEmitter;
+
 use crate::dto::PostResponse;
 use crate::models::category::Category;
 use crate::models::comment::Comment;

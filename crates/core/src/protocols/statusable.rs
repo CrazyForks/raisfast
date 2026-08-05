@@ -6,94 +6,17 @@
 //!
 //! Query filtering is not handled by the protocol but by the API rule engine (`[api.list] filter = 'status = "published"'`).
 
-use std::sync::Arc;
-
-use async_trait::async_trait;
 use serde_json::{Value, json};
 
-use crate::aspects::{
-    Advice, Aspect, AspectResult, ColumnDef, DataBeforeCreateContext, DataBeforeUpdateContext,
-    Layer, Operation, Pointcut, SqlType, TargetMatcher, When,
-};
+use crate::db::sql_type::{ColumnDef, SqlType};
 use crate::constants::COL_STATUS;
-use crate::protocols::{Protocol, ProtocolDeclaration, StatusMode};
+use crate::protocols::{HookCtx, Protocol, ProtocolDeclaration, StatusMode};
+use async_trait::async_trait;
 
-pub struct StatusableAspect;
-
-#[async_trait]
-impl Aspect for StatusableAspect {
-    fn name(&self) -> &str {
-        "statusable"
-    }
-
-    fn priority(&self) -> i32 {
-        -150
-    }
-
-    fn pointcuts(&self) -> Vec<Pointcut> {
-        vec![
-            Pointcut {
-                layer: Layer::Data,
-                operation: Operation::Create,
-                when: When::Before,
-                target: TargetMatcher::All,
-            },
-            Pointcut {
-                layer: Layer::Data,
-                operation: Operation::Update,
-                when: When::Before,
-                target: TargetMatcher::All,
-            },
-        ]
-    }
-
-    fn columns(&self) -> Vec<ColumnDef> {
-        vec![ColumnDef {
-            name: COL_STATUS.into(),
-            sql_type: SqlType::Varchar,
-            default: None,
-        }]
-    }
-
-    async fn on_data_before_create(&self, ctx: &mut DataBeforeCreateContext) -> AspectResult {
-        if !ctx
-            .schema
-            .as_ref()
-            .is_none_or(|s| s.is_protocol_column(COL_STATUS))
-        {
-            return Ok(Advice::Continue);
-        }
-
-        let decl = ctx
-            .schema
-            .as_ref()
-            .and_then(|s| s.cached_declaration.as_ref());
-
-        if !ctx.record.contains_key(COL_STATUS) {
-            let default = decl
-                .and_then(|d| d.status_default.as_deref())
-                .unwrap_or("draft");
-            let db_val = to_db_value(default, decl);
-            ctx.record.insert(COL_STATUS.into(), db_val);
-        }
-
-        if let Some(v) = ctx.record.get(COL_STATUS) {
-            validate_status(v, decl)?;
-        }
-
-        Ok(Advice::Continue)
-    }
-
-    async fn on_data_before_update(&self, ctx: &mut DataBeforeUpdateContext) -> AspectResult {
-        if let Some(v) = ctx.new_record.get(COL_STATUS) {
-            let decl = ctx
-                .schema
-                .as_ref()
-                .and_then(|s| s.cached_declaration.as_ref());
-            validate_status(v, decl)?;
-        }
-        Ok(Advice::Continue)
-    }
+fn declaration_from_schema(
+    schema: Option<&crate::content_type::schema::ContentTypeSchema>,
+) -> Option<&ProtocolDeclaration> {
+    schema.and_then(|s| s.cached_declaration.as_ref())
 }
 
 fn to_db_value(label: &str, decl: Option<&ProtocolDeclaration>) -> Value {
@@ -138,6 +61,7 @@ fn validate_status(v: &Value, decl: Option<&ProtocolDeclaration>) -> Result<(), 
 
 pub struct StatusableProtocol;
 
+#[async_trait]
 impl Protocol for StatusableProtocol {
     fn name(&self) -> &str {
         "statusable"
@@ -147,8 +71,12 @@ impl Protocol for StatusableProtocol {
         "Configurable status field supporting string and numeric mapping storage modes"
     }
 
-    fn aspects(&self) -> Vec<Arc<dyn Aspect>> {
-        vec![Arc::new(StatusableAspect)]
+    fn columns(&self) -> Vec<ColumnDef> {
+        vec![ColumnDef {
+            name: COL_STATUS.into(),
+            sql_type: SqlType::Varchar,
+            default: None,
+        }]
     }
 
     fn behaviors(&self) -> Vec<&'static str> {
@@ -198,13 +126,50 @@ impl Protocol for StatusableProtocol {
     fn built_in(&self) -> bool {
         true
     }
+
+    async fn before_create(
+        &self,
+        record: &mut serde_json::Map<String, Value>,
+        ctx: &HookCtx<'_>,
+    ) -> anyhow::Result<()> {
+        if !ctx.schema.is_none_or(|s| s.is_protocol_column(COL_STATUS)) {
+            return Ok(());
+        }
+
+        let decl = declaration_from_schema(ctx.schema);
+
+        if !record.contains_key(COL_STATUS) {
+            let default = decl
+                .and_then(|d| d.status_default.as_deref())
+                .unwrap_or("draft");
+            let db_val = to_db_value(default, decl);
+            record.insert(COL_STATUS.into(), db_val);
+        }
+
+        if let Some(v) = record.get(COL_STATUS) {
+            validate_status(v, decl)?;
+        }
+
+        Ok(())
+    }
+
+    async fn before_update(
+        &self,
+        new_record: &mut serde_json::Map<String, Value>,
+        _old_record: &serde_json::Map<String, Value>,
+        ctx: &HookCtx<'_>,
+    ) -> anyhow::Result<()> {
+        if let Some(v) = new_record.get(COL_STATUS) {
+            let decl = declaration_from_schema(ctx.schema);
+            validate_status(v, decl)?;
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::aspects::engine::AspectEngine;
-    use crate::aspects::{BaseContext, Record};
 
     #[test]
     fn parse_string_mode_values() {
@@ -248,27 +213,25 @@ mod tests {
 
     #[tokio::test]
     async fn injects_default_status_on_create() {
-        let engine = AspectEngine::new();
-        engine.register(StatusableAspect);
-
-        let mut ctx = DataBeforeCreateContext {
-            base: BaseContext::new(None, "default".into(), "now".into()),
-            table: "posts".into(),
-            record: Record::new(),
+        let protocol = StatusableProtocol;
+        let mut record = serde_json::Map::new();
+        let ctx = HookCtx {
+            user_id: None,
+            user_role: None,
+            tenant_id: "default",
+            now: "now",
             schema: None,
+            pool: None,
         };
 
-        engine
-            .dispatch_data_before_create("posts", &mut ctx)
-            .await
-            .unwrap();
+        protocol.before_create(&mut record, &ctx).await.unwrap();
 
-        assert_eq!(ctx.record.get(COL_STATUS), Some(&json!("draft")));
+        assert_eq!(record.get(COL_STATUS), Some(&json!("draft")));
     }
 
     #[test]
     fn provides_status_column() {
-        let cols = StatusableAspect.columns();
+        let cols = StatusableProtocol.columns();
         assert_eq!(cols.len(), 1);
         assert_eq!(cols[0].name, COL_STATUS);
     }

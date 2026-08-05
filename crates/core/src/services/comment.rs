@@ -7,10 +7,9 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 
-use crate::aspects::engine::AspectEngine;
 use crate::commands::CreateCommentCmd;
 use crate::errors::app_error::{AppError, AppResult};
-use crate::event::Event;
+use crate::event::{Event, EventEmitter};
 use crate::middleware::auth::AuthUser;
 use crate::models::comment::{self, AdminCommentRow, CommentResponse, CommentStatus};
 use crate::policy::check_owner_opt;
@@ -60,34 +59,20 @@ pub trait CommentService: Send + Sync {
 
 pub struct CommentServiceImpl {
     pool: Arc<crate::db::Pool>,
-    aspect_engine: Arc<AspectEngine>,
+    emitter: EventEmitter,
 }
 
 impl CommentServiceImpl {
-    pub fn new(pool: Arc<crate::db::Pool>, aspect_engine: Arc<AspectEngine>) -> Self {
-        Self {
-            pool,
-            aspect_engine,
-        }
-    }
-
-    async fn before_delete(
-        &self,
-        auth: &AuthUser,
-        existing: &crate::models::comment::Comment,
-    ) -> AppResult<crate::aspects::Dispatched> {
-        check_owner_opt(auth, existing.created_by, existing.tenant_id.as_deref())?;
-        self.aspect_engine
-            .before_delete("comments", auth, existing)
-            .await
+    pub fn new(pool: Arc<crate::db::Pool>, emitter: EventEmitter) -> Self {
+        Self { pool, emitter }
     }
 
     fn after_updated(&self, c: &crate::models::comment::Comment) {
-        self.aspect_engine.emit(Event::CommentUpdated(c.clone()));
+        self.emitter.emit(Event::CommentUpdated(c.clone()));
     }
 
     fn after_deleted(&self, c: &crate::models::comment::Comment) {
-        self.aspect_engine.emit(Event::CommentDeleted(c.clone()));
+        self.emitter.emit(Event::CommentDeleted(c.clone()));
     }
 }
 
@@ -129,12 +114,7 @@ impl CommentService for CommentServiceImpl {
             parent_id: parent_id.map(std::string::ToString::to_string),
         };
 
-        let (filtered, _d) = self
-            .aspect_engine
-            .before_create("comments", auth, comment_input)
-            .await?;
-
-        let parent_id = if let Some(ref raw_id) = filtered.parent_id {
+        let parent_id = if let Some(ref raw_id) = comment_input.parent_id {
             if raw_id.is_empty() {
                 None
             } else if let Ok(int_id) = raw_id.parse::<i64>() {
@@ -154,16 +134,16 @@ impl CommentService for CommentServiceImpl {
             &CreateCommentCmd {
                 post_id: p.id,
                 created_by: auth.user_id(),
-                nickname: filtered.nickname,
-                email: filtered.email,
-                content: filtered.content,
+                nickname: comment_input.nickname,
+                email: comment_input.email,
+                content: comment_input.content,
                 parent_id,
             },
             auth.tenant_id(),
         )
         .await?;
 
-        self.aspect_engine.emit(Event::CommentCreated(c.clone()));
+        self.emitter.emit(Event::CommentCreated(c.clone()));
 
         Ok(CommentResponse {
             id: c.id.to_string(),
@@ -205,7 +185,7 @@ impl CommentService for CommentServiceImpl {
             .await?
             .ok_or_else(|| AppError::not_found("comment"))?;
 
-        self.before_delete(auth, &c).await?;
+        check_owner_opt(auth, c.created_by, c.tenant_id.as_deref())?;
         comment::delete(&self.pool, c.id, auth.tenant_id()).await?;
         self.after_deleted(&c);
         Ok(())
@@ -220,9 +200,6 @@ impl CommentService for CommentServiceImpl {
         let c = comment::find_by_id(&self.pool, comment_id, auth.tenant_id())
             .await?
             .ok_or_else(|| AppError::not_found("comment"))?;
-        self.aspect_engine
-            .before_update("comments", auth, &c, status)
-            .await?;
         comment::update_status(&self.pool, c.id, status, auth.tenant_id()).await?;
         self.after_updated(&c);
         Ok(())
@@ -335,7 +312,10 @@ mod tests {
         let user = insert_user(&pool).await;
         let post_id = insert_post(&pool, *user.id).await;
         let c = insert_comment(&pool, post_id, *user.id).await;
-        let svc = CommentServiceImpl::new(Arc::new(pool.clone()), Arc::new(AspectEngine::new()));
+        let svc = CommentServiceImpl::new(
+            Arc::new(pool.clone()),
+            crate::event::EventEmitter::eventbus_only(crate::eventbus::EventBus::new(16)),
+        );
         svc.update_status(c.id, CommentStatus::Approved, &auth(&user))
             .await
             .unwrap();
@@ -352,7 +332,10 @@ mod tests {
     #[tokio::test]
     async fn update_comment_status_not_found() {
         let pool = setup_pool().await;
-        let svc = CommentServiceImpl::new(Arc::new(pool.clone()), Arc::new(AspectEngine::new()));
+        let svc = CommentServiceImpl::new(
+            Arc::new(pool.clone()),
+            crate::event::EventEmitter::eventbus_only(crate::eventbus::EventBus::new(16)),
+        );
         let a = AuthUser::new_test(0, crate::models::user::UserRole::Admin, "");
         assert!(
             svc.update_status(SnowflakeId(999999), CommentStatus::Approved, &a)
@@ -367,7 +350,10 @@ mod tests {
         let user = insert_user(&pool).await;
         let post_id = insert_post(&pool, *user.id).await;
         let c = insert_comment(&pool, post_id, *user.id).await;
-        let svc = CommentServiceImpl::new(Arc::new(pool.clone()), Arc::new(AspectEngine::new()));
+        let svc = CommentServiceImpl::new(
+            Arc::new(pool.clone()),
+            crate::event::EventEmitter::eventbus_only(crate::eventbus::EventBus::new(16)),
+        );
         let a = AuthUser::from_parts(Some(*user.id), crate::models::user::UserRole::Admin, None);
         svc.delete(c.id, &a).await.unwrap();
         assert!(
@@ -381,7 +367,10 @@ mod tests {
     #[tokio::test]
     async fn delete_comment_not_found() {
         let pool = setup_pool().await;
-        let svc = CommentServiceImpl::new(Arc::new(pool.clone()), Arc::new(AspectEngine::new()));
+        let svc = CommentServiceImpl::new(
+            Arc::new(pool.clone()),
+            crate::event::EventEmitter::eventbus_only(crate::eventbus::EventBus::new(16)),
+        );
         let a = AuthUser::new_test(0, crate::models::user::UserRole::Admin, "");
         assert!(svc.delete(SnowflakeId(999999), &a).await.is_err());
     }
@@ -392,7 +381,10 @@ mod tests {
         let user = insert_user(&pool).await;
         let post_id = insert_post(&pool, *user.id).await;
         let c = insert_comment(&pool, post_id, *user.id).await;
-        let svc = CommentServiceImpl::new(Arc::new(pool.clone()), Arc::new(AspectEngine::new()));
+        let svc = CommentServiceImpl::new(
+            Arc::new(pool.clone()),
+            crate::event::EventEmitter::eventbus_only(crate::eventbus::EventBus::new(16)),
+        );
         svc.update_status(c.id, CommentStatus::Spam, &auth(&user))
             .await
             .unwrap();

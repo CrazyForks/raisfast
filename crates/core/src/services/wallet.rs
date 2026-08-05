@@ -2,10 +2,9 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 
-use crate::aspects::engine::AspectEngine;
 use crate::db::pool::DbConnection;
 use crate::errors::app_error::{AppError, AppResult};
-use crate::event::Event;
+use crate::event::{Event, EventEmitter};
 use crate::middleware::auth::AuthUser;
 use crate::models::currencies;
 use crate::models::wallet;
@@ -125,24 +124,21 @@ pub trait WalletService: Send + Sync {
 }
 
 pub struct WalletServiceImpl {
-    aspect_engine: Arc<AspectEngine>,
+    emitter: EventEmitter,
     pool: Arc<crate::db::Pool>,
 }
 
 impl WalletServiceImpl {
-    pub fn new(aspect_engine: Arc<AspectEngine>, pool: Arc<crate::db::Pool>) -> Self {
-        Self {
-            aspect_engine,
-            pool,
-        }
+    pub fn new(emitter: EventEmitter, pool: Arc<crate::db::Pool>) -> Self {
+        Self { emitter, pool }
     }
 
     fn after_credited(&self, tx: &WalletTransaction) {
-        self.aspect_engine.emit(Event::WalletCredited(tx.clone()));
+        self.emitter.emit(Event::WalletCredited(tx.clone()));
     }
 
     fn after_debited(&self, tx: &WalletTransaction) {
-        self.aspect_engine.emit(Event::WalletDebited(tx.clone()));
+        self.emitter.emit(Event::WalletDebited(tx.clone()));
     }
 }
 

@@ -237,7 +237,7 @@ pub async fn setup_init(
     crate::services::auth::validate_password_strength(&req.password)?;
 
     let user = crate::services::auth::register(
-        &state.aspect_engine,
+        &state.emitter,
         crate::dto::RegisterRequest {
             email: req.email,
             username: req.username,

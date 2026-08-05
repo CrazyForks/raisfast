@@ -2,11 +2,10 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 
-use crate::aspects::engine::AspectEngine;
 use crate::commands::CreateOrderCmd;
 use crate::dto::{CreateOrderRequest, ShipOrderRequest};
 use crate::errors::app_error::{AppError, AppResult};
-use crate::event::Event;
+use crate::event::{Event, EventEmitter};
 use crate::middleware::auth::AuthUser;
 use crate::models::order::{Order, OrderStatus};
 use crate::models::order_item::OrderItem;
@@ -75,7 +74,7 @@ pub trait OrderService: Send + Sync {
 }
 
 pub struct OrderServiceImpl {
-    aspect_engine: Arc<AspectEngine>,
+    emitter: EventEmitter,
     pool: Arc<crate::db::Pool>,
     options: Arc<crate::services::options::OptionsService>,
     coupon_service: Option<Arc<dyn crate::services::coupon::CouponService>>,
@@ -85,12 +84,12 @@ pub struct OrderServiceImpl {
 
 impl OrderServiceImpl {
     pub fn new(
-        aspect_engine: Arc<AspectEngine>,
+        emitter: EventEmitter,
         pool: Arc<crate::db::Pool>,
         options: Arc<crate::services::options::OptionsService>,
     ) -> Self {
         Self {
-            aspect_engine,
+            emitter,
             pool,
             options,
             coupon_service: None,
@@ -114,34 +113,24 @@ impl OrderServiceImpl {
         self
     }
 
-    async fn before_create(
-        &self,
-        auth: &AuthUser,
-        req: CreateOrderRequest,
-    ) -> AppResult<(CreateOrderRequest, crate::aspects::Dispatched)> {
-        self.aspect_engine.before_create("orders", auth, req).await
-    }
-
     fn after_created(&self, order: &Order) {
-        self.aspect_engine.emit(Event::OrderCreated(order.clone()));
+        self.emitter.emit(Event::OrderCreated(order.clone()));
     }
 
     fn after_paid(&self, order: &Order) {
-        self.aspect_engine.emit(Event::OrderPaid(order.clone()));
+        self.emitter.emit(Event::OrderPaid(order.clone()));
     }
 
     fn after_shipped(&self, order: &Order) {
-        self.aspect_engine.emit(Event::OrderShipped(order.clone()));
+        self.emitter.emit(Event::OrderShipped(order.clone()));
     }
 
     fn after_completed(&self, order: &Order) {
-        self.aspect_engine
-            .emit(Event::OrderCompleted(order.clone()));
+        self.emitter.emit(Event::OrderCompleted(order.clone()));
     }
 
     fn after_cancelled(&self, order: &Order) {
-        self.aspect_engine
-            .emit(Event::OrderCancelled(order.clone()));
+        self.emitter.emit(Event::OrderCancelled(order.clone()));
     }
 }
 
@@ -153,8 +142,6 @@ impl OrderService for OrderServiceImpl {
         user_id: SnowflakeId,
         req: CreateOrderRequest,
     ) -> AppResult<(Order, Vec<OrderItem>)> {
-        let (req, _d) = self.before_create(auth, req).await?;
-
         if req.items.is_empty() {
             return Err(AppError::BadRequest("items_empty".into()));
         }
@@ -422,10 +409,6 @@ impl OrderService for OrderServiceImpl {
             return Err(AppError::BadRequest("only_pending_can_cancel".into()));
         }
 
-        self.aspect_engine
-            .before_update("orders", auth, &order, OrderStatus::Cancelled)
-            .await?;
-
         let result: Result<(), AppError> = async {
             crate::in_transaction!(&self.pool, tx, {
                 let rows = crate::models::order::tx_update_status_cas(
@@ -485,10 +468,6 @@ impl OrderService for OrderServiceImpl {
             return Err(AppError::BadRequest("only_pending_can_pay".into()));
         }
 
-        self.aspect_engine
-            .before_update("orders", auth, &order, OrderStatus::Paid)
-            .await?;
-
         let result: Result<(), AppError> = async {
             crate::in_transaction!(&self.pool, tx, {
                 let rows = crate::models::order::tx_update_status_cas(
@@ -530,10 +509,6 @@ impl OrderService for OrderServiceImpl {
             return Err(AppError::BadRequest("only_paid_can_ship".into()));
         }
 
-        self.aspect_engine
-            .before_update("orders", auth, &order, OrderStatus::Shipped)
-            .await?;
-
         let order_id = order.id;
         let result: Result<(), AppError> = async {
             crate::in_transaction!(&self.pool, tx, {
@@ -574,10 +549,6 @@ impl OrderService for OrderServiceImpl {
             return Err(AppError::BadRequest("only_shipped_can_confirm".into()));
         }
 
-        self.aspect_engine
-            .before_update("orders", auth, &order, OrderStatus::Completed)
-            .await?;
-
         let result: Result<(), AppError> = async {
             crate::in_transaction!(&self.pool, tx, {
                 let rows = crate::models::order::tx_update_status_cas(
@@ -612,10 +583,6 @@ impl OrderService for OrderServiceImpl {
             ));
         }
 
-        self.aspect_engine
-            .before_update("orders", auth, &order, OrderStatus::Refunding)
-            .await?;
-
         let expected = order.status;
         let result: Result<(), AppError> = async {
             crate::in_transaction!(&self.pool, tx, {
@@ -647,10 +614,6 @@ impl OrderService for OrderServiceImpl {
                 "only_pending_or_paid_can_admin_cancel".into(),
             ));
         }
-
-        self.aspect_engine
-            .before_update("orders", auth, &order, OrderStatus::Cancelled)
-            .await?;
 
         let expected = order.status;
         let order_id = order.id;
@@ -810,7 +773,7 @@ mod tests {
 
     async fn make_service(pool: crate::db::Pool) -> Arc<dyn OrderService> {
         Arc::new(OrderServiceImpl::new(
-            Arc::new(AspectEngine::new()),
+            crate::event::EventEmitter::eventbus_only(crate::eventbus::EventBus::new(16)),
             Arc::new(pool),
             Arc::new(
                 crate::services::options::OptionsService::new(Arc::new(setup_pool().await), false)

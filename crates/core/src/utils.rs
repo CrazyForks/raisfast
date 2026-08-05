@@ -6,7 +6,9 @@
 //! - **markdown** — Markdown to HTML rendering pipeline (with XSS protection)
 
 pub mod crypto;
+pub mod excerpt;
 pub mod id;
 pub mod markdown;
 pub mod pagination;
+pub mod slug;
 pub mod tz;

@@ -7,9 +7,9 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use raisfast_derive::aspect_service;
 
-use crate::aspects::engine::AspectEngine;
 use crate::commands::{CreatePageCmd, UpdatePageCmd};
 use crate::errors::app_error::{AppError, AppResult};
+use crate::event::EventEmitter;
 use crate::middleware::auth::AuthUser;
 use crate::models::page::{self, Page, PageStatus};
 use crate::policy::check_owner;
@@ -53,8 +53,7 @@ pub trait PageService: Send + Sync {
 
 #[aspect_service(entity = "pages", model = Page)]
 pub struct PageServiceImpl {
-    #[engine]
-    aspect_engine: Arc<AspectEngine>,
+    emitter: EventEmitter,
     pool: Arc<crate::db::Pool>,
 }
 
@@ -99,7 +98,6 @@ impl PageService for PageServiceImpl {
     }
 
     async fn create_page(&self, auth: &AuthUser, cmd: CreatePageCmd) -> AppResult<Page> {
-        let (cmd, _d) = self.before_create(auth, cmd).await?;
         if let Some(ref blocks) = cmd.blocks {
             Self::validate_blocks_json(blocks)?;
         }
@@ -120,7 +118,6 @@ impl PageService for PageServiceImpl {
 
         check_owner(auth, existing.created_by, existing.tenant_id.as_deref())?;
         cmd.id = existing.id;
-        let (cmd, _d) = self.before_update(auth, &existing, cmd).await?;
         if let Some(ref blocks) = cmd.blocks {
             Self::validate_blocks_json(blocks)?;
         }
@@ -134,7 +131,6 @@ impl PageService for PageServiceImpl {
             .await?
             .ok_or_else(|| AppError::not_found("page"))?;
         check_owner(auth, p.created_by, p.tenant_id.as_deref())?;
-        self.before_delete(auth, &p).await?;
         page::delete(&self.pool, p.id, auth.tenant_id()).await?;
         self.after_deleted(&p);
         Ok(())
@@ -150,9 +146,6 @@ impl PageService for PageServiceImpl {
             .await?
             .ok_or_else(|| AppError::not_found("page"))?;
         check_owner(auth, p.created_by, p.tenant_id.as_deref())?;
-        self.aspect_engine
-            .before_update("pages", auth, &p, status)
-            .await?;
         let updated =
             page::update_status(&self.pool, p.id, status, auth.user_id(), auth.tenant_id()).await?;
         self.after_updated(&updated);

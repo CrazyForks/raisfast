@@ -5,11 +5,11 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use raisfast_derive::aspect_service;
 
-use crate::aspects::engine::AspectEngine;
-use crate::aspects::slug_aspect;
+use crate::utils::slug;
 use crate::commands::{CreateProductCmd, UpdateProductCmd};
 use crate::dto::{CreateProductRequest, UpdateProductRequest};
 use crate::errors::app_error::{AppError, AppResult};
+use crate::event::EventEmitter;
 use crate::middleware::auth::AuthUser;
 use crate::models::product::Product;
 use crate::services::options::OptionsService;
@@ -47,8 +47,7 @@ pub trait ProductService: Send + Sync {
 
 #[aspect_service(entity = "products", model = Product)]
 pub struct ProductServiceImpl {
-    #[engine]
-    aspect_engine: Arc<AspectEngine>,
+    emitter: EventEmitter,
     pool: Arc<crate::db::Pool>,
     options: Arc<OptionsService>,
 }
@@ -56,7 +55,6 @@ pub struct ProductServiceImpl {
 #[async_trait]
 impl ProductService for ProductServiceImpl {
     async fn create(&self, auth: &AuthUser, req: CreateProductRequest) -> AppResult<Product> {
-        let (req, _d) = self.before_create(auth, req).await?;
         let product_type = req.product_type.as_deref().unwrap_or("custom");
         let fulfillment_type = req.fulfillment_type.as_deref().unwrap_or("digital");
         let default_currency = self
@@ -67,7 +65,7 @@ impl ProductService for ProductServiceImpl {
             .unwrap_or_else(|| "USD".to_string());
         let currency = req.currency.as_deref().unwrap_or(&default_currency);
         crate::models::currencies::ensure_active(&self.pool, currency, auth.tenant_id()).await?;
-        let generated_slug = slug_aspect::generate_slug(&req.title);
+        let generated_slug = slug::generate_slug(&req.title);
         let slug = req.slug.as_deref().or(Some(generated_slug.as_str()));
         let category_id = resolve_category_id(&self.pool, auth, req.category_id.as_deref()).await?;
         let tag_ids = parse_tag_ids(&self.pool, req.tag_ids.as_deref(), auth.tenant_id()).await?;
@@ -129,8 +127,6 @@ impl ProductService for ProductServiceImpl {
         let existing = crate::models::product::find_by_id(&self.pool, id, auth.tenant_id())
             .await?
             .ok_or_else(|| AppError::not_found("product"))?;
-
-        let (req, _d) = self.before_update(auth, &existing, req).await?;
 
         let title = req.title.as_deref().unwrap_or(&existing.title);
         let product_type = req
@@ -248,7 +244,6 @@ impl ProductService for ProductServiceImpl {
         let existing = crate::models::product::find_by_id(&self.pool, id, auth.tenant_id())
             .await?
             .ok_or_else(|| AppError::not_found("product"))?;
-        self.before_delete(auth, &existing).await?;
         crate::models::product::delete_by_id(&self.pool, existing.id, auth.tenant_id()).await?;
         self.after_deleted(&existing);
         Ok(())
@@ -442,7 +437,7 @@ mod tests {
 
     async fn make_service(pool: crate::db::Pool) -> Arc<dyn ProductService> {
         Arc::new(ProductServiceImpl::new(
-            Arc::new(AspectEngine::new()),
+            crate::event::EventEmitter::eventbus_only(crate::eventbus::EventBus::new(16)),
             Arc::new(pool),
             Arc::new(OptionsService::new(Arc::new(setup_pool().await), false).await),
         ))

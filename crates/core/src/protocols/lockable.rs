@@ -2,63 +2,18 @@
 //!
 //! Provides a version column `version`; appends WHERE version = ? on UPDATE,
 //! returns 409 Conflict when affected rows is 0.
-//! The Aspect injects version = 1 on create.
+//! The protocol injects version = 1 on create.
 
-use std::sync::Arc;
+use serde_json::{Value, json};
 
-use async_trait::async_trait;
-use serde_json::json;
-
-use crate::aspects::{
-    Advice, Aspect, AspectResult, ColumnDef, DataBeforeCreateContext, Layer, Operation, Pointcut,
-    SqlType, TargetMatcher, When,
-};
+use crate::db::sql_type::{ColumnDef, SqlType};
 use crate::constants::COL_LOCK_VERSION;
-use crate::protocols::{Protocol, ProtocolDeclaration};
-
-pub struct LockableAspect;
-
-#[async_trait]
-impl Aspect for LockableAspect {
-    fn name(&self) -> &str {
-        "lockable"
-    }
-
-    fn priority(&self) -> i32 {
-        -100
-    }
-
-    fn pointcuts(&self) -> Vec<Pointcut> {
-        vec![Pointcut {
-            layer: Layer::Data,
-            operation: Operation::Create,
-            when: When::Before,
-            target: TargetMatcher::All,
-        }]
-    }
-
-    fn columns(&self) -> Vec<ColumnDef> {
-        vec![ColumnDef {
-            name: COL_LOCK_VERSION.into(),
-            sql_type: SqlType::Integer,
-            default: Some("1".into()),
-        }]
-    }
-
-    async fn on_data_before_create(&self, ctx: &mut DataBeforeCreateContext) -> AspectResult {
-        let should_inject = ctx
-            .schema
-            .as_ref()
-            .is_none_or(|s| s.is_protocol_column(COL_LOCK_VERSION));
-        if should_inject {
-            ctx.record.insert(COL_LOCK_VERSION.into(), json!(1));
-        }
-        Ok(Advice::Continue)
-    }
-}
+use crate::protocols::{HookCtx, Protocol, ProtocolDeclaration};
+use async_trait::async_trait;
 
 pub struct LockableProtocol;
 
+#[async_trait]
 impl Protocol for LockableProtocol {
     fn name(&self) -> &str {
         "lockable"
@@ -68,8 +23,12 @@ impl Protocol for LockableProtocol {
         "Optimistic locking; checks the version column on update to prevent concurrent overwrites"
     }
 
-    fn aspects(&self) -> Vec<Arc<dyn Aspect>> {
-        vec![Arc::new(LockableAspect)]
+    fn columns(&self) -> Vec<ColumnDef> {
+        vec![ColumnDef {
+            name: COL_LOCK_VERSION.into(),
+            sql_type: SqlType::Integer,
+            default: Some("1".into()),
+        }]
     }
 
     fn behaviors(&self) -> Vec<&'static str> {
@@ -86,37 +45,51 @@ impl Protocol for LockableProtocol {
     fn built_in(&self) -> bool {
         true
     }
+
+    async fn before_create(
+        &self,
+        record: &mut serde_json::Map<String, Value>,
+        ctx: &HookCtx<'_>,
+    ) -> anyhow::Result<()> {
+        let should_inject = ctx
+            .schema
+            .is_none_or(|s| s.is_protocol_column(COL_LOCK_VERSION));
+        if should_inject {
+            record.insert(COL_LOCK_VERSION.into(), json!(1));
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::aspects::engine::AspectEngine;
-    use crate::aspects::{BaseContext, Record};
+
+    fn ctx() -> HookCtx<'static> {
+        HookCtx {
+            user_id: None,
+            user_role: None,
+            tenant_id: "default",
+            now: "now",
+            schema: None,
+            pool: None,
+        }
+    }
 
     #[tokio::test]
     async fn injects_version_on_create() {
-        let engine = AspectEngine::new();
-        engine.register(LockableAspect);
+        let protocol = LockableProtocol;
+        let mut record = serde_json::Map::new();
+        let ctx = ctx();
 
-        let mut ctx = DataBeforeCreateContext {
-            base: BaseContext::new(None, "default".into(), "now".into()),
-            table: "posts".into(),
-            record: Record::new(),
-            schema: None,
-        };
+        protocol.before_create(&mut record, &ctx).await.unwrap();
 
-        engine
-            .dispatch_data_before_create("posts", &mut ctx)
-            .await
-            .unwrap();
-
-        assert_eq!(ctx.record.get(COL_LOCK_VERSION).unwrap(), &json!(1));
+        assert_eq!(record.get(COL_LOCK_VERSION).unwrap(), &json!(1));
     }
 
     #[tokio::test]
     async fn provides_version_column() {
-        let cols = LockableAspect.columns();
+        let cols = LockableProtocol.columns();
         assert_eq!(cols.len(), 1);
         assert_eq!(cols[0].name, COL_LOCK_VERSION);
     }

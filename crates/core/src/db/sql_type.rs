@@ -1,7 +1,8 @@
-//! Cross-database SQL column type enum.
+//! Cross-database SQL column type definitions.
 //!
-//! Each variant maps to the appropriate native type for SQLite / MySQL / PostgreSQL.
-//! Used by `field_type_to_sql()`, Aspect protocols, and migration code.
+//! `SqlType` maps each variant to the appropriate native type for SQLite /
+//! MySQL / PostgreSQL. `ColumnDef` describes a column for protocol-driven
+//! schema generation.
 //!
 //! Adding a new database: just add one column to the `TYPE_MAP` table below.
 
@@ -20,6 +21,14 @@ pub enum SqlType {
     Time,
     Decimal,
     Json,
+}
+
+/// A column definition for protocol-driven schema generation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ColumnDef {
+    pub name: String,
+    pub sql_type: SqlType,
+    pub default: Option<String>,
 }
 
 impl SqlType {

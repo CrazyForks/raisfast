@@ -270,7 +270,7 @@ pub async fn create(
 
     let slug = req
         .slug
-        .unwrap_or_else(|| crate::aspects::slug_aspect::generate_slug(&req.title));
+        .unwrap_or_else(|| crate::utils::slug::generate_slug(&req.title));
     let template = req.template.unwrap_or_else(|| "default".to_string());
     let status = req.status.unwrap_or(PageStatus::Draft);
 

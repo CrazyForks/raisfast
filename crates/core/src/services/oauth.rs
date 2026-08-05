@@ -10,11 +10,10 @@ use chrono::Utc;
 #[cfg(feature = "export-types")]
 use ts_rs::TS;
 
-use crate::aspects::engine::AspectEngine;
 use crate::commands::CreateUserCmd;
 use crate::dto::LoginResponse;
 use crate::errors::app_error::{AppError, AppResult};
-use crate::event::Event;
+use crate::event::{Event, EventEmitter};
 use crate::middleware::auth::AuthUser;
 use crate::models::oauth;
 use crate::oauth::{OAuthProviderRegistry, OAuthUserInfo};
@@ -81,7 +80,7 @@ pub async fn handle_callback(
     jwt_secret: &str,
     jwt_access_expires: u64,
     jwt_refresh_expires: u64,
-    aspect_engine: &AspectEngine,
+    emitter: &EventEmitter,
 ) -> AppResult<OAuthCallbackResult> {
     let provider = registry.get(provider_name).ok_or_else(|| {
         AppError::BadRequest(format!("unsupported OAuth provider: {provider_name}"))
@@ -166,7 +165,7 @@ pub async fn handle_callback(
             )
             .await?;
 
-            aspect_engine.emit(Event::UserLoggedIn {
+            emitter.emit(Event::UserLoggedIn {
                 user: user.clone(),
                 success: true,
             });
@@ -175,7 +174,7 @@ pub async fn handle_callback(
         }
     }
 
-    let user = auto_register_user(pool, provider_name, &user_info, aspect_engine).await?;
+    let user = auto_register_user(pool, provider_name, &user_info, emitter).await?;
 
     do_bind_oauth(pool, user.id, provider_name, &token_resp, &user_info).await?;
 
@@ -314,7 +313,7 @@ async fn auto_register_user(
     pool: &crate::db::Pool,
     provider_name: &str,
     user_info: &OAuthUserInfo,
-    aspect_engine: &AspectEngine,
+    emitter: &EventEmitter,
 ) -> AppResult<crate::models::user::User> {
     let base_username = user_info.display_name.clone().unwrap_or_else(|| {
         format!(
@@ -364,7 +363,7 @@ async fn auto_register_user(
         .await?
         .ok_or_else(|| AppError::not_found("user"))?;
 
-    aspect_engine.emit(Event::UserRegistered(user.clone()));
+    emitter.emit(Event::UserRegistered(user.clone()));
 
     Ok(user)
 }

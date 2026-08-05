@@ -3,11 +3,11 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use raisfast_derive::aspect_service;
 
-use crate::aspects::engine::AspectEngine;
-use crate::aspects::slug_aspect;
+use crate::utils::slug;
 use crate::commands::{CreateProductCategoryCmd, UpdateProductCategoryCmd};
 use crate::dto::{CreateProductCategoryRequest, UpdateProductCategoryRequest};
 use crate::errors::app_error::AppResult;
+use crate::event::EventEmitter;
 use crate::middleware::auth::AuthUser;
 use crate::models::product_category::ProductCategory;
 use crate::policy::check_owner_opt;
@@ -39,8 +39,7 @@ pub trait ProductCategoryService: Send + Sync {
 
 #[aspect_service(entity = "product_categories", model = ProductCategory)]
 pub struct ProductCategoryServiceImpl {
-    #[engine]
-    aspect_engine: Arc<AspectEngine>,
+    emitter: EventEmitter,
     pool: Arc<crate::db::Pool>,
 }
 
@@ -51,8 +50,7 @@ impl ProductCategoryService for ProductCategoryServiceImpl {
         auth: &AuthUser,
         req: CreateProductCategoryRequest,
     ) -> AppResult<ProductCategory> {
-        let (req, _d) = self.before_create(auth, req).await?;
-        let slug = slug_aspect::generate_slug(&req.name);
+        let slug = slug::generate_slug(&req.name);
         let parent_id = resolve_parent_id(&self.pool, auth, req.parent_id.as_deref()).await?;
         let cmd = CreateProductCategoryCmd {
             name: req.name,
@@ -87,11 +85,10 @@ impl ProductCategoryService for ProductCategoryServiceImpl {
         let existing =
             crate::models::product_category::find_by_id(&self.pool, id, auth.tenant_id()).await?;
         check_owner_opt(auth, existing.created_by, existing.tenant_id.as_deref())?;
-        let (req, _d) = self.before_update(auth, &existing, req).await?;
         let new_slug = req
             .name
             .as_ref()
-            .map(|n| slug_aspect::generate_slug(n))
+            .map(|n| slug::generate_slug(n))
             .unwrap_or(existing.slug);
         let parent_id = resolve_parent_id(&self.pool, auth, req.parent_id.as_deref()).await?;
         let cmd = UpdateProductCategoryCmd {
@@ -123,7 +120,6 @@ impl ProductCategoryService for ProductCategoryServiceImpl {
         let existing =
             crate::models::product_category::find_by_id(&self.pool, id, auth.tenant_id()).await?;
         check_owner_opt(auth, existing.created_by, existing.tenant_id.as_deref())?;
-        self.before_delete(auth, &existing).await?;
         crate::models::product_category::ensure_safe_to_delete(
             &self.pool,
             existing.id,
@@ -195,7 +191,7 @@ mod tests {
 
     fn make_service(pool: crate::db::Pool) -> Arc<dyn ProductCategoryService> {
         Arc::new(ProductCategoryServiceImpl::new(
-            Arc::new(AspectEngine::new()),
+            crate::event::EventEmitter::eventbus_only(crate::eventbus::EventBus::new(16)),
             Arc::new(pool),
         ))
     }

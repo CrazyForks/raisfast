@@ -255,7 +255,7 @@ pub struct AppState {
     pub storage: Arc<dyn Storage>,             // File storage (local/S3)
     pub cache: Arc<dyn CacheStore>,            // In-memory cache
     pub content_type_registry: Arc<ContentTypeRegistry>,  // Dynamic CT registry
-    pub aspect_engine: Arc<AspectEngine>,      // AOP aspect engine
+    pub emitter: EventEmitter,                  // Domain event emitter
     pub protocol_registry: Arc<ProtocolRegistry>,  // Protocol declarations
     pub options: Arc<OptionsService>,          // Key-value options
     pub rbac: Arc<RbacService>,                // RBAC permission service

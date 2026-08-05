@@ -1,63 +1,18 @@
 //! sortable Protocol — explicit sort column
 //!
 //! Provides a sort key column `sort_key`; list queries default to sorting by sort_key Desc.
-//! The Aspect injects sort_key = 0 on create.
+//! The protocol injects sort_key = 0 on create.
 
-use std::sync::Arc;
+use serde_json::{Value, json};
 
-use async_trait::async_trait;
-use serde_json::json;
-
-use crate::aspects::{
-    Advice, Aspect, AspectResult, ColumnDef, DataBeforeCreateContext, Layer, Operation, Pointcut,
-    SqlType, TargetMatcher, When,
-};
+use crate::db::sql_type::{ColumnDef, SqlType};
 use crate::constants::COL_SORT_KEY;
-use crate::protocols::{Protocol, ProtocolDeclaration, SortDir};
-
-pub struct SortableAspect;
-
-#[async_trait]
-impl Aspect for SortableAspect {
-    fn name(&self) -> &str {
-        "sortable"
-    }
-
-    fn priority(&self) -> i32 {
-        -100
-    }
-
-    fn pointcuts(&self) -> Vec<Pointcut> {
-        vec![Pointcut {
-            layer: Layer::Data,
-            operation: Operation::Create,
-            when: When::Before,
-            target: TargetMatcher::All,
-        }]
-    }
-
-    fn columns(&self) -> Vec<ColumnDef> {
-        vec![ColumnDef {
-            name: COL_SORT_KEY.into(),
-            sql_type: SqlType::Integer,
-            default: Some("0".into()),
-        }]
-    }
-
-    async fn on_data_before_create(&self, ctx: &mut DataBeforeCreateContext) -> AspectResult {
-        let should_inject = ctx
-            .schema
-            .as_ref()
-            .is_none_or(|s| s.is_protocol_column(COL_SORT_KEY));
-        if should_inject && !ctx.record.contains_key(COL_SORT_KEY) {
-            ctx.record.insert(COL_SORT_KEY.into(), json!(0));
-        }
-        Ok(Advice::Continue)
-    }
-}
+use crate::protocols::{HookCtx, Protocol, ProtocolDeclaration, SortDir};
+use async_trait::async_trait;
 
 pub struct SortableProtocol;
 
+#[async_trait]
 impl Protocol for SortableProtocol {
     fn name(&self) -> &str {
         "sortable"
@@ -67,8 +22,12 @@ impl Protocol for SortableProtocol {
         "Explicit sort column; list queries default to sorting by sort_key"
     }
 
-    fn aspects(&self) -> Vec<Arc<dyn Aspect>> {
-        vec![Arc::new(SortableAspect)]
+    fn columns(&self) -> Vec<ColumnDef> {
+        vec![ColumnDef {
+            name: COL_SORT_KEY.into(),
+            sql_type: SqlType::Integer,
+            default: Some("0".into()),
+        }]
     }
 
     fn behaviors(&self) -> Vec<&'static str> {
@@ -108,60 +67,63 @@ impl Protocol for SortableProtocol {
     fn built_in(&self) -> bool {
         true
     }
+
+    async fn before_create(
+        &self,
+        record: &mut serde_json::Map<String, Value>,
+        ctx: &HookCtx<'_>,
+    ) -> anyhow::Result<()> {
+        let should_inject = ctx
+            .schema
+            .is_none_or(|s| s.is_protocol_column(COL_SORT_KEY));
+        if should_inject && !record.contains_key(COL_SORT_KEY) {
+            record.insert(COL_SORT_KEY.into(), json!(0));
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::aspects::engine::AspectEngine;
-    use crate::aspects::{BaseContext, Record};
+
+    fn ctx() -> HookCtx<'static> {
+        HookCtx {
+            user_id: None,
+            user_role: None,
+            tenant_id: "default",
+            now: "now",
+            schema: None,
+            pool: None,
+        }
+    }
 
     #[tokio::test]
     async fn injects_sort_key_on_create() {
-        let engine = AspectEngine::new();
-        engine.register(SortableAspect);
+        let protocol = SortableProtocol;
+        let mut record = serde_json::Map::new();
+        let ctx = ctx();
 
-        let mut ctx = DataBeforeCreateContext {
-            base: BaseContext::new(None, "default".into(), "now".into()),
-            table: "pages".into(),
-            record: Record::new(),
-            schema: None,
-        };
+        protocol.before_create(&mut record, &ctx).await.unwrap();
 
-        engine
-            .dispatch_data_before_create("pages", &mut ctx)
-            .await
-            .unwrap();
-
-        assert_eq!(ctx.record.get(COL_SORT_KEY).unwrap(), &json!(0));
+        assert_eq!(record.get(COL_SORT_KEY).unwrap(), &json!(0));
     }
 
     #[tokio::test]
     async fn does_not_overwrite_existing_sort_key() {
-        let engine = AspectEngine::new();
-        engine.register(SortableAspect);
-
-        let mut record = Record::new();
+        let protocol = SortableProtocol;
+        let mut record = serde_json::Map::new();
         record.insert(COL_SORT_KEY.into(), json!(42));
+        let ctx = ctx();
 
-        let mut ctx = DataBeforeCreateContext {
-            base: BaseContext::new(None, "default".into(), "now".into()),
-            table: "pages".into(),
-            record,
-            schema: None,
-        };
+        protocol.before_create(&mut record, &ctx).await.unwrap();
 
-        engine
-            .dispatch_data_before_create("pages", &mut ctx)
-            .await
-            .unwrap();
-
-        assert_eq!(ctx.record.get(COL_SORT_KEY).unwrap(), &json!(42));
+        assert_eq!(record.get(COL_SORT_KEY).unwrap(), &json!(42));
     }
 
     #[tokio::test]
     async fn provides_sort_key_column() {
-        let cols = SortableAspect.columns();
+        let cols = SortableProtocol.columns();
         assert_eq!(cols.len(), 1);
         assert_eq!(cols[0].name, COL_SORT_KEY);
     }

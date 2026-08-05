@@ -247,7 +247,7 @@ pub async fn register(
     }
     validation::validate(&req)?;
     let user = auth::register(
-        &state.aspect_engine,
+        &state.emitter,
         req,
         auth.tenant_id(),
         state.config.require_email_verification,
@@ -269,7 +269,7 @@ pub async fn login(
 ) -> AppResult<ApiResponse<crate::dto::LoginResponse>> {
     validation::validate(&req)?;
     let resp = auth::login(
-        &state.aspect_engine,
+        &state.emitter,
         &state.pool,
         &req,
         &state.config.jwt_secret,
@@ -298,7 +298,7 @@ pub async fn resend_verification(
     Json(req): Json<ResendVerificationRequest>,
 ) -> AppResult<ApiResponse<()>> {
     validation::validate(&req)?;
-    email_verification::resend_verification(&state.pool, &state.aspect_engine, &req.email).await?;
+    email_verification::resend_verification(&state.pool, &state.emitter, &req.email).await?;
     Ok(ApiResponse::success(()))
 }
 
@@ -348,13 +348,8 @@ pub async fn forgot_password(
     Json(req): Json<ForgotPasswordRequest>,
 ) -> AppResult<ApiResponse<()>> {
     validation::validate(&req)?;
-    password_reset::forgot_password(
-        &state.pool,
-        &state.aspect_engine,
-        &req.email,
-        auth.tenant_id(),
-    )
-    .await?;
+    password_reset::forgot_password(&state.pool, &state.emitter, &req.email, auth.tenant_id())
+        .await?;
     Ok(ApiResponse::success(()))
 }
 

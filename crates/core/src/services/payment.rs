@@ -2,7 +2,6 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 
-use crate::aspects::engine::AspectEngine;
 use crate::commands::{
     CreatePaymentChannelCmd, CreatePaymentOrderCmd, CreatePaymentRefundCmd,
     CreatePaymentTransactionCmd, CreateWalletOutboxCmd,
@@ -10,7 +9,7 @@ use crate::commands::{
 use crate::config::app::AppConfig;
 use crate::dto::payment::*;
 use crate::errors::app_error::{AppError, AppResult};
-use crate::event::Event;
+use crate::event::{Event, EventEmitter};
 use crate::middleware::auth::AuthUser;
 use crate::models::payment_channel::PaymentChannel;
 use crate::models::payment_order::{PaymentOrder, PaymentStatus};
@@ -127,35 +126,29 @@ pub trait PaymentService: Send + Sync {
 
 pub struct PaymentServiceImpl {
     config: Arc<AppConfig>,
-    aspect_engine: Arc<AspectEngine>,
+    emitter: EventEmitter,
     pool: Arc<crate::db::Pool>,
 }
 
 impl PaymentServiceImpl {
-    pub fn new(
-        config: Arc<AppConfig>,
-        aspect_engine: Arc<AspectEngine>,
-        pool: Arc<crate::db::Pool>,
-    ) -> Self {
+    pub fn new(config: Arc<AppConfig>, emitter: EventEmitter, pool: Arc<crate::db::Pool>) -> Self {
         Self {
             config,
-            aspect_engine,
+            emitter,
             pool,
         }
     }
 
     fn after_payment_order_created(&self, order: &PaymentOrder) {
-        self.aspect_engine
-            .emit(Event::PaymentOrderCreated(order.clone()));
+        self.emitter.emit(Event::PaymentOrderCreated(order.clone()));
     }
 
     fn after_payment_paid(&self, order: &PaymentOrder) {
-        self.aspect_engine.emit(Event::PaymentPaid(order.clone()));
+        self.emitter.emit(Event::PaymentPaid(order.clone()));
     }
 
     fn after_payment_refunded(&self, order: &PaymentOrder) {
-        self.aspect_engine
-            .emit(Event::PaymentRefunded(order.clone()));
+        self.emitter.emit(Event::PaymentRefunded(order.clone()));
     }
 }
 

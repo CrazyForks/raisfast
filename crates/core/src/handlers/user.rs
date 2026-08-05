@@ -257,7 +257,7 @@ pub async fn admin_create_user(
 ) -> AppResult<ApiResponse<UserResponse>> {
     validation::validate(&req)?;
     let user = crate::services::auth::admin_create_user(
-        &state.aspect_engine,
+        &state.emitter,
         req,
         auth.tenant_id(),
         &state.pool,

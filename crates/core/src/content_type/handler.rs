@@ -106,37 +106,6 @@ pub fn routes(
     r
 }
 
-fn make_base_ctx_from_auth(
-    auth: &AuthUser,
-    pool: &crate::db::pool::Pool,
-) -> crate::aspects::BaseContext {
-    crate::aspects::BaseContext::new(
-        auth.user_id().map(|id| id.to_string()),
-        auth.tenant_id().unwrap_or(DEFAULT_TENANT).to_string(),
-        crate::utils::tz::now_str(),
-    )
-    .with_pool(pool.clone())
-    .with_user_int_id(auth.user_id())
-}
-
-fn make_base_ctx(state: &AppState, save_ctx: &SaveContext) -> crate::aspects::BaseContext {
-    crate::aspects::BaseContext::new(
-        save_ctx.user_id.clone(),
-        save_ctx
-            .tenant_id
-            .clone()
-            .unwrap_or_else(|| DEFAULT_TENANT.into()),
-        crate::utils::tz::now_str(),
-    )
-    .with_pool(state.pool.clone())
-    .with_user_int_id(save_ctx.user_int_id)
-}
-
-fn make_base_ctx_anon(state: &AppState) -> crate::aspects::BaseContext {
-    crate::aspects::BaseContext::new(None, DEFAULT_TENANT.into(), crate::utils::tz::now_str())
-        .with_pool(state.pool.clone())
-}
-
 /// Compile API Rules into SQL WHERE clauses.
 ///
 /// If the user is authenticated and has `filter_auth`, generates `filter OR filter_auth`;
@@ -1099,9 +1068,8 @@ async fn parse_batch_request(body: Body) -> Result<BatchRequest, AppError> {
 
 /// Execute a batch operation (`delete`) over multiple CMS records.
 ///
-/// Runs each record through the full delete pipeline (permission check, aspects,
-/// soft-delete protocol, cache invalidation) via `do_delete`. Writes are serialized
-/// by the global write lock acquired inside each delete transaction.
+/// Runs each record through the full delete pipeline (permission check,
+/// protocol hooks, soft-delete decision, cache invalidation) via `do_delete`.
 pub async fn do_admin_batch(
     state: &AppState,
     ct: &ContentTypeSchema,
@@ -1248,47 +1216,8 @@ pub async fn do_list(
         return Ok(entry.value().0.clone());
     }
 
-    {
-        let mut read_ctx = crate::aspects::DataBeforeReadContext {
-            base: make_base_ctx_anon(state),
-            table: ct.table.clone(),
-            query: crate::aspects::ReadQuery::default(),
-            schema: Some(std::sync::Arc::new(ct.clone())),
-        };
-        if let Some(cached) = state
-            .aspect_engine
-            .dispatch_data_before_read(&ct.table, &mut read_ctx)
-            .await
-            .map_err(AppError::Internal)?
-        {
-            return Ok(cached);
-        }
-    }
-
     let (items, total) = repo.find(ct, query.clone()).await?;
-    let mut items: Vec<Value> = items;
-
-    {
-        let records: Vec<crate::aspects::Record> = items
-            .iter()
-            .filter_map(|v| v.as_object().cloned())
-            .collect();
-        let mut after_ctx = crate::aspects::DataAfterReadContext {
-            base: make_base_ctx_anon(state),
-            table: ct.table.clone(),
-            records,
-            schema: Some(std::sync::Arc::new(ct.clone())),
-        };
-        if let Err(e) = state
-            .aspect_engine
-            .dispatch_data_after_read(&ct.table, &mut after_ctx)
-            .await
-        {
-            tracing::warn!("aspect after_read dispatch error: {e}");
-        } else {
-            items = after_ctx.records.into_iter().map(Value::Object).collect();
-        }
-    }
+    let items: Vec<Value> = items;
 
     let result = json!({
         "items": items,
@@ -1382,19 +1311,21 @@ pub async fn do_create(
     let mut data = filtered.get("data").cloned().unwrap_or(data);
 
     {
-        let record = data.as_object().cloned().unwrap_or_default();
-        let mut ctx = crate::aspects::DataBeforeCreateContext {
-            base: make_base_ctx(state, save_ctx),
-            table: ct.table.clone(),
-            record,
-            schema: Some(std::sync::Arc::new(ct.clone())),
+        let mut record = data.as_object().cloned().unwrap_or_default();
+        let now_str = crate::utils::tz::now_str();
+        let hook_ctx = crate::protocols::HookCtx {
+            user_id: save_ctx.user_int_id,
+            user_role: save_ctx.user_role.clone(),
+            tenant_id: save_ctx.tenant_id.as_deref().unwrap_or(DEFAULT_TENANT),
+            now: &now_str,
+            schema: Some(ct),
+            pool: Some(&state.pool),
         };
-        state
-            .aspect_engine
-            .dispatch_data_before_create(&ct.table, &mut ctx)
-            .await
-            .map_err(AppError::Internal)?;
-        data = Value::Object(ctx.record);
+        let protocols = state.protocol_registry.get_protocols_for(ct);
+        for protocol in &protocols {
+            protocol.before_create(&mut record, &hook_ctx).await?;
+        }
+        data = Value::Object(record);
     }
 
     let repo = ContentRepository::new(state.pool.clone());
@@ -1410,23 +1341,6 @@ pub async fn do_create(
         .get("slug")
         .and_then(|v| v.as_str())
         .map(|s| s.to_string());
-
-    {
-        let record = result.as_object().cloned().unwrap_or_default();
-        let mut after_ctx = crate::aspects::DataAfterCreateContext {
-            base: make_base_ctx(state, save_ctx),
-            table: ct.table.clone(),
-            record,
-            schema: Some(std::sync::Arc::new(ct.clone())),
-        };
-        if let Err(e) = state
-            .aspect_engine
-            .dispatch_data_after_create(&ct.table, &mut after_ctx)
-            .await
-        {
-            tracing::warn!("aspect after_create dispatch error: {e}");
-        }
-    }
 
     state
         .plugins
@@ -1496,42 +1410,27 @@ pub async fn do_update(
         .unwrap_or_default();
 
     {
-        let new_record = data.as_object().cloned().unwrap_or_default();
-        let mut ctx = crate::aspects::DataBeforeUpdateContext {
-            base: make_base_ctx(state, save_ctx),
-            table: ct.table.clone(),
-            old_record: old_record.clone(),
-            new_record,
-            schema: Some(std::sync::Arc::new(ct.clone())),
+        let mut new_record = data.as_object().cloned().unwrap_or_default();
+        let now_str = crate::utils::tz::now_str();
+        let hook_ctx = crate::protocols::HookCtx {
+            user_id: save_ctx.user_int_id,
+            user_role: save_ctx.user_role.clone(),
+            tenant_id: save_ctx.tenant_id.as_deref().unwrap_or(DEFAULT_TENANT),
+            now: &now_str,
+            schema: Some(ct),
+            pool: Some(&state.pool),
         };
-        state
-            .aspect_engine
-            .dispatch_data_before_update(&ct.table, &mut ctx)
-            .await
-            .map_err(AppError::Internal)?;
-        data = Value::Object(ctx.new_record);
+        let protocols = state.protocol_registry.get_protocols_for(ct);
+        for protocol in &protocols {
+            protocol
+                .before_update(&mut new_record, &old_record, &hook_ctx)
+                .await?;
+        }
+        data = Value::Object(new_record);
     }
 
     let result = repo.update(ct, id, data, None, save_ctx).await?;
     invalidate_cms_cache(state, ct);
-
-    {
-        let new_record = result.as_object().cloned().unwrap_or_default();
-        let mut after_ctx = crate::aspects::DataAfterUpdateContext {
-            base: make_base_ctx(state, save_ctx),
-            table: ct.table.clone(),
-            old_record,
-            new_record,
-            schema: Some(std::sync::Arc::new(ct.clone())),
-        };
-        if let Err(e) = state
-            .aspect_engine
-            .dispatch_data_after_update(&ct.table, &mut after_ctx)
-            .await
-        {
-            tracing::warn!("aspect after_update dispatch error: {e}");
-        }
-    }
 
     state
         .plugins
@@ -1566,7 +1465,7 @@ pub async fn do_delete(
         ));
     }
 
-    let record: crate::aspects::Record = match value.as_object() {
+    let record: serde_json::Map<String, Value> = match value.as_object() {
         Some(map) => map.clone(),
         None => {
             return Err(AppError::Internal(anyhow::anyhow!(
@@ -1584,59 +1483,46 @@ pub async fn do_delete(
         }
     }
 
-    let mut before_ctx = crate::aspects::DataBeforeDeleteContext {
-        base: make_base_ctx_from_auth(auth, &state.pool),
-        table: ct.table.clone(),
-        record: record.clone(),
-        soft_delete: false,
-        schema: Some(std::sync::Arc::new(ct.clone())),
+    let now_str = crate::utils::tz::now_str();
+    let mut hook_ctx = crate::protocols::HookCtx {
+        user_id: auth.user_id(),
+        user_role: auth.is_authenticated().then(|| auth.role().to_string()),
+        tenant_id: auth.tenant_id().unwrap_or(DEFAULT_TENANT),
+        now: &now_str,
+        schema: Some(ct),
+        pool: Some(&state.pool),
     };
-    state
-        .aspect_engine
-        .dispatch_data_before_delete(&ct.table, &mut before_ctx)
-        .await
-        .map_err(crate::errors::app_error::AppError::Internal)?;
+    let protocols = state.protocol_registry.get_protocols_for(ct);
+    let mut delete_action = crate::protocols::DeleteAction::Hard;
+    for protocol in &protocols {
+        let action = protocol.before_delete(&record, &mut hook_ctx).await?;
+        if matches!(action, crate::protocols::DeleteAction::Soft { .. }) {
+            delete_action = action;
+            break;
+        }
+    }
 
-    if before_ctx.soft_delete {
-        let deleted_at = before_ctx
-            .record
-            .get(COL_DELETED_AT)
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
-        let deleted_by = before_ctx
-            .record
-            .get(COL_DELETED_BY)
-            .and_then(|v| v.as_i64());
-        repo.soft_delete(ct, id, deleted_at, deleted_by, auth.tenant_id())
+    match delete_action {
+        crate::protocols::DeleteAction::Soft {
+            deleted_at,
+            deleted_by,
+        } => {
+            repo.soft_delete(ct, id, &deleted_at, deleted_by, auth.tenant_id())
+                .await?;
+        }
+        crate::protocols::DeleteAction::Hard => {
+            repo.delete(
+                ct,
+                id,
+                auth.tenant_id(),
+                &state.protocol_registry,
+                &state.content_type_registry,
+            )
             .await?;
-    } else {
-        repo.delete(
-            ct,
-            id,
-            auth.tenant_id(),
-            &state.protocol_registry,
-            &state.content_type_registry,
-        )
-        .await?;
+        }
     }
 
     invalidate_cms_cache(state, ct);
-
-    {
-        let mut after_ctx = crate::aspects::DataAfterDeleteContext {
-            base: make_base_ctx_from_auth(auth, &state.pool),
-            table: ct.table.clone(),
-            record,
-            schema: Some(std::sync::Arc::new(ct.clone())),
-        };
-        if let Err(e) = state
-            .aspect_engine
-            .dispatch_data_after_delete(&ct.table, &mut after_ctx)
-            .await
-        {
-            tracing::warn!("aspect after_delete dispatch error: {e}");
-        }
-    }
 
     state
         .plugins

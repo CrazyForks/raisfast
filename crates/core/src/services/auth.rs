@@ -15,10 +15,9 @@ use chrono::Utc;
 use jsonwebtoken::{EncodingKey, Header, Validation};
 use serde::{Deserialize, Serialize};
 
-use crate::aspects::engine::AspectEngine;
 use crate::dto::{LoginResponse, RegisterRequest, UpdatePasswordRequest, UserResponse};
 use crate::errors::app_error::{AppError, AppResult};
-use crate::event::Event;
+use crate::event::{Event, EventEmitter};
 use crate::middleware::auth::AuthUser;
 use crate::models::user::{UserRole, UserStatus};
 use crate::models::user_credential::AuthType;
@@ -174,9 +173,9 @@ pub fn generate_access_token_for_test(user_id: SnowflakeId, roles: Vec<UserRole>
 ///
 /// Checks if the email is already registered; if unique, hashes the password and creates
 /// the user record and email credential within a transaction.
-#[tracing::instrument(skip(aspect_engine), fields(username = tracing::field::Empty))]
+#[tracing::instrument(skip(emitter), fields(username = tracing::field::Empty))]
 pub async fn register(
-    aspect_engine: &AspectEngine,
+    emitter: &EventEmitter,
     req: RegisterRequest,
     tenant_id: Option<&str>,
     require_email_verification: bool,
@@ -226,14 +225,11 @@ pub async fn register(
     let tid = tenant_id.unwrap_or(crate::constants::DEFAULT_TENANT);
     crate::models::user_role::assign_role_by_name(pool, user.id, "reader", tid).await?;
 
-    aspect_engine.emit(Event::UserRegistered(user.clone()));
+    emitter.emit(Event::UserRegistered(user.clone()));
 
     if require_email_verification
         && let Err(e) = crate::services::email_verification::trigger_email_verification(
-            pool,
-            aspect_engine,
-            user.id,
-            &req.email,
+            pool, emitter, user.id, &req.email,
         )
         .await
     {
@@ -248,7 +244,7 @@ pub async fn register(
 /// Unlike public registration, this bypasses `registration_email_enabled` and email
 /// verification. Optionally accepts a custom role (defaults to Reader).
 pub async fn admin_create_user(
-    aspect_engine: &AspectEngine,
+    emitter: &EventEmitter,
     req: crate::dto::AdminCreateUserRequest,
     tenant_id: Option<&str>,
     pool: &crate::db::Pool,
@@ -297,7 +293,7 @@ pub async fn admin_create_user(
     let role_ids = crate::models::user_role::resolve_role_ids(pool, &roles).await?;
     crate::models::user_role::set_roles(pool, user.id, &role_ids, tid).await?;
 
-    aspect_engine.emit(Event::UserRegistered(user.clone()));
+    emitter.emit(Event::UserRegistered(user.clone()));
 
     UserResponse::from_user_with_contacts(pool, user).await
 }
@@ -307,9 +303,9 @@ pub async fn admin_create_user(
 /// Looks up the user via email credential, verifies the password, and on success generates
 /// an access token and a refresh token.
 #[allow(clippy::too_many_arguments)]
-#[tracing::instrument(skip(aspect_engine), fields(email = %req.email))]
+#[tracing::instrument(skip(emitter), fields(email = %req.email))]
 pub async fn login(
-    aspect_engine: &AspectEngine,
+    emitter: &EventEmitter,
     pool: &crate::db::Pool,
     req: &crate::dto::LoginRequest,
     jwt_secret: &str,
@@ -388,7 +384,7 @@ pub async fn login(
     )
     .await?;
 
-    aspect_engine.emit(Event::UserLoggedIn {
+    emitter.emit(Event::UserLoggedIn {
         user: user.clone(),
         success: true,
     });

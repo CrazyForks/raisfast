@@ -92,6 +92,8 @@ pub(crate) async fn test_app_with_tenants() -> (axum::Router, AppState) {
 
 async fn build_test_app(pool: raisfast::db::Pool) -> (axum::Router, AppState) {
     let config = Arc::new(test_config());
+    let emitter =
+        raisfast::event::EventEmitter::eventbus_only(raisfast::eventbus::EventBus::new(256));
     let state = AppState {
         pool: pool.clone(),
         config: config.clone(),
@@ -101,38 +103,38 @@ async fn build_test_app(pool: raisfast::db::Pool) -> (axum::Router, AppState) {
         post_service: {
             Arc::new(raisfast::services::post::PostServiceImpl::new(
                 Arc::new(pool.clone()),
-                Arc::new(raisfast::aspects::engine::AspectEngine::new()),
+                emitter.clone(),
                 Arc::new(NoopSearchEngine),
             ))
         },
         page_service: Arc::new(raisfast::services::page::PageServiceImpl::new(
-            Arc::new(raisfast::aspects::engine::AspectEngine::new()),
+            emitter.clone(),
             Arc::new(pool.clone()),
         )),
         category_service: Arc::new(raisfast::services::category::CategoryServiceImpl::new(
-            Arc::new(raisfast::aspects::engine::AspectEngine::new()),
+            emitter.clone(),
             Arc::new(pool.clone()),
         )),
         tag_service: Arc::new(raisfast::services::tag::TagServiceImpl::new(
-            Arc::new(raisfast::aspects::engine::AspectEngine::new()),
+            emitter.clone(),
             Arc::new(pool.clone()),
         )),
         comment_service: Arc::new(raisfast::services::comment::CommentServiceImpl::new(
             Arc::new(pool.clone()),
-            Arc::new(raisfast::aspects::engine::AspectEngine::new()),
+            emitter.clone(),
         )),
         wallet_service: Arc::new(raisfast::services::wallet::WalletServiceImpl::new(
-            Arc::new(raisfast::aspects::engine::AspectEngine::new()),
+            emitter.clone(),
             Arc::new(pool.clone()),
         )),
         product_category_service: Arc::new(
             raisfast::services::product_category::ProductCategoryServiceImpl::new(
-                Arc::new(raisfast::aspects::engine::AspectEngine::new()),
+                emitter.clone(),
                 Arc::new(pool.clone()),
             ),
         ),
         product_service: Arc::new(raisfast::services::product::ProductServiceImpl::new(
-            Arc::new(raisfast::aspects::engine::AspectEngine::new()),
+            emitter.clone(),
             Arc::new(pool.clone()),
             Arc::new(
                 raisfast::services::options::OptionsService::new(Arc::new(pool.clone()), false)
@@ -140,7 +142,7 @@ async fn build_test_app(pool: raisfast::db::Pool) -> (axum::Router, AppState) {
             ),
         )),
         order_service: Arc::new(raisfast::services::order::OrderServiceImpl::new(
-            Arc::new(raisfast::aspects::engine::AspectEngine::new()),
+            emitter.clone(),
             Arc::new(pool.clone()),
             Arc::new(
                 raisfast::services::options::OptionsService::new(Arc::new(pool.clone()), false)
@@ -173,7 +175,7 @@ async fn build_test_app(pool: raisfast::db::Pool) -> (axum::Router, AppState) {
         ),
         payment_service: Arc::new(raisfast::services::payment::PaymentServiceImpl::new(
             config.clone(),
-            Arc::new(raisfast::aspects::engine::AspectEngine::new()),
+            emitter.clone(),
             Arc::new(pool.clone()),
         )),
         user_service: Arc::new(raisfast::services::user::UserServiceImpl::new(Arc::new(
@@ -181,15 +183,7 @@ async fn build_test_app(pool: raisfast::db::Pool) -> (axum::Router, AppState) {
         ))),
         search: Arc::new(NoopSearchEngine),
         content_type_registry: Arc::new(raisfast::content_type::ContentTypeRegistry::new()),
-        aspect_engine: {
-            let engine = raisfast::aspects::engine::AspectEngine::new();
-            let mut reg = raisfast::protocols::ProtocolRegistry::new();
-            reg.register(raisfast::protocols::ownable::OwnableProtocol);
-            reg.register(raisfast::protocols::timestampable::TimestampableProtocol);
-            let reg = Arc::new(reg);
-            reg.register_aspects_into(&engine);
-            Arc::new(engine)
-        },
+        emitter,
         protocol_registry: Arc::new({
             let mut reg = raisfast::protocols::ProtocolRegistry::new();
             reg.register(raisfast::protocols::ownable::OwnableProtocol);

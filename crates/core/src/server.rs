@@ -494,10 +494,6 @@ async fn build_app(
         .layer(from_fn(
             crate::middleware::security_headers::security_headers,
         ))
-        .layer(from_fn_with_state(
-            state.clone(),
-            crate::middleware::aop_http::aop_http_layer,
-        ))
         .layer(CompressionLayer::new())
         .layer(from_fn_with_state(
             state.clone(),

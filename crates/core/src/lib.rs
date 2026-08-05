@@ -18,7 +18,6 @@ mod macros;
 pub mod export_type;
 
 pub mod app;
-pub mod aspects;
 pub mod cache;
 pub mod commands;
 pub mod config;
@@ -129,7 +128,7 @@ pub struct AppState {
     pub payment_service: Arc<dyn crate::services::payment::PaymentService>,
     pub search: Arc<dyn SearchEngine>,
     pub content_type_registry: Arc<ContentTypeRegistry>,
-    pub aspect_engine: Arc<crate::aspects::engine::AspectEngine>,
+    pub emitter: crate::event::EventEmitter,
     pub protocol_registry: Arc<crate::protocols::ProtocolRegistry>,
     pub options: Arc<OptionsService>,
     pub rbac: Arc<RbacService>,
@@ -168,21 +167,12 @@ pub async fn build_app_state(
     protocol_registry.register_from_inventory();
     let protocol_registry = Arc::new(protocol_registry);
 
-    let aspect_engine = Arc::new(crate::aspects::engine::AspectEngine::new());
-
     let user_service: Arc<dyn crate::services::user::UserService> = Arc::new(
         crate::services::user::UserServiceImpl::new(Arc::new(pool.clone())),
     );
 
     let options_service =
         Arc::new(OptionsService::new(Arc::new(pool.clone()), config.builtin_tenantable).await);
-
-    let order_service: Arc<dyn crate::services::order::OrderService> =
-        Arc::new(crate::services::order::OrderServiceImpl::new(
-            aspect_engine.clone(),
-            Arc::new(pool.clone()),
-            options_service.clone(),
-        ));
 
     let cart_service: Arc<dyn crate::services::cart::CartService> = Arc::new(
         crate::services::cart::CartServiceImpl::new(Arc::new(pool.clone())),
@@ -217,19 +207,6 @@ pub async fn build_app_state(
     let user_address_service: Arc<dyn crate::services::user_address::UserAddressService> = Arc::new(
         crate::services::user_address::UserAddressServiceImpl::new(Arc::new(pool.clone())),
     );
-
-    let wallet_service: Arc<dyn crate::services::wallet::WalletService> =
-        Arc::new(crate::services::wallet::WalletServiceImpl::new(
-            aspect_engine.clone(),
-            Arc::new(pool.clone()),
-        ));
-
-    let payment_service: Arc<dyn crate::services::payment::PaymentService> =
-        Arc::new(crate::services::payment::PaymentServiceImpl::new(
-            Arc::new(config.clone()),
-            aspect_engine.clone(),
-            Arc::new(pool.clone()),
-        ));
 
     let reserved = config.builtins.reserved_route_segments();
     let protocol_names: Vec<&str> = protocol_registry.names();
@@ -269,51 +246,64 @@ pub async fn build_app_state(
     )
     .await;
 
-    protocol_registry.register_aspects_into(&aspect_engine);
-    aspect_engine.register(crate::aspects::slug_aspect::SlugAspect);
-    aspect_engine.register(crate::aspects::excerpt_aspect::ExcerptAspect);
-    aspect_engine.set_infrastructure(plugin_manager.clone(), eventbus.clone());
+    let emitter = crate::event::EventEmitter::new(eventbus.clone(), &plugin_manager);
+
+    let order_service: Arc<dyn crate::services::order::OrderService> =
+        Arc::new(crate::services::order::OrderServiceImpl::new(
+            emitter.clone(),
+            Arc::new(pool.clone()),
+            options_service.clone(),
+        ));
+
+    let wallet_service: Arc<dyn crate::services::wallet::WalletService> = Arc::new(
+        crate::services::wallet::WalletServiceImpl::new(emitter.clone(), Arc::new(pool.clone())),
+    );
+
+    let payment_service: Arc<dyn crate::services::payment::PaymentService> =
+        Arc::new(crate::services::payment::PaymentServiceImpl::new(
+            Arc::new(config.clone()),
+            emitter.clone(),
+            Arc::new(pool.clone()),
+        ));
+
     tracing::info!(
-        "aspect engine initialized with {} aspect(s), {} protocol(s)",
-        aspect_engine.aspects().len(),
+        "app state initialized with {} protocol(s)",
         protocol_registry.names().len()
     );
 
     let post_service: Arc<dyn crate::services::post::PostService> =
         Arc::new(crate::services::post::PostServiceImpl::new(
             Arc::new(pool.clone()),
-            aspect_engine.clone(),
+            emitter.clone(),
             search.clone(),
         ));
 
     let tag_service: Arc<dyn crate::services::tag::TagService> = Arc::new(
-        crate::services::tag::TagServiceImpl::new(aspect_engine.clone(), Arc::new(pool.clone())),
+        crate::services::tag::TagServiceImpl::new(emitter.clone(), Arc::new(pool.clone())),
     );
     let category_service: Arc<dyn crate::services::category::CategoryService> =
         Arc::new(crate::services::category::CategoryServiceImpl::new(
-            aspect_engine.clone(),
+            emitter.clone(),
             Arc::new(pool.clone()),
         ));
     let product_category_service: Arc<
         dyn crate::services::product_category::ProductCategoryService,
     > = Arc::new(
         crate::services::product_category::ProductCategoryServiceImpl::new(
-            aspect_engine.clone(),
+            emitter.clone(),
             Arc::new(pool.clone()),
         ),
     );
     let page_service: Arc<dyn crate::services::page::PageService> = Arc::new(
-        crate::services::page::PageServiceImpl::new(aspect_engine.clone(), Arc::new(pool.clone())),
+        crate::services::page::PageServiceImpl::new(emitter.clone(), Arc::new(pool.clone())),
     );
-    let comment_service: Arc<dyn crate::services::comment::CommentService> =
-        Arc::new(crate::services::comment::CommentServiceImpl::new(
-            Arc::new(pool.clone()),
-            aspect_engine.clone(),
-        ));
+    let comment_service: Arc<dyn crate::services::comment::CommentService> = Arc::new(
+        crate::services::comment::CommentServiceImpl::new(Arc::new(pool.clone()), emitter.clone()),
+    );
 
     let product_service: Arc<dyn crate::services::product::ProductService> =
         Arc::new(crate::services::product::ProductServiceImpl::new(
-            aspect_engine.clone(),
+            emitter.clone(),
             Arc::new(pool.clone()),
             options_service.clone(),
         ));
@@ -328,7 +318,6 @@ pub async fn build_app_state(
 
     let mut svc_builder = app::ServiceRegistryBuilder::new();
     svc_builder.register(search.clone());
-    svc_builder.register(aspect_engine.clone());
     svc_builder.register(protocol_registry.clone());
     svc_builder.register(ct_registry.clone());
     svc_builder.register(options_service.clone());
@@ -365,7 +354,7 @@ pub async fn build_app_state(
         payment_service,
         search,
         content_type_registry: ct_registry,
-        aspect_engine,
+        emitter,
         protocol_registry,
         options: options_service,
         rbac: rbac_service,

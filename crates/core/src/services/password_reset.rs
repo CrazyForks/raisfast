@@ -2,14 +2,13 @@
 
 use chrono::Utc;
 
-use crate::aspects::engine::AspectEngine;
 use crate::errors::app_error::{AppError, AppResult};
-use crate::event::Event;
+use crate::event::{Event, EventEmitter};
 use crate::middleware::auth::AuthUser;
 
 pub async fn forgot_password(
     pool: &crate::db::Pool,
-    aspect_engine: &AspectEngine,
+    emitter: &EventEmitter,
     email: &str,
     _tenant_id: Option<&str>,
 ) -> AppResult<()> {
@@ -33,7 +32,7 @@ pub async fn forgot_password(
 
     let reset_token = crate::models::password_reset::create(pool, user.id, 3600).await?;
 
-    aspect_engine.emit(Event::PasswordResetRequested {
+    emitter.emit(Event::PasswordResetRequested {
         user: user.clone(),
         token: reset_token,
     });
@@ -149,8 +148,8 @@ mod tests {
         crate::test_pool!()
     }
 
-    fn aspect_engine() -> crate::aspects::engine::AspectEngine {
-        crate::aspects::engine::AspectEngine::new()
+    fn emitter() -> crate::event::EventEmitter {
+        crate::event::EventEmitter::eventbus_only(crate::eventbus::EventBus::new(16))
     }
 
     async fn insert_user(pool: &crate::db::Pool, email: &str) -> crate::models::user::User {
@@ -183,7 +182,7 @@ mod tests {
     async fn forgot_password_existing_user() {
         let pool = setup_pool().await;
         let user = insert_user(&pool, "reset@test.com").await;
-        let ae = aspect_engine();
+        let ae = emitter();
         super::forgot_password(&pool, &ae, "reset@test.com", None)
             .await
             .unwrap();
@@ -202,7 +201,7 @@ mod tests {
     #[tokio::test]
     async fn forgot_password_nonexistent_user_ok() {
         let pool = setup_pool().await;
-        let ae = aspect_engine();
+        let ae = emitter();
         super::forgot_password(&pool, &ae, "noone@test.com", None)
             .await
             .unwrap();
@@ -222,7 +221,7 @@ mod tests {
     async fn reset_password_weak_password() {
         let pool = setup_pool().await;
         let user = insert_user(&pool, "weak@test.com").await;
-        let ae = aspect_engine();
+        let ae = emitter();
         super::forgot_password(&pool, &ae, "weak@test.com", None)
             .await
             .unwrap();

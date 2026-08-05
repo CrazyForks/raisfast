@@ -5,16 +5,16 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use raisfast_derive::aspect_service;
 
-use crate::aspects::engine::AspectEngine;
 use crate::dto::CreateTagRequest;
 use crate::errors::app_error::AppResult;
+use crate::event::EventEmitter;
 use crate::middleware::auth::AuthUser;
 use crate::models::tag::Tag;
 use crate::policy::check_owner_opt;
 use crate::types::snowflake_id::SnowflakeId;
 
 pub fn generate_slug(name: &str) -> String {
-    crate::aspects::slug_aspect::generate_slug(name)
+    crate::utils::slug::generate_slug(name)
 }
 
 #[async_trait]
@@ -40,15 +40,13 @@ pub trait TagService: Send + Sync {
 
 #[aspect_service(entity = "tags", model = Tag)]
 pub struct TagServiceImpl {
-    #[engine]
-    aspect_engine: Arc<AspectEngine>,
+    emitter: EventEmitter,
     pool: Arc<crate::db::Pool>,
 }
 
 #[async_trait]
 impl TagService for TagServiceImpl {
     async fn create(&self, auth: &AuthUser, req: CreateTagRequest) -> AppResult<Tag> {
-        let (req, _d) = self.before_create(auth, req).await?;
         let slug = generate_slug(&req.name);
         let tag = crate::models::tag::create(
             &self.pool,
@@ -71,7 +69,6 @@ impl TagService for TagServiceImpl {
     ) -> AppResult<Tag> {
         let tag = crate::models::tag::find_by_id(&self.pool, id, auth.tenant_id()).await?;
         check_owner_opt(auth, tag.created_by, tag.tenant_id.as_deref())?;
-        let ((name, slug), _d) = self.before_update(auth, &tag, (name, slug)).await?;
         let updated =
             crate::models::tag::update(&self.pool, tag.id, &name, &slug, auth.tenant_id()).await?;
         self.after_updated(&updated);
@@ -81,7 +78,6 @@ impl TagService for TagServiceImpl {
     async fn delete(&self, id: SnowflakeId, auth: &AuthUser) -> AppResult<()> {
         let tag = crate::models::tag::find_by_id(&self.pool, id, auth.tenant_id()).await?;
         check_owner_opt(auth, tag.created_by, tag.tenant_id.as_deref())?;
-        self.before_delete(auth, &tag).await?;
         crate::models::tag::delete(&self.pool, tag.id, auth.tenant_id()).await?;
         self.after_deleted(&tag);
         Ok(())
@@ -120,7 +116,7 @@ mod tests {
 
     fn make_service(pool: crate::db::Pool) -> Arc<dyn TagService> {
         Arc::new(TagServiceImpl::new(
-            Arc::new(AspectEngine::new()),
+            crate::event::EventEmitter::eventbus_only(crate::eventbus::EventBus::new(16)),
             Arc::new(pool),
         ))
     }
