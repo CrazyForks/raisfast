@@ -13,6 +13,7 @@ pub mod payment_reconcile;
 pub mod payment_retry;
 pub mod ping;
 pub mod publish;
+pub mod script;
 pub mod search_index;
 pub mod sitemap;
 pub mod sms;
@@ -47,6 +48,7 @@ pub fn register_all(
     cache: Arc<dyn CacheStore>,
     email_sender: Arc<dyn EmailSender>,
     sms_sender: Arc<dyn SmsSender>,
+    plugins: Arc<crate::plugins::PluginManager>,
 ) {
     registry.register(
         "send_welcome_email",
@@ -137,7 +139,7 @@ pub fn register_all(
     registry.register(
         "process_wallet_outbox",
         Box::new(wallet_outbox::ProcessWalletOutboxHandler::new(
-            pool,
+            pool.clone(),
             config.clone(),
         )),
     );
@@ -149,7 +151,24 @@ pub fn register_all(
     // ── Cron handlers with admin-visible metadata ───────────────────────────
     registry.register_with_meta(
         "ping",
-        Box::new(ping::PingHandler::new(config)),
+        Box::new(ping::PingHandler::new(config.clone())),
         &ping::META,
+    );
+
+    // ── Cron sandbox script handler (no meta — not a menu item) ────────────
+    registry.register(
+        "run_script",
+        Box::new(script::ScriptJobHandler::new(
+            plugins,
+            pool.clone(),
+            // Cron scripts are admin-created → full permissions.
+            crate::plugins::Permissions {
+                http: vec!["*".to_string()],
+                config: vec!["*".to_string()],
+                database: vec!["*".to_string()],
+                filesystem: vec!["*".to_string()],
+                ..Default::default()
+            },
+        )),
     );
 }

@@ -40,8 +40,11 @@ define_enum!(
 define_enum!(
     CronExecStatus {
         Running = "running",
+        Dispatched = "dispatched",
         Completed = "completed",
         Failed = "failed",
+        Dead = "dead",
+        TimedOut = "timed_out",
     }
 );
 
@@ -52,8 +55,9 @@ pub use job_queue::DefaultJobQueue;
 pub use runner::WorkerRunner;
 pub use scheduler::{
     CronExecutionLog, CronSchedule, CronScheduler, cleanup_execution_logs, complete_execution_log,
-    create_execution_log, create_schedule, create_schedule_v2, create_schedule_with_plugin,
-    delete_schedule, fail_execution_log, find_by_id, list_execution_logs, list_schedules, next_run,
+    complete_execution_log_with, create_execution_log, create_schedule, create_schedule_v2,
+    create_schedule_with_plugin, create_script_schedule, delete_schedule, fail_execution_log,
+    fail_execution_log_with, find_by_id, list_execution_logs, list_schedules, next_run,
     recent_execution_logs, remove_plugin_crons, seed_defaults, sync_plugin_crons, toggle_schedule,
     update_schedule,
 };
@@ -166,6 +170,24 @@ pub struct NewJob {
     pub job: Job,
     pub max_attempts: Option<u32>,
     pub run_after: Option<Timestamp>,
+    /// Cron provenance: the `cron_schedules.id` that produced this job.
+    /// `None` for EventBus/ad-hoc enqueue. Used by `ScriptJobHandler` to
+    /// look up `script_source` and by `WorkerRunner` to write back
+    /// `cron_execution_log`.
+    pub cron_schedule_id: Option<SnowflakeId>,
+    /// Cron execution-log row id, created by `scheduler::dispatch`.
+    /// `WorkerRunner` writes the real result back to this row on complete/fail/dead.
+    pub cron_log_id: Option<SnowflakeId>,
+}
+
+impl NewJob {
+    /// Builder: set `cron_schedule_id` + `cron_log_id` (cron provenance).
+    #[must_use]
+    pub fn with_cron(mut self, schedule_id: SnowflakeId, log_id: Option<SnowflakeId>) -> Self {
+        self.cron_schedule_id = Some(schedule_id);
+        self.cron_log_id = log_id;
+        self
+    }
 }
 
 impl From<Job> for NewJob {
@@ -174,6 +196,8 @@ impl From<Job> for NewJob {
             job,
             max_attempts: None,
             run_after: None,
+            cron_schedule_id: None,
+            cron_log_id: None,
         }
     }
 }
@@ -186,6 +210,10 @@ pub struct QueuedJob {
     pub attempts: u32,
     pub max_attempts: u32,
     pub created_at: Timestamp,
+    /// Cron provenance (mirror of `NewJob::cron_schedule_id`).
+    pub cron_schedule_id: Option<SnowflakeId>,
+    /// Cron execution-log row id (mirror of `NewJob::cron_log_id`).
+    pub cron_log_id: Option<SnowflakeId>,
 }
 
 /// Job queue trait

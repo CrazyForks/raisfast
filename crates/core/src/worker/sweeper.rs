@@ -97,6 +97,8 @@ mod tests {
             job: Job::GenerateSitemap,
             max_attempts: Some(1),
             run_after: None,
+            cron_schedule_id: None,
+            cron_log_id: None,
         })
         .await
         .unwrap();

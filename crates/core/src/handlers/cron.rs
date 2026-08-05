@@ -239,7 +239,24 @@ pub async fn create(
         .map_err(|e| AppError::Internal(e.into()))?;
 
     // Determine which constructor to use
-    let schedule = if req.exec_kind == "builtin" && req.handler_id.is_some() {
+    let schedule = if req.exec_kind == "script" {
+        let lang = req.script_lang.as_deref().ok_or_else(|| {
+            AppError::BadRequest("script_lang is required for exec_kind=script".into())
+        })?;
+        let source = req.script_source.as_deref().ok_or_else(|| {
+            AppError::BadRequest("script_source is required for exec_kind=script".into())
+        })?;
+        crate::worker::create_script_schedule(
+            &state.pool,
+            &req.label,
+            &req.cron_expr,
+            req.enabled,
+            lang,
+            source,
+            req.script_entry.as_deref(),
+        )
+        .await?
+    } else if req.exec_kind == "builtin" && req.handler_id.is_some() {
         // New path: use handler_id + params
         let handler_id = req.handler_id.as_deref().unwrap();
         crate::worker::create_schedule_v2(
@@ -288,14 +305,27 @@ pub async fn update(
 ) -> AppResult<ApiResponse<CronSchedule>> {
     crate::errors::validation::validate(&req)?;
     let id = crate::types::snowflake_id::parse_id(&id)?;
+
+    // Serialize params JSON to string
+    let params_str = req
+        .params
+        .as_ref()
+        .map(serde_json::to_string)
+        .transpose()
+        .map_err(|e| AppError::Internal(e.into()))?;
+
     let updated = update_schedule(
         &state.pool,
         id,
         req.label,
-        req.job_type,
-        req.payload,
         req.cron_expr,
         req.enabled,
+        req.exec_kind,
+        req.handler_id,
+        params_str,
+        req.script_lang,
+        req.script_source,
+        req.script_entry,
     )
     .await?;
     Ok(ApiResponse::success(updated))
@@ -348,15 +378,37 @@ pub async fn logs(
     _auth: AuthUser,
     State(state): State<AppState>,
     Query(params): Query<LogQueryParams>,
-) -> AppResult<ApiResponse<Vec<crate::worker::CronExecutionLog>>> {
-    let limit = params.limit.clamp(1, 100);
-    let logs = if let Some(ref schedule_id) = params.schedule_id {
+) -> AppResult<ApiResponse<crate::errors::response::PaginatedData<crate::worker::CronExecutionLog>>>
+{
+    let page = params.page.max(1);
+    let page_size = params.page_size.clamp(1, 100);
+    let offset = (page - 1) * page_size;
+
+    let (items, total) = if let Some(ref schedule_id) = params.schedule_id {
         let sid = crate::types::snowflake_id::parse_id(schedule_id)?;
-        list_execution_logs(&state.pool, sid, limit).await?
+        list_execution_logs(&state.pool, sid, page_size, offset).await?
     } else {
-        recent_execution_logs(&state.pool, limit).await?
+        // Recent logs across all schedules — use limit = page_size, no offset pagination
+        let logs = recent_execution_logs(&state.pool, page_size).await?;
+        let count = logs.len() as i64;
+        return Ok(ApiResponse::success(
+            crate::errors::response::PaginatedData {
+                items: logs,
+                total: count,
+                page,
+                page_size,
+            },
+        ));
     };
-    Ok(ApiResponse::success(logs))
+
+    Ok(ApiResponse::success(
+        crate::errors::response::PaginatedData {
+            items,
+            total,
+            page,
+            page_size,
+        },
+    ))
 }
 
 /// POST /api/v1/admin/crons/logs/cleanup — Clean up expired logs

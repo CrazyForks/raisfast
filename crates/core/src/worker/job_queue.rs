@@ -12,6 +12,7 @@ use super::{
     JobQueue, JobRow, JobStats, JobStatus, NewJob, QueuedJob, backoff_duration, parse_job,
     serialize_job,
 };
+use crate::types::snowflake_id::SnowflakeId;
 
 /// `SQLite` persisted job queue
 pub struct DefaultJobQueue {
@@ -41,6 +42,8 @@ impl JobQueue for DefaultJobQueue {
             "status" => JobStatus::Pending.as_str(),
             "max_attempts" => max_attempts,
             "run_after" => new_job.run_after,
+            "cron_schedule_id" => new_job.cron_schedule_id,
+            "cron_log_id" => new_job.cron_log_id,
             "created_at" => now,
             "updated_at" => now
         ])?;
@@ -56,7 +59,7 @@ impl JobQueue for DefaultJobQueue {
         #[cfg(not(feature = "db-mysql"))]
         {
             let returning = crate::db::Driver::returning_col(&format!(
-                "{COL_ID}, job_type, payload, attempts, max_attempts, created_at"
+                "{COL_ID}, job_type, payload, attempts, max_attempts, created_at, cron_schedule_id, cron_log_id"
             ));
             let sql = format!(
                 "UPDATE jobs SET status = {}, attempts = attempts + 1, updated_at = {}
@@ -90,6 +93,8 @@ impl JobQueue for DefaultJobQueue {
                 let attempts: i32 = row.get::<i32, _>("attempts");
                 let max_attempts: i32 = row.get::<i32, _>("max_attempts");
                 let created_at: Timestamp = row.get::<Timestamp, _>("created_at");
+                let cron_schedule_id: Option<i64> = row.get::<Option<i64>, _>("cron_schedule_id");
+                let cron_log_id: Option<i64> = row.get::<Option<i64>, _>("cron_log_id");
                 match parse_job(&job_type, &payload) {
                     Ok(job) => jobs.push(QueuedJob {
                         id: id.to_string(),
@@ -97,6 +102,8 @@ impl JobQueue for DefaultJobQueue {
                         attempts: attempts as u32,
                         max_attempts: max_attempts as u32,
                         created_at,
+                        cron_schedule_id: cron_schedule_id.map(SnowflakeId),
+                        cron_log_id: cron_log_id.map(SnowflakeId),
                     }),
                     Err(e) => {
                         tracing::error!("failed to parse job {id}: {e}");
@@ -118,7 +125,7 @@ impl JobQueue for DefaultJobQueue {
             let mut tx = self.pool.begin().await?;
 
             let select_sql = format!(
-                "SELECT {COL_ID}, job_type, payload, attempts, max_attempts, created_at \
+                "SELECT {COL_ID}, job_type, payload, attempts, max_attempts, created_at, cron_schedule_id, cron_log_id \
                  FROM jobs \
                  WHERE status = {} AND (run_after IS NULL OR run_after <= {}) \
                  ORDER BY created_at ASC \
@@ -165,7 +172,6 @@ impl JobQueue for DefaultJobQueue {
 
             tx.commit().await?;
 
-            // Parse rows fetched earlier (data already in hand, no second SELECT needed)
             let mut jobs = Vec::with_capacity(rows.len());
             for row in rows {
                 let id: i64 = row.get::<i64, _>(COL_ID);
@@ -174,6 +180,8 @@ impl JobQueue for DefaultJobQueue {
                 let attempts: i32 = row.get::<i32, _>("attempts");
                 let max_attempts: i32 = row.get::<i32, _>("max_attempts");
                 let created_at: Timestamp = row.get::<Timestamp, _>("created_at");
+                let cron_schedule_id: Option<i64> = row.get::<Option<i64>, _>("cron_schedule_id");
+                let cron_log_id: Option<i64> = row.get::<Option<i64>, _>("cron_log_id");
 
                 match parse_job(&job_type, &payload) {
                     Ok(job) => jobs.push(QueuedJob {
@@ -182,6 +190,8 @@ impl JobQueue for DefaultJobQueue {
                         attempts: (attempts + 1) as u32, // +1 because bulk UPDATE incremented it
                         max_attempts: max_attempts as u32,
                         created_at,
+                        cron_schedule_id: cron_schedule_id.map(SnowflakeId),
+                        cron_log_id: cron_log_id.map(SnowflakeId),
                     }),
                     Err(e) => {
                         tracing::error!("failed to parse job {id}: {e}");
@@ -530,6 +540,8 @@ mod tests {
             job: Job::GenerateSitemap,
             max_attempts: Some(3),
             run_after: None,
+            cron_schedule_id: None,
+            cron_log_id: None,
         }
     }
 
@@ -607,6 +619,8 @@ mod tests {
             job: Job::GenerateSitemap,
             max_attempts: Some(1),
             run_after: None,
+            cron_schedule_id: None,
+            cron_log_id: None,
         })
         .await
         .unwrap();
@@ -667,6 +681,8 @@ mod tests {
             job: Job::GenerateSitemap,
             max_attempts: Some(5),
             run_after: None,
+            cron_schedule_id: None,
+            cron_log_id: None,
         })
         .await
         .unwrap();
@@ -717,6 +733,8 @@ mod tests {
             job: Job::GenerateSitemap,
             max_attempts: Some(1),
             run_after: None,
+            cron_schedule_id: None,
+            cron_log_id: None,
         })
         .await
         .unwrap();
@@ -785,6 +803,8 @@ mod tests {
             job: Job::GenerateSitemap,
             max_attempts: Some(3),
             run_after: Some(future),
+            cron_schedule_id: None,
+            cron_log_id: None,
         })
         .await
         .unwrap();

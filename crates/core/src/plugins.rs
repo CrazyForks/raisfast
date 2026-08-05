@@ -867,6 +867,90 @@ impl PluginManager {
         }
     }
 
+    /// Execute an inline script (cron sandbox script).
+    ///
+    /// Loads the script into the engine under `id`, calls `func_name` with
+    /// `data`, then unloads. Each `call_action` creates a fresh runtime instance,
+    /// so there is zero state leakage between invocations.
+    ///
+    /// The `id` should be stable for the same schedule (e.g. `"__cron__<schedule_id>"`)
+    /// so that `host.getData` / `host.setData` KV persists across ticks.
+    pub async fn run_inline_script(
+        &self,
+        runtime: &str,
+        id: &str,
+        code: &str,
+        func_name: &str,
+        data: &serde_json::Value,
+        permissions: Permissions,
+    ) -> AppResult<()> {
+        match runtime {
+            #[cfg(feature = "plugin-js")]
+            "js" => {
+                let sdk_source = sdk_v1::get_sdk_source("js", "v1").ok_or_else(|| {
+                    AppError::Internal(anyhow::anyhow!("SDK source for js/v1 not found"))
+                })?;
+                // Inject `host` alias so inline scripts can use `host.log()`,
+                // `host.vfsWrite()` etc. without importing the SDK.
+                let wrapped_code = format!("const host = globalThis.RaisFastHost;\n{}", code);
+                self.js_engine
+                    .load_plugin(
+                        id,
+                        &wrapped_code,
+                        permissions,
+                        std::path::Path::new("."),
+                        sdk_source,
+                    )
+                    .await
+                    .map_err(|e| AppError::Internal(anyhow::anyhow!("load inline js: {e}")))?;
+                let result = self
+                    .js_engine
+                    .call_action(id, func_name, data)
+                    .await
+                    .map_err(|e| AppError::Internal(anyhow::anyhow!("exec inline js: {e}")));
+                self.js_engine.unload_plugin(id).await;
+                result?;
+            }
+            #[cfg(feature = "plugin-lua")]
+            "lua" => {
+                let sdk_source = sdk_v1::get_sdk_source("lua", "v1").ok_or_else(|| {
+                    AppError::Internal(anyhow::anyhow!("SDK source for lua/v1 not found"))
+                })?;
+                self.lua_engine
+                    .load_plugin(id, code, permissions, std::path::Path::new("."), sdk_source)
+                    .await
+                    .map_err(|e| AppError::Internal(anyhow::anyhow!("load inline lua: {e}")))?;
+                let result = self
+                    .lua_engine
+                    .call_action(id, func_name, data)
+                    .await
+                    .map_err(|e| AppError::Internal(anyhow::anyhow!("exec inline lua: {e}")));
+                self.lua_engine.unload_plugin(id).await;
+                result?;
+            }
+            #[cfg(feature = "plugin-rhai")]
+            "rhai" => {
+                self.rhai_engine
+                    .load_plugin(id, code, permissions, std::path::Path::new("."), "")
+                    .await
+                    .map_err(|e| AppError::Internal(anyhow::anyhow!("load inline rhai: {e}")))?;
+                let result = self
+                    .rhai_engine
+                    .call_action(id, func_name, data)
+                    .await
+                    .map_err(|e| AppError::Internal(anyhow::anyhow!("exec inline rhai: {e}")));
+                self.rhai_engine.unload_plugin(id).await;
+                result?;
+            }
+            _ => {
+                return Err(AppError::Internal(anyhow::anyhow!(
+                    "unsupported script runtime: '{runtime}' (available: js, lua, rhai)"
+                )));
+            }
+        }
+        Ok(())
+    }
+
     /// Sync plugin Cron schedules to the database
     async fn sync_crons_for_plugin(&self, plugin_id: &str, entries: &[CronEntry]) {
         if let Some(ref pool) = self.pool

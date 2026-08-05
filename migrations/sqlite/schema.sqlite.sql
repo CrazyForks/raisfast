@@ -372,16 +372,18 @@ CREATE INDEX IF NOT EXISTS idx_email_verification_tokens_expires ON email_verifi
 
 -- Background job queue
 CREATE TABLE IF NOT EXISTS jobs (
-    id           INTEGER PRIMARY KEY,
-    job_type     TEXT NOT NULL,
-    payload      TEXT NOT NULL,
-    status       TEXT NOT NULL DEFAULT 'pending',
-    attempts     INTEGER NOT NULL DEFAULT 0,
-    max_attempts INTEGER NOT NULL DEFAULT 3,
-    run_after    TEXT,
-    error        TEXT,
-    created_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
-    updated_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+    id               INTEGER PRIMARY KEY,
+    job_type         TEXT NOT NULL,
+    payload          TEXT NOT NULL,
+    status           TEXT NOT NULL DEFAULT 'pending',
+    attempts         INTEGER NOT NULL DEFAULT 0,
+    max_attempts     INTEGER NOT NULL DEFAULT 3,
+    run_after        TEXT,
+    error            TEXT,
+    cron_schedule_id INTEGER,
+    cron_log_id      INTEGER,
+    created_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    updated_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
 
 CREATE INDEX IF NOT EXISTS idx_jobs_status_run_after ON jobs(status, run_after);
@@ -401,6 +403,9 @@ CREATE TABLE IF NOT EXISTS cron_schedules (
     exec_kind    TEXT NOT NULL DEFAULT 'builtin',
     handler_id   TEXT,
     params       TEXT,
+    script_lang    TEXT,
+    script_source  TEXT,
+    script_entry   TEXT NOT NULL DEFAULT 'on_cron_tick',
     created_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     updated_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );

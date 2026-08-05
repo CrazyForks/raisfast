@@ -354,16 +354,18 @@ CREATE TABLE IF NOT EXISTS email_verification_tokens (
 
 -- Background job queue
 CREATE TABLE IF NOT EXISTS jobs (
-    id           BIGINT PRIMARY KEY,
-    job_type     VARCHAR(100) NOT NULL,
-    payload      TEXT NOT NULL,
-    status       VARCHAR(50) NOT NULL DEFAULT 'pending',
-    attempts     INT NOT NULL DEFAULT 0,
-    max_attempts INT NOT NULL DEFAULT 3,
-    run_after    DATETIME,
-    error        TEXT,
-    created_at   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    id               BIGINT PRIMARY KEY,
+    job_type         VARCHAR(100) NOT NULL,
+    payload          TEXT NOT NULL,
+    status           VARCHAR(50) NOT NULL DEFAULT 'pending',
+    attempts         INT NOT NULL DEFAULT 0,
+    max_attempts     INT NOT NULL DEFAULT 3,
+    run_after        DATETIME,
+    error            TEXT,
+    cron_schedule_id BIGINT,
+    cron_log_id      BIGINT,
+    created_at       DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at       DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     INDEX idx_jobs_status_run_after (status, run_after),
     INDEX idx_jobs_type (job_type)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
@@ -382,6 +384,9 @@ CREATE TABLE IF NOT EXISTS cron_schedules (
     exec_kind    VARCHAR(20) NOT NULL DEFAULT 'builtin',
     handler_id   VARCHAR(100),
     params       TEXT,
+    script_lang    VARCHAR(20),
+    script_source  TEXT,
+    script_entry   VARCHAR(100) NOT NULL DEFAULT 'on_cron_tick',
     created_at   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     INDEX idx_cron_enabled (enabled),

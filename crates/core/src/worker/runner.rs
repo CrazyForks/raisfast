@@ -5,13 +5,17 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use super::{Job, JobHandlerRegistry, JobQueue, PluginCronDispatcher};
+use crate::db::Pool;
+use crate::types::snowflake_id::SnowflakeId;
+
+use super::{CronExecStatus, Job, JobHandlerRegistry, JobQueue, PluginCronDispatcher};
 
 /// Worker executor
 pub struct WorkerRunner {
     queue: Arc<dyn JobQueue>,
     handlers: Arc<JobHandlerRegistry>,
     plugin_dispatcher: Option<Arc<PluginCronDispatcher>>,
+    pool: Pool,
     poll_interval: Duration,
     batch_size: usize,
 }
@@ -23,6 +27,7 @@ impl WorkerRunner {
     pub fn new(
         queue: Arc<dyn JobQueue>,
         handlers: Arc<JobHandlerRegistry>,
+        pool: Pool,
         poll_interval: Duration,
         batch_size: usize,
     ) -> Self {
@@ -30,6 +35,7 @@ impl WorkerRunner {
             queue,
             handlers,
             plugin_dispatcher: None,
+            pool,
             poll_interval,
             batch_size,
         }
@@ -135,6 +141,9 @@ impl WorkerRunner {
             job.max_attempts,
         );
 
+        // Measure handler execution time for cron log writeback.
+        let handler_start = std::time::Instant::now();
+
         let result = if self.handlers.has_handler(job_type) {
             self.handlers.handle(&job.job).await
         } else if let Some(ref dispatcher) = self.plugin_dispatcher {
@@ -143,17 +152,74 @@ impl WorkerRunner {
         } else {
             tracing::warn!("no handler for job type '{job_type}', marking dead");
             self.queue.dead(&job.id, "no handler registered").await?;
+            self.writeback_cron_log(job, Err("no handler registered".to_string()))
+                .await;
             return Ok(());
         };
 
+        let elapsed_ms = handler_start.elapsed().as_millis() as i64;
+
         match result {
-            Ok(()) => self.queue.complete(&job.id).await,
+            Ok(()) => {
+                self.queue.complete(&job.id).await?;
+                self.writeback_cron_log(job, Ok(elapsed_ms)).await;
+            }
             Err(e) => {
                 let err_msg = format!("{e}");
-                if job.attempts >= job.max_attempts {
-                    self.queue.dead(&job.id, &err_msg).await
+                let became_dead = job.attempts >= job.max_attempts;
+                if became_dead {
+                    self.queue.dead(&job.id, &err_msg).await?;
                 } else {
-                    self.queue.fail(&job.id, &err_msg).await
+                    self.queue.fail(&job.id, &err_msg).await?;
+                }
+                self.writeback_cron_log(
+                    job,
+                    Err(format!(
+                        "{err_msg} (elapsed {elapsed_ms}ms, dead={became_dead})"
+                    )),
+                )
+                .await;
+            }
+        }
+        Ok(())
+    }
+
+    /// Write back the real execution outcome to `cron_execution_log`.
+    ///
+    /// Only called when the job has cron provenance (`cron_log_id` is Some).
+    /// The `Ok(i64)` arm carries duration_ms; the `Err` arm carries the error string.
+    async fn writeback_cron_log(&self, job: &super::QueuedJob, outcome: Result<i64, String>) {
+        let Some(log_id) = job.cron_log_id else {
+            return; // Not a cron-originated job (EventBus / ad-hoc enqueue)
+        };
+        let now = crate::utils::tz::now_utc();
+        let log_id: SnowflakeId = log_id;
+        match outcome {
+            Ok(duration_ms) => {
+                let res = crate::worker::complete_execution_log_with(
+                    &self.pool,
+                    log_id,
+                    duration_ms,
+                    now,
+                )
+                .await;
+                if let Err(e) = res {
+                    tracing::warn!("failed to writeback cron log {log_id}: {e}");
+                }
+            }
+            Err(err_str) => {
+                let became_dead = job.attempts >= job.max_attempts;
+                let status = if became_dead {
+                    CronExecStatus::Dead
+                } else {
+                    CronExecStatus::Failed
+                };
+                let res = crate::worker::fail_execution_log_with(
+                    &self.pool, log_id, status, &err_str, now,
+                )
+                .await;
+                if let Err(e) = res {
+                    tracing::warn!("failed to writeback cron log {log_id}: {e}");
                 }
             }
         }
@@ -164,6 +230,7 @@ impl WorkerRunner {
             queue: self.queue.clone(),
             handlers: self.handlers.clone(),
             plugin_dispatcher: self.plugin_dispatcher.clone(),
+            pool: self.pool.clone(),
             poll_interval: self.poll_interval,
             batch_size: self.batch_size,
         }
@@ -187,24 +254,34 @@ mod tests {
         }
     }
 
-    async fn setup() -> (Arc<DefaultJobQueue>, Arc<JobHandlerRegistry>) {
+    async fn setup() -> (
+        Arc<DefaultJobQueue>,
+        Arc<JobHandlerRegistry>,
+        crate::db::Pool,
+    ) {
         let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
         sqlx::query(crate::db::schema::SCHEMA_SQL)
             .execute(&pool)
             .await
             .unwrap();
-        let queue = Arc::new(DefaultJobQueue::new(pool));
+        let queue = Arc::new(DefaultJobQueue::new(pool.clone()));
         let mut registry = JobHandlerRegistry::new();
         registry.register("generate_sitemap", Box::new(LogJobHandler));
         registry.register("send_welcome_email", Box::new(FailHandler));
         registry.register("rebuild_search_index", Box::new(LogJobHandler));
-        (queue, Arc::new(registry))
+        (queue, Arc::new(registry), pool)
     }
 
     #[tokio::test]
     async fn execute_completes_on_handler_success() {
-        let (queue, registry) = setup().await;
-        let runner = WorkerRunner::new(queue.clone(), registry, Duration::from_millis(100), 5);
+        let (queue, registry, pool) = setup().await;
+        let runner = WorkerRunner::new(
+            queue.clone(),
+            registry,
+            pool.clone(),
+            Duration::from_millis(100),
+            5,
+        );
 
         queue
             .enqueue(NewJob::from(Job::GenerateSitemap))
@@ -224,8 +301,14 @@ mod tests {
 
     #[tokio::test]
     async fn execute_fails_and_retries() {
-        let (queue, registry) = setup().await;
-        let runner = WorkerRunner::new(queue.clone(), registry, Duration::from_millis(100), 5);
+        let (queue, registry, pool) = setup().await;
+        let runner = WorkerRunner::new(
+            queue.clone(),
+            registry,
+            pool.clone(),
+            Duration::from_millis(100),
+            5,
+        );
 
         queue
             .enqueue(NewJob {
@@ -236,6 +319,8 @@ mod tests {
                 },
                 max_attempts: Some(3),
                 run_after: None,
+                cron_schedule_id: None,
+                cron_log_id: None,
             })
             .await
             .unwrap();
@@ -252,8 +337,14 @@ mod tests {
 
     #[tokio::test]
     async fn execute_marks_dead_at_max_attempts() {
-        let (queue, registry) = setup().await;
-        let runner = WorkerRunner::new(queue.clone(), registry, Duration::from_millis(100), 5);
+        let (queue, registry, pool) = setup().await;
+        let runner = WorkerRunner::new(
+            queue.clone(),
+            registry,
+            pool.clone(),
+            Duration::from_millis(100),
+            5,
+        );
 
         queue
             .enqueue(NewJob {
@@ -264,6 +355,8 @@ mod tests {
                 },
                 max_attempts: Some(1),
                 run_after: None,
+                cron_schedule_id: None,
+                cron_log_id: None,
             })
             .await
             .unwrap();
@@ -282,8 +375,14 @@ mod tests {
 
     #[tokio::test]
     async fn dequeue_empty_no_error() {
-        let (queue, registry) = setup().await;
-        let _runner = WorkerRunner::new(queue.clone(), registry, Duration::from_millis(100), 5);
+        let (queue, registry, pool) = setup().await;
+        let _runner = WorkerRunner::new(
+            queue.clone(),
+            registry,
+            pool.clone(),
+            Duration::from_millis(100),
+            5,
+        );
 
         let jobs = queue.dequeue(10).await.unwrap();
         assert!(jobs.is_empty());
@@ -294,8 +393,14 @@ mod tests {
 
     #[tokio::test]
     async fn spawn_processes_pending_jobs() {
-        let (queue, registry) = setup().await;
-        let runner = WorkerRunner::new(queue.clone(), registry, Duration::from_millis(50), 5);
+        let (queue, registry, pool) = setup().await;
+        let runner = WorkerRunner::new(
+            queue.clone(),
+            registry,
+            pool.clone(),
+            Duration::from_millis(50),
+            5,
+        );
 
         queue
             .enqueue(NewJob::from(Job::GenerateSitemap))
@@ -312,8 +417,14 @@ mod tests {
 
     #[tokio::test]
     async fn unhandled_job_without_plugin_marks_dead() {
-        let (queue, registry) = setup().await;
-        let runner = WorkerRunner::new(queue.clone(), registry, Duration::from_millis(100), 5);
+        let (queue, registry, pool) = setup().await;
+        let runner = WorkerRunner::new(
+            queue.clone(),
+            registry,
+            pool.clone(),
+            Duration::from_millis(100),
+            5,
+        );
 
         queue
             .enqueue(NewJob::from(Job::Custom {
@@ -336,8 +447,14 @@ mod tests {
 
     #[tokio::test]
     async fn coalesces_multiple_search_index_jobs() {
-        let (queue, registry) = setup().await;
-        let runner = WorkerRunner::new(queue.clone(), registry, Duration::from_millis(100), 20);
+        let (queue, registry, pool) = setup().await;
+        let runner = WorkerRunner::new(
+            queue.clone(),
+            registry,
+            pool.clone(),
+            Duration::from_millis(100),
+            20,
+        );
 
         queue
             .enqueue(NewJob::from(Job::RebuildSearchIndex {
@@ -370,8 +487,14 @@ mod tests {
 
     #[tokio::test]
     async fn coalesces_search_index_with_mixed_jobs() {
-        let (queue, registry) = setup().await;
-        let runner = WorkerRunner::new(queue.clone(), registry, Duration::from_millis(100), 20);
+        let (queue, registry, pool) = setup().await;
+        let runner = WorkerRunner::new(
+            queue.clone(),
+            registry,
+            pool.clone(),
+            Duration::from_millis(100),
+            20,
+        );
 
         queue
             .enqueue(NewJob::from(Job::GenerateSitemap))

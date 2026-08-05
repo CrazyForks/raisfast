@@ -369,16 +369,18 @@ CREATE INDEX IF NOT EXISTS idx_email_verification_tokens_expires ON email_verifi
 
 -- Background job queue
 CREATE TABLE IF NOT EXISTS jobs (
-    id           BIGINT PRIMARY KEY,
-    job_type     VARCHAR(100) NOT NULL,
-    payload      TEXT NOT NULL,
-    status       VARCHAR(50) NOT NULL DEFAULT 'pending',
-    attempts     INTEGER NOT NULL DEFAULT 0,
-    max_attempts INTEGER NOT NULL DEFAULT 3,
-    run_after    TIMESTAMPTZ,
-    error        TEXT,
-    created_at   TIMESTAMPTZ(0) NOT NULL DEFAULT NOW(),
-    updated_at   TIMESTAMPTZ(0) NOT NULL DEFAULT NOW()
+    id               BIGINT PRIMARY KEY,
+    job_type         VARCHAR(100) NOT NULL,
+    payload          TEXT NOT NULL,
+    status           VARCHAR(50) NOT NULL DEFAULT 'pending',
+    attempts         INTEGER NOT NULL DEFAULT 0,
+    max_attempts     INTEGER NOT NULL DEFAULT 3,
+    run_after        TIMESTAMPTZ,
+    error            TEXT,
+    cron_schedule_id BIGINT,
+    cron_log_id      BIGINT,
+    created_at       TIMESTAMPTZ(0) NOT NULL DEFAULT NOW(),
+    updated_at       TIMESTAMPTZ(0) NOT NULL DEFAULT NOW()
 );
 
 CREATE INDEX IF NOT EXISTS idx_jobs_status_run_after ON jobs(status, run_after) WHERE status = 'pending';
@@ -398,6 +400,9 @@ CREATE TABLE IF NOT EXISTS cron_schedules (
     exec_kind    VARCHAR(20) NOT NULL DEFAULT 'builtin',
     handler_id   VARCHAR(100),
     params       TEXT,
+    script_lang    VARCHAR(20),
+    script_source  TEXT,
+    script_entry   VARCHAR(100) NOT NULL DEFAULT 'on_cron_tick',
     created_at   TIMESTAMPTZ(0) NOT NULL DEFAULT NOW(),
     updated_at   TIMESTAMPTZ(0) NOT NULL DEFAULT NOW()
 );

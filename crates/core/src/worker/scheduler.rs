@@ -61,6 +61,9 @@ macro_rules! cron_row_to_schedule {
             exec_kind: r.exec_kind,
             handler_id: r.handler_id,
             params: r.params,
+            script_lang: r.script_lang,
+            script_source: r.script_source,
+            script_entry: r.script_entry,
             created_at: r.created_at,
             updated_at: r.updated_at,
         }
@@ -98,6 +101,9 @@ struct CronScheduleRow {
     exec_kind: String,
     handler_id: Option<String>,
     params: Option<String>,
+    script_lang: Option<String>,
+    script_source: Option<String>,
+    script_entry: String,
     created_at: Timestamp,
     updated_at: Timestamp,
 }
@@ -137,6 +143,9 @@ pub struct CronSchedule {
     pub exec_kind: String,
     pub handler_id: Option<String>,
     pub params: Option<String>,
+    pub script_lang: Option<String>,
+    pub script_source: Option<String>,
+    pub script_entry: String,
     pub created_at: Timestamp,
     pub updated_at: Timestamp,
 }
@@ -214,6 +223,9 @@ pub async fn create_schedule_with_plugin(
         exec_kind: "builtin".into(),
         handler_id: Some(job_type.to_string()),
         params: payload.map(|s| s.to_string()),
+        script_lang: None,
+        script_source: None,
+        script_entry: "on_cron_tick".to_string(),
         created_at: now,
         updated_at: now,
     }))
@@ -238,7 +250,7 @@ pub async fn create_schedule_v2(
     raisfast_derive::crud_insert!(pool, "cron_schedules", [
         "id" => id,
         "label" => label,
-        "job_type" => handler_id.unwrap_or("custom"),
+        "job_type" => handler_id.unwrap_or(if exec_kind == "script" { "run_script" } else { "custom" }),
         "payload" => params,
         "cron_expr" => cron_expr,
         "enabled" => enabled,
@@ -254,7 +266,13 @@ pub async fn create_schedule_v2(
     Ok(find_by_id(pool, id).await?.unwrap_or(CronSchedule {
         id,
         label: label.to_string(),
-        job_type: handler_id.unwrap_or("custom").to_string(),
+        job_type: handler_id
+            .unwrap_or(if exec_kind == "script" {
+                "run_script"
+            } else {
+                "custom"
+            })
+            .to_string(),
         payload: params.map(|s| s.to_string()),
         cron_expr: cron_expr.to_string(),
         enabled,
@@ -264,6 +282,68 @@ pub async fn create_schedule_v2(
         exec_kind: exec_kind.to_string(),
         handler_id: handler_id.map(|s| s.to_string()),
         params: params.map(|s| s.to_string()),
+        script_lang: None,
+        script_source: None,
+        script_entry: "on_cron_tick".to_string(),
+        created_at: now,
+        updated_at: now,
+    }))
+}
+
+/// Create a cron schedule for a sandbox script.
+///
+/// `script_lang` must be `"js"`, `"lua"`, or `"rhai"`.
+/// `script_source` is the raw script code.
+/// `script_entry` is the function name to call (default `"on_cron_tick"`).
+pub async fn create_script_schedule(
+    pool: &Pool,
+    label: &str,
+    cron_expr: &str,
+    enabled: bool,
+    script_lang: &str,
+    script_source: &str,
+    script_entry: Option<&str>,
+) -> AppResult<CronSchedule> {
+    let now = crate::utils::tz::now_utc();
+    let next = next_run(cron_expr, now)?;
+    let id = crate::utils::id::new_snowflake_id();
+    let entry = script_entry.unwrap_or("on_cron_tick");
+
+    raisfast_derive::crud_insert!(pool, "cron_schedules", [
+        "id" => id,
+        "label" => label,
+        "job_type" => "run_script",
+        "payload" => Option::<&str>::None,
+        "cron_expr" => cron_expr,
+        "enabled" => enabled,
+        "next_run_at" => next,
+        "plugin_id" => Option::<&str>::None,
+        "exec_kind" => "script",
+        "handler_id" => Option::<&str>::None,
+        "params" => Option::<&str>::None,
+        "script_lang" => script_lang,
+        "script_source" => script_source,
+        "script_entry" => entry,
+        "created_at" => now,
+        "updated_at" => now
+    ])?;
+
+    Ok(find_by_id(pool, id).await?.unwrap_or(CronSchedule {
+        id,
+        label: label.to_string(),
+        job_type: "run_script".to_string(),
+        payload: None,
+        cron_expr: cron_expr.to_string(),
+        enabled,
+        last_run_at: None,
+        next_run_at: next,
+        plugin_id: None,
+        exec_kind: "script".to_string(),
+        handler_id: None,
+        params: None,
+        script_lang: Some(script_lang.to_string()),
+        script_source: Some(script_source.to_string()),
+        script_entry: entry.to_string(),
         created_at: now,
         updated_at: now,
     }))
@@ -272,7 +352,7 @@ pub async fn create_schedule_v2(
 /// Find by ID
 pub async fn find_by_id(pool: &Pool, id: SnowflakeId) -> AppResult<Option<CronSchedule>> {
     let row: Option<CronScheduleRow> = sqlx::query_as::<_, CronScheduleRow>(&format!(
-        "SELECT id, label, job_type, payload, cron_expr, enabled, last_run_at, next_run_at, plugin_id, exec_kind, handler_id, params, created_at, updated_at
+        "SELECT id, label, job_type, payload, cron_expr, enabled, last_run_at, next_run_at, plugin_id, exec_kind, handler_id, params, script_lang, script_source, script_entry, created_at, updated_at
          FROM cron_schedules WHERE id = {}",
         Driver::ph(1)
     ))
@@ -286,7 +366,7 @@ pub async fn find_by_id(pool: &Pool, id: SnowflakeId) -> AppResult<Option<CronSc
 /// List all schedules
 pub async fn list_schedules(pool: &Pool) -> AppResult<Vec<CronSchedule>> {
     let rows: Vec<CronScheduleRow> = sqlx::query_as::<_, CronScheduleRow>(
-        "SELECT id, label, job_type, payload, cron_expr, enabled, last_run_at, next_run_at, plugin_id, exec_kind, handler_id, params, created_at, updated_at
+        "SELECT id, label, job_type, payload, cron_expr, enabled, last_run_at, next_run_at, plugin_id, exec_kind, handler_id, params, script_lang, script_source, script_entry, created_at, updated_at
          FROM cron_schedules ORDER BY created_at ASC",
     )
     .fetch_all(pool)
@@ -296,10 +376,35 @@ pub async fn list_schedules(pool: &Pool) -> AppResult<Vec<CronSchedule>> {
 }
 
 /// Enable/disable a schedule
+///
+/// When **enabling**, `next_run_at` is recalculated from `now` so a schedule
+/// that was disabled for a long time does not fire immediately in a burst
+/// (its stale `next_run_at` would be far in the past).
 pub async fn toggle_schedule(pool: &Pool, id: SnowflakeId, enabled: bool) -> AppResult<()> {
     let now = crate::utils::tz::now_utc();
+
+    // When enabling, recompute next_run_at from cron_expr so a long-disabled
+    // schedule doesn't fire-storm on re-enable.
+    let next_run_at: Option<Timestamp> = if enabled {
+        let row: Option<(String,)> = sqlx::query_as(&format!(
+            "SELECT cron_expr FROM cron_schedules WHERE id = {}",
+            Driver::ph(1)
+        ))
+        .bind(id)
+        .fetch_optional(pool)
+        .await?;
+
+        match row {
+            Some((cron_expr,)) => Some(next_run(&cron_expr, now)?),
+            None => return Err(AppError::not_found("cron_schedule")),
+        }
+    } else {
+        None
+    };
+
     let result: crate::db::pool::DbQueryResult = raisfast_derive::crud_update!(pool, "cron_schedules",
         bind: ["enabled" => enabled, "updated_at" => now],
+        optional: ["next_run_at" => next_run_at],
         where: ("id", id)
     )?;
 
@@ -316,10 +421,14 @@ pub async fn update_schedule(
     pool: &Pool,
     id: SnowflakeId,
     label: Option<String>,
-    job_type: Option<String>,
-    payload: Option<Option<String>>,
     cron_expr: Option<String>,
     enabled: Option<bool>,
+    exec_kind: Option<String>,
+    handler_id: Option<String>,
+    params: Option<String>,
+    script_lang: Option<String>,
+    script_source: Option<String>,
+    script_entry: Option<String>,
 ) -> AppResult<CronSchedule> {
     let mut schedule = find_by_id(pool, id)
         .await?
@@ -328,17 +437,31 @@ pub async fn update_schedule(
     if let Some(v) = label {
         schedule.label = v;
     }
-    if let Some(v) = job_type {
-        schedule.job_type = v;
-    }
-    if let Some(v) = payload {
-        schedule.payload = v;
-    }
     if let Some(v) = cron_expr {
         schedule.cron_expr = v;
     }
     if let Some(v) = enabled {
         schedule.enabled = v;
+    }
+    if let Some(v) = exec_kind {
+        schedule.exec_kind = v;
+    }
+    if let Some(v) = handler_id {
+        schedule.handler_id = Some(v);
+        schedule.job_type = schedule.handler_id.clone().unwrap_or(schedule.job_type);
+    }
+    if let Some(v) = params {
+        schedule.params = Some(v);
+        schedule.payload = schedule.params.clone();
+    }
+    if let Some(v) = script_lang {
+        schedule.script_lang = Some(v);
+    }
+    if let Some(v) = script_source {
+        schedule.script_source = Some(v);
+    }
+    if let Some(v) = script_entry {
+        schedule.script_entry = v;
     }
 
     let next = next_run(&schedule.cron_expr, crate::utils::tz::now_utc())?;
@@ -351,6 +474,12 @@ pub async fn update_schedule(
             "payload" => &schedule.payload,
             "cron_expr" => &schedule.cron_expr,
             "enabled" => schedule.enabled,
+            "exec_kind" => &schedule.exec_kind,
+            "handler_id" => &schedule.handler_id,
+            "params" => &schedule.params,
+            "script_lang" => &schedule.script_lang,
+            "script_source" => &schedule.script_source,
+            "script_entry" => &schedule.script_entry,
             "next_run_at" => next,
             "updated_at" => now
         ],
@@ -414,7 +543,7 @@ impl CronScheduler {
         let now = crate::utils::tz::now_utc();
 
         let rows = sqlx::query_as::<_, CronScheduleRow>(&format!(
-            "SELECT id, label, job_type, payload, cron_expr, enabled, last_run_at, next_run_at, plugin_id, exec_kind, handler_id, params, created_at, updated_at
+            "SELECT id, label, job_type, payload, cron_expr, enabled, last_run_at, next_run_at, plugin_id, exec_kind, handler_id, params, script_lang, script_source, script_entry, created_at, updated_at
              FROM cron_schedules WHERE enabled = TRUE AND next_run_at <= {}",
             Driver::ph(1)
         ))
@@ -444,40 +573,51 @@ impl CronScheduler {
             schedule.job_type
         );
 
-        let log_id =
+        // Create execution log row (status: running). The real outcome
+        // (Completed/Failed/Dead) is written back by `WorkerRunner` after the
+        // job finishes — NOT here. This fixes the "fake log" bug where dispatch
+        // reported Completed based on enqueue success alone.
+        let log_id: Option<i64> =
             create_execution_log(&self.pool, schedule.id, &schedule.job_type, &schedule.label)
                 .await
                 .ok();
 
-        let start = std::time::Instant::now();
-
         let job = self.build_job(schedule);
         let dispatch_result = match job {
-            Ok(j) => self.queue.enqueue(NewJob::from(j)).await,
+            Ok(j) => {
+                // Attach cron provenance so WorkerRunner can write back the log.
+                let mut new_job = NewJob::from(j);
+                new_job.cron_schedule_id = Some(schedule.id);
+                new_job.cron_log_id = log_id.map(SnowflakeId);
+                self.queue.enqueue(new_job).await
+            }
             Err(e) => Err(e),
         };
 
-        let elapsed = start.elapsed().as_millis() as i64;
-
         let now = crate::utils::tz::now_utc();
-        let local_now = now.with_timezone(&crate::utils::tz::site_tz());
-        let next = next_run(&schedule.cron_expr, local_now).ok();
+        // Use UTC consistently — `next_run` accepts any TimeZone, but mixing
+        // site_tz here while `tick()` queries with UTC caused off-by-one-hour
+        // drift near DST boundaries. UTC is the single source of truth.
+        let next = next_run(&schedule.cron_expr, now).ok();
 
         in_transaction!(&self.pool, tx, {
             match &dispatch_result {
                 Ok(()) => {
+                    // Mark as "dispatched" (enqueued, not yet executed).
+                    // WorkerRunner will update to Completed/Failed/Dead later.
                     if let Some(ref lid) = log_id {
                         raisfast_derive::crud_update!(&mut *tx, "cron_execution_log",
-                            bind: ["status" => CronExecStatus::Completed, "duration_ms" => elapsed, "finished_at" => now],
+                            bind: ["status" => CronExecStatus::Dispatched],
                             where: ("id", lid)
                         )?;
                     }
                 }
                 Err(e) => {
+                    // Enqueue itself failed — record immediately as Failed.
                     if let Some(ref lid) = log_id {
                         let err_str = e.to_string();
                         raisfast_derive::crud_update!(&mut *tx, "cron_execution_log",
-                            bind: ["status" => CronExecStatus::Failed, "duration_ms" => elapsed, "error" => &err_str, "finished_at" => now],
+                            bind: ["status" => CronExecStatus::Failed, "error" => &err_str, "finished_at" => now],
                             where: ("id", lid)
                         )?;
                     }
@@ -522,6 +662,20 @@ impl CronScheduler {
             });
         }
 
+        // For script exec_kind, dispatch to run_script handler.
+        // The handler reads script_source/script_lang from cron_schedules by schedule_id.
+        if schedule.exec_kind == "script" {
+            let entry = schedule.script_entry.clone();
+            let payload = serde_json::json!({
+                "schedule_id": schedule.id.0,
+                "entry": entry,
+            });
+            return Ok(Job::Custom {
+                job_type: "run_script".to_string(),
+                payload,
+            });
+        }
+
         // Legacy / plugin path: try tagged-enum round-trip first
         let tagged = match &schedule.payload {
             Some(p) if !p.is_empty() => {
@@ -546,31 +700,37 @@ impl CronScheduler {
     }
 }
 
-/// Seed schedules (called on first startup)
+/// Seed schedules (called on every startup)
 ///
-/// Inserts into the `cron_schedules` table when it is empty, using `AppConfig.cron_schedules`.
-/// If the config is empty, uses `default_cron_schedules()` built-in defaults.
+/// **Idempotent**: uses `(plugin_id IS NULL, handler_id/job_type)` as the
+/// natural key to decide insert-vs-skip. This ensures newly-added default
+/// schedules appear on upgrade even when the table is non-empty, while
+/// existing ones are left untouched (user edits preserved).
 pub async fn seed_defaults(
     pool: &Pool,
     schedules: &[crate::config::app::CronScheduleConfig],
 ) -> AppResult<()> {
-    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM cron_schedules")
-        .fetch_one(pool)
-        .await?;
-
-    if count > 0 {
-        return Ok(());
-    }
-
     let schedules = if schedules.is_empty() {
         crate::config::app::default_cron_schedules()
     } else {
         schedules.to_vec()
     };
 
-    tracing::info!("seeding {} cron schedule(s)", schedules.len());
-
+    let mut inserted = 0u64;
     for s in &schedules {
+        // Natural key: (plugin_id IS NULL, job_type) — only seed built-in schedules.
+        let exists: bool = sqlx::query_scalar(&format!(
+            "SELECT EXISTS(SELECT 1 FROM cron_schedules WHERE plugin_id IS NULL AND job_type = {})",
+            Driver::ph(1)
+        ))
+        .bind(&s.job_type)
+        .fetch_one(pool)
+        .await?;
+
+        if exists {
+            continue;
+        }
+
         create_schedule(
             pool,
             &s.label,
@@ -580,8 +740,12 @@ pub async fn seed_defaults(
             s.enabled,
         )
         .await?;
+        inserted += 1;
     }
 
+    if inserted > 0 {
+        tracing::info!("seeded {inserted} new cron schedule(s)");
+    }
     Ok(())
 }
 
@@ -651,28 +815,72 @@ pub async fn fail_execution_log(
     Ok(())
 }
 
+/// Mark execution log as completed (called by `WorkerRunner` after job finishes).
+///
+/// Accepts an explicit `now` to avoid clock skew within a batch.
+pub async fn complete_execution_log_with(
+    pool: &Pool,
+    log_id: SnowflakeId,
+    duration_ms: i64,
+    now: crate::utils::tz::Timestamp,
+) -> AppResult<()> {
+    raisfast_derive::crud_update!(pool, "cron_execution_log",
+        bind: ["status" => CronExecStatus::Completed, "duration_ms" => duration_ms, "finished_at" => now],
+        where: ("id", log_id)
+    )?;
+    Ok(())
+}
+
+/// Mark execution log as failed/dead (called by `WorkerRunner` after job fails).
+///
+/// `status` may be `Failed` (will retry) or `Dead` (exhausted retries).
+pub async fn fail_execution_log_with(
+    pool: &Pool,
+    log_id: SnowflakeId,
+    status: crate::worker::CronExecStatus,
+    error: &str,
+    now: crate::utils::tz::Timestamp,
+) -> AppResult<()> {
+    raisfast_derive::crud_update!(pool, "cron_execution_log",
+        bind: ["status" => status, "error" => error, "finished_at" => now],
+        where: ("id", log_id)
+    )?;
+    Ok(())
+}
+
 /// Query execution history for a schedule
 pub async fn list_execution_logs(
     pool: &Pool,
     schedule_id: SnowflakeId,
     limit: i64,
-) -> AppResult<Vec<CronExecutionLog>> {
+    offset: i64,
+) -> AppResult<(Vec<CronExecutionLog>, i64)> {
+    let total: i64 = sqlx::query_scalar(&format!(
+        "SELECT COUNT(*) FROM cron_execution_log WHERE schedule_id = {}",
+        Driver::ph(1)
+    ))
+    .bind(schedule_id)
+    .fetch_one(pool)
+    .await?;
+
     let rows: Vec<CronExecLogRow> = sqlx::query_as::<_, CronExecLogRow>(&format!(
         "SELECT el.id, el.schedule_id, el.job_type, el.label, el.status, el.duration_ms, el.error, el.started_at, el.finished_at
          FROM cron_execution_log el
          WHERE el.schedule_id = {}
-         ORDER BY el.started_at DESC LIMIT {}",
-        Driver::ph(1), Driver::ph(2)
+         ORDER BY el.started_at DESC LIMIT {} OFFSET {}",
+        Driver::ph(1), Driver::ph(2), Driver::ph(3)
     ))
     .bind(schedule_id)
     .bind(limit)
+    .bind(offset)
     .fetch_all(pool)
     .await?;
 
-    Ok(rows
+    let logs = rows
         .into_iter()
         .map(|r| exec_log_row_to_struct!(r))
-        .collect())
+        .collect();
+    Ok((logs, total))
 }
 
 /// Query recent execution records across all schedules

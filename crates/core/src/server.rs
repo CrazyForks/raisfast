@@ -1015,10 +1015,11 @@ async fn spawn_workers(
         cache,
         crate::notifier::build_email_sender(config),
         crate::notifier::build_sms_sender(config),
+        plugins.clone(),
     );
 
     let cron = CronScheduler::new(
-        pool,
+        pool.clone(),
         queue.clone(),
         Duration::from_millis(config.worker_cron_tick_ms),
     );
@@ -1029,6 +1030,7 @@ async fn spawn_workers(
     let runner = WorkerRunner::new(
         queue.clone(),
         Arc::new(registry),
+        pool.clone(),
         Duration::from_millis(config.worker_poll_interval_ms),
         config.worker_batch_size,
     )
