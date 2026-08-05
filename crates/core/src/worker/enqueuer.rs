@@ -89,6 +89,7 @@ impl JobEnqueuer {
                 user_id,
                 email,
                 token,
+                ..
             } => {
                 vec![NewJob::from(Job::SendEmailVerification {
                     user_id: *user_id,
@@ -148,6 +149,7 @@ mod tests {
             published_at: None,
             title_highlight: None,
             excerpt_highlight: None,
+            tenant_id: None,
         }
     }
 

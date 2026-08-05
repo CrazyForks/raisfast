@@ -4,9 +4,9 @@
 
 use serde_json::Value;
 
-use crate::db::sql_type::{ColumnDef, SqlType};
 use crate::constants::COL_EXPIRES_AT;
 use crate::db::DbDriver;
+use crate::db::sql_type::{ColumnDef, SqlType};
 use crate::protocols::{HookCtx, Protocol, ProtocolDeclaration};
 use async_trait::async_trait;
 

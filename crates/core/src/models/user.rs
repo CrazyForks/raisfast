@@ -14,14 +14,86 @@ use crate::utils::tz::Timestamp;
 pub type SocialLinks = HashMap<String, String>;
 pub type UserMetadata = serde_json::Value;
 
-define_enum!(
-    UserRole {
-        Admin = "admin",
-        Editor = "editor",
-        Author = "author",
-        Reader = "reader",
+/// User role.
+///
+/// Four built-in roles plus an open [`UserRole::Custom`] variant so that
+/// user-defined RBAC roles (created via `/admin/rbac/roles`) can be assigned
+/// to users and carried through the auth pipeline without being dropped.
+/// Serializes as a flat string (`"admin"`, `"moderator"`, ...), never as a
+/// tagged enum.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, utoipa::ToSchema)]
+#[cfg_attr(feature = "export-types", derive(ts_rs::TS))]
+#[cfg_attr(feature = "export-types", ts(type = "string"))]
+pub enum UserRole {
+    Admin,
+    Editor,
+    Author,
+    Reader,
+    /// User-defined RBAC role; the inner string is the role name from the
+    /// `roles` table. A name equal to one of the built-ins always parses to
+    /// the corresponding fixed variant, so there is no collision.
+    Custom(String),
+}
+
+impl UserRole {
+    /// The four built-in role names.
+    pub const fn all_values() -> &'static [&'static str] {
+        &["admin", "editor", "author", "reader"]
     }
-);
+
+    /// String form used for serialization, JWTs and SQL binds.
+    pub fn as_str(&self) -> &str {
+        match self {
+            UserRole::Admin => "admin",
+            UserRole::Editor => "editor",
+            UserRole::Author => "author",
+            UserRole::Reader => "reader",
+            UserRole::Custom(name) => name,
+        }
+    }
+}
+
+impl std::fmt::Display for UserRole {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// Always succeeds: unknown strings become [`UserRole::Custom`].
+impl std::str::FromStr for UserRole {
+    type Err = std::convert::Infallible;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(match s {
+            "admin" => UserRole::Admin,
+            "editor" => UserRole::Editor,
+            "author" => UserRole::Author,
+            "reader" => UserRole::Reader,
+            other => UserRole::Custom(other.to_string()),
+        })
+    }
+}
+
+/// Flat string serialization (not a tagged enum).
+impl serde::Serialize for UserRole {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+/// Flat string deserialization; unknown values become [`UserRole::Custom`].
+impl<'de> serde::Deserialize<'de> for UserRole {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        Ok(String::deserialize(deserializer)?
+            .parse()
+            .unwrap_or(UserRole::Reader))
+    }
+}
+
+impl From<UserRole> for String {
+    fn from(val: UserRole) -> String {
+        val.as_str().to_string()
+    }
+}
 
 define_enum!(
     UserStatus {

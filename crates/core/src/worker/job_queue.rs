@@ -458,7 +458,7 @@ impl JobQueue for DefaultJobQueue {
 
         // Jobs that exhausted retries → dead
         let dead_sql = format!(
-            "UPDATE jobs SET status = {}, error = {}, updated_at = {}\
+            "UPDATE jobs SET status = {}, error = {}, updated_at = {} \
              WHERE status = {} AND updated_at < {} AND attempts >= max_attempts",
             Driver::ph(1),
             Driver::ph(2),
@@ -479,7 +479,7 @@ impl JobQueue for DefaultJobQueue {
 
         // Jobs still retryable → back to pending
         let requeue_sql = format!(
-            "UPDATE jobs SET status = {}, error = {}, updated_at = {}\
+            "UPDATE jobs SET status = {}, error = {}, updated_at = {} \
              WHERE status = {} AND updated_at < {} AND attempts < max_attempts",
             Driver::ph(1),
             Driver::ph(2),

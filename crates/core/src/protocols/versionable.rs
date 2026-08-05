@@ -3,8 +3,8 @@
 //! Declares `snapshot_before_update` and `revision_routes`;
 //! repository.update() proactively creates snapshots based on the declaration.
 
-use crate::db::sql_type::{ColumnDef, SqlType};
 use crate::constants::COL_VERSION;
+use crate::db::sql_type::{ColumnDef, SqlType};
 use crate::protocols::{Protocol, ProtocolDeclaration};
 use crate::types::snowflake_id::SnowflakeId;
 use async_trait::async_trait;

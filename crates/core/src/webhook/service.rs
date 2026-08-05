@@ -15,6 +15,7 @@ impl WebhookService {
     pub async fn create(
         &self,
         tenant_id: Option<&str>,
+        name: String,
         url: String,
         events: Vec<String>,
         description: Option<String>,
@@ -25,10 +26,11 @@ impl WebhookService {
             crate::utils::id::new_snowflake_id(),
             crate::utils::tz::now_utc(),
         );
-        let secret = custom_secret.unwrap_or_else(Self::generate_secret);
+        let secret = custom_secret.unwrap_or_default();
         let sub = model::WebhookSubscription {
             id,
             tenant_id: tenant_id.map(|t| t.to_string()),
+            name,
             url,
             secret,
             events: serde_json::to_string(&events).unwrap_or_default(),
@@ -59,16 +61,21 @@ impl WebhookService {
     pub async fn update(
         &self,
         id: SnowflakeId,
+        name: Option<String>,
         url: Option<String>,
         events: Option<Vec<String>>,
         description: Option<String>,
         enabled: Option<bool>,
+        secret: Option<String>,
     ) -> AppResult<model::WebhookSubscription> {
         let mut sub = model::find_by_id(&self.pool, id).await?;
         let (_, now) = (
             crate::utils::id::new_snowflake_id(),
             crate::utils::tz::now_utc(),
         );
+        if let Some(n) = name {
+            sub.name = n;
+        }
         if let Some(u) = url {
             sub.url = u;
         }
@@ -80,6 +87,9 @@ impl WebhookService {
         }
         if let Some(en) = enabled {
             sub.enabled = en;
+        }
+        if let Some(s) = secret {
+            sub.secret = s;
         }
         sub.updated_at = now;
         model::update(&self.pool, &sub).await?;

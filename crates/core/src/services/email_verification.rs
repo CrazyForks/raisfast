@@ -11,6 +11,7 @@ pub async fn trigger_email_verification(
     emitter: &EventEmitter,
     user_id: SnowflakeId,
     email: &str,
+    tenant_id: Option<&str>,
 ) -> AppResult<()> {
     crate::models::email_verification::delete_unused_by_user(pool, user_id).await?;
 
@@ -20,6 +21,7 @@ pub async fn trigger_email_verification(
     emitter.emit(Event::EmailVerificationRequested {
         user_id,
         email: email.to_string(),
+        tenant_id: tenant_id.map(|t| t.to_string()),
         token: verification,
     });
 
@@ -68,7 +70,7 @@ pub async fn resend_verification(
         return Err(AppError::BadRequest("email_already_verified".into()));
     }
 
-    trigger_email_verification(pool, emitter, cred.user_id, &cred.identifier).await
+    trigger_email_verification(pool, emitter, cred.user_id, &cred.identifier, None).await
 }
 
 #[cfg(test)]
@@ -113,7 +115,7 @@ mod tests {
         let pool = setup_pool().await;
         let user = insert_user(&pool, "verify@test.com").await;
         let ae = emitter();
-        super::trigger_email_verification(&pool, &ae, user.id, "verify@test.com")
+        super::trigger_email_verification(&pool, &ae, user.id, "verify@test.com", None)
             .await
             .unwrap();
         let row =
@@ -131,7 +133,7 @@ mod tests {
         let pool = setup_pool().await;
         let user = insert_user(&pool, "replace@test.com").await;
         let ae = emitter();
-        super::trigger_email_verification(&pool, &ae, user.id, "replace@test.com")
+        super::trigger_email_verification(&pool, &ae, user.id, "replace@test.com", None)
             .await
             .unwrap();
         let sql = format!(
@@ -144,7 +146,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(count_before, 1);
-        super::trigger_email_verification(&pool, &ae, user.id, "replace@test.com")
+        super::trigger_email_verification(&pool, &ae, user.id, "replace@test.com", None)
             .await
             .unwrap();
         let (count_after,): (i64,) = sqlx::query_as(&sql)
@@ -160,7 +162,7 @@ mod tests {
         let pool = setup_pool().await;
         let user = insert_user(&pool, "v@test.com").await;
         let ae = emitter();
-        super::trigger_email_verification(&pool, &ae, user.id, "v@test.com")
+        super::trigger_email_verification(&pool, &ae, user.id, "v@test.com", None)
             .await
             .unwrap();
         let sql = format!(
@@ -219,7 +221,7 @@ mod tests {
         let pool = setup_pool().await;
         let user = insert_user(&pool, "verified@test.com").await;
         let ae = emitter();
-        super::trigger_email_verification(&pool, &ae, user.id, "verified@test.com")
+        super::trigger_email_verification(&pool, &ae, user.id, "verified@test.com", None)
             .await
             .unwrap();
         let sql = format!(

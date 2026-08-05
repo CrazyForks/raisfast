@@ -105,7 +105,6 @@ impl AuthUser {
         self.0
             .roles
             .first()
-            .copied()
             .map(UserRole::as_str)
             .unwrap_or(UserRole::Reader.as_str())
     }

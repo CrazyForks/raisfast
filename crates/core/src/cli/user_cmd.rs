@@ -35,7 +35,8 @@ pub async fn create(
         "admin" => UserRole::Admin,
         "editor" => UserRole::Editor,
         "author" => UserRole::Author,
-        _ => UserRole::Reader,
+        "reader" => UserRole::Reader,
+        other => UserRole::Custom(other.to_string()),
     };
 
     let password_hash = raisfast::services::auth::hash_password(password)
@@ -78,7 +79,8 @@ pub async fn create(
     }
 
     let assigned_tid = tid.as_deref().unwrap_or("default");
-    let role_ids = raisfast::models::user_role::resolve_role_ids(&pool, &[role]).await?;
+    let role_ids =
+        raisfast::models::user_role::resolve_role_ids(&pool, std::slice::from_ref(&role)).await?;
     raisfast::models::user_role::set_roles(&pool, id, &role_ids, assigned_tid).await?;
 
     let cred_data = user_credential::wrap_password_hash(&password_hash);

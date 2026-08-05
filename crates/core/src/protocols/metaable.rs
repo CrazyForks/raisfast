@@ -9,8 +9,8 @@
 
 use serde_json::{Value, json};
 
-use crate::db::sql_type::{ColumnDef, SqlType};
 use crate::constants::COL_META;
+use crate::db::sql_type::{ColumnDef, SqlType};
 use crate::protocols::{HookCtx, Protocol};
 use async_trait::async_trait;
 

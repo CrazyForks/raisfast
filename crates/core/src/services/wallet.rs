@@ -241,6 +241,7 @@ async fn reverse_single_tx(
     };
     insert_tx(
         tx,
+        original.tenant_id.as_deref(),
         updated.id,
         original.user_id,
         entry_type,
@@ -301,6 +302,7 @@ pub async fn credit_wallet(
 
         insert_tx(
             &mut tx,
+            auth.tenant_id(),
             updated.id,
             user_id,
             WalletEntryType::Credit,
@@ -362,6 +364,7 @@ pub async fn debit_wallet(
 
         insert_tx(
             &mut tx,
+            auth.tenant_id(),
             updated.id,
             user_id,
             WalletEntryType::Debit,
@@ -462,6 +465,7 @@ pub async fn transfer(
 
         let out_tx = insert_tx(
             &mut tx,
+            auth.tenant_id(),
             updated_from.id,
             from_user_id,
             WalletEntryType::Debit,
@@ -481,6 +485,7 @@ pub async fn transfer(
         let in_no = format!("{transaction_no}_in");
         let in_tx = insert_tx(
             &mut tx,
+            auth.tenant_id(),
             updated_to.id,
             to_user_id,
             WalletEntryType::Credit,
@@ -568,6 +573,7 @@ pub async fn reverse_transaction(
 #[allow(clippy::too_many_arguments)]
 async fn insert_tx(
     tx: &mut DbConnection,
+    tenant_id: Option<&str>,
     wallet_id: SnowflakeId,
     user_id: SnowflakeId,
     entry_type: WalletEntryType,
@@ -584,7 +590,8 @@ async fn insert_tx(
 ) -> AppResult<WalletTransaction> {
     debug_assert!(balance_after >= 0, "balance_after must be non-negative");
     let row = wallet_transaction::tx_insert(
-        &mut *tx,
+        tx,
+        tenant_id,
         wallet_id,
         user_id,
         entry_type,

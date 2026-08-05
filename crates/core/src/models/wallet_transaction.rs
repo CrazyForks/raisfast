@@ -39,6 +39,7 @@ define_enum!(
 #[derive(Debug, FromRow, Serialize, Deserialize, Clone)]
 pub struct WalletTransaction {
     pub id: SnowflakeId,
+    pub tenant_id: Option<String>,
     pub wallet_id: SnowflakeId,
     pub user_id: SnowflakeId,
     pub entry_type: WalletEntryType,
@@ -161,6 +162,7 @@ pub async fn tx_has_reversal_for(
 #[allow(clippy::too_many_arguments)]
 pub async fn tx_insert(
     tx: &mut crate::db::pool::DbConnection,
+    tenant_id: Option<&str>,
     wallet_id: SnowflakeId,
     user_id: SnowflakeId,
     entry_type: WalletEntryType,
@@ -181,7 +183,7 @@ pub async fn tx_insert(
     );
     raisfast_derive::crud_insert!(
         &mut *tx, "wallet_transactions",
-        ["id" => id, "wallet_id" => wallet_id, "user_id" => user_id, "entry_type" => entry_type.as_str(), "amount" => amount, "balance_after" => balance_after, "tx_type" => tx_type.as_str(), "currency" => currency, "transaction_no" => transaction_no, "related_tx_id" => related_tx_id, "reference_type" => reference_type.map(|r| r.as_str()), "reference_id" => reference_id.as_deref(), "counterparty_wallet_id" => counterparty_wallet_id, "metadata" => metadata.as_deref(), "created_at" => now]
+        ["id" => id, "tenant_id" => tenant_id, "wallet_id" => wallet_id, "user_id" => user_id, "entry_type" => entry_type.as_str(), "amount" => amount, "balance_after" => balance_after, "tx_type" => tx_type.as_str(), "currency" => currency, "transaction_no" => transaction_no, "related_tx_id" => related_tx_id, "reference_type" => reference_type.map(|r| r.as_str()), "reference_id" => reference_id.as_deref(), "counterparty_wallet_id" => counterparty_wallet_id, "metadata" => metadata.as_deref(), "created_at" => now]
     )?;
     Ok(
         raisfast_derive::crud_find_one!(&mut *tx, "wallet_transactions", WalletTransaction, where: ("id", id))?,

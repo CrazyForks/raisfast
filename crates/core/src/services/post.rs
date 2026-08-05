@@ -8,11 +8,9 @@
 
 use std::sync::Arc;
 
-use async_trait::async_trait;
 use ::slug::slugify;
+use async_trait::async_trait;
 
-use crate::utils::excerpt;
-use crate::utils::slug;
 use crate::commands::{CreatePostCmd, UpdatePostCmd};
 use crate::dto::{CreatePostRequest, PostResponse, UpdatePostRequest};
 use crate::errors::app_error::{AppError, AppResult};
@@ -22,6 +20,8 @@ use crate::models::post::{PostJoinedRow, PostStatus};
 use crate::policy::check_owner;
 use crate::search::SearchEngine;
 use crate::types::snowflake_id::SnowflakeId;
+use crate::utils::excerpt;
+use crate::utils::slug;
 
 // ─── Trait ───
 
@@ -533,6 +533,7 @@ async fn joined_row_to_response(
         published_at: r.published_at,
         title_highlight: None,
         excerpt_highlight: None,
+        tenant_id: None,
     })
 }
 
@@ -576,6 +577,7 @@ async fn build_response_from_post(
         published_at: post.published_at,
         title_highlight: None,
         excerpt_highlight: None,
+        tenant_id: post.tenant_id.clone(),
     })
 }
 
@@ -734,6 +736,7 @@ async fn list_posts_inner(
             published_at: r.published_at,
             title_highlight: title_hl,
             excerpt_highlight: excerpt_hl,
+            tenant_id: None,
         });
     }
 
@@ -799,6 +802,7 @@ async fn list_all_posts_inner(
             published_at: r.published_at,
             title_highlight: None,
             excerpt_highlight: None,
+            tenant_id: None,
         });
     }
 

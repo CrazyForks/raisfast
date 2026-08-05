@@ -247,6 +247,7 @@ CREATE TABLE IF NOT EXISTS api_tokens (
 CREATE TABLE IF NOT EXISTS webhook_subscriptions (
     id BIGINT PRIMARY KEY,
     tenant_id VARCHAR(36) NOT NULL DEFAULT 'default',
+    name VARCHAR(255) NOT NULL DEFAULT '',
     url VARCHAR(1024) NOT NULL,
     secret VARCHAR(255) NOT NULL,
     events TEXT NOT NULL,
@@ -256,6 +257,20 @@ CREATE TABLE IF NOT EXISTS webhook_subscriptions (
     updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     INDEX idx_webhook_subscriptions_enabled (enabled),
     INDEX idx_webhook_subscriptions_tenant (tenant_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Webhook delivery log
+CREATE TABLE IF NOT EXISTS webhook_deliveries (
+    id BIGINT PRIMARY KEY,
+    webhook_id BIGINT NOT NULL,
+    event VARCHAR(100) NOT NULL,
+    status VARCHAR(20) NOT NULL,
+    status_code INT,
+    error TEXT,
+    duration_ms BIGINT,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_webhook_deliveries_webhook (webhook_id),
+    INDEX idx_webhook_deliveries_created (created_at DESC)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- Plugin KV storage

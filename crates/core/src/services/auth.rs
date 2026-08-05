@@ -229,7 +229,7 @@ pub async fn register(
 
     if require_email_verification
         && let Err(e) = crate::services::email_verification::trigger_email_verification(
-            pool, emitter, user.id, &req.email,
+            pool, emitter, user.id, &req.email, Some(tid),
         )
         .await
     {

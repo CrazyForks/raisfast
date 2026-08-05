@@ -254,6 +254,7 @@ CREATE INDEX IF NOT EXISTS idx_api_tokens_user_id ON api_tokens(user_id);
 CREATE TABLE IF NOT EXISTS webhook_subscriptions (
     id BIGINT PRIMARY KEY,
     tenant_id TEXT NOT NULL DEFAULT 'default',
+    name VARCHAR(255) NOT NULL DEFAULT '',
     url VARCHAR(1024) NOT NULL,
     secret VARCHAR(255) NOT NULL,
     events TEXT NOT NULL DEFAULT '[]',
@@ -265,6 +266,20 @@ CREATE TABLE IF NOT EXISTS webhook_subscriptions (
 
 CREATE INDEX IF NOT EXISTS idx_webhook_subscriptions_enabled ON webhook_subscriptions(enabled);
 CREATE INDEX IF NOT EXISTS idx_webhook_subscriptions_tenant ON webhook_subscriptions(tenant_id);
+
+-- Webhook delivery log
+CREATE TABLE IF NOT EXISTS webhook_deliveries (
+    id BIGINT PRIMARY KEY,
+    webhook_id BIGINT NOT NULL,
+    event VARCHAR(100) NOT NULL,
+    status VARCHAR(20) NOT NULL,
+    status_code INTEGER,
+    error TEXT,
+    duration_ms BIGINT,
+    created_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_webhook ON webhook_deliveries(webhook_id);
+CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_created ON webhook_deliveries(created_at DESC);
 
 -- Plugin KV storage
 CREATE TABLE IF NOT EXISTS plugin_storage (

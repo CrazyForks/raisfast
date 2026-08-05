@@ -92,6 +92,7 @@ mod tests {
             published_at: None,
             title_highlight: None,
             excerpt_highlight: None,
+            tenant_id: None,
         }
     }
 

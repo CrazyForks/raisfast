@@ -93,6 +93,7 @@ pub struct PostResponse {
     pub excerpt_highlight: Option<String>,
     pub created_by: Option<String>,
     pub category_id: Option<String>,
+    pub tenant_id: Option<String>,
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -145,9 +146,10 @@ impl PostResponse {
             published_at: p.published_at,
             title_highlight: None,
             excerpt_highlight: None,
-            created_by: None,
-            category_id: None,
+            created_by: Some(p.created_by.to_string()),
+            category_id: p.category_id.map(|id| id.to_string()),
             category_name: None,
+            tenant_id: p.tenant_id,
         })
     }
 }

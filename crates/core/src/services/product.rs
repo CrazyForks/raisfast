@@ -5,7 +5,6 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use raisfast_derive::aspect_service;
 
-use crate::utils::slug;
 use crate::commands::{CreateProductCmd, UpdateProductCmd};
 use crate::dto::{CreateProductRequest, UpdateProductRequest};
 use crate::errors::app_error::{AppError, AppResult};
@@ -14,6 +13,7 @@ use crate::middleware::auth::AuthUser;
 use crate::models::product::Product;
 use crate::services::options::OptionsService;
 use crate::types::snowflake_id::SnowflakeId;
+use crate::utils::slug;
 
 /// Product business logic trait.
 #[async_trait]

@@ -178,7 +178,7 @@ impl UserService for UserServiceImpl {
         let mut results = Vec::with_capacity(operations.len());
         for (user_id, role) in operations {
             let ok = self
-                .update_role(user_id, vec![*role], tenant_id)
+                .update_role(user_id, vec![role.clone()], tenant_id)
                 .await
                 .is_ok();
             results.push(ok);

@@ -17,7 +17,7 @@
 - [Auth System](#auth-system)
 - [Plugin Engine](#plugin-engine)
 - [Content Type System](#content-type-system)
-- [AOP & Protocols](#aop--protocols)
+- [Protocols](#protocols)
 - [Worker & Job Queue](#worker--job-queue)
 - [Event System](#event-system)
 - [Search Engine](#search-engine)
@@ -46,7 +46,7 @@ raisfast is a Rust-powered high-performance BaaS and headless CMS. It compiles t
                     │  ┌───▼────────────────────────┐  │
                     │  │     Middleware Stack         │  │
                     │  │  Auth / CORS / RateLimit /   │  │
-                    │  │  Metrics / Locale / AOP      │  │
+                    │  │  Metrics / Locale            │  │
                     │  └───────────┬─────────────────┘  │
                     │              │                     │
                     │  ┌───────────▼─────────────────┐  │
@@ -166,13 +166,12 @@ src/
 ├── handlers/               # Axum route handlers (31 modules)
 ├── services/               # Business logic layer (28 modules)
 ├── models/                 # Data structures + SQL queries (35 modules)
-├── middleware/              # Auth, rate limiting, CORS, metrics, locale, AOP
+├── middleware/              # Auth, rate limiting, CORS, metrics, locale
 ├── dto/                    # Request/response DTOs with validation
-├── db/                     # Connection pool, SQL dialect, schema, write lock
+├── db/                     # Connection pool, SQL dialect, schema, write lock, column types
 ├── plugins/                # 4-engine plugin system (15 files)
 ├── content_type/           # Dynamic content type system (7 files)
-├── protocols/              # AOP protocol definitions (11 protocols)
-├── aspects/                # AOP aspect engine (auto-slug, auto-excerpt, etc.)
+├── protocols/              # Declarative protocol hooks (11 protocols: timestampable, ownable, ...)
 ├── worker/                 # Job queue + cron scheduler (14 built-in handlers)
 ├── workflow/               # State machine workflow engine
 ├── event/                  # Event definitions (~40 event types)
@@ -296,8 +295,6 @@ HTTP Request
 │  Locale Detection     │  Accept-Language / query param
 ├──────────────────────┤
 │  Rate Limiter         │  IP-based sliding window
-├──────────────────────┤
-│  AOP HTTP Layer       │  Before/After request aspects
 ├──────────────────────┤
 │  Auth Middleware       │  JWT / API Token resolution
 ├──────────────────────┤
@@ -628,7 +625,7 @@ The three-layer model covers most CMS/BaaS scenarios (blogs, e-commerce, forums,
 
 ---
 
-## AOP & Protocols
+## Protocols
 
 ### Protocol System
 
@@ -648,22 +645,24 @@ Protocols are composable, declarative behaviors that can be mixed into any conte
 | `nestable` | `parent_id` | Parent-child hierarchy |
 | `metaable` | `metadata` (JSON) | Arbitrary metadata |
 
-### AOP Layers
+### Hook Methods
 
-```
-┌──────────────────────────────────┐
-│  HTTP Layer    — Before/After    │  Request/response interception
-│  Access Layer  — Check/Filter    │  Route/data-level permissions
-│  Data Layer    — Before/After    │  Pre/post CRUD hooks
-│  Event Layer   — Consume         │  Event interception
-└──────────────────────────────────┘
-```
+Each protocol implements up to 3 hook methods on the `Protocol` trait:
 
-### Built-in Aspects
+- `before_create(&mut record, &ctx)` — inject default field values
+- `before_update(&mut new_record, &old_record, &ctx)` — inject/validate fields
+- `before_delete(&record, &mut ctx) -> DeleteAction` — choose soft/hard delete
 
-- **Auto-slug**: Generate URL-safe slug from title field
-- **Auto-excerpt**: Generate excerpt from content body
-- Protocol-generated aspects run automatically when content type declares `implements`
+Hooks are called directly by the content type handler (for dynamic types) or by
+built-in services (for typed entities). There is no intermediary dispatch engine.
+
+### Built-in Helpers
+
+For built-in entities (posts, pages, tags, categories, products), slug and excerpt
+generation are plain functions in `utils/`:
+
+- `utils::slug::make_unique_slug()` / `generate_slug()`
+- `utils::excerpt::extract_excerpt()`
 
 ---
 
@@ -1005,6 +1004,6 @@ raisfast codegen             # Code generation
 | **Feature flags** | Compile only what you need, minimal binary size |
 | **Embedded admin** | `rust-embed` serves SPA from binary, no separate deployment |
 | **EventBus decoupling** | Services emit events, subscribers handle side effects |
-| **AOP protocols** | Composable behaviors, no code duplication across content types |
+| **Protocol hooks** | Composable behaviors, no code duplication across content types |
 | **Plugin VFS** | Isolated filesystem per plugin with size limits |
 | **moka cache** | High-performance concurrent cache, no external dependency |

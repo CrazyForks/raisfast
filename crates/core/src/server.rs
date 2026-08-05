@@ -789,21 +789,27 @@ pub fn spawn_audit_subscriber(
 pub fn spawn_webhook_subscriber(
     eventbus: crate::eventbus::EventBus,
     webhook_service: Arc<crate::webhook::WebhookService>,
+    pool: crate::db::Pool,
     mut shutdown_rx: tokio::sync::watch::Receiver<bool>,
 ) {
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(10))
+        .redirect(reqwest::redirect::Policy::none())
         .build()
         .unwrap_or_else(|e| {
             tracing::error!("webhook http client init failed: {e}; using default client");
             reqwest::Client::builder()
                 .timeout(std::time::Duration::from_secs(10))
+                .redirect(reqwest::redirect::Policy::none())
                 .build()
                 .unwrap_or_else(|_| reqwest::Client::new())
         });
 
     let mut rx = eventbus.subscribe();
+    let pool_clone = pool.clone();
     tokio::spawn(async move {
+        let mut cleanup_interval = tokio::time::interval(std::time::Duration::from_secs(3600));
+        cleanup_interval.tick().await; // skip first tick
         loop {
             tokio::select! {
                 result = rx.recv() => {
@@ -815,10 +821,14 @@ pub fn spawn_webhook_subscriber(
                             };
 
                     let payload_value = serde_json::to_value(event.as_ref()).unwrap_or_default();
+                    let inner_data = payload_value
+                        .get("data")
+                        .cloned()
+                        .unwrap_or(payload_value);
                     let timestamp = crate::utils::tz::now_utc();
                     let webhook_payload = crate::webhook::model::WebhookPayload {
                         event: event_type.clone(),
-                        data: payload_value,
+                        data: inner_data.clone(),
                         timestamp,
                     };
                     let body = match serde_json::to_vec(&webhook_payload) {
@@ -829,7 +839,17 @@ pub fn spawn_webhook_subscriber(
                         }
                     };
 
-                    let subs = match webhook_service.find_enabled(Some(DEFAULT_TENANT)).await {
+                    let tenant_id = inner_data
+                        .get("tenant_id")
+                        .and_then(|v| v.as_str())
+                        .or_else(|| {
+                            inner_data
+                                .get("user")
+                                .and_then(|u| u.get("tenant_id"))
+                                .and_then(|v| v.as_str())
+                        })
+                        .unwrap_or(DEFAULT_TENANT);
+                    let subs = match webhook_service.find_enabled(Some(tenant_id)).await {
                         Ok(s) => s,
                         Err(e) => {
                             tracing::warn!("webhook find_enabled error: {e}");
@@ -846,30 +866,77 @@ pub fn spawn_webhook_subscriber(
                             continue;
                         }
 
-                        let signature = crate::webhook::service::WebhookService::sign_payload(
-                            &sub.secret,
-                            &body,
-                        );
+                        let signature = if sub.secret.is_empty() {
+                            None
+                        } else {
+                            Some(crate::webhook::service::WebhookService::sign_payload(
+                                &sub.secret,
+                                &body,
+                            ))
+                        };
                         let url = sub.url.clone();
                         let body_clone = body.clone();
-                        let event_type = event_type.clone();
-                        let client = client.clone();
+                        let event_type_clone = event_type.clone();
+                        let webhook_id = sub.id;
+                        let client_clone = client.clone();
+                        let pool_clone = pool.clone();
                         tokio::spawn(async move {
-                            let result = client
-                                .post(&url)
-                                .header("Content-Type", "application/json")
-                                .header("X-Webhook-Signature", format!("sha256={signature}"))
-                                .header("X-Webhook-Event", event_type)
-                                .body(body_clone)
-                                .send()
-                                .await;
+                        let start = std::time::Instant::now();
+                        tracing::debug!(
+                            event = %event_type_clone,
+                            url = %url,
+                            payload = %String::from_utf8_lossy(&body_clone),
+                            "webhook sending"
+                        );
+                        let req = client_clone
+                            .post(&url)
+                            .header("Content-Type", "application/json")
+                            .header("X-Webhook-Event", &event_type_clone)
+                            .body(body_clone);
+                        let req = if let Some(ref sig) = signature {
+                            req.header("X-Webhook-Signature", format!("sha256={sig}"))
+                        } else {
+                            req
+                        };
+                        let result = req.send().await;
+                        let duration_ms = start.elapsed().as_millis() as i64;
+
                             match result {
                                 Ok(resp) => {
-                                    tracing::debug!(
-                                        url = %url,
-                                        status = %resp.status(),
-                                        "webhook delivered"
-                                    );
+                                    let status = resp.status();
+                                    let code = status.as_u16() as i32;
+                                    if status.is_redirection() {
+                                        tracing::warn!(
+                                            url = %url,
+                                            status = %status,
+                                            location = ?resp.headers().get("location"),
+                                            "webhook got redirect (not followed); fix the URL to avoid 3xx"
+                                        );
+                                        let _ = crate::webhook::model::insert_delivery(
+                                            &pool_clone, webhook_id, &event_type_clone, "redirect",
+                                            Some(code), Some("unexpected 3xx redirect"), Some(duration_ms),
+                                        ).await;
+                                    } else if status.is_success() {
+                                        tracing::debug!(
+                                            url = %url,
+                                            status = %status,
+                                            "webhook delivered"
+                                        );
+                                        let _ = crate::webhook::model::insert_delivery(
+                                            &pool_clone, webhook_id, &event_type_clone, "success",
+                                            Some(code), None, Some(duration_ms),
+                                        ).await;
+                                    } else {
+                                        tracing::warn!(
+                                            url = %url,
+                                            status = %status,
+                                            "webhook non-2xx response"
+                                        );
+                                        let _ = crate::webhook::model::insert_delivery(
+                                            &pool_clone, webhook_id, &event_type_clone, "failed",
+                                            Some(code), Some(&format!("HTTP {code}")), Some(duration_ms),
+                                        ).await;
+                                    }
                                 }
                                 Err(e) => {
                                     tracing::warn!(
@@ -877,6 +944,10 @@ pub fn spawn_webhook_subscriber(
                                         error = %e,
                                         "webhook delivery failed"
                                     );
+                                    let _ = crate::webhook::model::insert_delivery(
+                                        &pool_clone, webhook_id, &event_type_clone, "error",
+                                        None, Some(&e.to_string()), Some(duration_ms),
+                                    ).await;
                                 }
                             }
                         });
@@ -889,6 +960,14 @@ pub fn spawn_webhook_subscriber(
                     break;
                 }
             }
+                }
+                _ = cleanup_interval.tick() => {
+                    let cutoff = crate::utils::tz::now_utc() - chrono::Duration::days(7);
+                    match crate::webhook::model::delete_deliveries_before(&pool_clone, cutoff).await {
+                        Ok(n) if n > 0 => tracing::info!("cleaned up {n} old webhook delivery records"),
+                        Ok(_) => {}
+                        Err(e) => tracing::warn!("webhook delivery cleanup error: {e}"),
+                    }
                 }
                 _ = shutdown_rx.changed() => {
                     tracing::info!("webhook subscriber shutting down");

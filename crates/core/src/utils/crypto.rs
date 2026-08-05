@@ -46,8 +46,10 @@ mod tests {
     fn hmac_sha1_is_base64() {
         let result = hmac_sha1_sign("secret", "message");
         use base64::Engine;
-        assert!(base64::engine::general_purpose::STANDARD
-            .decode(&result)
-            .is_ok());
+        assert!(
+            base64::engine::general_purpose::STANDARD
+                .decode(&result)
+                .is_ok()
+        );
     }
 }

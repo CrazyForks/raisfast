@@ -66,7 +66,6 @@ pub async fn audit_denied_layer(
                     Some(
                         c.roles
                             .iter()
-                            .copied()
                             .map(crate::models::user::UserRole::as_str)
                             .collect::<Vec<_>>()
                             .join(","),

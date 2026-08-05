@@ -5,7 +5,6 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use raisfast_derive::aspect_service;
 
-use crate::utils::slug;
 use crate::commands::{CreateCategoryCmd, UpdateCategoryCmd};
 use crate::dto::{CreateCategoryRequest, UpdateCategoryRequest};
 use crate::errors::app_error::AppResult;
@@ -14,6 +13,7 @@ use crate::middleware::auth::AuthUser;
 use crate::models::category::Category;
 use crate::policy::check_owner_opt;
 use crate::types::snowflake_id::SnowflakeId;
+use crate::utils::slug;
 
 /// Category business logic trait.
 #[async_trait]

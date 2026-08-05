@@ -184,6 +184,7 @@ pub enum Event {
     EmailVerificationRequested {
         user_id: SnowflakeId,
         email: String,
+        tenant_id: Option<String>,
         token: EmailVerificationToken,
     },
 
@@ -352,6 +353,7 @@ mod tests {
             published_at: None,
             title_highlight: None,
             excerpt_highlight: None,
+            tenant_id: None,
         }
     }
 

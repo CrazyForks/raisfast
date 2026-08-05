@@ -4,9 +4,9 @@
 
 use super::schema::{ContentTypeSchema, FieldType, RelationType};
 
-use crate::db::sql_type::ColumnDef;
 use crate::constants::COL_ID;
 use crate::db::DbDriver;
+use crate::db::sql_type::ColumnDef;
 
 /// Generate CREATE TABLE SQL from a content type definition
 ///

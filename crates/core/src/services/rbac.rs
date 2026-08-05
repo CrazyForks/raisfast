@@ -99,13 +99,23 @@ impl RbacService {
         id: SnowflakeId,
         req: &UpdateRoleRequest,
     ) -> Result<Role, AppError> {
-        crate::models::rbac::update_role(
+        let role = crate::models::rbac::find_role_by_id(&self.pool, id)
+            .await?
+            .ok_or_else(|| AppError::not_found(&format!("role/{id}")))?;
+        if role.is_system && req.name.is_some() {
+            return Err(AppError::BadRequest(
+                "cannot rename system role".into(),
+            ));
+        }
+        let updated = crate::models::rbac::update_role(
             &self.pool,
             id,
             req.name.as_deref(),
             req.description.as_deref(),
         )
-        .await
+        .await?;
+        let _ = self.cache.delete_prefix("perm:").await;
+        Ok(updated)
     }
 
     pub async fn delete_role(&self, id: SnowflakeId) -> Result<(), AppError> {

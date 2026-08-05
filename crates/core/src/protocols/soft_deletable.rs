@@ -2,8 +2,8 @@
 //!
 //! Returns `DeleteAction::Soft` from `before_delete` to switch delete into an UPDATE.
 
-use crate::db::sql_type::{ColumnDef, SqlType};
 use crate::constants::*;
+use crate::db::sql_type::{ColumnDef, SqlType};
 use crate::protocols::{DeleteAction, HookCtx, Protocol, ProtocolDeclaration};
 use async_trait::async_trait;
 

@@ -343,12 +343,12 @@ pub async fn admin_batch_users(
                 affected += 1;
             }
             "change_role" => {
-                let Some(role) = req.role else {
+                let Some(role) = req.role.as_ref() else {
                     continue;
                 };
                 if state
                     .user_service
-                    .update_role(uid, vec![role], auth.tenant_id())
+                    .update_role(uid, vec![role.clone()], auth.tenant_id())
                     .await
                     .is_ok()
                 {

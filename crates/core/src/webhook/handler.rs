@@ -67,6 +67,16 @@ pub fn routes(
         "system",
         "admin/webhooks"
     );
+    let r = reg_route!(
+        r,
+        registry,
+        restful,
+        "/admin/webhooks/{id}/deliveries",
+        get,
+        deliveries,
+        "system",
+        "admin/webhooks"
+    );
     reg_route!(
         r,
         registry,
@@ -135,6 +145,7 @@ pub async fn create(
         .webhook
         .create(
             tenant_id,
+            req.name.unwrap_or_default(),
             req.url,
             req.events,
             req.description,
@@ -154,14 +165,24 @@ pub async fn update(
 ) -> AppResult<ApiResponse<crate::webhook::model::WebhookSubscription>> {
     auth.ensure_admin()?;
     auth.ensure_scope("webhooks", TokenAction::Update)?;
+    tracing::debug!(
+        id = %id,
+        name = ?req.name,
+        url = ?req.url,
+        secret = ?req.secret,
+        enabled = ?req.enabled,
+        "webhook update request"
+    );
     let sub = state
         .webhook
         .update(
             crate::types::snowflake_id::parse_id(&id)?,
+            req.name,
             req.url,
             req.events,
             req.description,
             req.enabled,
+            req.secret,
         )
         .await?;
     Ok(ApiResponse::success(sub))
@@ -204,7 +225,7 @@ pub async fn admin_batch(
                 let enabled = req.action == "enable";
                 if state
                     .webhook
-                    .update(id, None, None, None, Some(enabled))
+                    .update(id, None, None, None, None, Some(enabled), None)
                     .await
                     .is_ok()
                 {
@@ -218,4 +239,28 @@ pub async fn admin_batch(
         &req.action,
         affected,
     )))
+}
+
+/// GET /admin/webhooks/:id/deliveries — delivery history for a webhook
+pub async fn deliveries(
+    auth: AuthUser,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Query(mut params): Query<PaginationParams>,
+) -> AppResult<ApiResponse<crate::errors::response::PaginatedData<crate::webhook::model::WebhookDelivery>>> {
+    auth.ensure_admin()?;
+    auth.ensure_scope("webhooks", TokenAction::Read)?;
+    params.sanitize();
+    let wid = crate::types::snowflake_id::parse_id(&id)?;
+    let (items, total) =
+        crate::webhook::model::find_deliveries_by_webhook(&state.pool, wid, params.page, params.page_size)
+            .await?;
+    Ok(ApiResponse::success(
+        crate::errors::response::PaginatedData {
+            items,
+            total,
+            page: params.page,
+            page_size: params.page_size,
+        },
+    ))
 }

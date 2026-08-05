@@ -2,8 +2,8 @@
 //!
 //! Provides a `tenant_id` column; automatically injects the current tenant ID and filters by tenant on list queries.
 
-use crate::db::sql_type::{ColumnDef, SqlType};
 use crate::constants::{COL_TENANT_ID, DEFAULT_TENANT};
+use crate::db::sql_type::{ColumnDef, SqlType};
 use crate::protocols::Protocol;
 use async_trait::async_trait;
 
