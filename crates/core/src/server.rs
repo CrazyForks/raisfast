@@ -789,29 +789,6 @@ pub fn spawn_audit_subscriber(
     });
 }
 
-/// Derive webhook event type from event metadata.
-///
-/// Format: `{singular_table}.{action}` where action is extracted from `display_name()`
-/// by stripping the PascalCase table prefix (e.g., `PostCreated` → `post.created`).
-fn webhook_event_type(event: &crate::eventbus::Event) -> Option<String> {
-    let table = event.table()?;
-    let singular = table.strip_suffix('s').unwrap_or(table);
-    let display = event.display_name();
-    let prefix: String = singular
-        .split('_')
-        .map(|word| {
-            let mut chars = word.chars();
-            match chars.next() {
-                Some(c) => c.to_uppercase().collect::<String>() + chars.as_str(),
-                None => String::new(),
-            }
-        })
-        .collect();
-    let action = display.strip_prefix(&prefix)?;
-    let action = action[..1].to_ascii_lowercase() + &action[1..];
-    Some(format!("{}.{}", singular, action))
-}
-
 /// Spawn webhook event delivery subscriber
 pub fn spawn_webhook_subscriber(
     eventbus: crate::eventbus::EventBus,
@@ -836,8 +813,8 @@ pub fn spawn_webhook_subscriber(
                 result = rx.recv() => {
                     match result {
                         Ok(event) => {
-                            let event_type = match webhook_event_type(event.as_ref()) {
-                                Some(t) => t,
+                            let event_type = match event.event_name() {
+                                Some(t) => t.into_owned(),
                                 None => continue,
                             };
 

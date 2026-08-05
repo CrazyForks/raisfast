@@ -1,13 +1,16 @@
 //! Unified event definitions
 //!
 //! Single `Event` enum for all hooks — lifecycle, utility, and custom.
-//! `name()` uses `on_` prefix which doubles as the WASM function name.
-//! `display_name()` returns PascalCase for SSE/frontend.
-//! `table()` returns the DB table if applicable.
-//! `audit_info()` auto-derives audit fields from table + display_name + serde payload.
+//! - `name()` uses `on_` prefix which doubles as the WASM function name.
+//! - `display_name()` returns PascalCase for logging.
+//! - `event_name()` returns the stable external contract name (e.g., `"post.created"`)
+//!   declared via `#[event(event_name = "...")]`. Used by webhooks, SSE, and audit logs.
+//! - `table()` returns the DB table if applicable (metadata only).
+//! - `audit_info()` auto-derives audit fields from `event_name` + serde payload,
+//!   with hand-written overrides for events that need richer detail.
 //!
-//! Adding a new event: add variant + optional `#[event(table = "...", name = "...")]`.
-//! Audit logging is automatic for any event with a `table` attribute.
+//! Adding a new event: add variant + `#[event(table, event_name)]`.
+//! Audit logging is automatic for any event with an `event_name`.
 
 use crate::types::snowflake_id::SnowflakeId;
 use serde::{Deserialize, Serialize};
@@ -45,97 +48,103 @@ pub enum Event {
     // ── Post lifecycle ──
     #[event(table = "posts")]
     PostCreating,
-    #[event(table = "posts")]
+    #[event(table = "posts", event_name = "post.created")]
     PostCreated(PostResponse),
     #[event(table = "posts")]
     PostUpdating,
-    #[event(table = "posts")]
+    #[event(table = "posts", event_name = "post.updated")]
     PostUpdated(Post),
-    #[event(table = "posts")]
+    #[event(table = "posts", event_name = "post.deleted")]
     PostDeleted(Post),
 
     // ── Comment lifecycle ──
     #[event(table = "comments")]
     CommentCreating,
-    #[event(table = "comments")]
+    #[event(table = "comments", event_name = "comment.created")]
     CommentCreated(Comment),
-    #[event(table = "comments")]
+    #[event(table = "comments", event_name = "comment.updated")]
     CommentUpdated(Comment),
-    #[event(table = "comments")]
+    #[event(table = "comments", event_name = "comment.deleted")]
     CommentDeleted(Comment),
 
     // ── Tag lifecycle ──
-    #[event(table = "tags")]
+    #[event(table = "tags", event_name = "tag.created")]
     TagCreated(Tag),
-    #[event(table = "tags")]
+    #[event(table = "tags", event_name = "tag.updated")]
     TagUpdated(Tag),
-    #[event(table = "tags")]
+    #[event(table = "tags", event_name = "tag.deleted")]
     TagDeleted(Tag),
 
     // ── Category lifecycle ──
-    #[event(table = "categories")]
+    #[event(table = "categories", event_name = "category.created")]
     CategoryCreated(Category),
-    #[event(table = "categories")]
+    #[event(table = "categories", event_name = "category.updated")]
     CategoryUpdated(Category),
-    #[event(table = "categories")]
+    #[event(table = "categories", event_name = "category.deleted")]
     CategoryDeleted(Category),
 
     // ── Page lifecycle ──
-    #[event(table = "pages")]
+    #[event(table = "pages", event_name = "page.created")]
     PageCreated(Page),
-    #[event(table = "pages")]
+    #[event(table = "pages", event_name = "page.updated")]
     PageUpdated(Page),
-    #[event(table = "pages")]
+    #[event(table = "pages", event_name = "page.deleted")]
     PageDeleted(Page),
 
     // ── Product lifecycle ──
-    #[event(table = "products")]
+    #[event(table = "products", event_name = "product.created")]
     ProductCreated(Product),
-    #[event(table = "products")]
+    #[event(table = "products", event_name = "product.updated")]
     ProductUpdated(Product),
-    #[event(table = "products")]
+    #[event(table = "products", event_name = "product.deleted")]
     ProductDeleted(Product),
 
     // ── Product Category lifecycle ──
-    #[event(table = "product_categories")]
+    #[event(table = "product_categories", event_name = "product_category.created")]
     ProductCategoryCreated(ProductCategory),
-    #[event(table = "product_categories")]
+    #[event(table = "product_categories", event_name = "product_category.updated")]
     ProductCategoryUpdated(ProductCategory),
-    #[event(table = "product_categories")]
+    #[event(table = "product_categories", event_name = "product_category.deleted")]
     ProductCategoryDeleted(ProductCategory),
 
     // ── Product Comment lifecycle ──
-    #[event(table = "product_comments")]
+    #[event(table = "product_comments", event_name = "product_comment.created")]
     ProductCommentCreated(crate::models::product_comment::ProductComment),
-    #[event(table = "product_comments")]
+    #[event(table = "product_comments", event_name = "product_comment.updated")]
     ProductCommentUpdated(crate::models::product_comment::ProductComment),
-    #[event(table = "product_comments")]
+    #[event(table = "product_comments", event_name = "product_comment.deleted")]
     ProductCommentDeleted(crate::models::product_comment::ProductComment),
 
     // ── Order lifecycle ──
-    #[event(table = "orders")]
+    #[event(table = "orders", event_name = "order.created")]
     OrderCreated(Order),
-    #[event(table = "orders")]
+    #[event(table = "orders", event_name = "order.paid")]
     OrderPaid(Order),
-    #[event(table = "orders")]
+    #[event(table = "orders", event_name = "order.shipped")]
     OrderShipped(Order),
-    #[event(table = "orders")]
+    #[event(table = "orders", event_name = "order.completed")]
     OrderCompleted(Order),
-    #[event(table = "orders")]
+    #[event(table = "orders", event_name = "order.cancelled")]
     OrderCancelled(Order),
 
     // ── Payment lifecycle ──
-    #[event(table = "payment_orders")]
+    #[event(table = "payment_orders", event_name = "payment_order.created")]
     PaymentOrderCreated(PaymentOrder),
-    #[event(table = "payment_orders")]
+    #[event(table = "payment_orders", event_name = "payment_order.paid")]
     PaymentPaid(PaymentOrder),
-    #[event(table = "payment_orders")]
+    #[event(table = "payment_orders", event_name = "payment_order.refunded")]
     PaymentRefunded(PaymentOrder),
 
     // ── Wallet lifecycle ──
-    #[event(table = "wallet_transactions")]
+    #[event(
+        table = "wallet_transactions",
+        event_name = "wallet_transaction.credited"
+    )]
     WalletCredited(WalletTransaction),
-    #[event(table = "wallet_transactions")]
+    #[event(
+        table = "wallet_transactions",
+        event_name = "wallet_transaction.debited"
+    )]
     WalletDebited(WalletTransaction),
 
     // ── Generic CMS content lifecycle ──
@@ -147,41 +156,32 @@ pub enum Event {
     ContentViewed,
 
     // ── User ──
-    #[event(table = "users")]
+    #[event(table = "users", event_name = "user.registered")]
     UserRegistered(User),
-    #[event(table = "users")]
+    #[event(table = "users", event_name = "user.loggedIn")]
     UserLoggedIn {
         user: User,
         success: bool,
     },
 
     // ── Media ──
-    #[event(table = "media")]
+    #[event(table = "media", event_name = "media.uploaded")]
     MediaUploaded(Media),
-    #[event(table = "media")]
+    #[event(table = "media", event_name = "media.deleted")]
     MediaDeleted(Media),
 
     // ── Auth ──
-    #[event(table = "users")]
+    #[event(table = "users", event_name = "user.password_reset_requested")]
     PasswordResetRequested {
         user: User,
         token: PasswordResetToken,
     },
-    #[event(table = "users")]
+    #[event(table = "users", event_name = "user.email_verification_requested")]
     EmailVerificationRequested {
         user_id: SnowflakeId,
         email: String,
         token: EmailVerificationToken,
     },
-
-    // ── Utility ──
-    #[event(name = "render_markdown")]
-    RenderMarkdown,
-    #[event(name = "filter_html")]
-    FilterHtml,
-    #[event(name = "on_login")]
-    OnLogin,
-    CronTick,
 
     // ── Plugin custom ──
     #[event(dynamic)]
@@ -193,34 +193,28 @@ pub enum Event {
 }
 
 impl Event {
-    fn snake_to_pascal(s: &str) -> String {
-        s.split('_')
-            .map(|word| {
-                let mut chars = word.chars();
-                match chars.next() {
-                    Some(c) => c.to_uppercase().collect::<String>() + chars.as_str(),
-                    None => String::new(),
-                }
-            })
-            .collect()
-    }
-
+    /// Generic audit info derived from `event_name` + serde payload.
+    ///
+    /// Used as a fallback for events that don't have a hand-written `audit_info` arm.
+    /// Derives:
+    /// - `subject` / `action` from `event_name` (e.g., `"order.paid"` → subject=`"order"`, action=`"paid"`)
+    /// - `subject_id` from the payload's `id` field
+    /// - `actor_id` from the payload's `user_id` or `created_by` field
     fn generic_audit_info(&self) -> Option<AuditInfo> {
-        let table = self.table()?;
-        let singular = table.strip_suffix('s').unwrap_or(table);
-        let display = self.display_name();
-        let prefix = Self::snake_to_pascal(singular);
-        let remainder = display.strip_prefix(&prefix)?;
-        let action = remainder[..1].to_ascii_lowercase() + &remainder[1..];
-        let subject = singular.to_string();
+        let event_name = self.event_name()?;
+        let (subject, action) = event_name.split_once('.')?;
 
+        // Extract the inner data payload (serde tag = "type", content = "data")
         let value = serde_json::to_value(self).ok()?;
         let data = value.get("data")?;
 
         let subject_id = data
             .get("id")
-            .and_then(|v| v.as_i64())
-            .map(|id| id.to_string())
+            .and_then(|v| {
+                v.as_i64()
+                    .map(|i| i.to_string())
+                    .or_else(|| v.as_str().map(|s| s.to_string()))
+            })
             .unwrap_or_default();
 
         let actor_id = data
@@ -229,8 +223,8 @@ impl Event {
             .or_else(|| data.get("created_by").and_then(|v| v.as_i64()));
 
         Some(AuditInfo {
-            action,
-            subject,
+            action: action.to_string(),
+            subject: subject.to_string(),
             subject_id,
             actor_id,
             detail: None,
@@ -364,14 +358,6 @@ mod tests {
             Event::PostCreated(make_post_response("1", "s", "t")).name(),
             "on_post_created"
         );
-        assert_eq!(Event::OnLogin.name(), "on_login");
-        assert_eq!(Event::CronTick.name(), "on_cron_tick");
-    }
-
-    #[test]
-    fn name_custom() {
-        assert_eq!(Event::RenderMarkdown.name(), "render_markdown");
-        assert_eq!(Event::FilterHtml.name(), "filter_html");
     }
 
     #[test]
@@ -387,7 +373,6 @@ mod tests {
     #[test]
     fn display_name_auto() {
         assert_eq!(Event::PostCreating.display_name(), "PostCreating");
-        assert_eq!(Event::RenderMarkdown.display_name(), "RenderMarkdown");
     }
 
     #[test]
@@ -395,6 +380,5 @@ mod tests {
         assert_eq!(Event::PostCreating.table(), Some("posts"));
         assert_eq!(Event::CommentCreating.table(), Some("comments"));
         assert_eq!(Event::ContentCreating.table(), None);
-        assert_eq!(Event::RenderMarkdown.table(), None);
     }
 }

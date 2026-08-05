@@ -1,5 +1,55 @@
+use raisfast::event::Event;
 use raisfast::export_type::collect_all;
-use raisfast::services::media::{ALL_MEDIA_MIMES, mime_to_ext};
+use raisfast::services::media::{mime_to_ext, ALL_MEDIA_MIMES};
+
+/// Extract job-type discriminant strings from the `Job` TS declaration.
+///
+/// The `Job` enum is a tagged union (`#[serde(tag = "type")]`), so ts-rs emits
+/// `{ type: "send_welcome_email", payload: ... } | ...`. We parse out every
+/// `type: "..."` and exclude the `custom` escape hatch (plugin-supplied).
+///
+/// This avoids hardcoding a parallel list — the `Job` enum is the single source
+/// of truth; adding/removing a variant automatically updates this export.
+fn emit_job_types(decls: &[(String, String)]) -> String {
+    let job_decl = decls
+        .iter()
+        .find(|(name, _)| name == "Job")
+        .map(|(_, decl)| decl.as_str())
+        .unwrap_or("");
+
+    let mut types: Vec<&str> = Vec::new();
+    let mut rest = job_decl;
+    while let Some(pos) = rest.find("\"type\":") {
+        rest = &rest[pos + 7..];
+        // skip whitespace then find the opening quote of the value
+        let trimmed = rest.trim_start();
+        if !trimmed.starts_with('"') {
+            continue;
+        }
+        rest = &trimmed[1..];
+        if let Some(end) = rest.find('"') {
+            let tag = &rest[..end];
+            if tag != "custom" {
+                types.push(tag);
+            }
+            rest = &rest[end + 1..];
+        } else {
+            break;
+        }
+    }
+
+    if types.is_empty() {
+        return String::new();
+    }
+
+    let mut out = String::from("export const BuiltinJobTypes = [\n");
+    for ty in &types {
+        out.push_str(&format!("  \"{ty}\",\n"));
+    }
+    out.push_str("] as const;\n");
+    out.push_str("export type BuiltinJobType = (typeof BuiltinJobTypes)[number];\n");
+    out
+}
 
 fn emit_mime_ext() -> String {
     let mut out = String::from("export const MimeExt: Record<string, string> = {\n");
@@ -11,6 +61,22 @@ fn emit_mime_ext() -> String {
         ));
     }
     out.push_str("} as const;\n");
+    out
+}
+
+/// Export all external event names from `Event::all_event_names()`.
+///
+/// The list is generated at compile time by the `EventMeta` derive macro from
+/// `#[event(event_name = "...")]` attributes. This is the single source of truth —
+/// the `Event` enum variants + `event_name` attributes determine which events appear.
+fn emit_webhook_events() -> String {
+    let events = Event::all_event_names();
+    let mut out = String::from("export const EventNames = [\n");
+    for ev in events {
+        out.push_str(&format!("  \"{ev}\",\n"));
+    }
+    out.push_str("] as const;\n");
+    out.push_str("export type EventName = (typeof EventNames)[number];\n");
     out
 }
 
@@ -26,6 +92,8 @@ fn main() {
         out.push_str("\n\n");
     }
 
+    out.push_str(&emit_job_types(&decls));
+    out.push_str(&emit_webhook_events());
     out.push_str(&emit_mime_ext());
 
     let out_dir = "frontend/sdk/src/generated";

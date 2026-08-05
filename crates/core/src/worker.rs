@@ -18,6 +18,9 @@ mod sweeper;
 
 use std::time::Duration;
 
+#[cfg(feature = "export-types")]
+use ts_rs::TS;
+
 use crate::types::snowflake_id::SnowflakeId;
 use serde::{Deserialize, Serialize};
 
@@ -57,11 +60,13 @@ pub use scheduler::{
 pub use sweeper::StuckJobSweeper;
 
 #[cfg(feature = "export-types")]
-export_types!(JobStatus, CronExecStatus, CronSchedule, CronExecutionLog,);
+export_types!(Job, JobStatus, CronExecStatus, CronSchedule, CronExecutionLog,);
 
 /// Job types and parameters
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "export-types", derive(TS))]
 #[serde(tag = "type", content = "payload", rename_all = "snake_case")]
+#[cfg_attr(feature = "export-types", ts(tag = "type", content = "payload", rename_all = "snake_case"))]
 #[non_exhaustive]
 pub enum Job {
     SendWelcomeEmail {
@@ -78,6 +83,7 @@ pub enum Job {
     },
     WebhookNotify {
         url: String,
+        #[cfg_attr(feature = "export-types", ts(type = "unknown"))]
         payload: serde_json::Value,
     },
     RebuildSearchIndex {
@@ -114,6 +120,7 @@ pub enum Job {
     /// When no built-in Handler matches, WorkerRunner falls back to plugin dispatch.
     Custom {
         job_type: String,
+        #[cfg_attr(feature = "export-types", ts(type = "unknown"))]
         payload: serde_json::Value,
     },
 }
