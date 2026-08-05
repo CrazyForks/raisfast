@@ -185,9 +185,6 @@ pub async fn delete_deliveries_before(pool: &crate::db::Pool, before: Timestamp)
         "DELETE FROM webhook_deliveries WHERE created_at < {}",
         crate::db::Driver::ph(1)
     );
-    let result = sqlx::query(&sql)
-        .bind(before)
-        .execute(pool)
-        .await?;
+    let result = sqlx::query(&sql).bind(before).execute(pool).await?;
     Ok(result.rows_affected())
 }

@@ -247,14 +247,20 @@ pub async fn deliveries(
     State(state): State<AppState>,
     Path(id): Path<String>,
     Query(mut params): Query<PaginationParams>,
-) -> AppResult<ApiResponse<crate::errors::response::PaginatedData<crate::webhook::model::WebhookDelivery>>> {
+) -> AppResult<
+    ApiResponse<crate::errors::response::PaginatedData<crate::webhook::model::WebhookDelivery>>,
+> {
     auth.ensure_admin()?;
     auth.ensure_scope("webhooks", TokenAction::Read)?;
     params.sanitize();
     let wid = crate::types::snowflake_id::parse_id(&id)?;
-    let (items, total) =
-        crate::webhook::model::find_deliveries_by_webhook(&state.pool, wid, params.page, params.page_size)
-            .await?;
+    let (items, total) = crate::webhook::model::find_deliveries_by_webhook(
+        &state.pool,
+        wid,
+        params.page,
+        params.page_size,
+    )
+    .await?;
     Ok(ApiResponse::success(
         crate::errors::response::PaginatedData {
             items,

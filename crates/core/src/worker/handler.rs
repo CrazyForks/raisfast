@@ -2,9 +2,36 @@
 
 use std::collections::HashMap;
 
+#[cfg(feature = "export-types")]
+use ts_rs::TS;
+
 use crate::errors::app_error::AppResult;
 
 use super::Job;
+
+/// Self-describing metadata for a cron handler — powers the admin task menu.
+///
+/// Handlers registered via [`JobHandlerRegistry::register_with_meta`] attach a
+/// `&'static HandlerMeta`. The admin `GET /admin/cron-handlers` endpoint lists
+/// all metas so the frontend can render a task picker + dynamic parameter form.
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "export-types", derive(TS))]
+pub struct HandlerMeta {
+    /// Unique identifier (snake_case), same as the registered `job_type`.
+    pub id: &'static str,
+    /// Display name shown in the admin UI.
+    pub display_name: &'static str,
+    /// One-line description of what this task does.
+    pub description: &'static str,
+    /// Category for grouping in the task menu (e.g. "系统维护", "内容").
+    pub category: &'static str,
+    /// JSON Schema (draft-07) as a raw string. Parsed to `Value` at runtime.
+    /// `None` = no params.
+    #[cfg_attr(feature = "export-types", ts(type = "string | null"))]
+    pub params_schema: Option<&'static str>,
+    /// Optional icon identifier for the admin UI.
+    pub icon: Option<&'static str>,
+}
 
 /// Job handler trait
 #[async_trait::async_trait]
@@ -15,6 +42,7 @@ pub trait JobHandler: Send + Sync {
 /// Handler registry
 pub struct JobHandlerRegistry {
     handlers: HashMap<String, Box<dyn JobHandler>>,
+    metas: HashMap<String, &'static HandlerMeta>,
 }
 
 impl JobHandlerRegistry {
@@ -22,17 +50,41 @@ impl JobHandlerRegistry {
     pub fn new() -> Self {
         Self {
             handlers: HashMap::new(),
+            metas: HashMap::new(),
         }
     }
 
+    /// Registers a handler without metadata (invisible in the cron task menu).
     pub fn register(&mut self, job_type: &str, handler: Box<dyn JobHandler>) {
         self.handlers.insert(job_type.to_string(), handler);
+    }
+
+    /// Registers a handler **with** metadata — makes it appear in the cron task menu.
+    pub fn register_with_meta(
+        &mut self,
+        job_type: &str,
+        handler: Box<dyn JobHandler>,
+        meta: &'static HandlerMeta,
+    ) {
+        self.handlers.insert(job_type.to_string(), handler);
+        self.metas.insert(job_type.to_string(), meta);
     }
 
     /// Checks if a handler is registered
     #[must_use]
     pub fn has_handler(&self, job_type: &str) -> bool {
         self.handlers.contains_key(job_type)
+    }
+
+    /// Returns the metadata for a registered handler, if it has one.
+    #[must_use]
+    pub fn get_meta(&self, job_type: &str) -> Option<&'static HandlerMeta> {
+        self.metas.get(job_type).copied()
+    }
+
+    /// Lists all handler metas that have been registered with metadata.
+    pub fn list_meta(&self) -> Vec<&'static HandlerMeta> {
+        self.metas.values().copied().collect()
     }
 
     pub async fn handle(&self, job: &Job) -> AppResult<()> {

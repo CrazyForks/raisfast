@@ -5,17 +5,30 @@ use validator::Validate;
 pub struct CreateCronRequest {
     #[validate(length(min = 1, message = "label is required"))]
     pub label: String,
-    #[validate(length(min = 1, message = "job_type is required"))]
-    pub job_type: String,
-    pub payload: Option<String>,
     #[validate(length(min = 1, message = "cron_expr is required"))]
     pub cron_expr: String,
     #[serde(default = "default_true")]
     pub enabled: bool,
+    /// Execution kind: "builtin" (default), "script", "system", "plugin"
+    #[serde(default = "default_builtin")]
+    pub exec_kind: String,
+    /// Handler ID from the cron task menu (required for builtin)
+    pub handler_id: Option<String>,
+    /// JSON params validated against the handler's params_schema
+    pub params: Option<serde_json::Value>,
+
+    // ── Legacy fields (backward compat) ──────────────────────────────
+    /// Legacy: ignored if handler_id is set. Still used for plugin/old schedules.
+    pub job_type: Option<String>,
+    pub payload: Option<String>,
 }
 
 fn default_true() -> bool {
     true
+}
+
+fn default_builtin() -> String {
+    "builtin".into()
 }
 
 #[derive(Debug, Deserialize, Validate)]

@@ -398,6 +398,9 @@ CREATE TABLE IF NOT EXISTS cron_schedules (
     last_run_at  TEXT,
     next_run_at  TEXT NOT NULL,
     plugin_id    TEXT,
+    exec_kind    TEXT NOT NULL DEFAULT 'builtin',
+    handler_id   TEXT,
+    params       TEXT,
     created_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     updated_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );

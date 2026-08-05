@@ -58,6 +58,9 @@ macro_rules! cron_row_to_schedule {
             last_run_at: r.last_run_at,
             next_run_at: r.next_run_at,
             plugin_id: r.plugin_id,
+            exec_kind: r.exec_kind,
+            handler_id: r.handler_id,
+            params: r.params,
             created_at: r.created_at,
             updated_at: r.updated_at,
         }
@@ -92,6 +95,9 @@ struct CronScheduleRow {
     last_run_at: Option<Timestamp>,
     next_run_at: Timestamp,
     plugin_id: Option<String>,
+    exec_kind: String,
+    handler_id: Option<String>,
+    params: Option<String>,
     created_at: Timestamp,
     updated_at: Timestamp,
 }
@@ -128,6 +134,9 @@ pub struct CronSchedule {
     pub last_run_at: Option<Timestamp>,
     pub next_run_at: Timestamp,
     pub plugin_id: Option<String>,
+    pub exec_kind: String,
+    pub handler_id: Option<String>,
+    pub params: Option<String>,
     pub created_at: Timestamp,
     pub updated_at: Timestamp,
 }
@@ -185,6 +194,9 @@ pub async fn create_schedule_with_plugin(
         "enabled" => enabled,
         "next_run_at" => next,
         "plugin_id" => plugin_id,
+        "exec_kind" => "builtin",
+        "handler_id" => job_type,
+        "params" => payload,
         "created_at" => now,
         "updated_at" => now
     ])?;
@@ -199,6 +211,59 @@ pub async fn create_schedule_with_plugin(
         last_run_at: None,
         next_run_at: next,
         plugin_id: plugin_id.map(|s| s.to_string()),
+        exec_kind: "builtin".into(),
+        handler_id: Some(job_type.to_string()),
+        params: payload.map(|s| s.to_string()),
+        created_at: now,
+        updated_at: now,
+    }))
+}
+
+/// Create a cron schedule with full control over exec_kind / handler_id / params.
+///
+/// This is the preferred constructor for admin-created schedules.
+pub async fn create_schedule_v2(
+    pool: &Pool,
+    label: &str,
+    cron_expr: &str,
+    enabled: bool,
+    exec_kind: &str,
+    handler_id: Option<&str>,
+    params: Option<&str>,
+) -> AppResult<CronSchedule> {
+    let now = crate::utils::tz::now_utc();
+    let next = next_run(cron_expr, now)?;
+    let id = crate::utils::id::new_snowflake_id();
+
+    raisfast_derive::crud_insert!(pool, "cron_schedules", [
+        "id" => id,
+        "label" => label,
+        "job_type" => handler_id.unwrap_or("custom"),
+        "payload" => params,
+        "cron_expr" => cron_expr,
+        "enabled" => enabled,
+        "next_run_at" => next,
+        "plugin_id" => Option::<&str>::None,
+        "exec_kind" => exec_kind,
+        "handler_id" => handler_id,
+        "params" => params,
+        "created_at" => now,
+        "updated_at" => now
+    ])?;
+
+    Ok(find_by_id(pool, id).await?.unwrap_or(CronSchedule {
+        id,
+        label: label.to_string(),
+        job_type: handler_id.unwrap_or("custom").to_string(),
+        payload: params.map(|s| s.to_string()),
+        cron_expr: cron_expr.to_string(),
+        enabled,
+        last_run_at: None,
+        next_run_at: next,
+        plugin_id: None,
+        exec_kind: exec_kind.to_string(),
+        handler_id: handler_id.map(|s| s.to_string()),
+        params: params.map(|s| s.to_string()),
         created_at: now,
         updated_at: now,
     }))
@@ -207,7 +272,7 @@ pub async fn create_schedule_with_plugin(
 /// Find by ID
 pub async fn find_by_id(pool: &Pool, id: SnowflakeId) -> AppResult<Option<CronSchedule>> {
     let row: Option<CronScheduleRow> = sqlx::query_as::<_, CronScheduleRow>(&format!(
-        "SELECT id, label, job_type, payload, cron_expr, enabled, last_run_at, next_run_at, plugin_id, created_at, updated_at
+        "SELECT id, label, job_type, payload, cron_expr, enabled, last_run_at, next_run_at, plugin_id, exec_kind, handler_id, params, created_at, updated_at
          FROM cron_schedules WHERE id = {}",
         Driver::ph(1)
     ))
@@ -221,7 +286,7 @@ pub async fn find_by_id(pool: &Pool, id: SnowflakeId) -> AppResult<Option<CronSc
 /// List all schedules
 pub async fn list_schedules(pool: &Pool) -> AppResult<Vec<CronSchedule>> {
     let rows: Vec<CronScheduleRow> = sqlx::query_as::<_, CronScheduleRow>(
-        "SELECT id, label, job_type, payload, cron_expr, enabled, last_run_at, next_run_at, plugin_id, created_at, updated_at
+        "SELECT id, label, job_type, payload, cron_expr, enabled, last_run_at, next_run_at, plugin_id, exec_kind, handler_id, params, created_at, updated_at
          FROM cron_schedules ORDER BY created_at ASC",
     )
     .fetch_all(pool)
@@ -349,7 +414,7 @@ impl CronScheduler {
         let now = crate::utils::tz::now_utc();
 
         let rows = sqlx::query_as::<_, CronScheduleRow>(&format!(
-            "SELECT id, label, job_type, payload, cron_expr, enabled, last_run_at, next_run_at, plugin_id, created_at, updated_at
+            "SELECT id, label, job_type, payload, cron_expr, enabled, last_run_at, next_run_at, plugin_id, exec_kind, handler_id, params, created_at, updated_at
              FROM cron_schedules WHERE enabled = TRUE AND next_run_at <= {}",
             Driver::ph(1)
         ))
@@ -434,6 +499,30 @@ impl CronScheduler {
     }
 
     fn build_job(&self, schedule: &CronSchedule) -> AppResult<Job> {
+        // For builtin exec_kind, use handler_id + params directly
+        if schedule.exec_kind == "builtin" {
+            let job_type = schedule.handler_id.as_deref().unwrap_or(&schedule.job_type);
+            let payload: serde_json::Value = schedule
+                .params
+                .as_deref()
+                .filter(|s| !s.is_empty())
+                .and_then(|s| serde_json::from_str(s).ok())
+                .unwrap_or_else(|| {
+                    // Fall back to legacy payload field for backward compat
+                    schedule
+                        .payload
+                        .as_deref()
+                        .filter(|s| !s.is_empty())
+                        .and_then(|s| serde_json::from_str(s).ok())
+                        .unwrap_or(serde_json::Value::Null)
+                });
+            return Ok(Job::Custom {
+                job_type: job_type.to_string(),
+                payload,
+            });
+        }
+
+        // Legacy / plugin path: try tagged-enum round-trip first
         let tagged = match &schedule.payload {
             Some(p) if !p.is_empty() => {
                 format!(r#"{{"type":"{}","payload":{}}}"#, schedule.job_type, p)
@@ -688,6 +777,9 @@ pub async fn sync_plugin_crons(
                     "enabled" => entry.enabled,
                     "next_run_at" => next,
                     "plugin_id" => plugin_id,
+                    "exec_kind" => "plugin",
+                    "handler_id" => Option::<&str>::None,
+                    "params" => entry.payload.as_deref(),
                     "created_at" => now,
                     "updated_at" => now
                 ])?;

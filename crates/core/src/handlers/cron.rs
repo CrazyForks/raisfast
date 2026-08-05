@@ -30,6 +30,17 @@ pub fn routes(
         r,
         registry,
         restful,
+        "/admin/cron-handlers",
+        get,
+        self::list_handlers,
+        "system",
+        "admin/cron-handlers",
+        "admin"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        restful,
         "/admin/crons",
         get,
         self::list,
@@ -127,6 +138,45 @@ pub fn routes(
     )
 }
 
+/// GET /api/v1/admin/cron-handlers — List all cron handler metadata (task menu)
+#[utoipa::path(get, path = "/admin/cron-handlers", tag = "cron",
+    security(("bearer_auth" = [])),
+    responses((status = 200, description = "Cron handler metadata grouped by category"))
+)]
+pub async fn list_handlers(
+    _auth: AuthUser,
+    State(_state): State<AppState>,
+) -> AppResult<ApiResponse<serde_json::Value>> {
+    let metas = crate::worker::handlers::cron_handler_metas();
+
+    // Group by category
+    use std::collections::BTreeMap;
+    let mut categories: BTreeMap<&str, Vec<serde_json::Value>> = BTreeMap::new();
+    for m in metas {
+        let entry = serde_json::json!({
+            "id": m.id,
+            "display_name": m.display_name,
+            "description": m.description,
+            "category": m.category,
+            "params_schema": m.params_schema.and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok()),
+            "has_params": m.params_schema.is_some(),
+            "icon": m.icon,
+        });
+        categories.entry(m.category).or_default().push(entry);
+    }
+
+    let result: Vec<serde_json::Value> = categories
+        .into_iter()
+        .map(|(category, handlers)| {
+            serde_json::json!({ "category": category, "handlers": handlers })
+        })
+        .collect();
+
+    Ok(ApiResponse::success(serde_json::json!({
+        "categories": result
+    })))
+}
+
 /// GET /api/v1/admin/crons — List all schedules (paginated)
 #[utoipa::path(get, path = "/admin/crons", tag = "cron",
     security(("bearer_auth" = [])),
@@ -179,15 +229,47 @@ pub async fn create(
     Json(req): Json<CreateCronRequest>,
 ) -> AppResult<ApiResponse<CronSchedule>> {
     crate::errors::validation::validate(&req)?;
-    let schedule = create_schedule(
-        &state.pool,
-        &req.label,
-        &req.job_type,
-        req.payload.as_deref(),
-        &req.cron_expr,
-        req.enabled,
-    )
-    .await?;
+
+    // Serialize params to string if present
+    let params_str = req
+        .params
+        .as_ref()
+        .map(serde_json::to_string)
+        .transpose()
+        .map_err(|e| AppError::Internal(e.into()))?;
+
+    // Determine which constructor to use
+    let schedule = if req.exec_kind == "builtin" && req.handler_id.is_some() {
+        // New path: use handler_id + params
+        let handler_id = req.handler_id.as_deref().unwrap();
+        crate::worker::create_schedule_v2(
+            &state.pool,
+            &req.label,
+            &req.cron_expr,
+            req.enabled,
+            "builtin",
+            Some(handler_id),
+            params_str.as_deref(),
+        )
+        .await?
+    } else {
+        // Legacy path: job_type + payload
+        let jt = req
+            .handler_id
+            .as_deref()
+            .or(req.job_type.as_deref())
+            .unwrap_or("custom");
+        create_schedule(
+            &state.pool,
+            &req.label,
+            jt,
+            params_str.as_deref().or(req.payload.as_deref()),
+            &req.cron_expr,
+            req.enabled,
+        )
+        .await?
+    };
+
     Ok(ApiResponse::success(schedule))
 }
 

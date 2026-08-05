@@ -103,9 +103,7 @@ impl RbacService {
             .await?
             .ok_or_else(|| AppError::not_found(&format!("role/{id}")))?;
         if role.is_system && req.name.is_some() {
-            return Err(AppError::BadRequest(
-                "cannot rename system role".into(),
-            ));
+            return Err(AppError::BadRequest("cannot rename system role".into()));
         }
         let updated = crate::models::rbac::update_role(
             &self.pool,

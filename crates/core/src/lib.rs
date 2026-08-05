@@ -381,7 +381,12 @@ pub async fn build_app_state(
         state.tenant.clone(),
         shutdown_rx.clone(),
     );
-    crate::server::spawn_webhook_subscriber(eventbus.clone(), state.webhook.clone(), pool.clone(), shutdown_rx);
+    crate::server::spawn_webhook_subscriber(
+        eventbus.clone(),
+        state.webhook.clone(),
+        pool.clone(),
+        shutdown_rx,
+    );
 
     Ok(state)
 }

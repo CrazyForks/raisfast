@@ -11,6 +11,7 @@ pub mod order_expire;
 pub mod payment_expire;
 pub mod payment_reconcile;
 pub mod payment_retry;
+pub mod ping;
 pub mod publish;
 pub mod search_index;
 pub mod sitemap;
@@ -27,6 +28,15 @@ use crate::db::Pool;
 use crate::notifier::{EmailSender, SmsSender};
 use crate::search::SearchEngine;
 use crate::worker::JobHandlerRegistry;
+use crate::worker::handler::HandlerMeta;
+
+/// Returns metadata for all cron handlers registered with `register_with_meta`.
+///
+/// Called by the `GET /admin/cron-handlers` endpoint to populate the admin task menu.
+/// **NOTE**: Keep this list in sync with the `register_with_meta` calls in `register_all`.
+pub fn cron_handler_metas() -> Vec<&'static HandlerMeta> {
+    vec![&ping::META]
+}
 
 /// Registers all concrete Handlers with the Registry
 pub fn register_all(
@@ -133,6 +143,13 @@ pub fn register_all(
     );
     registry.register(
         "db_backup",
-        Box::new(db_backup::DbBackupHandler::new(config)),
+        Box::new(db_backup::DbBackupHandler::new(config.clone())),
+    );
+
+    // ── Cron handlers with admin-visible metadata ───────────────────────────
+    registry.register_with_meta(
+        "ping",
+        Box::new(ping::PingHandler::new(config)),
+        &ping::META,
     );
 }
