@@ -1,0 +1,228 @@
+name: Build All Backends
+
+on:
+  push:
+    tags:
+      - '**[0-9]+.[0-9]+.[0-9]+*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag (e.g. v0.2.20)"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: Build ${{ matrix.binary }} (${{ matrix.target }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # Three DB variants, each for all target platforms
+        include:
+          # ── SQLite (default) ──
+          - { binary: raisfast, db: sqlite, features: "db-sqlite plugin-js plugin-rhai search-tantivy payment-all tunnel mcp cron-system", target: x86_64-unknown-linux-musl, runner: ubuntu-22.04 }
+          - { binary: raisfast, db: sqlite, features: "db-sqlite plugin-js plugin-rhai search-tantivy payment-all tunnel mcp cron-system", target: aarch64-unknown-linux-musl, runner: ubuntu-22.04 }
+          - { binary: raisfast, db: sqlite, features: "db-sqlite plugin-js plugin-rhai search-tantivy payment-all tunnel mcp cron-system", target: x86_64-apple-darwin, runner: macos-13 }
+          - { binary: raisfast, db: sqlite, features: "db-sqlite plugin-js plugin-rhai search-tantivy payment-all tunnel mcp cron-system", target: aarch64-apple-darwin, runner: macos-14 }
+          - { binary: raisfast, db: sqlite, features: "db-sqlite plugin-js plugin-rhai search-tantivy payment-all tunnel mcp cron-system", target: x86_64-pc-windows-msvc, runner: windows-latest }
+
+          # ── PostgreSQL ──
+          - { binary: raisfast-postgres, db: postgres, features: "db-postgres plugin-js plugin-rhai search-tantivy payment-all tunnel mcp cron-system", target: x86_64-unknown-linux-musl, runner: ubuntu-22.04 }
+          - { binary: raisfast-postgres, db: postgres, features: "db-postgres plugin-js plugin-rhai search-tantivy payment-all tunnel mcp cron-system", target: aarch64-unknown-linux-musl, runner: ubuntu-22.04 }
+          - { binary: raisfast-postgres, db: postgres, features: "db-postgres plugin-js plugin-rhai search-tantivy payment-all tunnel mcp cron-system", target: x86_64-apple-darwin, runner: macos-13 }
+          - { binary: raisfast-postgres, db: postgres, features: "db-postgres plugin-js plugin-rhai search-tantivy payment-all tunnel mcp cron-system", target: aarch64-apple-darwin, runner: macos-14 }
+          - { binary: raisfast-postgres, db: postgres, features: "db-postgres plugin-js plugin-rhai search-tantivy payment-all tunnel mcp cron-system", target: x86_64-pc-windows-msvc, runner: windows-latest }
+
+          # ── MySQL ──
+          - { binary: raisfast-mysql, db: mysql, features: "db-mysql plugin-js plugin-rhai search-tantivy payment-all tunnel mcp cron-system", target: x86_64-unknown-linux-musl, runner: ubuntu-22.04 }
+          - { binary: raisfast-mysql, db: mysql, features: "db-mysql plugin-js plugin-rhai search-tantivy payment-all tunnel mcp cron-system", target: aarch64-unknown-linux-musl, runner: ubuntu-22.04 }
+          - { binary: raisfast-mysql, db: mysql, features: "db-mysql plugin-js plugin-rhai search-tantivy payment-all tunnel mcp cron-system", target: x86_64-apple-darwin, runner: macos-13 }
+          - { binary: raisfast-mysql, db: mysql, features: "db-mysql plugin-js plugin-rhai search-tantivy payment-all tunnel mcp cron-system", target: aarch64-apple-darwin, runner: macos-14 }
+          - { binary: raisfast-mysql, db: mysql, features: "db-mysql plugin-js plugin-rhai search-tantivy payment-all tunnel mcp cron-system", target: x86_64-pc-windows-msvc, runner: windows-latest }
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: build-${{ matrix.binary }}-${{ matrix.target }}
+
+      - name: Install cross-compilation dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config libssl-dev musl-tools
+
+      - name: Install sqlx-cli
+        run: cargo install sqlx-cli --no-default-features --features ${{ matrix.db == 'sqlite' && 'sqlite' || matrix.db == 'postgres' && 'postgres' || 'mysql' }} || true
+
+      - name: Setup database and generate sqlx cache
+        shell: bash
+        env:
+          DB_FEATURES: "db-${{ matrix.db }} plugin-js plugin-rhai search-tantivy payment-all tunnel mcp cron-system"
+        run: |
+          DB="${{ matrix.db }}"
+          if [ "$DB" = "sqlite" ]; then
+            mkdir -p /tmp/sqlx_prepare
+            sqlite3 /tmp/sqlx_prepare/raisfast.db < migrations/sqlite/schema.sqlite.sql
+            export DATABASE_URL="sqlite:/tmp/sqlx_prepare/raisfast.db"
+          elif [ "$DB" = "postgres" ]; then
+            sudo apt-get install -y postgresql-client
+            PGPASSWORD=postgres psql -h localhost -U postgres -c "CREATE DATABASE raisfast_prepare" 2>/dev/null || true
+            PGPASSWORD=postgres psql -h localhost -U postgres -d raisfast_prepare -f migrations/postgres/schema.postgres.sql
+            export DATABASE_URL="postgres://postgres:postgres@localhost:5432/raisfast_prepare"
+          else
+            sudo systemctl start mysql 2>/dev/null || true
+            mysql -u root -proot -e "CREATE DATABASE IF NOT EXISTS raisfast_prepare" 2>/dev/null || true
+            mysql -u root -proot raisfast_prepare < migrations/mysql/schema.mysql.sql
+            export DATABASE_URL="mysql://root:root@127.0.0.1:3306/raisfast_prepare"
+          fi
+          SQLX_OFFLINE=false cargo sqlx prepare --workspace -- --tests --no-default-features --features "$DB_FEATURES"
+
+      - name: Build
+        env:
+          SQLX_OFFLINE: true
+        run: cargo build --release --no-default-features --features "${{ matrix.features }}" --target ${{ matrix.target }}
+
+      - name: Get version
+        id: version
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "version=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Package (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          mkdir -p dist
+          BINARY="${{ matrix.binary }}"
+          TARGET="${{ matrix.target }}"
+          VERSION="${{ steps.version.outputs.version }}"
+          EXT=""
+
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            cp "target/$TARGET/raisfast.exe" "dist/$BINARY.exe"
+          else
+            cp "target/$TARGET/raisfast" "dist/$BINARY"
+          fi
+
+          cd dist
+          tar -czf "$BINARY-$TARGET.tar.gz" "$BINARY"
+          cd ..
+          echo "artifact=dist/$BINARY-$TARGET.tar.gz" >> "$GITHUB_OUTPUT"
+
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          mkdir -p dist
+          $target = "${{ matrix.target }}"
+          Copy-Item "target/$target/raisfast.exe" "dist/${{ matrix.binary }}.exe"
+          Compress-Archive -Path "dist/${{ matrix.binary }}.exe" -DestinationPath "dist/${{ matrix.binary }}-$target.zip"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.binary }}-${{ matrix.target }}
+          path: |
+            dist/${{ matrix.binary }}-*.tar.gz
+            dist/${{ matrix.binary }}-*.zip
+
+  release:
+    name: Publish to GitHub Release
+    needs: build
+    runs-on: ubuntu-22.04
+    if: startsWith(github.ref, 'refs/tags/')
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          gh release create "$TAG" \
+            --title "$TAG" \
+            --generate-notes \
+            artifacts/*.tar.gz \
+            artifacts/*.zip
+
+      - name: Sign artifacts with cosign
+        uses: sigstore/cosign-installer@v3
+
+      - run: |
+          cd artifacts
+          for f in *.tar.gz *.zip; do
+            [ -f "$f" ] || continue
+            cosign sign-blob --yes --bundle "${f}.bundle" "$f"
+          done
+          gh release upload "${GITHUB_REF_NAME}" *.bundle || true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  docker:
+    name: Build Docker Images
+    needs: build
+    runs-on: ubuntu-22.04
+    permissions:
+      packages: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download Linux musl binaries
+        uses: actions/download-artifact@v4
+        with:
+          pattern: raisfast-*x86_64-unknown-linux-musl*
+          path: binaries
+          merge-multiple: true
+
+      - name: Extract binaries
+        run: |
+          mkdir -p dist
+          for variant in raisfast raisfast-postgres raisfast-mysql; do
+            tar -xzf "binaries/$variant-x86_64-unknown-linux-musl.tar.gz" -C dist/
+            if [ -f "dist/$variant" ]; then
+              mv "dist/$variant" "dist/raisfast-$variant" 2>/dev/null || true
+            fi
+          done
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push images
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.ci
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository }}:${{ github.ref_name }}
+            ghcr.io/${{ github.repository }}:latest
+          build-args: |
+            BINARY=dist/raisfast

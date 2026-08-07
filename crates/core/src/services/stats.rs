@@ -448,12 +448,12 @@ mod tests {
     async fn stats_overview_empty_db() {
         let pool = crate::test_pool!();
 
-        sqlx::query(
-            "TRUNCATE TABLE posts, users, comments, media, categories, tags, products, orders, coupons RESTART IDENTITY CASCADE",
-        )
-        .execute(&pool)
-        .await
-        .unwrap();
+        for table in &["posts", "users", "comments", "media", "categories", "tags", "products", "orders", "coupons"] {
+            sqlx::query(&format!("DELETE FROM {table}"))
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
 
         let svc = StatsService::new(pool);
         let result = svc.overview(None).await.unwrap();
@@ -472,12 +472,12 @@ mod tests {
     async fn stats_overview_with_data() {
         let pool = crate::test_pool!();
 
-        sqlx::query(
-            "TRUNCATE TABLE posts, users, comments, media, categories, tags, products, orders, coupons RESTART IDENTITY CASCADE",
-        )
-        .execute(&pool)
-        .await
-        .unwrap();
+        for table in &["posts", "users", "comments", "media", "categories", "tags", "products", "orders", "coupons"] {
+            sqlx::query(&format!("DELETE FROM {table}"))
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
 
         sqlx::query("INSERT INTO posts (id, title, slug, content, created_by) VALUES (1, 'Hello', 'hello', 'body', 1)")
             .execute(&pool)
@@ -512,7 +512,7 @@ mod tests {
         let pool = crate::test_pool!();
 
         sqlx::query(&format!(
-            "CREATE TABLE IF NOT EXISTS ct_test (id {}, status TEXT, tenant_id TEXT NOT NULL DEFAULT 'default')",
+            "CREATE TABLE IF NOT EXISTS ct_test (id {}, status TEXT, tenant_id VARCHAR(64) NOT NULL DEFAULT 'default')",
             crate::db::Driver::auto_increment_pk()
         ))
         .execute(&pool)
@@ -558,7 +558,7 @@ mod tests {
             .await
             .unwrap();
         sqlx::query(&format!(
-            "CREATE TABLE ct_trends (id {}, created_at {} NOT NULL, tenant_id TEXT NOT NULL DEFAULT 'default')",
+            "CREATE TABLE ct_trends (id {}, created_at {} NOT NULL, tenant_id VARCHAR(64) NOT NULL DEFAULT 'default')",
             crate::db::Driver::auto_increment_pk(),
             ts_type,
         ))

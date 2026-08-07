@@ -480,7 +480,7 @@ through = "ct_resolve_posts_tags"
         .unwrap();
 
         sqlx::query(&format!(
-            "CREATE TABLE IF NOT EXISTS ct_resolve_posts (id {}, title TEXT, author_id INTEGER, created_at TEXT NOT NULL DEFAULT '2024-01-01', updated_at TEXT NOT NULL DEFAULT '2024-01-01', created_by INTEGER, updated_by INTEGER)",
+            "CREATE TABLE IF NOT EXISTS ct_resolve_posts (id {}, title TEXT, author_id INTEGER, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, created_by INTEGER, updated_by INTEGER)",
             crate::db::Driver::auto_increment_pk()
         ))
         .execute(&pool)
@@ -655,7 +655,7 @@ through = "ct_resolve_posts_tags"
         .unwrap();
 
         sqlx::query(&format!(
-            "CREATE TABLE IF NOT EXISTS ct_resolve_posts (id {}, title TEXT, author_id INTEGER, created_at TEXT NOT NULL DEFAULT '2024-01-01', updated_at TEXT NOT NULL DEFAULT '2024-01-01', created_by INTEGER, updated_by INTEGER)",
+            "CREATE TABLE IF NOT EXISTS ct_resolve_posts (id {}, title TEXT, author_id INTEGER, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, created_by INTEGER, updated_by INTEGER)",
             crate::db::Driver::auto_increment_pk()
         ))
         .execute(&pool)
@@ -737,7 +737,7 @@ foreign_key = "post_id"
         .unwrap();
 
         sqlx::query(&format!(
-            "CREATE TABLE IF NOT EXISTS ct_resolve_posts (id {}, title TEXT, author_id INTEGER, created_at TEXT NOT NULL DEFAULT '2024-01-01', updated_at TEXT NOT NULL DEFAULT '2024-01-01', created_by INTEGER, updated_by INTEGER)",
+            "CREATE TABLE IF NOT EXISTS ct_resolve_posts (id {}, title TEXT, author_id INTEGER, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, created_by INTEGER, updated_by INTEGER)",
             crate::db::Driver::auto_increment_pk()
         ))
         .execute(&pool)

@@ -375,7 +375,7 @@ mod tests {
     async fn end_to_end_select_filters_by_tenant() {
         let pool = crate::test_pool!();
         sqlx::query(&format!(
-            "CREATE TABLE IF NOT EXISTS tt_posts (id {}, title TEXT, tenant_id TEXT NOT NULL DEFAULT 'default')",
+            "CREATE TABLE IF NOT EXISTS tt_posts (id {}, title TEXT, tenant_id VARCHAR(64) NOT NULL DEFAULT 'default')",
             crate::db::Driver::auto_increment_pk()
         ))
         .execute(&pool)
@@ -438,7 +438,7 @@ mod tests {
     async fn end_to_end_insert_auto_tenant() {
         let pool = crate::test_pool!();
         sqlx::query(&format!(
-            "CREATE TABLE IF NOT EXISTS tt_items (id {}, name TEXT, tenant_id TEXT NOT NULL DEFAULT 'default')",
+            "CREATE TABLE IF NOT EXISTS tt_items (id {}, name TEXT, tenant_id VARCHAR(64) NOT NULL DEFAULT 'default')",
             crate::db::Driver::auto_increment_pk()
         ))
         .execute(&pool)
@@ -469,7 +469,7 @@ mod tests {
     async fn end_to_end_delete_respects_tenant() {
         let pool = crate::test_pool!();
         sqlx::query(&format!(
-            "CREATE TABLE IF NOT EXISTS tt_items (id {}, name TEXT, tenant_id TEXT NOT NULL DEFAULT 'default')",
+            "CREATE TABLE IF NOT EXISTS tt_items (id {}, name TEXT, tenant_id VARCHAR(64) NOT NULL DEFAULT 'default')",
             crate::db::Driver::auto_increment_pk()
         ))
         .execute(&pool)

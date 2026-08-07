@@ -992,7 +992,7 @@ pub async fn recent_execution_logs(
     let rows: Vec<CronExecLogRow> = sqlx::query_as::<_, CronExecLogRow>(&format!(
         "SELECT id, schedule_id, job_type, label, status, duration_ms, error, started_at, finished_at
          FROM cron_execution_log
-         ORDER BY started_at DESC LIMIT {} OFFSET {}",
+         ORDER BY started_at DESC, id DESC LIMIT {} OFFSET {}",
         Driver::ph(1), Driver::ph(2)
     ))
     .bind(limit)

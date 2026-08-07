@@ -2443,10 +2443,10 @@ type = "text"
     fn fetch_columns_sql_sqlite() {
         let (sql, idx) = fetch_columns_sql("my_table").unwrap();
         assert!(sql.contains("my_table"));
-        #[cfg(feature = "db-postgres")]
-        assert_eq!(idx, 0);
-        #[cfg(not(feature = "db-postgres"))]
+        #[cfg(feature = "db-sqlite")]
         assert_eq!(idx, 1);
+        #[cfg(not(feature = "db-sqlite"))]
+        assert_eq!(idx, 0);
         let _ = sql;
     }
 

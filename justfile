@@ -12,9 +12,11 @@ set dotenv-load
 #   RAISFAST_DB_URL     — connection string for dev DB
 #   RAISFAST_TEST_DB_URL — connection string for test DB
 #
-# Or just edit the defaults below.
+# Or just edit the default below.
+#
+# Switch backend:  RAISFAST_DB=mysql just test-all
 
-db        := env_var_or_default("RAISFAST_DB", "mysql")
+db        := env_var_or_default("RAISFAST_DB", "postgres")
 
 # Derive connection strings from `db` if not explicitly set.
 default_db_url := if db == "sqlite" { "sqlite:storage/db/raisfast.db?mode=rwc" } \
@@ -28,28 +30,54 @@ default_test_db_url := if db == "sqlite" { "sqlite::memory:" } \
 db_url        := env_var_or_default("RAISFAST_DB_URL", default_db_url)
 test_db_url   := env_var_or_default("RAISFAST_TEST_DB_URL", default_test_db_url)
 
-plugin_type := "all"
+# Per-backend sqlx offline cache directory (avoids cross-contamination).
+# `cargo sqlx prepare` writes to .sqlx/, so we keep per-backend copies in
+# .sqlx-{db}/ and symlink .sqlx → .sqlx-{db} before each compile.
+sqlx_cache := ".sqlx-" + db
+
+# Schema file path for the active database backend.
+schema_file := if db == "sqlite" { "migrations/sqlite/schema.sqlite.sql" } else if db == "postgres" { "migrations/postgres/schema.postgres.sql" } else { "migrations/mysql/schema.mysql.sql" }
+
+# Feature flags derived from backend.
+features     := "db-" + db + " plugin-js plugin-rhai search-tantivy payment-all tunnel mcp cron-system"
+features_csv := "db-" + db + ",plugin-js,plugin-rhai,search-tantivy,payment-all,tunnel,mcp,cron-system"
+
+# Tests run in parallel on SQLite; PG/MySQL share a single test DB so they run
+# serially to avoid DDL/catalog races during concurrent schema apply.
+test_threads := if db == "sqlite" { "" } else { "-- --test-threads=1" }
 
 # ── Default ───────────────────────────────────────────────────────
 
 default:
     @just --list
 
-features := "db-" + db + " plugin-js plugin-rhai search-tantivy payment-all tunnel mcp cron-system"
-features_csv := "db-" + db + ",plugin-js,plugin-rhai,search-tantivy,payment-all,tunnel,mcp,cron-system"
+# ── sqlx cache symlink helper ─────────────────────────────────────
+
+# Link .sqlx → .sqlx-{db} so sqlx macros read the correct backend cache.
+# Called automatically before every compile/test recipe.
+_link-cache:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    CACHE="{{sqlx_cache}}"
+    if [ -d "$CACHE" ]; then
+        rm -f .sqlx
+        ln -s "$CACHE" .sqlx
+    elif [ -d .sqlx ] && [ ! -L .sqlx ]; then
+        echo ">> WARNING: .sqlx exists but $CACHE does not. Run: just db-prepare"
+    fi
 
 # ── Build ─────────────────────────────────────────────────────────
 
-# Check compilation (default SQLite)
-check *FLAGS:
+# Check compilation
+check *FLAGS: _link-cache
     SQLX_OFFLINE=true DATABASE_URL={{db_url}} cargo check --no-default-features --features "{{features}}" {{FLAGS}}
 
 # Build release binary
-build *FLAGS:
+build *FLAGS: _link-cache
     SQLX_OFFLINE=true DATABASE_URL={{db_url}} cargo build --release --no-default-features --features "{{features}}" {{FLAGS}}
 
 # Build release binary with Admin UI (auto-detects frontend/admin)
-build-full *FLAGS:
+build-full *FLAGS: _link-cache
     #!/usr/bin/env bash
     set -euo pipefail
     if [ -d "frontend/admin" ]; then
@@ -76,7 +104,7 @@ fmt-check:
     cargo fmt --check
 
 # Lint (including tests)
-lint:
+lint: _link-cache
     SQLX_OFFLINE=true DATABASE_URL={{db_url}} cargo clippy --tests --no-default-features --features "{{features}}" -- -D warnings
 
 # Full quality check (fmt + lint)
@@ -84,28 +112,19 @@ qa: fmt-check lint
 
 # ── Tests ─────────────────────────────────────────────────────────
 
-# SQLite tests run in parallel; PostgreSQL/MySQL share a single test DB so
-# they run serially to avoid DDL/catalog races during concurrent schema apply.
-pg_or_mysql := if db == "sqlite" { "" } else { "-- --test-threads=1" }
-
-# Run all tests
-test *FLAGS:
-    SQLX_OFFLINE=true DATABASE_URL={{db_url}} RAISFAST_TEST_DB_URL={{test_db_url}} cargo test --no-default-features --features "{{features}}" {{FLAGS}} {{ pg_or_mysql }}
+# Run all raisfast tests (excludes bore-cli e2e tests that need a bore server)
+test *FLAGS: _link-cache
+    SQLX_OFFLINE=true DATABASE_URL={{db_url}} RAISFAST_TEST_DB_URL={{test_db_url}} cargo test -p raisfast --no-default-features --features "{{features}}" {{FLAGS}} {{test_threads}}
 
 # Run unit tests only
-test-unit:
-    SQLX_OFFLINE=true DATABASE_URL={{db_url}} RAISFAST_TEST_DB_URL={{test_db_url}} cargo test --lib --no-default-features --features "{{features}}" {{ pg_or_mysql }}
+test-unit: _link-cache
+    SQLX_OFFLINE=true DATABASE_URL={{db_url}} RAISFAST_TEST_DB_URL={{test_db_url}} cargo test -p raisfast --lib --no-default-features --features "{{features}}" {{test_threads}}
 
 # Run integration tests only
-test-integration:
-    SQLX_OFFLINE=true DATABASE_URL={{db_url}} RAISFAST_TEST_DB_URL={{test_db_url}} cargo test --test api_tests --no-default-features --features "{{features}}" {{ pg_or_mysql }}
-
-# ── Database Backend Switch ───────────────────────────────────────
+test-integration: _link-cache
+    SQLX_OFFLINE=true DATABASE_URL={{db_url}} RAISFAST_TEST_DB_URL={{test_db_url}} cargo test -p raisfast --test api_tests --no-default-features --features "{{features}}" {{test_threads}}
 
 # ── Database ──────────────────────────────────────────────────────
-
-# Schema file path for the active database backend.
-schema_file := if db == "sqlite" { "migrations/sqlite/schema.sqlite.sql" } else if db == "postgres" { "migrations/postgres/schema.postgres.sql" } else { "migrations/mysql/schema.mysql.sql" }
 
 # Create database (if needed) and load schema
 db-init:
@@ -151,11 +170,30 @@ db-backup:
     DATABASE_URL={{db_url}} cargo run --no-default-features --features "{{features}}" -- db backup ./backups
 
 # Generate sqlx offline query metadata for production AND test code.
-# Uses the test DB (same schema as dev DB, guaranteed fresh).
+# cargo sqlx prepare writes to .sqlx/, then we move it to .sqlx-{db}/.
 db-prepare:
-    SQLX_OFFLINE=false DATABASE_URL={{test_db_url}} cargo sqlx prepare --workspace -- --tests --no-default-features --features "{{features}}"
+    #!/usr/bin/env bash
+    set -euo pipefail
+    DB="{{db}}"
+    TEST_URL="{{test_db_url}}"
+    SCHEMA="{{schema_file}}"
+    CACHE_DIR="{{sqlx_cache}}"
+    # Remove symlink/old dir so prepare creates a fresh real directory.
+    rm -f .sqlx
+    rm -rf "$CACHE_DIR"
+    if [ "$DB" = "sqlite" ]; then
+        TMPDB="$(mktemp -d)/raisfast_prepare.db"
+        sqlite3 "$TMPDB" < "$SCHEMA"
+        SQLX_OFFLINE=false DATABASE_URL="sqlite:$TMPDB" cargo sqlx prepare --workspace -- --tests --no-default-features --features "{{features}}"
+        rm -rf "$(dirname "$TMPDB")"
+    else
+        SQLX_OFFLINE=false DATABASE_URL="$TEST_URL" cargo sqlx prepare --workspace -- --tests --no-default-features --features "{{features}}"
+    fi
+    mv .sqlx "$CACHE_DIR"
+    ln -sf "$CACHE_DIR" .sqlx
+    echo ">> sqlx cache written to $CACHE_DIR ($(ls "$CACHE_DIR" | wc -l | tr -d ' ') queries)"
 
-# Recreate the test database (PostgreSQL/MySQL only; SQLite uses :memory:)
+# Recreate the test database (SQLite uses :memory:, no setup needed)
 test-db-init:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -174,10 +212,6 @@ test-db-init:
         mysql -u root -proot raisfast_test < "$SCHEMA"
     fi
 
-# Verify offline compilation (no DATABASE_URL required)
-check-offline:
-    SQLX_OFFLINE=true cargo check --no-default-features --features "{{features}}"
-
 # ── Run ───────────────────────────────────────────────────────────
 
 # Install cargo-watch (auto-recompile on file change)
@@ -189,22 +223,25 @@ dev:
     SQLX_OFFLINE=false DATABASE_URL={{db_url}} cargo run --no-default-features --features "{{features}}"
 
 # Start development server with auto-reload on code change.
-# -w crates:         only watch source code (skip frontend/, .sqlx/, etc.)
-# --delay 1s:         debounce rapid saves (Ctrl-S spam) into one rebuild
-# --no-restart:       don't kill/restart if the binary exits on its own
-# --ignore tests:     skip test files to avoid triggering on test edits
+# -w crates:   only watch source code (skip frontend/, .sqlx-*/, etc.)
+# --delay 1s:  debounce rapid saves into one rebuild
+# --no-restart: don't kill/restart if the binary exits on its own
 dev-watch:
     SQLX_OFFLINE=false DATABASE_URL={{db_url}} RUST_LOG=info cargo watch -w crates --delay 1s --no-restart -x "run --no-default-features --features {{features_csv}}"
 
-# ── Database Backend Switch ───────────────────────────────────────
+# ── Backend-Specific Checks ───────────────────────────────────────
 
 # Check compilation with PostgreSQL
 pg-check:
-    SQLX_OFFLINE=true cargo check --features "db-postgres"
+    RAISFAST_DB=postgres just check
 
 # Check compilation with MySQL
 mysql-check:
-    SQLX_OFFLINE=true cargo check --features "db-mysql"
+    RAISFAST_DB=mysql just check
+
+# Check compilation with SQLite
+sqlite-check:
+    RAISFAST_DB=sqlite just check
 
 # ── Full CI Pipeline ──────────────────────────────────────────────
 

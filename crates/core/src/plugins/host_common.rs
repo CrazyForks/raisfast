@@ -461,9 +461,7 @@ impl HostContext {
             match acquire {
                 Ok(mut conn) => {
                     match handle.block_on(async {
-                        sqlx::query::<crate::db::pool::Db>("BEGIN")
-                            .execute(&mut *conn)
-                            .await
+                        sqlx::raw_sql("BEGIN").execute(&mut *conn).await
                     }) {
                         Ok(_r) => {
                             let _: crate::db::pool::DbQueryResult = _r;
@@ -489,9 +487,7 @@ impl HostContext {
         let handle = tokio::runtime::Handle::current();
         tokio::task::block_in_place(|| {
             match handle.block_on(async {
-                sqlx::query::<crate::db::pool::Db>("COMMIT")
-                    .execute(&mut *tx_state.conn)
-                    .await
+                sqlx::raw_sql("COMMIT").execute(&mut *tx_state.conn).await
             }) {
                 Ok(_r) => {
                     let _: crate::db::pool::DbQueryResult = _r;
@@ -501,7 +497,7 @@ impl HostContext {
                 Err(e) => {
                     let _: Result<crate::db::pool::DbQueryResult, sqlx::Error> =
                         handle.block_on(async {
-                            sqlx::query::<crate::db::pool::Db>("ROLLBACK")
+                            sqlx::raw_sql("ROLLBACK")
                                 .execute(&mut *tx_state.conn)
                                 .await
                         });
@@ -521,9 +517,7 @@ impl HostContext {
         let handle = tokio::runtime::Handle::current();
         tokio::task::block_in_place(|| {
             match handle.block_on(async {
-                sqlx::query::<crate::db::pool::Db>("ROLLBACK")
-                    .execute(&mut *tx_state.conn)
-                    .await
+                sqlx::raw_sql("ROLLBACK").execute(&mut *tx_state.conn).await
             }) {
                 Ok(_r) => {
                     let _: crate::db::pool::DbQueryResult = _r;
@@ -543,7 +537,7 @@ impl HostContext {
             let plugin_id = self.plugin_id.clone();
             tokio::task::block_in_place(|| {
                 let _ = handle.block_on(async {
-                    sqlx::query::<crate::db::pool::Db>("ROLLBACK")
+                    sqlx::raw_sql("ROLLBACK")
                         .execute(&mut *tx_state.conn)
                         .await
                 });

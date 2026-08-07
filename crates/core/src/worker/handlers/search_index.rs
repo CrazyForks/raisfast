@@ -133,18 +133,32 @@ mod tests {
     async fn create_user(pool: &crate::db::Pool) -> i64 {
         let id = crate::utils::id::new_id();
         let username = format!("testuser_{}", crate::utils::id::new_id());
-        let (user_id,): (i64,) = sqlx::query_as(&format!(
-            "INSERT INTO users (id, username, status, registered_via) VALUES ({}, {}, 'active', 'email') {}",
-            crate::db::Driver::ph(1),
-            crate::db::Driver::ph(2),
-            crate::db::Driver::returning_col("id"),
-        ))
-        .bind(id)
-        .bind(&username)
-        .fetch_one(pool)
-        .await
-        .unwrap();
-        user_id
+        let returning = crate::db::Driver::returning_col("id");
+        if returning.is_empty() {
+            sqlx::query(&format!(
+                "INSERT INTO users (id, username, status, registered_via) VALUES ({}, {}, 'active', 'email')",
+                crate::db::Driver::ph(1),
+                crate::db::Driver::ph(2),
+            ))
+            .bind(id)
+            .bind(&username)
+            .execute(pool)
+            .await
+            .unwrap();
+            id
+        } else {
+            let (user_id,): (i64,) = sqlx::query_as(&format!(
+                "INSERT INTO users (id, username, status, registered_via) VALUES ({}, {}, 'active', 'email') {returning}",
+                crate::db::Driver::ph(1),
+                crate::db::Driver::ph(2),
+            ))
+            .bind(id)
+            .bind(&username)
+            .fetch_one(pool)
+            .await
+            .unwrap();
+            user_id
+        }
     }
 
     #[cfg(feature = "search-tantivy")]
@@ -152,9 +166,15 @@ mod tests {
         let id = crate::utils::id::new_id();
         let now = crate::utils::tz::now_utc();
         let published = crate::models::post::PostStatus::Published.as_str();
-        let (int_id,): (i64,) = sqlx::query_as(&format!(
+        let returning = crate::db::Driver::returning_col("id");
+        let slug = format!(
+            "{}-{}",
+            title.to_lowercase().replace(' ', "-"),
+            crate::utils::id::new_id()
+        );
+        let sql = format!(
             "INSERT INTO posts (id, title, slug, content, status, created_by, updated_by, view_count, is_pinned, created_at, updated_at) \
-             VALUES ({}, {}, {}, {}, '{published}', {}, NULL, 0, FALSE, {}, {}) {}",
+             VALUES ({}, {}, {}, {}, '{published}', {}, NULL, 0, FALSE, {}, {}){returning}",
             crate::db::Driver::ph(1),
             crate::db::Driver::ph(2),
             crate::db::Driver::ph(3),
@@ -162,23 +182,34 @@ mod tests {
             crate::db::Driver::ph(5),
             crate::db::Driver::ph(6),
             crate::db::Driver::ph(7),
-            crate::db::Driver::returning_col("id"),
-        ))
-        .bind(id)
-        .bind(title)
-        .bind(format!(
-            "{}-{}",
-            title.to_lowercase().replace(' ', "-"),
-            crate::utils::id::new_id()
-        ))
-        .bind(format!("{title} content"))
-        .bind(author_id)
-        .bind(&now)
-        .bind(&now)
-        .fetch_one(pool)
-        .await
-        .unwrap();
-        (int_id, id.to_string())
+        );
+        if returning.is_empty() {
+            sqlx::query(&sql)
+                .bind(id)
+                .bind(title)
+                .bind(&slug)
+                .bind(format!("{title} content"))
+                .bind(author_id)
+                .bind(&now)
+                .bind(&now)
+                .execute(pool)
+                .await
+                .unwrap();
+            (id, id.to_string())
+        } else {
+            let (int_id,): (i64,) = sqlx::query_as(&sql)
+                .bind(id)
+                .bind(title)
+                .bind(&slug)
+                .bind(format!("{title} content"))
+                .bind(author_id)
+                .bind(&now)
+                .bind(&now)
+                .fetch_one(pool)
+                .await
+                .unwrap();
+            (int_id, id.to_string())
+        }
     }
 
     #[cfg(feature = "search-tantivy")]

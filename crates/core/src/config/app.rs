@@ -830,13 +830,17 @@ impl AppConfig {
             {
                 format!("sqlite:{}/db/raisfast.db?mode=rwc", storage_root_dir)
             }
-            #[cfg(feature = "db-postgres")]
+            #[cfg(not(feature = "db-sqlite"))]
             {
-                "postgres://localhost/raisfast".into()
-            }
-            #[cfg(feature = "db-mysql")]
-            {
-                "mysql://root@localhost/raisfast".into()
+                eprintln!(
+                    "ERROR: DATABASE_URL environment variable is required when not using SQLite."
+                );
+                eprintln!("Examples:");
+                eprintln!(
+                    "  PostgreSQL: DATABASE_URL=postgres://user:pass@localhost:5432/raisfast"
+                );
+                eprintln!("  MySQL:      DATABASE_URL=mysql://user:pass@localhost:3306/raisfast");
+                std::process::exit(1);
             }
         });
 

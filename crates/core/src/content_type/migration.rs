@@ -713,12 +713,12 @@ default = false
         assert!(
             stmts
                 .iter()
-                .any(|s| s.contains("view_count INTEGER DEFAULT 0"))
+                .any(|s| s.contains("view_count") && s.contains("DEFAULT 0"))
         );
         assert!(
             stmts
                 .iter()
-                .any(|s| s.contains("is_pinned BOOLEAN DEFAULT FALSE"))
+                .any(|s| s.contains("is_pinned") && s.contains("DEFAULT FALSE"))
         );
     }
 
@@ -1158,8 +1158,8 @@ default = true
         )
         .unwrap();
         let sql = generate_create_table(&ct, &[]);
-        assert!(sql.contains("active BOOLEAN DEFAULT TRUE"));
-        let active_line = sql.lines().find(|l| l.contains("active BOOLEAN")).unwrap();
+        assert!(sql.contains("active") && sql.contains("DEFAULT TRUE"));
+        let active_line = sql.lines().find(|l| l.contains("active")).unwrap();
         assert!(!active_line.contains("NOT NULL"));
     }
 

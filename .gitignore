@@ -7,12 +7,19 @@ data/
 backups/
 .local-cache/
 
+# sqlx offline cache (per-backend)
+/.sqlx
+/.sqlx-*
+
 node_modules
 *.pid
 
 # storage root path
 storage/*
 !storage/.gitkeep
+
+# test artifacts
+test-storage/
 
 frontend/
 dev-docs/

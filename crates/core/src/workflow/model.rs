@@ -318,7 +318,7 @@ pub async fn complete_step_log(
     let output_str = output.map(|v| serde_json::to_string(v).unwrap_or_default());
     raisfast_derive::crud_update!(
         pool, "workflow_step_logs",
-        bind: ["status" => WorkflowStepStatus::Completed, "output" => output_str, "completed_at" => now],
+        bind: ["status" => WorkflowStepStatus::Completed.as_str(), "output" => output_str, "completed_at" => now],
         where: ("id", id)
     )?;
     Ok(())
@@ -329,7 +329,7 @@ pub async fn fail_step_log(pool: &Pool, id: SnowflakeId, error: &str) -> anyhow:
     let now = crate::utils::tz::now_utc();
     raisfast_derive::crud_update!(
         pool, "workflow_step_logs",
-        bind: ["status" => WorkflowStepStatus::Failed, "error" => error, "completed_at" => now],
+        bind: ["status" => WorkflowStepStatus::Failed.as_str(), "error" => error, "completed_at" => now],
         where: ("id", id)
     )?;
     Ok(())
