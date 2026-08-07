@@ -421,6 +421,7 @@ async fn parse_tag_ids(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::DbDriver;
 
     async fn setup_pool() -> crate::db::Pool {
         crate::test_pool!()
@@ -899,7 +900,9 @@ mod tests {
     async fn list_active_products() {
         let pool = setup_pool().await;
         let svc = make_service(pool.clone()).await;
-        let a = auth(None);
+        let tenant = format!("t_{}", crate::utils::id::new_id());
+        let _ = crate::models::currencies::create(&pool, &tenant, "USD", "US Dollar", 2).await;
+        let a = auth(Some(&tenant));
         for i in 0..3 {
             let p = svc
                 .create(
@@ -940,11 +943,14 @@ mod tests {
                 )
                 .await
                 .unwrap();
-            sqlx::query("UPDATE products SET status = 'active' WHERE id = ?")
-                .bind(p.id)
-                .execute(&pool)
-                .await
-                .unwrap();
+            sqlx::query(&format!(
+                "UPDATE products SET status = 'active' WHERE id = {}",
+                crate::db::Driver::ph(1)
+            ))
+            .bind(p.id)
+            .execute(&pool)
+            .await
+            .unwrap();
         }
         let (items, total) = svc.list_active(&a, 1, 10).await.unwrap();
         assert_eq!(total, 3);
@@ -955,7 +961,9 @@ mod tests {
     async fn list_admin_products_with_filter() {
         let pool = setup_pool().await;
         let svc = make_service(pool.clone()).await;
-        let a = auth(None);
+        let tenant = format!("t_{}", crate::utils::id::new_id());
+        let _ = crate::models::currencies::create(&pool, &tenant, "USD", "US Dollar", 2).await;
+        let a = auth(Some(&tenant));
         let p = svc
             .create(
                 &a,
@@ -995,11 +1003,14 @@ mod tests {
             )
             .await
             .unwrap();
-        sqlx::query("UPDATE products SET status = 'active' WHERE id = ?")
-            .bind(p.id)
-            .execute(&pool)
-            .await
-            .unwrap();
+        sqlx::query(&format!(
+            "UPDATE products SET status = 'active' WHERE id = {}",
+            crate::db::Driver::ph(1)
+        ))
+        .bind(p.id)
+        .execute(&pool)
+        .await
+        .unwrap();
         svc.create(
             &a,
             CreateProductRequest {

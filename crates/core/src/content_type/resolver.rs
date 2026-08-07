@@ -461,35 +461,59 @@ through = "ct_resolve_posts_tags"
     }
 
     async fn setup_test_db() -> crate::db::Pool {
-        let pool = crate::db::Pool::connect(":memory:").await.unwrap();
+        let pool = crate::test_pool!();
 
+        sqlx::query(&format!(
+            "CREATE TABLE IF NOT EXISTS ct_resolve_users (id {}, name TEXT, slug TEXT, title TEXT)",
+            crate::db::Driver::auto_increment_pk()
+        ))
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        sqlx::query(&format!(
+            "CREATE TABLE IF NOT EXISTS ct_resolve_tags (id {}, name TEXT, slug TEXT, title TEXT)",
+            crate::db::Driver::auto_increment_pk()
+        ))
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        sqlx::query(&format!(
+            "CREATE TABLE IF NOT EXISTS ct_resolve_posts (id {}, title TEXT, author_id INTEGER, created_at TEXT NOT NULL DEFAULT '2024-01-01', updated_at TEXT NOT NULL DEFAULT '2024-01-01', created_by INTEGER, updated_by INTEGER)",
+            crate::db::Driver::auto_increment_pk()
+        ))
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        sqlx::query("DROP TABLE IF EXISTS ct_resolve_posts_tags")
+            .execute(&pool)
+            .await
+            .unwrap();
         sqlx::query(
-            "CREATE TABLE ct_resolve_users (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, slug TEXT, title TEXT)",
+            "CREATE TABLE ct_resolve_posts_tags (post_id BIGINT NOT NULL, ct_resolve_tags_id BIGINT NOT NULL, PRIMARY KEY (post_id, ct_resolve_tags_id))",
         )
         .execute(&pool)
         .await
         .unwrap();
 
-        sqlx::query(
-            "CREATE TABLE ct_resolve_tags (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, slug TEXT, title TEXT)",
-        )
-        .execute(&pool)
-        .await
-        .unwrap();
-
-        sqlx::query(
-            "CREATE TABLE ct_resolve_posts (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT, author_id INTEGER, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, created_by INTEGER, updated_by INTEGER)",
-        )
-        .execute(&pool)
-        .await
-        .unwrap();
-
-        sqlx::query(
-            "CREATE TABLE ct_resolve_posts_tags (post_id INTEGER NOT NULL, ct_resolve_tags_id INTEGER NOT NULL, PRIMARY KEY (post_id, ct_resolve_tags_id))",
-        )
-        .execute(&pool)
-        .await
-        .unwrap();
+        sqlx::query("DELETE FROM ct_resolve_posts_tags")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM ct_resolve_posts")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM ct_resolve_tags")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM ct_resolve_users")
+            .execute(&pool)
+            .await
+            .unwrap();
 
         sqlx::query(
             "INSERT INTO ct_resolve_users (id, name, slug, title) VALUES (1, 'Alice', 'alice', '')",
@@ -616,21 +640,36 @@ through = "ct_resolve_posts_tags"
 
     #[tokio::test]
     async fn resolve_one_to_many() {
-        let pool = crate::db::Pool::connect(":memory:").await.unwrap();
+        let pool = crate::test_pool!();
 
-        sqlx::query(
-            "CREATE TABLE ct_resolve_comments (id INTEGER PRIMARY KEY AUTOINCREMENT, text TEXT, post_id INTEGER)",
-        )
+        sqlx::query("DROP TABLE IF EXISTS ct_resolve_comments")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(&format!(
+            "CREATE TABLE ct_resolve_comments (id {}, text TEXT, post_id BIGINT)",
+            crate::db::Driver::auto_increment_pk()
+        ))
         .execute(&pool)
         .await
         .unwrap();
 
-        sqlx::query(
-            "CREATE TABLE ct_resolve_posts (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT, author_id INTEGER, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)",
-        )
+        sqlx::query(&format!(
+            "CREATE TABLE IF NOT EXISTS ct_resolve_posts (id {}, title TEXT, author_id INTEGER, created_at TEXT NOT NULL DEFAULT '2024-01-01', updated_at TEXT NOT NULL DEFAULT '2024-01-01', created_by INTEGER, updated_by INTEGER)",
+            crate::db::Driver::auto_increment_pk()
+        ))
         .execute(&pool)
         .await
         .unwrap();
+
+        sqlx::query("DELETE FROM ct_resolve_comments")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM ct_resolve_posts")
+            .execute(&pool)
+            .await
+            .unwrap();
 
         sqlx::query("INSERT INTO ct_resolve_posts (id, title, author_id, created_at, updated_at) VALUES (1, 'Hello', 0, '2024-01-01', '2024-01-01')")
             .execute(&pool)
@@ -687,16 +726,20 @@ foreign_key = "post_id"
 
     #[tokio::test]
     async fn resolve_m2o_with_zero_fk_skipped() {
-        let pool = crate::db::Pool::connect(":memory:").await.unwrap();
+        let pool = crate::test_pool!();
 
-        sqlx::query("CREATE TABLE ct_resolve_users (id INTEGER PRIMARY KEY, name TEXT)")
-            .execute(&pool)
-            .await
-            .unwrap();
+        sqlx::query(&format!(
+            "CREATE TABLE IF NOT EXISTS ct_resolve_users (id {}, name TEXT, slug TEXT, title TEXT)",
+            crate::db::Driver::auto_increment_pk()
+        ))
+        .execute(&pool)
+        .await
+        .unwrap();
 
-        sqlx::query(
-            "CREATE TABLE ct_resolve_posts (id INTEGER PRIMARY KEY, title TEXT, author_id INTEGER)",
-        )
+        sqlx::query(&format!(
+            "CREATE TABLE IF NOT EXISTS ct_resolve_posts (id {}, title TEXT, author_id INTEGER, created_at TEXT NOT NULL DEFAULT '2024-01-01', updated_at TEXT NOT NULL DEFAULT '2024-01-01', created_by INTEGER, updated_by INTEGER)",
+            crate::db::Driver::auto_increment_pk()
+        ))
         .execute(&pool)
         .await
         .unwrap();

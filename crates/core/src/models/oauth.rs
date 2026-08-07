@@ -270,12 +270,13 @@ mod tests {
     async fn create_and_find_account() {
         let pool = setup_pool().await;
         let user_id = insert_user(&pool).await;
+        let provider_user_id = format!("github-{}", crate::utils::id::new_id());
         let account = create_account(
             &pool,
             CreateOAuthAccountParams {
                 user_id: SnowflakeId(user_id),
                 provider: "github",
-                provider_user_id: "github-123",
+                provider_user_id: &provider_user_id,
                 email: Some("user@example.com"),
                 display_name: Some("Test User"),
                 avatar_url: None,
@@ -287,25 +288,27 @@ mod tests {
         )
         .await
         .unwrap();
-        let found = find_by_provider_user(&pool, "github", "github-123")
+        let found = find_by_provider_user(&pool, "github", &provider_user_id)
             .await
             .unwrap()
             .unwrap();
         assert_eq!(found.id, account.id);
         assert_eq!(found.provider, "github");
-        assert_eq!(found.provider_user_id, "github-123");
+        assert_eq!(found.provider_user_id, provider_user_id);
     }
 
     #[tokio::test]
     async fn find_by_user_id() {
         let pool = setup_pool().await;
         let user_id = insert_user(&pool).await;
+        let github_uid = format!("github-{}", crate::utils::id::new_id());
+        let google_uid = format!("google-{}", crate::utils::id::new_id());
         create_account(
             &pool,
             CreateOAuthAccountParams {
                 user_id: SnowflakeId(user_id),
                 provider: "github",
-                provider_user_id: "github-123",
+                provider_user_id: &github_uid,
                 email: None,
                 display_name: None,
                 avatar_url: None,
@@ -322,7 +325,7 @@ mod tests {
             CreateOAuthAccountParams {
                 user_id: SnowflakeId(user_id),
                 provider: "google",
-                provider_user_id: "google-456",
+                provider_user_id: &google_uid,
                 email: None,
                 display_name: None,
                 avatar_url: None,
@@ -344,12 +347,13 @@ mod tests {
     async fn delete_account() {
         let pool = setup_pool().await;
         let user_id = insert_user(&pool).await;
+        let github_uid = format!("github-{}", crate::utils::id::new_id());
         create_account(
             &pool,
             CreateOAuthAccountParams {
                 user_id: SnowflakeId(user_id),
                 provider: "github",
-                provider_user_id: "github-123",
+                provider_user_id: &github_uid,
                 email: None,
                 display_name: None,
                 avatar_url: None,
@@ -366,7 +370,7 @@ mod tests {
             .unwrap();
         assert!(deleted);
         assert!(
-            find_by_provider_user(&pool, "github", "github-123")
+            find_by_provider_user(&pool, "github", &github_uid)
                 .await
                 .unwrap()
                 .is_none()
@@ -377,12 +381,14 @@ mod tests {
     async fn count_by_user() {
         let pool = setup_pool().await;
         let user_id = insert_user(&pool).await;
+        let github_uid = format!("github-{}", crate::utils::id::new_id());
+        let google_uid = format!("google-{}", crate::utils::id::new_id());
         create_account(
             &pool,
             CreateOAuthAccountParams {
                 user_id: SnowflakeId(user_id),
                 provider: "github",
-                provider_user_id: "github-123",
+                provider_user_id: &github_uid,
                 email: None,
                 display_name: None,
                 avatar_url: None,
@@ -399,7 +405,7 @@ mod tests {
             CreateOAuthAccountParams {
                 user_id: SnowflakeId(user_id),
                 provider: "google",
-                provider_user_id: "google-456",
+                provider_user_id: &google_uid,
                 email: None,
                 display_name: None,
                 avatar_url: None,

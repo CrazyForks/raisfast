@@ -25,6 +25,28 @@ impl RebuildSearchIndexHandler {
 
 #[async_trait::async_trait]
 impl JobHandler for RebuildSearchIndexHandler {
+    fn coalesce_key(&self, job: &Job) -> Option<String> {
+        match job {
+            Job::RebuildSearchIndex { .. } => Some("rebuild_search_index".to_string()),
+            _ => None,
+        }
+    }
+
+    fn coalesce(&self, jobs: Vec<Job>) -> Option<Job> {
+        let mut post_ids: Vec<i64> = Vec::new();
+        for job in jobs {
+            if let Job::RebuildSearchIndex { post_ids: ids } = job {
+                post_ids.extend(ids);
+            }
+        }
+        if post_ids.is_empty() {
+            return None;
+        }
+        post_ids.sort_unstable();
+        post_ids.dedup();
+        Some(Job::RebuildSearchIndex { post_ids })
+    }
+
     async fn handle(&self, job: &Job) -> AppResult<()> {
         let Job::RebuildSearchIndex { post_ids } = job else {
             return Ok(());
@@ -88,7 +110,7 @@ mod tests {
 
     #[tokio::test]
     async fn noop_engine_skips_indexing() {
-        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
+        let pool = crate::test_pool!();
         let handler = RebuildSearchIndexHandler::new(pool, Arc::new(NoopSearchEngine));
         let job = Job::RebuildSearchIndex { post_ids: vec![1] };
         assert!(handler.handle(&job).await.is_ok());
@@ -96,7 +118,7 @@ mod tests {
 
     #[tokio::test]
     async fn ignores_wrong_job_type() {
-        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
+        let pool = crate::test_pool!();
         let handler = RebuildSearchIndexHandler::new(pool, Arc::new(NoopSearchEngine));
         let job = Job::GenerateSitemap;
         assert!(handler.handle(&job).await.is_ok());
@@ -110,11 +132,15 @@ mod tests {
     #[cfg(feature = "search-tantivy")]
     async fn create_user(pool: &crate::db::Pool) -> i64 {
         let id = crate::utils::id::new_id();
+        let username = format!("testuser_{}", crate::utils::id::new_id());
         let (user_id,): (i64,) = sqlx::query_as(&format!(
-            "INSERT INTO users (id, username, status, registered_via) VALUES (?, 'testuser', 'active', 'email') {}",
+            "INSERT INTO users (id, username, status, registered_via) VALUES ({}, {}, 'active', 'email') {}",
+            crate::db::Driver::ph(1),
+            crate::db::Driver::ph(2),
             crate::db::Driver::returning_col("id"),
         ))
         .bind(id)
+        .bind(&username)
         .fetch_one(pool)
         .await
         .unwrap();
@@ -124,16 +150,27 @@ mod tests {
     #[cfg(feature = "search-tantivy")]
     async fn create_post(pool: &crate::db::Pool, author_id: i64, title: &str) -> (i64, String) {
         let id = crate::utils::id::new_id();
-        let now = crate::utils::tz::now_str();
+        let now = crate::utils::tz::now_utc();
         let published = crate::models::post::PostStatus::Published.as_str();
         let (int_id,): (i64,) = sqlx::query_as(&format!(
             "INSERT INTO posts (id, title, slug, content, status, created_by, updated_by, view_count, is_pinned, created_at, updated_at) \
-             VALUES (?, ?, ?, ?, '{published}', ?, NULL, 0, 0, ?, ?) {}",
+             VALUES ({}, {}, {}, {}, '{published}', {}, NULL, 0, FALSE, {}, {}) {}",
+            crate::db::Driver::ph(1),
+            crate::db::Driver::ph(2),
+            crate::db::Driver::ph(3),
+            crate::db::Driver::ph(4),
+            crate::db::Driver::ph(5),
+            crate::db::Driver::ph(6),
+            crate::db::Driver::ph(7),
             crate::db::Driver::returning_col("id"),
         ))
         .bind(id)
         .bind(title)
-        .bind(title.to_lowercase().replace(' ', "-"))
+        .bind(format!(
+            "{}-{}",
+            title.to_lowercase().replace(' ', "-"),
+            crate::utils::id::new_id()
+        ))
         .bind(format!("{title} content"))
         .bind(author_id)
         .bind(&now)

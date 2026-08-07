@@ -62,24 +62,11 @@ pub(crate) fn test_config() -> AppConfig {
 }
 
 pub(crate) async fn test_pool() -> raisfast::db::Pool {
-    #[cfg(feature = "db-sqlite")]
-    {
-        let pool = raisfast::db::Pool::connect("sqlite::memory:")
-            .await
-            .unwrap();
-        sqlx::query(raisfast::db::schema::SCHEMA_SQL)
-            .execute(&pool)
-            .await
-            .unwrap();
-        pool
-    }
+    raisfast::test_pool!()
 }
 
 pub(crate) async fn test_pool_with_tenants() -> raisfast::db::Pool {
-    #[cfg(feature = "db-sqlite")]
-    {
-        test_pool().await
-    }
+    raisfast::test_pool!()
 }
 
 pub(crate) async fn test_app() -> (axum::Router, AppState) {
@@ -216,6 +203,7 @@ async fn build_test_app(pool: raisfast::db::Pool) -> (axum::Router, AppState) {
             ),
         ),
         services: raisfast::app::ServiceRegistry::new(),
+        handler_registry: Arc::new(raisfast::worker::JobHandlerRegistry::new()),
     };
     let max_upload = state.config.max_upload_size;
 

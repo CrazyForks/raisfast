@@ -49,16 +49,8 @@ fields = ["slug"]
 unique = true
 "#;
 
-async fn setup_pool() -> sqlx::SqlitePool {
-    let pool = raisfast::db::Pool::connect("sqlite::memory:")
-        .await
-        .unwrap();
-    sqlx::query(raisfast::db::schema::SCHEMA_SQL)
-        .execute(&pool)
-        .await
-        .unwrap();
-    tenant::invalidate_cache().await;
-    pool
+async fn setup_pool() -> raisfast::db::Pool {
+    raisfast::test_pool!()
 }
 
 fn parse_product() -> ContentTypeSchema {

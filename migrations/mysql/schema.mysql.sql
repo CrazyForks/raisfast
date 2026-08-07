@@ -364,10 +364,14 @@ CREATE TABLE IF NOT EXISTS jobs (
     error            TEXT,
     cron_schedule_id BIGINT,
     cron_log_id      BIGINT,
+    priority         SMALLINT NOT NULL DEFAULT 0,
+    timeout_secs     INT,
+    dedup_key        VARCHAR(255),
     created_at       DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at       DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     INDEX idx_jobs_status_run_after (status, run_after),
-    INDEX idx_jobs_type (job_type)
+    INDEX idx_jobs_type (job_type),
+    INDEX idx_jobs_dedup_key (dedup_key)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- Cron job schedules

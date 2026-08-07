@@ -614,15 +614,15 @@ mod tests {
     #[test]
     fn extract_notify_url_works() {
         let channel = PaymentChannel {
-            id: 1,
+            id: crate::types::snowflake_id::SnowflakeId(1),
             tenant_id: None,
             provider: "wechat".into(),
             name: "Wechat".into(),
-            is_live: 0,
+            is_live: false,
             credentials: String::new(),
             webhook_secret: None,
             settings: Some(r#"{"notify_url":"https://example.com/callback"}"#.into()),
-            is_active: 1,
+            is_active: true,
             sort_order: 0,
             version: 1,
             created_at: crate::utils::tz::Timestamp::default(),
@@ -637,15 +637,15 @@ mod tests {
     #[test]
     fn extract_notify_url_missing() {
         let channel = PaymentChannel {
-            id: 1,
+            id: crate::types::snowflake_id::SnowflakeId(1),
             tenant_id: None,
             provider: "wechat".into(),
             name: "Wechat".into(),
-            is_live: 0,
+            is_live: false,
             credentials: String::new(),
             webhook_secret: None,
             settings: None,
-            is_active: 1,
+            is_active: true,
             sort_order: 0,
             version: 1,
             created_at: crate::utils::tz::Timestamp::default(),

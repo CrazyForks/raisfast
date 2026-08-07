@@ -687,10 +687,14 @@ mod tests {
 
     async fn create_user(pool: &crate::db::Pool) -> i64 {
         let id = crate::utils::id::new_id();
-        sqlx::query(
-            "INSERT INTO users (id, username, status, registered_via) VALUES (?, 'testuser', 'active', 'email')",
-        )
+        let username = format!("testuser_{}", crate::utils::id::new_id());
+        sqlx::query(&format!(
+            "INSERT INTO users (id, username, status, registered_via) VALUES ({}, {}, 'active', 'email')",
+            crate::db::Driver::ph(1),
+            crate::db::Driver::ph(2)
+        ))
         .bind(id)
+        .bind(&username)
         .execute(pool)
         .await
         .unwrap();
@@ -703,6 +707,17 @@ mod tests {
         slug: &str,
         status: &str,
         created_by: i64,
+    ) -> Page {
+        create_test_page_t(pool, title, slug, status, created_by, None).await
+    }
+
+    async fn create_test_page_t(
+        pool: &crate::db::Pool,
+        title: &str,
+        slug: &str,
+        status: &str,
+        created_by: i64,
+        tenant: Option<&str>,
     ) -> Page {
         create(
             pool,
@@ -722,7 +737,7 @@ mod tests {
                 updated_by: None,
                 cover_image: None,
             },
-            None,
+            tenant,
         )
         .await
         .unwrap()
@@ -732,9 +747,10 @@ mod tests {
     async fn create_and_find_by_slug() {
         let pool = setup_pool().await;
         let uid = create_user(&pool).await;
-        let page = create_test_page(&pool, "About Us", "about", "published", uid).await;
+        let slug = format!("about_{}", crate::utils::id::new_id());
+        let page = create_test_page(&pool, "About Us", &slug, "published", uid).await;
 
-        let found = find_by_slug(&pool, "about", None).await.unwrap();
+        let found = find_by_slug(&pool, &slug, None).await.unwrap();
         assert!(found.is_some());
         assert_eq!(found.unwrap().id, page.id);
     }
@@ -743,20 +759,40 @@ mod tests {
     async fn list_published_excludes_drafts() {
         let pool = setup_pool().await;
         let uid = create_user(&pool).await;
-        create_test_page(&pool, "Published Page", "pub", "published", uid).await;
-        create_test_page(&pool, "Draft Page", "draft", "draft", uid).await;
+        let tenant = format!("t_{}", crate::utils::id::new_id());
+        let pub_slug = format!("pub_{}", crate::utils::id::new_id());
+        let draft_slug = format!("draft_{}", crate::utils::id::new_id());
+        create_test_page_t(
+            &pool,
+            "Published Page",
+            &pub_slug,
+            "published",
+            uid,
+            Some(&tenant),
+        )
+        .await;
+        create_test_page_t(
+            &pool,
+            "Draft Page",
+            &draft_slug,
+            "draft",
+            uid,
+            Some(&tenant),
+        )
+        .await;
 
-        let (items, total) = list_published(&pool, 1, 10, None).await.unwrap();
+        let (items, total) = list_published(&pool, 1, 10, Some(&tenant)).await.unwrap();
         assert_eq!(total, 1);
         assert_eq!(items.len(), 1);
-        assert_eq!(items[0].slug, "pub");
+        assert_eq!(items[0].slug, pub_slug);
     }
 
     #[tokio::test]
     async fn update_changes_title() {
         let pool = setup_pool().await;
         let uid = create_user(&pool).await;
-        let page = create_test_page(&pool, "Old Title", "old", "published", uid).await;
+        let slug = format!("old_{}", crate::utils::id::new_id());
+        let page = create_test_page(&pool, "Old Title", &slug, "published", uid).await;
 
         let updated = update(
             &pool,
@@ -788,10 +824,11 @@ mod tests {
     async fn delete_removes_page() {
         let pool = setup_pool().await;
         let uid = create_user(&pool).await;
-        let page = create_test_page(&pool, "To Delete", "delete-me", "published", uid).await;
+        let slug = format!("delete-me_{}", crate::utils::id::new_id());
+        let page = create_test_page(&pool, "To Delete", &slug, "published", uid).await;
 
         delete(&pool, page.id, None).await.unwrap();
-        let found = find_by_slug(&pool, "delete-me", None).await.unwrap();
+        let found = find_by_slug(&pool, &slug, None).await.unwrap();
         assert!(found.is_none());
     }
 
@@ -799,7 +836,8 @@ mod tests {
     async fn update_status_changes() {
         let pool = setup_pool().await;
         let uid = create_user(&pool).await;
-        let page = create_test_page(&pool, "Status Test", "status-test", "draft", uid).await;
+        let slug = format!("status-test_{}", crate::utils::id::new_id());
+        let page = create_test_page(&pool, "Status Test", &slug, "draft", uid).await;
 
         assert_eq!(page.status, PageStatus::Draft);
 

@@ -369,14 +369,17 @@ mod tests {
     async fn list_definitions() {
         let pool = setup_pool().await;
         let steps = r#"[{"id":"s1","name":"Step 1","type":"task","config":{},"next":""}]"#;
-        for i in 0..3 {
-            let id = crate::utils::id::new_snowflake_id();
+        let ids: Vec<SnowflakeId> = (0..3)
+            .map(|_| crate::utils::id::new_snowflake_id())
+            .collect();
+        for (i, &id) in ids.iter().enumerate() {
             super::create_definition(&pool, id, &format!("WF {i}"), None, steps, "s1")
                 .await
                 .unwrap();
         }
         let list = super::list_definitions(&pool).await.unwrap();
-        assert_eq!(list.len(), 3);
+        let mine = list.iter().filter(|d| ids.contains(&d.id)).count();
+        assert_eq!(mine, 3);
     }
 
     #[tokio::test]

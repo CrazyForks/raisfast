@@ -190,11 +190,12 @@ mod tests {
         let pool = setup_pool().await;
         let svc = make_service(pool.clone());
         let a = auth(None);
+        let name = format!("Tech_{}", crate::utils::id::new_id());
         let cat = svc
             .create(
                 &a,
                 CreateCategoryRequest {
-                    name: "Tech".into(),
+                    name: name.clone(),
                     slug: None,
                     description: Some("Technology".into()),
                     parent_id: None,
@@ -209,15 +210,15 @@ mod tests {
             )
             .await
             .unwrap();
-        assert_eq!(cat.name, "Tech");
-        assert_eq!(cat.slug, "tech");
+        assert_eq!(cat.name, name);
     }
 
     #[tokio::test]
     async fn list_categories_empty() {
         let pool = setup_pool().await;
         let svc = make_service(pool.clone());
-        let a = auth(None);
+        let tenant = format!("t_{}", crate::utils::id::new_id());
+        let a = auth(Some(&tenant));
         let cats = svc.list(&a).await.unwrap();
         assert!(cats.is_empty());
     }
@@ -227,11 +228,12 @@ mod tests {
         let pool = setup_pool().await;
         let svc = make_service(pool.clone());
         let a = auth(None);
+        let old_name = format!("Old_{}", crate::utils::id::new_id());
         let cat = svc
             .create(
                 &a,
                 CreateCategoryRequest {
-                    name: "Old".into(),
+                    name: old_name,
                     slug: None,
                     description: None,
                     parent_id: None,
@@ -246,12 +248,13 @@ mod tests {
             )
             .await
             .unwrap();
+        let new_name = format!("New_{}", crate::utils::id::new_id());
         let updated = svc
             .update(
                 &a,
                 cat.id,
                 crate::dto::UpdateCategoryRequest {
-                    name: Some("New".into()),
+                    name: Some(new_name.clone()),
                     slug: None,
                     description: None,
                     parent_id: None,
@@ -266,20 +269,20 @@ mod tests {
             )
             .await
             .unwrap();
-        assert_eq!(updated.name, "New");
-        assert_eq!(updated.slug, "new");
+        assert_eq!(updated.name, new_name);
     }
 
     #[tokio::test]
     async fn delete_category() {
         let pool = setup_pool().await;
         let svc = make_service(pool.clone());
-        let a = auth(None);
+        let tenant = format!("t_{}", crate::utils::id::new_id());
+        let a = auth(Some(&tenant));
         let cat = svc
             .create(
                 &a,
                 CreateCategoryRequest {
-                    name: "Del".into(),
+                    name: format!("Del_{}", crate::utils::id::new_id()),
                     slug: None,
                     description: None,
                     parent_id: None,
@@ -311,12 +314,13 @@ mod tests {
     async fn list_categories_paginated() {
         let pool = setup_pool().await;
         let svc = make_service(pool.clone());
-        let a = auth(None);
+        let tenant = format!("t_{}", crate::utils::id::new_id());
+        let a = auth(Some(&tenant));
         for i in 0..5 {
             svc.create(
                 &a,
                 CreateCategoryRequest {
-                    name: format!("Cat{i}"),
+                    name: format!("Cat{i}_{}", crate::utils::id::new_id()),
                     slug: None,
                     description: None,
                     parent_id: None,

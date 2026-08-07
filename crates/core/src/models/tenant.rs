@@ -123,22 +123,18 @@ mod tests {
     use super::*;
 
     async fn setup_pool() -> crate::db::Pool {
-        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query(crate::db::schema::SCHEMA_SQL)
-            .execute(&pool)
-            .await
-            .unwrap();
+        let pool = crate::test_pool!();
         pool
     }
 
     #[tokio::test]
     async fn create_and_find_by_id() {
         let pool = setup_pool().await;
-        let row = create(&pool, "Test Tenant", Some("test.example.com"), "{}")
-            .await
-            .unwrap();
-        assert_eq!(row.name, "Test Tenant");
-        assert_eq!(row.domain.unwrap(), "test.example.com");
+        let name = format!("Test Tenant {}", crate::utils::id::new_id());
+        let domain = format!("test-{}.example.com", crate::utils::id::new_id());
+        let row = create(&pool, &name, Some(&domain), "{}").await.unwrap();
+        assert_eq!(row.name, name);
+        assert_eq!(row.domain.unwrap(), domain);
 
         let found = find_by_id(&pool, row.id).await.unwrap().unwrap();
         assert_eq!(found.id, row.id);
@@ -147,15 +143,12 @@ mod tests {
     #[tokio::test]
     async fn find_by_domain_returns_match() {
         let pool = setup_pool().await;
-        create(&pool, "Dom Tenant", Some("dom.example.com"), "{}")
-            .await
-            .unwrap();
+        let name = format!("Dom Tenant {}", crate::utils::id::new_id());
+        let domain = format!("dom-{}.example.com", crate::utils::id::new_id());
+        create(&pool, &name, Some(&domain), "{}").await.unwrap();
 
-        let found = find_by_domain(&pool, "dom.example.com")
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(found.name, "Dom Tenant");
+        let found = find_by_domain(&pool, &domain).await.unwrap().unwrap();
+        assert_eq!(found.name, name);
 
         let missing = find_by_domain(&pool, "no.such.domain").await.unwrap();
         assert!(missing.is_none());
@@ -164,9 +157,30 @@ mod tests {
     #[tokio::test]
     async fn find_all_returns_all() {
         let pool = setup_pool().await;
-        create(&pool, "Alpha", None, "{}").await.unwrap();
-        create(&pool, "Bravo", None, "{}").await.unwrap();
-        create(&pool, "Charlie", None, "{}").await.unwrap();
+        create(
+            &pool,
+            &format!("Alpha {}", crate::utils::id::new_id()),
+            None,
+            "{}",
+        )
+        .await
+        .unwrap();
+        create(
+            &pool,
+            &format!("Bravo {}", crate::utils::id::new_id()),
+            None,
+            "{}",
+        )
+        .await
+        .unwrap();
+        create(
+            &pool,
+            &format!("Charlie {}", crate::utils::id::new_id()),
+            None,
+            "{}",
+        )
+        .await
+        .unwrap();
 
         let all = find_all(&pool).await.unwrap();
         assert!(all.len() >= 3);
@@ -175,15 +189,22 @@ mod tests {
     #[tokio::test]
     async fn update_changes_name() {
         let pool = setup_pool().await;
-        let row = create(&pool, "Original", Some("orig.example.com"), "{}")
-            .await
-            .unwrap();
+        let domain = format!("orig-{}.example.com", crate::utils::id::new_id());
+        let row = create(
+            &pool,
+            &format!("Original {}", crate::utils::id::new_id()),
+            Some(&domain),
+            "{}",
+        )
+        .await
+        .unwrap();
 
-        let updated = update(&pool, row.id, Some("Updated Name"), None, None, None)
+        let new_name = format!("Updated Name {}", crate::utils::id::new_id());
+        let updated = update(&pool, row.id, Some(&new_name), None, None, None)
             .await
             .unwrap();
-        assert_eq!(updated.name, "Updated Name");
-        assert_eq!(updated.domain.unwrap(), "orig.example.com");
+        assert_eq!(updated.name, new_name);
+        assert_eq!(updated.domain.unwrap(), domain);
     }
 
     #[tokio::test]

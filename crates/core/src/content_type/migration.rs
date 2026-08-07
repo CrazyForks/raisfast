@@ -635,8 +635,8 @@ unique = true
 
         let sql = generate_create_table(&ct, &default_protocol_columns());
         assert!(sql.contains("CREATE TABLE IF NOT EXISTS tags"));
-        assert!(sql.contains("name TEXT NOT NULL"));
-        assert!(sql.contains("created_at TEXT"));
+        assert!(sql.contains(&format!("name {} NOT NULL", SqlType::Varchar.as_str())));
+        assert!(sql.contains(&format!("created_at {}", SqlType::Timestamp.as_str())));
         assert!(!sql.contains("status"));
         assert!(!sql.contains("document_id"));
     }
@@ -660,7 +660,7 @@ required = true
         .unwrap();
 
         let sql = generate_create_table(&ct, &soft_delete_protocol_columns());
-        assert!(sql.contains("deleted_at TEXT"));
+        assert!(sql.contains(&format!("deleted_at {}", SqlType::Timestamp.as_str())));
     }
 
     #[test]
@@ -778,9 +778,22 @@ required = true
         let existing = vec!["id".into(), "title".into()];
 
         let stmts = generate_alter_table(&ct, &existing, &soft_delete_protocol_columns());
-        assert!(stmts.iter().any(|s| s.contains("created_at TEXT")));
-        assert!(stmts.iter().any(|s| s.contains("updated_at TEXT")));
-        assert!(stmts.iter().any(|s| s.contains("deleted_at TEXT")));
+        let ts = SqlType::Timestamp.as_str();
+        assert!(
+            stmts
+                .iter()
+                .any(|s| s.contains(&format!("created_at {ts}")))
+        );
+        assert!(
+            stmts
+                .iter()
+                .any(|s| s.contains(&format!("updated_at {ts}")))
+        );
+        assert!(
+            stmts
+                .iter()
+                .any(|s| s.contains(&format!("deleted_at {ts}")))
+        );
     }
 
     #[test]
@@ -816,25 +829,67 @@ foreign_key = "author_id"
 
     #[test]
     fn field_type_to_sql_all_types() {
-        assert_eq!(field_type_to_sql(&FieldType::Text), "TEXT");
-        assert_eq!(field_type_to_sql(&FieldType::RichText), "TEXT");
-        assert_eq!(field_type_to_sql(&FieldType::Integer), "INTEGER");
-        assert_eq!(field_type_to_sql(&FieldType::BigInt), "INTEGER");
-        assert_eq!(field_type_to_sql(&FieldType::Decimal), "TEXT");
-        assert_eq!(field_type_to_sql(&FieldType::Float), "REAL");
-        assert_eq!(field_type_to_sql(&FieldType::Boolean), "BOOLEAN");
-        assert_eq!(field_type_to_sql(&FieldType::Date), "TEXT");
-        assert_eq!(field_type_to_sql(&FieldType::DateTime), "TEXT");
-        assert_eq!(field_type_to_sql(&FieldType::Time), "TEXT");
-        assert_eq!(field_type_to_sql(&FieldType::Email), "TEXT");
-        assert_eq!(field_type_to_sql(&FieldType::Password), "TEXT");
-        assert_eq!(field_type_to_sql(&FieldType::Enum), "TEXT");
-        assert_eq!(field_type_to_sql(&FieldType::Uid), "TEXT");
-        assert_eq!(field_type_to_sql(&FieldType::Json), "TEXT");
-        assert_eq!(field_type_to_sql(&FieldType::Media), "TEXT");
-        assert_eq!(field_type_to_sql(&FieldType::MediaSet), "TEXT");
-        assert_eq!(field_type_to_sql(&FieldType::Blob), "BLOB");
-        assert_eq!(field_type_to_sql(&FieldType::Relation), "INTEGER");
+        assert_eq!(
+            field_type_to_sql(&FieldType::Text),
+            SqlType::Varchar.as_str()
+        );
+        assert_eq!(
+            field_type_to_sql(&FieldType::RichText),
+            SqlType::Text.as_str()
+        );
+        assert_eq!(
+            field_type_to_sql(&FieldType::Integer),
+            SqlType::Integer.as_str()
+        );
+        assert_eq!(
+            field_type_to_sql(&FieldType::BigInt),
+            SqlType::BigInt.as_str()
+        );
+        assert_eq!(
+            field_type_to_sql(&FieldType::Decimal),
+            SqlType::Decimal.as_str()
+        );
+        assert_eq!(field_type_to_sql(&FieldType::Float), SqlType::Real.as_str());
+        assert_eq!(
+            field_type_to_sql(&FieldType::Boolean),
+            SqlType::Boolean.as_str()
+        );
+        assert_eq!(field_type_to_sql(&FieldType::Date), SqlType::Date.as_str());
+        assert_eq!(
+            field_type_to_sql(&FieldType::DateTime),
+            SqlType::Timestamp.as_str()
+        );
+        assert_eq!(field_type_to_sql(&FieldType::Time), SqlType::Time.as_str());
+        assert_eq!(
+            field_type_to_sql(&FieldType::Email),
+            SqlType::Varchar.as_str()
+        );
+        assert_eq!(
+            field_type_to_sql(&FieldType::Password),
+            SqlType::Varchar.as_str()
+        );
+        assert_eq!(
+            field_type_to_sql(&FieldType::Enum),
+            SqlType::Varchar.as_str()
+        );
+        assert_eq!(
+            field_type_to_sql(&FieldType::Uid),
+            SqlType::Varchar.as_str()
+        );
+        assert_eq!(field_type_to_sql(&FieldType::Json), SqlType::Json.as_str());
+        assert_eq!(
+            field_type_to_sql(&FieldType::Media),
+            SqlType::Varchar.as_str()
+        );
+        assert_eq!(
+            field_type_to_sql(&FieldType::MediaSet),
+            SqlType::Json.as_str()
+        );
+        assert_eq!(field_type_to_sql(&FieldType::Blob), SqlType::Blob.as_str());
+        assert_eq!(
+            field_type_to_sql(&FieldType::Relation),
+            SqlType::BigInt.as_str()
+        );
     }
 
     #[test]
@@ -866,7 +921,7 @@ target = "users"
         )
         .unwrap();
         let sql = generate_create_table(&ct, &[]);
-        assert!(sql.contains("user_id INTEGER"));
+        assert!(sql.contains(&format!("user_id {}", crate::db::Driver::fk_type())));
         assert!(!sql.contains("REFERENCES"));
     }
 
@@ -912,7 +967,7 @@ foreign_key = "owner_id"
         )
         .unwrap();
         let sql = generate_create_table(&ct, &[]);
-        assert!(sql.contains("owner_id INTEGER"));
+        assert!(sql.contains(&format!("owner_id {}", crate::db::Driver::fk_type())));
         assert!(!sql.contains("REFERENCES"));
     }
 

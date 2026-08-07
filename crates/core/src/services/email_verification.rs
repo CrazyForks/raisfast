@@ -113,15 +113,15 @@ mod tests {
     #[tokio::test]
     async fn trigger_email_verification_creates_token() {
         let pool = setup_pool().await;
-        let user = insert_user(&pool, "verify@test.com").await;
+        let email = format!("verify_{}@test.com", crate::utils::id::new_id());
+        let user = insert_user(&pool, &email).await;
         let ae = emitter();
-        super::trigger_email_verification(&pool, &ae, user.id, "verify@test.com", None)
+        super::trigger_email_verification(&pool, &ae, user.id, &email, None)
             .await
             .unwrap();
-        let row =
-            crate::models::email_verification::create(&pool, user.id, "verify@test.com", 3600)
-                .await
-                .unwrap();
+        let row = crate::models::email_verification::create(&pool, user.id, &email, 3600)
+            .await
+            .unwrap();
         let found = crate::models::email_verification::find_by_token(&pool, &row.token)
             .await
             .unwrap();
@@ -131,9 +131,10 @@ mod tests {
     #[tokio::test]
     async fn trigger_email_verification_replaces_old() {
         let pool = setup_pool().await;
-        let user = insert_user(&pool, "replace@test.com").await;
+        let email = format!("replace_{}@test.com", crate::utils::id::new_id());
+        let user = insert_user(&pool, &email).await;
         let ae = emitter();
-        super::trigger_email_verification(&pool, &ae, user.id, "replace@test.com", None)
+        super::trigger_email_verification(&pool, &ae, user.id, &email, None)
             .await
             .unwrap();
         let sql = format!(
@@ -146,7 +147,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(count_before, 1);
-        super::trigger_email_verification(&pool, &ae, user.id, "replace@test.com", None)
+        super::trigger_email_verification(&pool, &ae, user.id, &email, None)
             .await
             .unwrap();
         let (count_after,): (i64,) = sqlx::query_as(&sql)
@@ -160,9 +161,10 @@ mod tests {
     #[tokio::test]
     async fn verify_email_valid_token() {
         let pool = setup_pool().await;
-        let user = insert_user(&pool, "v@test.com").await;
+        let email = format!("v_{}@test.com", crate::utils::id::new_id());
+        let user = insert_user(&pool, &email).await;
         let ae = emitter();
-        super::trigger_email_verification(&pool, &ae, user.id, "v@test.com", None)
+        super::trigger_email_verification(&pool, &ae, user.id, &email, None)
             .await
             .unwrap();
         let sql = format!(
@@ -178,7 +180,7 @@ mod tests {
         let cred = crate::models::user_credential::find_by_auth_type_and_identifier(
             &pool,
             crate::models::user_credential::AuthType::Email,
-            "v@test.com",
+            &email,
         )
         .await
         .unwrap()
@@ -199,9 +201,10 @@ mod tests {
     #[tokio::test]
     async fn resend_verification_success() {
         let pool = setup_pool().await;
-        let user = insert_user(&pool, "resend@test.com").await;
+        let email = format!("resend_{}@test.com", crate::utils::id::new_id());
+        let user = insert_user(&pool, &email).await;
         let ae = emitter();
-        super::resend_verification(&pool, &ae, "resend@test.com")
+        super::resend_verification(&pool, &ae, &email)
             .await
             .unwrap();
         let sql = format!(
@@ -219,9 +222,10 @@ mod tests {
     #[tokio::test]
     async fn resend_verification_already_verified() {
         let pool = setup_pool().await;
-        let user = insert_user(&pool, "verified@test.com").await;
+        let email = format!("verified_{}@test.com", crate::utils::id::new_id());
+        let user = insert_user(&pool, &email).await;
         let ae = emitter();
-        super::trigger_email_verification(&pool, &ae, user.id, "verified@test.com", None)
+        super::trigger_email_verification(&pool, &ae, user.id, &email, None)
             .await
             .unwrap();
         let sql = format!(
@@ -234,7 +238,7 @@ mod tests {
             .await
             .unwrap();
         super::verify_email(&pool, &token_str).await.unwrap();
-        let err = super::resend_verification(&pool, &ae, "verified@test.com")
+        let err = super::resend_verification(&pool, &ae, &email)
             .await
             .unwrap_err();
         let msg = err.to_string();

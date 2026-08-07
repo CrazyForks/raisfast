@@ -290,6 +290,7 @@ mod tests {
                 Event::EmailVerificationRequested {
                     user_id: SnowflakeId(1),
                     email: "e".into(),
+                    tenant_id: None,
                     token: make_email_verification_token(1, "e"),
                 },
                 "EmailVerificationRequested",

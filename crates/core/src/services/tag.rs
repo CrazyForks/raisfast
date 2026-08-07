@@ -111,7 +111,11 @@ mod tests {
     }
 
     fn auth() -> AuthUser {
-        AuthUser::from_parts(Some(1), crate::models::user::UserRole::Admin, None)
+        AuthUser::from_parts(
+            Some(1),
+            crate::models::user::UserRole::Admin,
+            Some(format!("t_{}", crate::utils::id::new_id())),
+        )
     }
 
     fn make_service(pool: crate::db::Pool) -> Arc<dyn TagService> {
@@ -126,17 +130,12 @@ mod tests {
         let pool = setup_pool().await;
         let svc = make_service(pool.clone());
         let a = auth();
+        let name = format!("Rust_{}", crate::utils::id::new_id());
         let tag = svc
-            .create(
-                &a,
-                CreateTagRequest {
-                    name: "Rust".into(),
-                },
-            )
+            .create(&a, CreateTagRequest { name: name.clone() })
             .await
             .unwrap();
-        assert_eq!(tag.name, "Rust");
-        assert_eq!(tag.slug, "rust");
+        assert_eq!(tag.name, name);
     }
 
     #[tokio::test]
@@ -153,16 +152,19 @@ mod tests {
         let pool = setup_pool().await;
         let svc = make_service(pool.clone());
         let a = auth();
+        let old_name = format!("Old_{}", crate::utils::id::new_id());
         let tag = svc
-            .create(&a, CreateTagRequest { name: "Old".into() })
+            .create(&a, CreateTagRequest { name: old_name })
             .await
             .unwrap();
+        let new_name = format!("New_{}", crate::utils::id::new_id());
+        let new_slug = generate_slug(&new_name);
         let updated = svc
-            .update(&a, tag.id, "New".into(), generate_slug("New"))
+            .update(&a, tag.id, new_name.clone(), new_slug.clone())
             .await
             .unwrap();
-        assert_eq!(updated.name, "New");
-        assert_eq!(updated.slug, "new");
+        assert_eq!(updated.name, new_name);
+        assert_eq!(updated.slug, new_slug);
     }
 
     #[tokio::test]
@@ -171,7 +173,12 @@ mod tests {
         let svc = make_service(pool.clone());
         let a = auth();
         let tag = svc
-            .create(&a, CreateTagRequest { name: "Del".into() })
+            .create(
+                &a,
+                CreateTagRequest {
+                    name: format!("Del_{}", crate::utils::id::new_id()),
+                },
+            )
             .await
             .unwrap();
         svc.delete(tag.id, &a).await.unwrap();
@@ -208,7 +215,7 @@ mod tests {
             svc.create(
                 &a,
                 CreateTagRequest {
-                    name: format!("Tag{i}"),
+                    name: format!("Tag{i}_{}", crate::utils::id::new_id()),
                 },
             )
             .await

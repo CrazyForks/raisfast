@@ -670,9 +670,10 @@ impl HostContext {
     /// Fetch a single row from a table.
     ///
     /// `where_json` can be:
-    /// - A JSON object: `{"id": 1}` → WHERE id = ?
-    /// - A string: `"id = 1 AND status = 'active'"` → raw WHERE clause
-    /// - An array: `["status = ? AND total > ?", "active", 100]` → parameterized
+    /// - A JSON object: `{"id": 1}` → auto-generated parameterized WHERE (safe)
+    /// - An array: `["status = ${host.ph(1)} AND total > ${host.ph(2)}", "active", 100]`
+    ///   → the SQL template must use `host.ph(N)` for placeholders; no
+    ///   automatic `?` replacement is performed.
     ///
     /// Returns `{"data":{...}}` or `{"data":null}` or `{"error":"..."}`.
     #[must_use]
@@ -776,10 +777,6 @@ impl HostContext {
         if data.is_empty() {
             return r#"{"error":"no columns to update"}"#.to_string();
         }
-        let where_result = match Self::build_where_clause(where_json) {
-            Ok(w) => w,
-            Err(e) => return format!(r#"{{"error":"{e}"}}"#),
-        };
         let opts = CrudOptions::parse(options_json);
 
         let mut set_parts = Vec::new();
@@ -793,6 +790,13 @@ impl HostContext {
             idx += 1;
             Self::add_param(&mut args, v);
         }
+
+        // Build WHERE clause with offset = number of SET params (placeholders
+        // in WHERE must start after SET placeholders).
+        let where_result = match Self::build_where_clause_with_offset(where_json, data.len()) {
+            Ok(w) => w,
+            Err(e) => return format!(r#"{{"error":"{e}"}}"#),
+        };
 
         let mut where_sql = String::new();
         if !where_result.clause.is_empty() {
@@ -938,7 +942,8 @@ impl HostContext {
             args.add(tid).ok();
         }
 
-        let sql = format!("SELECT COUNT(*) as cnt FROM {table}{where_sql}");
+        let cnt_expr = crate::db::Driver::cast_int("COUNT(*)");
+        let sql = format!("SELECT {cnt_expr} as cnt FROM {table}{where_sql}");
         let handle = tokio::runtime::Handle::current();
         tokio::task::block_in_place(|| {
             match handle.block_on(async {
@@ -1016,7 +1021,10 @@ impl HostContext {
                 idx += 1;
                 let delta_ph = crate::db::Driver::ph(idx);
                 idx += 1;
-                set_parts.push(format!("{col} = MAX({min_ph}, {col} + {delta_ph})"));
+                set_parts.push(format!(
+                    "{col} = {}",
+                    crate::db::Driver::greatest(&min_ph, &format!("{col} + {delta_ph}"))
+                ));
                 args.add(min).ok();
                 args.add(delta_i64).ok();
             } else {
@@ -1036,7 +1044,7 @@ impl HostContext {
             }
         }
 
-        let where_result = match Self::build_where_clause(where_json) {
+        let where_result = match Self::build_where_clause_with_offset(where_json, idx - 1) {
             Ok(w) => w,
             Err(e) => return format!(r#"{{"error":"{e}"}}"#),
         };
@@ -1128,7 +1136,8 @@ impl HostContext {
             args.add(tid).ok();
         }
 
-        let sql = format!("SELECT COALESCE(SUM({column}), 0) as total FROM {table}{where_sql}");
+        let sum_expr = crate::db::Driver::cast_int(&format!("COALESCE(SUM({column}), 0)"));
+        let sql = format!("SELECT {sum_expr} as total FROM {table}{where_sql}");
         let handle = tokio::runtime::Handle::current();
         tokio::task::block_in_place(|| {
             match handle.block_on(async {
@@ -1226,10 +1235,16 @@ impl HostContext {
 
         let mut select_parts: Vec<String> = group_by.clone();
         if do_count {
-            select_parts.push("COUNT(*) as cnt".to_string());
+            select_parts.push(format!(
+                "{} as cnt",
+                crate::db::Driver::cast_int("COUNT(*)")
+            ));
         }
         for col in &sum_cols {
-            select_parts.push(format!("COALESCE(SUM({col}), 0) as sum_{col}"));
+            select_parts.push(format!(
+                "{} as sum_{col}",
+                crate::db::Driver::cast_int(&format!("COALESCE(SUM({col}), 0)"))
+            ));
         }
 
         let mut args = DbArguments::default();
@@ -1308,6 +1323,13 @@ impl HostContext {
     }
 
     fn build_where_clause(where_json: &str) -> Result<WhereResult, String> {
+        Self::build_where_clause_with_offset(where_json, 0)
+    }
+
+    fn build_where_clause_with_offset(
+        where_json: &str,
+        offset: usize,
+    ) -> Result<WhereResult, String> {
         let trimmed = where_json.trim();
         if trimmed.is_empty() || trimmed == "null" || trimmed == "{}" {
             return Ok(WhereResult {
@@ -1316,7 +1338,13 @@ impl HostContext {
             });
         }
 
-        // Try array form: ["col = ? AND col2 = ?", val1, val2]
+        // Try array form: ["col = $1 AND col2 = $2", val1, val2]
+        //
+        // The SQL template must use `host.ph(N)` placeholders (e.g. `$1`, `$2`
+        // on PostgreSQL, `?` on SQLite/MySQL). The clause is passed through
+        // as-is — no automatic `?` replacement is performed, because naive
+        // string replacement cannot distinguish placeholders from `?`
+        // characters inside string literals or comments.
         if trimmed.starts_with('[') {
             let arr: Vec<serde_json::Value> =
                 serde_json::from_str(trimmed).map_err(|e| format!("invalid where array: {e}"))?;
@@ -1352,7 +1380,7 @@ impl HostContext {
                 if !crate::db::driver::is_safe_identifier(k) {
                     return Err(format!("invalid column name in where: {k}"));
                 }
-                parts.push(format!("{k} = {}", crate::db::Driver::ph(i + 1)));
+                parts.push(format!("{k} = {}", crate::db::Driver::ph(i + offset + 1)));
             }
             for (_, v) in obj.iter() {
                 params.push(v.clone());
@@ -1592,6 +1620,42 @@ mod tests {
         Arc::new(config)
     }
 
+    // On PostgreSQL, `id BIGINT PRIMARY KEY` does not auto-increment and the
+    // `tags`/`categories` tables have `UNIQUE(tenant_id, name)` / `UNIQUE(tenant_id, slug)`
+    // constraints. These builders mint a fresh snowflake id and derive a unique
+    // name/slug so the generated `db_insert` payloads are safe across parallel
+    // test runs. They return `(json, name, slug)`.
+
+    fn tag_json(name: &str) -> (String, String, String) {
+        let id = crate::utils::id::new_id();
+        let full = format!("{name}{id}");
+        let slug = format!("{}-{id}", name.to_lowercase());
+        (
+            format!(r#"{{"id":{id},"name":"{full}","slug":"{slug}"}}"#),
+            full,
+            slug,
+        )
+    }
+
+    fn cat_json(
+        name: &str,
+        sort_order: Option<i64>,
+        tenant_id: Option<&str>,
+    ) -> (String, String, String) {
+        let id = crate::utils::id::new_id();
+        let full = format!("{name}{id}");
+        let slug = format!("{}-{id}", name.to_lowercase());
+        let mut json = format!(r#"{{"id":{id},"name":"{full}","slug":"{slug}""#);
+        if let Some(s) = sort_order {
+            json.push_str(&format!(",\"sort_order\":{s}"));
+        }
+        if let Some(t) = tenant_id {
+            json.push_str(&format!(",\"tenant_id\":\"{t}\""));
+        }
+        json.push('}');
+        (json, full, slug)
+    }
+
     #[test]
     fn get_config_value_returns_known_keys() {
         let config = make_test_config();
@@ -1779,11 +1843,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn host_context_get_data_set_data_with_real_db() {
-        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query::<crate::db::pool::Db>(crate::db::schema::SCHEMA_SQL)
-            .execute(&pool)
-            .await
-            .unwrap();
+        let pool = crate::test_pool!();
 
         let config = make_test_config();
         let ctx = HostContext::new(
@@ -1794,21 +1854,18 @@ mod tests {
             Some(pool.clone()),
         );
 
-        assert!(ctx.get_data("greeting").is_none());
-        assert!(ctx.set_data("greeting", "hello world"));
-        assert_eq!(ctx.get_data("greeting"), Some("hello world".into()));
+        let key = format!("greeting_{}", crate::utils::id::new_id());
+        assert!(ctx.get_data(&key).is_none());
+        assert!(ctx.set_data(&key, "hello world"));
+        assert_eq!(ctx.get_data(&key), Some("hello world".into()));
 
-        assert!(ctx.set_data("greeting", "updated"));
-        assert_eq!(ctx.get_data("greeting"), Some("updated".into()));
+        assert!(ctx.set_data(&key, "updated"));
+        assert_eq!(ctx.get_data(&key), Some("updated".into()));
     }
 
     #[tokio::test(flavor = "multi_thread")]
     async fn host_context_get_data_isolation_between_plugins() {
-        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query::<crate::db::pool::Db>(crate::db::schema::SCHEMA_SQL)
-            .execute(&pool)
-            .await
-            .unwrap();
+        let pool = crate::test_pool!();
 
         let config1 = make_test_config();
         let config2 = make_test_config();
@@ -1836,11 +1893,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn host_context_db_query_with_real_db() {
-        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query::<crate::db::pool::Db>(crate::db::schema::SCHEMA_SQL)
-            .execute(&pool)
-            .await
-            .unwrap();
+        let pool = crate::test_pool!();
 
         let perms = Permissions {
             database: vec!["posts".into()],
@@ -1856,11 +1909,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn host_context_db_query_table_not_permitted() {
-        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query::<crate::db::pool::Db>(crate::db::schema::SCHEMA_SQL)
-            .execute(&pool)
-            .await
-            .unwrap();
+        let pool = crate::test_pool!();
 
         let perms = Permissions {
             database: vec!["read:comments".into()],
@@ -1875,11 +1924,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn host_context_db_query_wildcard_permission() {
-        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query::<crate::db::pool::Db>(crate::db::schema::SCHEMA_SQL)
-            .execute(&pool)
-            .await
-            .unwrap();
+        let pool = crate::test_pool!();
 
         let perms = Permissions {
             database: vec!["*".into()],
@@ -1943,11 +1988,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn host_context_db_execute_with_real_db() {
-        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query::<crate::db::pool::Db>(crate::db::schema::SCHEMA_SQL)
-            .execute(&pool)
-            .await
-            .unwrap();
+        let pool = crate::test_pool!();
 
         let perms = Permissions {
             database: vec!["tags".into()],
@@ -1956,27 +1997,28 @@ mod tests {
         let config = make_test_config();
         let ctx = HostContext::new("test", config, "p1".into(), perms, Some(pool));
 
+        let id = crate::utils::id::new_id();
+        let slug = format!("test_{id}");
         let result = ctx.db_execute(
-            "INSERT INTO tags (name, slug) VALUES ('Test', 'test')",
+            &format!("INSERT INTO tags (id, name, slug) VALUES ({id}, 'Test', '{slug}')"),
             "[]",
         );
         assert!(result.contains("rows_affected"));
         assert!(!result.contains("error"));
 
-        let update = ctx.db_execute("UPDATE tags SET name = 'Updated' WHERE slug = 'test'", "[]");
+        let update = ctx.db_execute(
+            &format!("UPDATE tags SET name = 'Updated' WHERE slug = '{slug}'"),
+            "[]",
+        );
         assert!(update.contains("rows_affected"));
 
-        let delete = ctx.db_execute("DELETE FROM tags WHERE slug = 'test'", "[]");
+        let delete = ctx.db_execute(&format!("DELETE FROM tags WHERE slug = '{slug}'"), "[]");
         assert!(delete.contains("rows_affected"));
     }
 
     #[tokio::test(flavor = "multi_thread")]
     async fn host_context_db_execute_parameterized() {
-        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query::<crate::db::pool::Db>(crate::db::schema::SCHEMA_SQL)
-            .execute(&pool)
-            .await
-            .unwrap();
+        let pool = crate::test_pool!();
 
         let perms = Permissions {
             database: vec!["tags".into()],
@@ -1985,20 +2027,37 @@ mod tests {
         let config = make_test_config();
         let ctx = HostContext::new("test", config, "p1".into(), perms, Some(pool));
 
+        let nid = crate::utils::id::new_id();
+        let slug = format!("param-tag_{nid}");
+        let insert_params = format!(r#"[{nid},"Param Tag","{slug}"]"#);
         let result = ctx.db_execute(
-            "INSERT INTO tags (name, slug) VALUES (?, ?)",
-            r#"["Param Tag","param-tag"]"#,
+            &format!(
+                "INSERT INTO tags (id, name, slug) VALUES ({}, {}, {})",
+                ctx.db_ph(1),
+                ctx.db_ph(2),
+                ctx.db_ph(3)
+            ),
+            &insert_params,
         );
         assert!(result.contains("rows_affected"));
         assert!(!result.contains("error"));
 
+        let update_params = format!(r#"["Renamed","{slug}"]"#);
         let update = ctx.db_execute(
-            "UPDATE tags SET name = ? WHERE slug = ?",
-            r#"["Renamed","param-tag"]"#,
+            &format!(
+                "UPDATE tags SET name = {} WHERE slug = {}",
+                ctx.db_ph(1),
+                ctx.db_ph(2)
+            ),
+            &update_params,
         );
         assert!(update.contains("rows_affected"));
 
-        let delete = ctx.db_execute("DELETE FROM tags WHERE slug = ?", r#"["param-tag"]"#);
+        let delete_params = format!(r#"["{slug}"]"#);
+        let delete = ctx.db_execute(
+            &format!("DELETE FROM tags WHERE slug = {}", ctx.db_ph(1)),
+            &delete_params,
+        );
         assert!(delete.contains("rows_affected"));
     }
 
@@ -2010,7 +2069,10 @@ mod tests {
             ..Permissions::default()
         };
         let ctx = HostContext::new("test", config, "p1".into(), perms, None);
-        let result = ctx.db_execute("INSERT INTO tags (name, slug) VALUES (?)", "not valid json");
+        let result = ctx.db_execute(
+            &format!("INSERT INTO tags (name, slug) VALUES ({})", ctx.db_ph(1)),
+            "not valid json",
+        );
         assert!(result.contains("invalid params JSON"));
     }
 
@@ -2023,7 +2085,11 @@ mod tests {
         };
         let ctx = HostContext::new("test", config, "p1".into(), perms, None);
         let result = ctx.db_execute(
-            "INSERT INTO tags (name, slug) VALUES (?, ?)",
+            &format!(
+                "INSERT INTO tags (name, slug) VALUES ({}, {})",
+                ctx.db_ph(1),
+                ctx.db_ph(2)
+            ),
             r#"[{"nested":"object"}]"#,
         );
         assert!(result.contains("unsupported param type"));
@@ -2055,11 +2121,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn host_context_transaction_commit_roundtrip() {
-        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query::<crate::db::pool::Db>(crate::db::schema::SCHEMA_SQL)
-            .execute(&pool)
-            .await
-            .unwrap();
+        let pool = crate::test_pool!();
 
         let perms = Permissions {
             database: vec!["tags".into()],
@@ -2071,8 +2133,10 @@ mod tests {
         let begin = ctx.db_begin();
         assert!(begin.contains(r#""ok":true"#), "begin failed: {begin}");
 
+        let tx_id = crate::utils::id::new_id();
+        let tx_slug = format!("tx-test-{tx_id}");
         let insert = ctx.db_execute(
-            "INSERT INTO tags (name, slug) VALUES ('TxTest', 'tx-test')",
+            &format!("INSERT INTO tags (id, name, slug) VALUES ({tx_id}, 'TxTest', '{tx_slug}')"),
             "[]",
         );
         assert!(insert.contains("rows_affected"), "insert failed: {insert}");
@@ -2080,20 +2144,17 @@ mod tests {
         let commit = ctx.db_commit();
         assert!(commit.contains(r#""ok":true"#), "commit failed: {commit}");
 
-        let rows: Vec<(String,)> = sqlx::query_as("SELECT name FROM tags WHERE slug = 'tx-test'")
-            .fetch_all(&pool)
-            .await
-            .unwrap();
+        let rows: Vec<(String,)> =
+            sqlx::query_as(&format!("SELECT name FROM tags WHERE slug = '{tx_slug}'"))
+                .fetch_all(&pool)
+                .await
+                .unwrap();
         assert_eq!(rows.len(), 1, "row should be committed");
     }
 
     #[tokio::test(flavor = "multi_thread")]
     async fn host_context_transaction_rollback_discards() {
-        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query::<crate::db::pool::Db>(crate::db::schema::SCHEMA_SQL)
-            .execute(&pool)
-            .await
-            .unwrap();
+        let pool = crate::test_pool!();
 
         let perms = Permissions {
             database: vec!["tags".into()],
@@ -2105,8 +2166,10 @@ mod tests {
         let begin = ctx.db_begin();
         assert!(begin.contains(r#""ok":true"#));
 
+        let rb_id = crate::utils::id::new_id();
+        let rb_slug = format!("rb-test-{rb_id}");
         let insert = ctx.db_execute(
-            "INSERT INTO tags (name, slug) VALUES ('RbTest', 'rb-test')",
+            &format!("INSERT INTO tags (id, name, slug) VALUES ({rb_id}, 'RbTest', '{rb_slug}')"),
             "[]",
         );
         assert!(insert.contains("rows_affected"));
@@ -2114,16 +2177,18 @@ mod tests {
         let rollback = ctx.db_rollback();
         assert!(rollback.contains(r#""ok":true"#));
 
-        let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM tags WHERE slug = 'rb-test'")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
+        let count: (i64,) = sqlx::query_as(&format!(
+            "SELECT COUNT(*) FROM tags WHERE slug = '{rb_slug}'"
+        ))
+        .fetch_one(&pool)
+        .await
+        .unwrap();
         assert_eq!(count.0, 0, "row should be rolled back");
     }
 
     #[tokio::test(flavor = "multi_thread")]
     async fn host_context_transaction_double_begin_error() {
-        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
+        let pool = crate::test_pool!();
 
         let config = make_test_config();
         let ctx = HostContext::new(
@@ -2145,11 +2210,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn host_context_cleanup_tx_rolls_back() {
-        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query::<crate::db::pool::Db>(crate::db::schema::SCHEMA_SQL)
-            .execute(&pool)
-            .await
-            .unwrap();
+        let pool = crate::test_pool!();
 
         let perms = Permissions {
             database: vec!["tags".into()],
@@ -2161,24 +2222,30 @@ mod tests {
         let begin = ctx.db_begin();
         assert!(begin.contains(r#""ok":true"#));
 
+        let cl_id = crate::utils::id::new_id();
+        let cl_slug = format!("cl-test-{cl_id}");
         let insert = ctx.db_execute(
-            "INSERT INTO tags (name, slug) VALUES ('CleanTest', 'cl-test')",
+            &format!(
+                "INSERT INTO tags (id, name, slug) VALUES ({cl_id}, 'CleanTest', '{cl_slug}')"
+            ),
             "[]",
         );
         assert!(insert.contains("rows_affected"));
 
         ctx.cleanup_tx();
 
-        let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM tags WHERE slug = 'cl-test'")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
+        let count: (i64,) = sqlx::query_as(&format!(
+            "SELECT COUNT(*) FROM tags WHERE slug = '{cl_slug}'"
+        ))
+        .fetch_one(&pool)
+        .await
+        .unwrap();
         assert_eq!(count.0, 0, "cleanup_tx should rollback");
     }
 
     #[tokio::test(flavor = "multi_thread")]
     async fn host_context_cleanup_tx_noop_without_active() {
-        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
+        let pool = crate::test_pool!();
         let config = make_test_config();
         let ctx = HostContext::new(
             "test",
@@ -2209,27 +2276,23 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn db_insert_and_fetch_one() {
-        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query::<crate::db::pool::Db>(crate::db::schema::SCHEMA_SQL)
-            .execute(&pool)
-            .await
-            .unwrap();
+        let pool = crate::test_pool!();
         let ctx = make_crud_ctx(&pool);
 
-        let result = ctx.db_insert("tags", r#"{"name":"Rust","slug":"rust"}"#, "{}");
+        let (json, name, slug) = tag_json("Rust");
+        let result = ctx.db_insert("tags", &json, "{}");
         assert!(result.contains(r#""rows_affected":1"#), "insert: {result}");
 
-        let found = ctx.db_fetch_one("tags", r#"{"slug":"rust"}"#, "{}");
-        assert!(found.contains(r#""name":"Rust""#), "fetch_one: {found}");
+        let found = ctx.db_fetch_one("tags", &format!(r#"{{"slug":"{slug}"}}"#), "{}");
+        assert!(
+            found.contains(&format!(r#""name":"{name}""#)),
+            "fetch_one: {found}"
+        );
     }
 
     #[tokio::test(flavor = "multi_thread")]
     async fn db_fetch_one_not_found() {
-        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query::<crate::db::pool::Db>(crate::db::schema::SCHEMA_SQL)
-            .execute(&pool)
-            .await
-            .unwrap();
+        let pool = crate::test_pool!();
         let ctx = make_crud_ctx(&pool);
 
         let found = ctx.db_fetch_one("tags", r#"{"slug":"nonexistent"}"#, "{}");
@@ -2238,46 +2301,45 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn db_fetch_one_object_where() {
-        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query::<crate::db::pool::Db>(crate::db::schema::SCHEMA_SQL)
-            .execute(&pool)
-            .await
-            .unwrap();
+        let pool = crate::test_pool!();
         let ctx = make_crud_ctx(&pool);
 
-        let _ = ctx.db_insert("tags", r#"{"name":"Go","slug":"go"}"#, "{}");
+        let (json, name, slug) = tag_json("Go");
+        let _ = ctx.db_insert("tags", &json, "{}");
 
-        let found = ctx.db_fetch_one("tags", r#"{"name":"Go"}"#, "{}");
-        assert!(found.contains(r#""slug":"go""#), "string where: {found}");
+        let found = ctx.db_fetch_one("tags", &format!(r#"{{"name":"{name}"}}"#), "{}");
+        assert!(
+            found.contains(&format!(r#""slug":"{slug}""#)),
+            "string where: {found}"
+        );
     }
 
     #[tokio::test(flavor = "multi_thread")]
     async fn db_fetch_one_array_where() {
-        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query::<crate::db::pool::Db>(crate::db::schema::SCHEMA_SQL)
-            .execute(&pool)
-            .await
-            .unwrap();
+        let pool = crate::test_pool!();
         let ctx = make_crud_ctx(&pool);
 
-        let _ = ctx.db_insert("tags", r#"{"name":"Python","slug":"python"}"#, "{}");
+        let (json, name, slug) = tag_json("Python");
+        let _ = ctx.db_insert("tags", &json, "{}");
 
-        let found = ctx.db_fetch_one("tags", r#"["name = ?", "Python"]"#, "{}");
-        assert!(found.contains(r#""slug":"python""#), "array where: {found}");
+        let found = ctx.db_fetch_one("tags", &format!(r#"["name = {}", "{}"]"#, ctx.db_ph(1), name), "{}");
+        assert!(
+            found.contains(&format!(r#""slug":"{slug}""#)),
+            "array where: {found}"
+        );
     }
 
     #[tokio::test(flavor = "multi_thread")]
     async fn db_fetch_all_with_order_and_limit() {
-        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query::<crate::db::pool::Db>(crate::db::schema::SCHEMA_SQL)
-            .execute(&pool)
-            .await
-            .unwrap();
+        let pool = crate::test_pool!();
         let ctx = make_crud_ctx(&pool);
 
-        let _ = ctx.db_insert("tags", r#"{"name":"A","slug":"a"}"#, "{}");
-        let _ = ctx.db_insert("tags", r#"{"name":"B","slug":"b"}"#, "{}");
-        let _ = ctx.db_insert("tags", r#"{"name":"C","slug":"c"}"#, "{}");
+        let (ja, _, _) = tag_json("A");
+        let (jb, _, _) = tag_json("B");
+        let (jc, _, _) = tag_json("C");
+        let _ = ctx.db_insert("tags", &ja, "{}");
+        let _ = ctx.db_insert("tags", &jb, "{}");
+        let _ = ctx.db_insert("tags", &jc, "{}");
 
         let result = ctx.db_fetch_all("tags", "{}", r#"{"order_by":"name DESC","limit":2}"#);
         assert!(result.contains(r#""total":2"#), "fetch_all limit: {result}");
@@ -2285,29 +2347,28 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn db_update() {
-        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query::<crate::db::pool::Db>(crate::db::schema::SCHEMA_SQL)
-            .execute(&pool)
-            .await
-            .unwrap();
+        let pool = crate::test_pool!();
         let ctx = make_crud_ctx(&pool);
 
-        let _ = ctx.db_insert("tags", r#"{"name":"Old","slug":"old"}"#, "{}");
+        let (json, _, slug) = tag_json("Old");
+        let _ = ctx.db_insert("tags", &json, "{}");
 
-        let result = ctx.db_update("tags", r#"{"name":"New"}"#, r#"{"slug":"old"}"#, "{}");
+        let new_name = format!("New{}", crate::utils::id::new_id());
+        let result = ctx.db_update(
+            "tags",
+            &format!(r#"{{"name":"{new_name}"}}"#),
+            &format!(r#"{{"slug":"{slug}"}}"#),
+            "{}",
+        );
         assert!(result.contains(r#""rows_affected":1"#), "update: {result}");
 
-        let found = ctx.db_fetch_one("tags", r#"{"slug":"old"}"#, "{}");
-        assert!(found.contains(r#""name":"New""#), "after update: {found}");
+        let found = ctx.db_fetch_one("tags", &format!(r#"{{"slug":"{slug}"}}"#), "{}");
+        assert!(found.contains(&new_name), "after update: {found}");
     }
 
     #[tokio::test(flavor = "multi_thread")]
     async fn db_update_empty_data() {
-        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query::<crate::db::pool::Db>(crate::db::schema::SCHEMA_SQL)
-            .execute(&pool)
-            .await
-            .unwrap();
+        let pool = crate::test_pool!();
         let ctx = make_crud_ctx(&pool);
 
         let result = ctx.db_update("tags", "{}", "{}", "{}");
@@ -2316,51 +2377,48 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn db_delete() {
-        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query::<crate::db::pool::Db>(crate::db::schema::SCHEMA_SQL)
-            .execute(&pool)
-            .await
-            .unwrap();
+        let pool = crate::test_pool!();
         let ctx = make_crud_ctx(&pool);
 
-        let _ = ctx.db_insert("tags", r#"{"name":"Delete","slug":"del"}"#, "{}");
+        let (json, _, slug) = tag_json("Delete");
+        let _ = ctx.db_insert("tags", &json, "{}");
 
-        let result = ctx.db_delete("tags", r#"{"slug":"del"}"#, "{}");
+        let result = ctx.db_delete("tags", &format!(r#"{{"slug":"{slug}"}}"#), "{}");
         assert!(result.contains(r#""rows_affected":1"#), "delete: {result}");
 
-        let found = ctx.db_fetch_one("tags", r#"{"slug":"del"}"#, "{}");
+        let found = ctx.db_fetch_one("tags", &format!(r#"{{"slug":"{slug}"}}"#), "{}");
         assert!(found.contains(r#""data":null"#), "after delete: {found}");
     }
 
     #[tokio::test(flavor = "multi_thread")]
     async fn db_count() {
-        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query::<crate::db::pool::Db>(crate::db::schema::SCHEMA_SQL)
-            .execute(&pool)
-            .await
-            .unwrap();
+        let pool = crate::test_pool!();
         let ctx = make_crud_ctx(&pool);
 
-        let _ = ctx.db_insert("tags", r#"{"name":"Count1","slug":"c1"}"#, "{}");
-        let _ = ctx.db_insert("tags", r#"{"name":"Count2","slug":"c2"}"#, "{}");
+        let (j1, _, s1) = tag_json("Count1");
+        let (j2, _, s2) = tag_json("Count2");
+        let _ = ctx.db_insert("tags", &j1, "{}");
+        let _ = ctx.db_insert("tags", &j2, "{}");
 
-        let result = ctx.db_count("tags", "{}", "{}");
+        let result = ctx.db_count(
+            "tags",
+            &format!(r#"["slug IN ({}, {})", "{s1}", "{s2}"]"#, ctx.db_ph(1), ctx.db_ph(2)),
+            "{}",
+        );
         assert!(result.contains(r#""count":2"#), "count: {result}");
     }
 
     #[tokio::test(flavor = "multi_thread")]
     async fn db_count_with_where() {
-        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query::<crate::db::pool::Db>(crate::db::schema::SCHEMA_SQL)
-            .execute(&pool)
-            .await
-            .unwrap();
+        let pool = crate::test_pool!();
         let ctx = make_crud_ctx(&pool);
 
-        let _ = ctx.db_insert("tags", r#"{"name":"Go","slug":"go"}"#, "{}");
-        let _ = ctx.db_insert("tags", r#"{"name":"Rust","slug":"rust"}"#, "{}");
+        let (j_go, _, _) = tag_json("Go");
+        let _ = ctx.db_insert("tags", &j_go, "{}");
+        let (j_rust, rust_name, _) = tag_json("Rust");
+        let _ = ctx.db_insert("tags", &j_rust, "{}");
 
-        let result = ctx.db_count("tags", r#"["name = ?", "Rust"]"#, "{}");
+        let result = ctx.db_count("tags", &format!(r#"["name = {}", "{}"]"#, ctx.db_ph(1), rust_name), "{}");
         assert!(
             result.contains(r#""count":1"#),
             "count with where: {result}"
@@ -2389,11 +2447,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn db_crud_no_permission() {
-        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query::<crate::db::pool::Db>(crate::db::schema::SCHEMA_SQL)
-            .execute(&pool)
-            .await
-            .unwrap();
+        let pool = crate::test_pool!();
         let config = make_test_config();
         let ctx = HostContext::new(
             "test",
@@ -2415,124 +2469,125 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn db_increment_simple() {
-        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query::<crate::db::pool::Db>(crate::db::schema::SCHEMA_SQL)
-            .execute(&pool)
-            .await
-            .unwrap();
+        let pool = crate::test_pool!();
         let ctx = make_crud_ctx(&pool);
 
-        let _ = ctx.db_insert(
-            "categories",
-            r#"{"name":"Test","slug":"test","sort_order":"0"}"#,
-            "{}",
-        );
+        let (json, _, slug) = cat_json("Test", Some(0), None);
+        let _ = ctx.db_insert("categories", &json, "{}");
 
         let r = ctx.db_increment(
             "categories",
             r#"{"sort_order":1}"#,
-            r#"{"slug":"test"}"#,
+            &format!(r#"{{"slug":"{slug}"}}"#),
             "{}",
         );
         assert!(r.contains(r#""rows_affected":1"#), "increment: {r}");
 
-        let s = ctx.db_sum("categories", "sort_order", r#"{"slug":"test"}"#, "{}");
+        let s = ctx.db_sum(
+            "categories",
+            "sort_order",
+            &format!(r#"{{"slug":"{slug}"}}"#),
+            "{}",
+        );
         assert!(s.contains(r#""sum":1"#), "after increment sum: {s}");
 
         let r2 = ctx.db_increment(
             "categories",
             r#"{"sort_order":1}"#,
-            r#"{"slug":"test"}"#,
+            &format!(r#"{{"slug":"{slug}"}}"#),
             "{}",
         );
         assert!(r2.contains(r#""rows_affected":1"#));
 
-        let s2 = ctx.db_sum("categories", "sort_order", r#"{"slug":"test"}"#, "{}");
+        let s2 = ctx.db_sum(
+            "categories",
+            "sort_order",
+            &format!(r#"{{"slug":"{slug}"}}"#),
+            "{}",
+        );
         assert!(s2.contains(r#""sum":2"#), "after 2nd sum: {s2}");
     }
 
     #[tokio::test(flavor = "multi_thread")]
     async fn db_increment_negative_delta() {
-        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query::<crate::db::pool::Db>(crate::db::schema::SCHEMA_SQL)
-            .execute(&pool)
-            .await
-            .unwrap();
+        let pool = crate::test_pool!();
         let ctx = make_crud_ctx(&pool);
 
-        let _ = ctx.db_insert(
-            "categories",
-            r#"{"name":"Dec","slug":"dec","sort_order":"5"}"#,
-            "{}",
-        );
+        let (json, _, slug) = cat_json("Dec", Some(5), None);
+        let _ = ctx.db_insert("categories", &json, "{}");
 
         let r = ctx.db_increment(
             "categories",
             r#"{"sort_order":-1}"#,
-            r#"{"slug":"dec"}"#,
+            &format!(r#"{{"slug":"{slug}"}}"#),
             "{}",
         );
         assert!(r.contains(r#""rows_affected":1"#), "decrement: {r}");
 
-        let s = ctx.db_sum("categories", "sort_order", r#"{"slug":"dec"}"#, "{}");
+        let s = ctx.db_sum(
+            "categories",
+            "sort_order",
+            &format!(r#"{{"slug":"{slug}"}}"#),
+            "{}",
+        );
         assert!(s.contains(r#""sum":4"#), "after decrement sum: {s}");
     }
 
     #[tokio::test(flavor = "multi_thread")]
     async fn db_increment_with_min_clamp() {
-        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query::<crate::db::pool::Db>(crate::db::schema::SCHEMA_SQL)
-            .execute(&pool)
-            .await
-            .unwrap();
+        let pool = crate::test_pool!();
         let ctx = make_crud_ctx(&pool);
 
-        let _ = ctx.db_insert(
-            "categories",
-            r#"{"name":"Clamp","slug":"clamp","sort_order":"1"}"#,
-            "{}",
-        );
+        let (json, _, slug) = cat_json("Clamp", Some(1), None);
+        let _ = ctx.db_insert("categories", &json, "{}");
 
         let r = ctx.db_increment(
             "categories",
             r#"{"sort_order":-5}"#,
-            r#"{"slug":"clamp"}"#,
+            &format!(r#"{{"slug":"{slug}"}}"#),
             r#"{"min":0}"#,
         );
         assert!(r.contains(r#""rows_affected":1"#), "clamp: {r}");
 
-        let s = ctx.db_sum("categories", "sort_order", r#"{"slug":"clamp"}"#, "{}");
+        let s = ctx.db_sum(
+            "categories",
+            "sort_order",
+            &format!(r#"{{"slug":"{slug}"}}"#),
+            "{}",
+        );
         assert!(s.contains(r#""sum":0"#), "clamped to 0 sum: {s}");
     }
 
     #[tokio::test(flavor = "multi_thread")]
     async fn db_increment_with_set() {
-        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query::<crate::db::pool::Db>(crate::db::schema::SCHEMA_SQL)
-            .execute(&pool)
-            .await
-            .unwrap();
+        let pool = crate::test_pool!();
         let ctx = make_crud_ctx(&pool);
 
-        let _ = ctx.db_insert(
-            "categories",
-            r#"{"name":"Set","slug":"set","sort_order":"0"}"#,
-            "{}",
-        );
+        let (json, _, slug) = cat_json("Set", Some(0), None);
+        let _ = ctx.db_insert("categories", &json, "{}");
 
+        let set_name = format!("Updated{}", crate::utils::id::new_id());
         let r = ctx.db_increment(
             "categories",
             r#"{"sort_order":1}"#,
-            r#"{"slug":"set"}"#,
-            r#"{"set":{"name":"Updated"}}"#,
+            &format!(r#"{{"slug":"{slug}"}}"#),
+            &format!(r#"{{"set":{{"name":"{set_name}"}}}}"#),
         );
         assert!(r.contains(r#""rows_affected":1"#), "increment+set: {r}");
 
-        let s = ctx.db_sum("categories", "sort_order", r#"{"slug":"set"}"#, "{}");
+        let s = ctx.db_sum(
+            "categories",
+            "sort_order",
+            &format!(r#"{{"slug":"{slug}"}}"#),
+            "{}",
+        );
         assert!(s.contains(r#""sum":1"#), "incremented sum: {s}");
 
-        let found = ctx.db_fetch_one("categories", r#"{"slug":"set"}"#, "{}");
-        assert!(found.contains(r#""name":"Updated""#), "set col: {found}");
+        let found = ctx.db_fetch_one("categories", &format!(r#"{{"slug":"{slug}"}}"#), "{}");
+        assert!(
+            found.contains(&format!(r#""name":"{set_name}""#)),
+            "set col: {found}"
+        );
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -2549,11 +2604,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn db_increment_no_permission() {
-        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query::<crate::db::pool::Db>(crate::db::schema::SCHEMA_SQL)
-            .execute(&pool)
-            .await
-            .unwrap();
+        let pool = crate::test_pool!();
         let config = make_test_config();
         let ctx = HostContext::new(
             "test",
@@ -2568,28 +2619,18 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn db_sum_basic() {
-        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query::<crate::db::pool::Db>(crate::db::schema::SCHEMA_SQL)
-            .execute(&pool)
-            .await
-            .unwrap();
+        let pool = crate::test_pool!();
         let ctx = make_crud_ctx(&pool);
 
-        let _ = ctx.db_insert(
-            "categories",
-            r#"{"name":"A","slug":"sa","sort_order":"3"}"#,
-            "{}",
-        );
-        let _ = ctx.db_insert(
-            "categories",
-            r#"{"name":"B","slug":"sb","sort_order":"7"}"#,
-            "{}",
-        );
+        let (ja, _, s1) = cat_json("A", Some(3), None);
+        let (jb, _, s2) = cat_json("B", Some(7), None);
+        let _ = ctx.db_insert("categories", &ja, "{}");
+        let _ = ctx.db_insert("categories", &jb, "{}");
 
         let r = ctx.db_sum(
             "categories",
             "sort_order",
-            r#"{"tenant_id":"default"}"#,
+            &format!(r#"["slug IN ({}, {})", "{s1}", "{s2}"]"#, ctx.db_ph(1), ctx.db_ph(2)),
             "{}",
         );
         assert!(r.contains(r#""sum":10"#), "sum: {r}");
@@ -2597,14 +2638,16 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn db_sum_empty() {
-        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query::<crate::db::pool::Db>(crate::db::schema::SCHEMA_SQL)
-            .execute(&pool)
-            .await
-            .unwrap();
+        let pool = crate::test_pool!();
         let ctx = make_crud_ctx(&pool);
 
-        let r = ctx.db_sum("categories", "sort_order", "{}", "{}");
+        let empty_slug = format!("__never_{}__", crate::utils::id::new_id());
+        let r = ctx.db_sum(
+            "categories",
+            "sort_order",
+            &format!(r#"{{"slug":"{empty_slug}"}}"#),
+            "{}",
+        );
         assert!(r.contains(r#""sum":0"#), "sum empty: {r}");
     }
 
@@ -2622,32 +2665,22 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn db_group_by_count() {
-        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query::<crate::db::pool::Db>(crate::db::schema::SCHEMA_SQL)
-            .execute(&pool)
-            .await
-            .unwrap();
+        let pool = crate::test_pool!();
         let ctx = make_crud_ctx(&pool);
 
-        let _ = ctx.db_insert(
-            "categories",
-            r#"{"name":"Rust1","slug":"rust1","tenant_id":"t1"}"#,
-            r#"{"tenant":"disabled"}"#,
-        );
-        let _ = ctx.db_insert(
-            "categories",
-            r#"{"name":"Go","slug":"go","tenant_id":"t2"}"#,
-            r#"{"tenant":"disabled"}"#,
-        );
-        let _ = ctx.db_insert(
-            "categories",
-            r#"{"name":"Rust2","slug":"rust2","tenant_id":"t1"}"#,
-            r#"{"tenant":"disabled"}"#,
-        );
+        let (j1, _, s1) = cat_json("Rust1", None, Some("t1"));
+        let (j2, _, s2) = cat_json("Go", None, Some("t2"));
+        let (j3, _, s3) = cat_json("Rust2", None, Some("t1"));
+        let _ = ctx.db_insert("categories", &j1, r#"{"tenant":"disabled"}"#);
+        let _ = ctx.db_insert("categories", &j2, r#"{"tenant":"disabled"}"#);
+        let _ = ctx.db_insert("categories", &j3, r#"{"tenant":"disabled"}"#);
 
         let r = ctx.db_group_by(
             "categories",
-            r#"{"group_by":"tenant_id","count":true,"order_by":"cnt DESC","tenant":false}"#,
+            &format!(
+                r#"{{"group_by":"tenant_id","count":true,"order_by":"cnt DESC","tenant":false,"where":["slug IN ({}, {}, {})", "{s1}", "{s2}", "{s3}"]}}"#,
+                ctx.db_ph(1), ctx.db_ph(2), ctx.db_ph(3)
+            ),
         );
         assert!(r.contains(r#""total":2"#), "group_by count: {r}");
         assert!(r.contains(r#""tenant_id":"t1""#), "group_by t1: {r}");
@@ -2656,32 +2689,22 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn db_group_by_with_sum() {
-        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query::<crate::db::pool::Db>(crate::db::schema::SCHEMA_SQL)
-            .execute(&pool)
-            .await
-            .unwrap();
+        let pool = crate::test_pool!();
         let ctx = make_crud_ctx(&pool);
 
-        let _ = ctx.db_insert(
-            "categories",
-            r#"{"name":"A1","slug":"gsa","sort_order":"3","tenant_id":"grpA"}"#,
-            r#"{"tenant":"disabled"}"#,
-        );
-        let _ = ctx.db_insert(
-            "categories",
-            r#"{"name":"A2","slug":"gsb","sort_order":"7","tenant_id":"grpA"}"#,
-            r#"{"tenant":"disabled"}"#,
-        );
-        let _ = ctx.db_insert(
-            "categories",
-            r#"{"name":"B1","slug":"gsc","sort_order":"2","tenant_id":"grpB"}"#,
-            r#"{"tenant":"disabled"}"#,
-        );
+        let (j1, _, s1) = cat_json("A1", Some(3), Some("grpA"));
+        let (j2, _, s2) = cat_json("A2", Some(7), Some("grpA"));
+        let (j3, _, s3) = cat_json("B1", Some(2), Some("grpB"));
+        let _ = ctx.db_insert("categories", &j1, r#"{"tenant":"disabled"}"#);
+        let _ = ctx.db_insert("categories", &j2, r#"{"tenant":"disabled"}"#);
+        let _ = ctx.db_insert("categories", &j3, r#"{"tenant":"disabled"}"#);
 
         let r = ctx.db_group_by(
             "categories",
-            r#"{"group_by":"tenant_id","count":true,"sum":"sort_order","order_by":"sum_sort_order DESC","tenant":false}"#,
+            &format!(
+                r#"{{"group_by":"tenant_id","count":true,"sum":"sort_order","order_by":"sum_sort_order DESC","tenant":false,"where":["slug IN ({}, {}, {})", "{s1}", "{s2}", "{s3}"]}}"#,
+                ctx.db_ph(1), ctx.db_ph(2), ctx.db_ph(3)
+            ),
         );
         assert!(r.contains(r#""total":2"#), "group_by sum total: {r}");
         assert!(
@@ -2692,32 +2715,22 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn db_group_by_with_where() {
-        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query::<crate::db::pool::Db>(crate::db::schema::SCHEMA_SQL)
-            .execute(&pool)
-            .await
-            .unwrap();
+        let pool = crate::test_pool!();
         let ctx = make_crud_ctx(&pool);
 
-        let _ = ctx.db_insert(
-            "categories",
-            r#"{"name":"W1","slug":"wa","tenant_id":"tA"}"#,
-            r#"{"tenant":"disabled"}"#,
-        );
-        let _ = ctx.db_insert(
-            "categories",
-            r#"{"name":"W2","slug":"wb","tenant_id":"tA"}"#,
-            r#"{"tenant":"disabled"}"#,
-        );
-        let _ = ctx.db_insert(
-            "categories",
-            r#"{"name":"W3","slug":"wc","tenant_id":"tB"}"#,
-            r#"{"tenant":"disabled"}"#,
-        );
+        let (j1, _, s1) = cat_json("W1", None, Some("tA"));
+        let (j2, _, s2) = cat_json("W2", None, Some("tA"));
+        let (j3, _, _) = cat_json("W3", None, Some("tB"));
+        let _ = ctx.db_insert("categories", &j1, r#"{"tenant":"disabled"}"#);
+        let _ = ctx.db_insert("categories", &j2, r#"{"tenant":"disabled"}"#);
+        let _ = ctx.db_insert("categories", &j3, r#"{"tenant":"disabled"}"#);
 
         let r = ctx.db_group_by(
             "categories",
-            r#"{"group_by":"tenant_id","count":true,"where":{"tenant_id":"tA"},"tenant":false}"#,
+            &format!(
+                r#"{{"group_by":"tenant_id","count":true,"where":["slug IN ({}, {})", "{s1}", "{s2}"],"tenant":false}}"#,
+                ctx.db_ph(1), ctx.db_ph(2)
+            ),
         );
         assert!(r.contains(r#""total":1"#), "group_by where: {r}");
         assert!(r.contains(r#""cnt":2"#), "group_by where cnt: {r}");
@@ -2725,16 +2738,15 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn db_group_by_with_limit() {
-        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query::<crate::db::pool::Db>(crate::db::schema::SCHEMA_SQL)
-            .execute(&pool)
-            .await
-            .unwrap();
+        let pool = crate::test_pool!();
         let ctx = make_crud_ctx(&pool);
 
-        let _ = ctx.db_insert("categories", r#"{"name":"X","slug":"lx"}"#, "{}");
-        let _ = ctx.db_insert("categories", r#"{"name":"Y","slug":"ly"}"#, "{}");
-        let _ = ctx.db_insert("categories", r#"{"name":"Z","slug":"lz"}"#, "{}");
+        let (jx, _, _) = cat_json("X", None, None);
+        let (jy, _, _) = cat_json("Y", None, None);
+        let (jz, _, _) = cat_json("Z", None, None);
+        let _ = ctx.db_insert("categories", &jx, "{}");
+        let _ = ctx.db_insert("categories", &jy, "{}");
+        let _ = ctx.db_insert("categories", &jz, "{}");
 
         let r = ctx.db_group_by(
             "categories",
@@ -2745,11 +2757,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn db_group_by_missing_field() {
-        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query::<crate::db::pool::Db>(crate::db::schema::SCHEMA_SQL)
-            .execute(&pool)
-            .await
-            .unwrap();
+        let pool = crate::test_pool!();
         let ctx = make_crud_ctx(&pool);
 
         let r = ctx.db_group_by("categories", r#"{"count":true}"#);
@@ -2770,11 +2778,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn db_group_by_no_permission() {
-        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query::<crate::db::pool::Db>(crate::db::schema::SCHEMA_SQL)
-            .execute(&pool)
-            .await
-            .unwrap();
+        let pool = crate::test_pool!();
         let config = make_test_config();
         let ctx = HostContext::new(
             "test",
@@ -2789,28 +2793,26 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn db_increment_multi_column_with_min() {
-        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query::<crate::db::pool::Db>(crate::db::schema::SCHEMA_SQL)
-            .execute(&pool)
-            .await
-            .unwrap();
+        let pool = crate::test_pool!();
         let ctx = make_crud_ctx(&pool);
 
-        let _ = ctx.db_insert(
-            "categories",
-            r#"{"name":"Multi","slug":"multi","sort_order":"2"}"#,
-            "{}",
-        );
+        let (json, _, slug) = cat_json("Multi", Some(2), None);
+        let _ = ctx.db_insert("categories", &json, "{}");
 
         let r = ctx.db_increment(
             "categories",
             r#"{"sort_order":-10}"#,
-            r#"{"slug":"multi"}"#,
+            &format!(r#"{{"slug":"{slug}"}}"#),
             r#"{"min":0}"#,
         );
         assert!(r.contains(r#""rows_affected":1"#), "multi clamp: {r}");
 
-        let s = ctx.db_sum("categories", "sort_order", r#"{"slug":"multi"}"#, "{}");
+        let s = ctx.db_sum(
+            "categories",
+            "sort_order",
+            &format!(r#"{{"slug":"{slug}"}}"#),
+            "{}",
+        );
         assert!(s.contains(r#""sum":0"#), "clamped sum: {s}");
     }
 }

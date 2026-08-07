@@ -2,8 +2,65 @@
 //!
 //! Each Handler encapsulates its required external dependencies (Pool, Config),
 //! and is registered with the `JobHandlerRegistry` in `register_all()`.
+//!
+//! **Builtin cron handlers** self-register via the `register_cron_handler!` macro
+//! (inventory-based, same pattern as `register_protocol!`).
+//!
+//! Adding a new builtin cron handler means creating `worker/handlers/<name>.rs`
+//! with a `pub const META`, the handler impl, and a `register_cron_handler!(...)`
+//! line at the bottom, then adding one `pub mod <name>;` below. No changes to
+//! `register_all()` are needed.
+
+use std::sync::Arc;
+
+use crate::cache::CacheStore;
+use crate::config::app::AppConfig;
+use crate::db::Pool;
+use crate::notifier::{EmailSender, SmsSender};
+use crate::search::SearchEngine;
+use crate::worker::JobHandlerRegistry;
+use crate::worker::handler::HandlerMeta;
+
+/// Aggregated dependencies passed to every builtin cron handler factory.
+pub struct HandlerDeps {
+    pub pool: Pool,
+    pub config: Arc<AppConfig>,
+    pub search: Arc<dyn SearchEngine>,
+    pub cache: Arc<dyn CacheStore>,
+    pub email_sender: Arc<dyn EmailSender>,
+    pub sms_sender: Arc<dyn SmsSender>,
+    pub plugins: Arc<crate::plugins::PluginManager>,
+}
+
+/// Inventory entry for a builtin cron handler. Handlers self-register via
+/// [`register_cron_handler!`].
+pub struct CronHandlerEntry {
+    pub meta: &'static HandlerMeta,
+    pub factory: fn(&HandlerDeps) -> Box<dyn crate::worker::JobHandler>,
+}
+
+inventory::collect!(CronHandlerEntry);
+
+/// Self-registration macro for builtin cron handlers.
+///
+/// Usage at the bottom of a handler file:
+/// ```ignore
+/// register_cron_handler!(META, |deps| Box::new(MyHandler::new(deps.pool.clone())));
+/// ```
+#[macro_export]
+macro_rules! register_cron_handler {
+    ($meta:expr, $factory:expr) => {
+        ::inventory::submit! {
+            $crate::worker::handlers::CronHandlerEntry {
+                meta: $meta,
+                factory: $factory,
+            }
+        }
+    };
+}
 
 pub mod cache;
+pub mod cron_ping;
 pub mod db_backup;
 pub mod email;
 pub mod email_verification;
@@ -11,7 +68,6 @@ pub mod order_expire;
 pub mod payment_expire;
 pub mod payment_reconcile;
 pub mod payment_retry;
-pub mod ping;
 pub mod publish;
 pub mod script;
 pub mod search_index;
@@ -23,26 +79,24 @@ pub mod thumbnail;
 pub mod wallet_outbox;
 pub mod webhook;
 
-use std::sync::Arc;
-
-use crate::cache::CacheStore;
-use crate::config::app::AppConfig;
-use crate::db::Pool;
-use crate::notifier::{EmailSender, SmsSender};
-use crate::search::SearchEngine;
-use crate::worker::JobHandlerRegistry;
-
 /// Registers all concrete Handlers with the Registry
-pub fn register_all(
-    registry: &mut JobHandlerRegistry,
-    pool: Pool,
-    config: Arc<AppConfig>,
-    search: Arc<dyn SearchEngine>,
-    cache: Arc<dyn CacheStore>,
-    email_sender: Arc<dyn EmailSender>,
-    sms_sender: Arc<dyn SmsSender>,
-    plugins: Arc<crate::plugins::PluginManager>,
-) {
+pub fn register_all(deps: HandlerDeps) -> JobHandlerRegistry {
+    let mut registry = JobHandlerRegistry::new();
+    let HandlerDeps {
+        pool,
+        config,
+        search,
+        cache,
+        email_sender,
+        sms_sender,
+        plugins,
+    } = deps;
+
+    // Clones for the inventory loop (single-use values moved into handlers above).
+    let loop_search = search.clone();
+    let loop_cache = cache.clone();
+    let loop_email = email_sender.clone();
+    let loop_sms = sms_sender.clone();
     registry.register(
         "send_welcome_email",
         Box::new(email::SendWelcomeEmailHandler::new(
@@ -141,18 +195,27 @@ pub fn register_all(
         Box::new(db_backup::DbBackupHandler::new(config.clone())),
     );
 
-    // ── Cron handlers with admin-visible metadata ───────────────────────────
-    registry.register_with_meta(
-        "ping",
-        Box::new(ping::PingHandler::new(config.clone())),
-        &ping::META,
-    );
+    // ── Cron handlers: collected from inventory self-registration ───────────
+    // Every `register_cron_handler!(...)` call in a handler file is collected here.
+    for entry in inventory::iter::<CronHandlerEntry> {
+        let deps = HandlerDeps {
+            pool: pool.clone(),
+            config: config.clone(),
+            search: loop_search.clone(),
+            cache: loop_cache.clone(),
+            email_sender: loop_email.clone(),
+            sms_sender: loop_sms.clone(),
+            plugins: plugins.clone(),
+        };
+        let handler = (entry.factory)(&deps);
+        registry.register_with_meta(entry.meta.id, handler, entry.meta);
+    }
 
     // ── Cron sandbox script handler (no meta — not a menu item) ────────────
     registry.register(
         "run_script",
         Box::new(script::ScriptJobHandler::new(
-            plugins,
+            plugins.clone(),
             pool.clone(),
             // Cron scripts are admin-created → full permissions.
             crate::plugins::Permissions {
@@ -171,4 +234,6 @@ pub fn register_all(
         "run_system",
         Box::new(system::SystemJobHandler::new(pool.clone(), config.clone())),
     );
+
+    registry
 }

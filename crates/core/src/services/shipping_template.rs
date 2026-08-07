@@ -231,6 +231,7 @@ impl ShippingTemplateService for ShippingTemplateServiceImpl {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::DbDriver;
 
     fn make_template(
         template_type: ShippingTemplateType,
@@ -373,12 +374,16 @@ mod tests {
         .await
         .unwrap();
 
-        sqlx::query("UPDATE products SET shipping_template_id = ? WHERE id = ?")
-            .bind(*tmpl.id)
-            .bind(product.id)
-            .execute(&pool)
-            .await
-            .unwrap();
+        sqlx::query(&format!(
+            "UPDATE products SET shipping_template_id = {} WHERE id = {}",
+            crate::db::Driver::ph(1),
+            crate::db::Driver::ph(2)
+        ))
+        .bind(*tmpl.id)
+        .bind(product.id)
+        .execute(&pool)
+        .await
+        .unwrap();
 
         let result = svc
             .calculate_shipping(&[(product.id, 1200, 2)], None, None)
@@ -452,12 +457,16 @@ mod tests {
         .await
         .unwrap();
 
-        sqlx::query("UPDATE products SET shipping_template_id = ? WHERE id = ?")
-            .bind(*tmpl.id)
-            .bind(product.id)
-            .execute(&pool)
-            .await
-            .unwrap();
+        sqlx::query(&format!(
+            "UPDATE products SET shipping_template_id = {} WHERE id = {}",
+            crate::db::Driver::ph(1),
+            crate::db::Driver::ph(2)
+        ))
+        .bind(*tmpl.id)
+        .bind(product.id)
+        .execute(&pool)
+        .await
+        .unwrap();
 
         let result = svc
             .calculate_shipping(&[(product.id, 2500, 1)], None, None)
@@ -544,11 +553,14 @@ mod tests {
         .await
         .unwrap();
 
-        sqlx::query("UPDATE shipping_templates SET status = 'inactive' WHERE id = ?")
-            .bind(tmpl.id)
-            .execute(&pool)
-            .await
-            .unwrap();
+        sqlx::query(&format!(
+            "UPDATE shipping_templates SET status = 'inactive' WHERE id = {}",
+            crate::db::Driver::ph(1)
+        ))
+        .bind(tmpl.id)
+        .execute(&pool)
+        .await
+        .unwrap();
 
         let product = crate::models::product::insert(
             &pool,
@@ -590,12 +602,16 @@ mod tests {
         .await
         .unwrap();
 
-        sqlx::query("UPDATE products SET shipping_template_id = ? WHERE id = ?")
-            .bind(*tmpl.id)
-            .bind(product.id)
-            .execute(&pool)
-            .await
-            .unwrap();
+        sqlx::query(&format!(
+            "UPDATE products SET shipping_template_id = {} WHERE id = {}",
+            crate::db::Driver::ph(1),
+            crate::db::Driver::ph(2)
+        ))
+        .bind(*tmpl.id)
+        .bind(product.id)
+        .execute(&pool)
+        .await
+        .unwrap();
 
         let result = svc
             .calculate_shipping(&[(product.id, 500, 1)], None, None)

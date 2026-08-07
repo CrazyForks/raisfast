@@ -277,13 +277,18 @@ mod tests {
         }
     }
 
+    fn uniq_tenant() -> String {
+        format!("t_{}", crate::utils::id::new_id())
+    }
+
     #[tokio::test]
     async fn create_and_find_by_id() {
         let pool = setup_pool().await;
-        let cat = create(&pool, &make_cmd("Electronics"), None, None)
+        let tenant = uniq_tenant();
+        let cat = create(&pool, &make_cmd("Electronics"), Some(&tenant), None)
             .await
             .unwrap();
-        let found = find_by_id(&pool, cat.id, None).await.unwrap();
+        let found = find_by_id(&pool, cat.id, Some(&tenant)).await.unwrap();
         assert_eq!(found.id, cat.id);
         assert_eq!(found.name, "Electronics");
         assert_eq!(found.slug, "electronics");
@@ -292,22 +297,24 @@ mod tests {
     #[tokio::test]
     async fn find_all_returns_all() {
         let pool = setup_pool().await;
-        create(&pool, &make_cmd("Phones"), None, None)
+        let tenant = uniq_tenant();
+        create(&pool, &make_cmd("Phones"), Some(&tenant), None)
             .await
             .unwrap();
-        create(&pool, &make_cmd("Laptops"), None, None)
+        create(&pool, &make_cmd("Laptops"), Some(&tenant), None)
             .await
             .unwrap();
-        create(&pool, &make_cmd("Tablets"), None, None)
+        create(&pool, &make_cmd("Tablets"), Some(&tenant), None)
             .await
             .unwrap();
-        let all = find_all(&pool, None).await.unwrap();
+        let all = find_all(&pool, Some(&tenant)).await.unwrap();
         assert_eq!(all.len(), 3);
     }
 
     #[tokio::test]
     async fn find_paginated() {
         let pool = setup_pool().await;
+        let tenant = uniq_tenant();
         for name in ["A", "B", "C", "D", "E"] {
             create(
                 &pool,
@@ -324,13 +331,15 @@ mod tests {
                     og_description: None,
                     og_image: None,
                 },
-                None,
+                Some(&tenant),
                 None,
             )
             .await
             .unwrap();
         }
-        let (items, total) = super::find_paginated(&pool, None, 1, 3).await.unwrap();
+        let (items, total) = super::find_paginated(&pool, Some(&tenant), 1, 3)
+            .await
+            .unwrap();
         assert_eq!(total, 5);
         assert_eq!(items.len(), 3);
     }
@@ -338,7 +347,10 @@ mod tests {
     #[tokio::test]
     async fn update_changes_name() {
         let pool = setup_pool().await;
-        let cat = create(&pool, &make_cmd("Old"), None, None).await.unwrap();
+        let tenant = uniq_tenant();
+        let cat = create(&pool, &make_cmd("Old"), Some(&tenant), None)
+            .await
+            .unwrap();
         let updated = update(
             &pool,
             &UpdateProductCategoryCmd {
@@ -355,7 +367,7 @@ mod tests {
                 og_description: None,
                 og_image: None,
             },
-            None,
+            Some(&tenant),
             None,
         )
         .await
@@ -368,9 +380,12 @@ mod tests {
     #[tokio::test]
     async fn delete_removes_category() {
         let pool = setup_pool().await;
-        let cat = create(&pool, &make_cmd("Gone"), None, None).await.unwrap();
-        delete(&pool, cat.id, None).await.unwrap();
-        let result = find_by_id(&pool, cat.id, None).await;
+        let tenant = uniq_tenant();
+        let cat = create(&pool, &make_cmd("Gone"), Some(&tenant), None)
+            .await
+            .unwrap();
+        delete(&pool, cat.id, Some(&tenant)).await.unwrap();
+        let result = find_by_id(&pool, cat.id, Some(&tenant)).await;
         assert!(result.is_err());
     }
 
@@ -384,7 +399,8 @@ mod tests {
     #[tokio::test]
     async fn create_with_parent() {
         let pool = setup_pool().await;
-        let parent = create(&pool, &make_cmd("Parent"), None, None)
+        let tenant = uniq_tenant();
+        let parent = create(&pool, &make_cmd("Parent"), Some(&tenant), None)
             .await
             .unwrap();
         let child = create(
@@ -402,7 +418,7 @@ mod tests {
                 og_description: None,
                 og_image: None,
             },
-            None,
+            Some(&tenant),
             None,
         )
         .await

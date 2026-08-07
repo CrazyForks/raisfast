@@ -226,7 +226,11 @@ mod tests {
     #[tokio::test]
     async fn get_me_not_found() {
         let pool = setup_pool().await;
-        let a = auth("ghost");
+        let a = AuthUser::from_parts(
+            Some(*crate::utils::id::new_snowflake_id()),
+            crate::models::user::UserRole::Admin,
+            None,
+        );
         assert!(super::get_me(&pool, &a).await.is_err());
     }
 
@@ -275,9 +279,30 @@ mod tests {
     #[tokio::test]
     async fn list_users_paginated() {
         let pool = setup_pool().await;
-        insert_user(&pool, "user_a").await;
-        insert_user(&pool, "user_b").await;
-        let (users, total) = super::list_users(&pool, 1, 10, None).await.unwrap();
+        let tenant = format!("t_{}", crate::utils::id::new_id());
+        crate::models::user::create(
+            &pool,
+            &crate::commands::CreateUserCmd {
+                username: format!("user_a_{}", crate::utils::id::new_id()),
+                registered_via: crate::models::user::RegisteredVia::Email,
+            },
+            Some(&tenant),
+        )
+        .await
+        .unwrap();
+        crate::models::user::create(
+            &pool,
+            &crate::commands::CreateUserCmd {
+                username: format!("user_b_{}", crate::utils::id::new_id()),
+                registered_via: crate::models::user::RegisteredVia::Email,
+            },
+            Some(&tenant),
+        )
+        .await
+        .unwrap();
+        let (users, total) = super::list_users(&pool, 1, 10, Some(&tenant))
+            .await
+            .unwrap();
         assert_eq!(total, 2);
         assert_eq!(users.len(), 2);
     }

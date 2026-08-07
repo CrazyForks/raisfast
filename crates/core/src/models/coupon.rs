@@ -128,24 +128,14 @@ pub async fn update(
         .await?
         .ok_or_else(|| AppError::not_found("coupon"))?;
 
-    let starts_at_str = cmd
-        .starts_at
-        .as_deref()
-        .or(existing
-            .starts_at
-            .as_ref()
-            .map(|t| t.to_string())
-            .as_deref())
-        .map(|s| s.to_string());
-    let expires_at_str = cmd
-        .expires_at
-        .as_deref()
-        .or(existing
-            .expires_at
-            .as_ref()
-            .map(|t| t.to_string())
-            .as_deref())
-        .map(|s| s.to_string());
+    let starts_at_ts = match cmd.starts_at.as_deref() {
+        Some(s) => crate::utils::tz::parse_rfc3339_opt(Some(s)),
+        None => existing.starts_at,
+    };
+    let expires_at_ts = match cmd.expires_at.as_deref() {
+        Some(s) => crate::utils::tz::parse_rfc3339_opt(Some(s)),
+        None => existing.expires_at,
+    };
 
     let affected = raisfast_derive::crud_update!(
         pool,
@@ -156,8 +146,8 @@ pub async fn update(
             "min_order" => cmd.min_order.unwrap_or(existing.min_order),
             "max_uses" => cmd.max_uses.unwrap_or(existing.max_uses),
             "max_uses_per_user" => cmd.max_uses_per_user.unwrap_or(existing.max_uses_per_user),
-            "starts_at" => starts_at_str.as_deref(),
-            "expires_at" => expires_at_str.as_deref(),
+            "starts_at" => starts_at_ts,
+            "expires_at" => expires_at_ts,
             "status" => cmd.status.as_deref().unwrap_or(existing.status.as_str()),
         ],
         raw: ["updated_at" => crate::db::Driver::now_fn()],
@@ -248,6 +238,7 @@ pub async fn count_user_uses(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::DbDriver;
 
     async fn setup_pool() -> crate::db::Pool {
         crate::test_pool!()
@@ -270,11 +261,12 @@ mod tests {
     #[tokio::test]
     async fn insert_and_find_by_id() {
         let pool = setup_pool().await;
-        let c = super::insert(&pool, &seed_cmd("SAVE10", 10), None)
+        let code = format!("SAVE10_{}", crate::utils::id::new_id());
+        let c = super::insert(&pool, &seed_cmd(&code, 10), None)
             .await
             .unwrap();
         let found = super::find_by_id(&pool, c.id, None).await.unwrap().unwrap();
-        assert_eq!(found.code, "SAVE10");
+        assert_eq!(found.code, code);
         assert_eq!(found.value, 10);
         assert_eq!(found.coupon_type, CouponType::Percent);
         assert_eq!(found.status, CouponStatus::Active);
@@ -294,10 +286,11 @@ mod tests {
     #[tokio::test]
     async fn find_by_code() {
         let pool = setup_pool().await;
-        super::insert(&pool, &seed_cmd("CODE20", 20), None)
+        let code = format!("CODE20_{}", crate::utils::id::new_id());
+        super::insert(&pool, &seed_cmd(&code, 20), None)
             .await
             .unwrap();
-        let found = super::find_by_code(&pool, "CODE20", None)
+        let found = super::find_by_code(&pool, &code, None)
             .await
             .unwrap()
             .unwrap();
@@ -318,12 +311,20 @@ mod tests {
     #[tokio::test]
     async fn find_all_paginated() {
         let pool = setup_pool().await;
+        let tenant = format!("t_{}", crate::utils::id::new_id());
         for i in 0..5 {
-            super::insert(&pool, &seed_cmd(&format!("C{i}"), i as i64 * 10), None)
-                .await
-                .unwrap();
+            super::insert(
+                &pool,
+                &seed_cmd(
+                    &format!("C{i}_{}", crate::utils::id::new_id()),
+                    i as i64 * 10,
+                ),
+                Some(&tenant),
+            )
+            .await
+            .unwrap();
         }
-        let (items, total) = super::find_all_paginated(&pool, None, 1, 3, None)
+        let (items, total) = super::find_all_paginated(&pool, Some(&tenant), 1, 3, None)
             .await
             .unwrap();
         assert_eq!(total, 5);
@@ -333,31 +334,44 @@ mod tests {
     #[tokio::test]
     async fn find_all_paginated_status_filter() {
         let pool = setup_pool().await;
-        super::insert(&pool, &seed_cmd("A1", 10), None)
+        let tenant = format!("t_{}", crate::utils::id::new_id());
+        let a1_code = format!("A1_{}", crate::utils::id::new_id());
+        super::insert(&pool, &seed_cmd(&a1_code, 10), Some(&tenant))
             .await
             .unwrap();
-        let c2 = super::insert(&pool, &seed_cmd("A2", 20), None)
-            .await
-            .unwrap();
-        sqlx::query("UPDATE coupons SET status = 'inactive' WHERE id = ?")
-            .bind(c2.id)
-            .execute(&pool)
-            .await
-            .unwrap();
+        let c2 = super::insert(
+            &pool,
+            &seed_cmd(&format!("A2_{}", crate::utils::id::new_id()), 20),
+            Some(&tenant),
+        )
+        .await
+        .unwrap();
+        sqlx::query(&format!(
+            "UPDATE coupons SET status = 'inactive' WHERE id = {}",
+            crate::db::Driver::ph(1)
+        ))
+        .bind(c2.id)
+        .execute(&pool)
+        .await
+        .unwrap();
 
-        let (items, total) = super::find_all_paginated(&pool, None, 1, 10, Some("active"))
+        let (items, total) = super::find_all_paginated(&pool, Some(&tenant), 1, 10, Some("active"))
             .await
             .unwrap();
         assert_eq!(total, 1);
-        assert_eq!(items[0].code, "A1");
+        assert_eq!(items[0].code, a1_code);
     }
 
     #[tokio::test]
     async fn update_changes_title_and_value() {
         let pool = setup_pool().await;
-        let c = super::insert(&pool, &seed_cmd("UPD", 10), None)
-            .await
-            .unwrap();
+        let c = super::insert(
+            &pool,
+            &seed_cmd(&format!("UPD_{}", crate::utils::id::new_id()), 10),
+            None,
+        )
+        .await
+        .unwrap();
         let ok = super::update(
             &pool,
             &crate::commands::UpdateCouponCmd {
@@ -384,9 +398,13 @@ mod tests {
     #[tokio::test]
     async fn update_status_to_inactive() {
         let pool = setup_pool().await;
-        let c = super::insert(&pool, &seed_cmd("STAT", 10), None)
-            .await
-            .unwrap();
+        let c = super::insert(
+            &pool,
+            &seed_cmd(&format!("STAT_{}", crate::utils::id::new_id()), 10),
+            None,
+        )
+        .await
+        .unwrap();
         super::update(
             &pool,
             &crate::commands::UpdateCouponCmd {
@@ -411,9 +429,13 @@ mod tests {
     #[tokio::test]
     async fn increment_used_increases_count() {
         let pool = setup_pool().await;
-        let c = super::insert(&pool, &seed_cmd("USE", 10), None)
-            .await
-            .unwrap();
+        let c = super::insert(
+            &pool,
+            &seed_cmd(&format!("USE_{}", crate::utils::id::new_id()), 10),
+            None,
+        )
+        .await
+        .unwrap();
         assert_eq!(c.used_count, 0);
         super::increment_used(&pool, c.id, None).await.unwrap();
         let found = super::find_by_id(&pool, c.id, None).await.unwrap().unwrap();
@@ -423,9 +445,13 @@ mod tests {
     #[tokio::test]
     async fn delete_removes_coupon() {
         let pool = setup_pool().await;
-        let c = super::insert(&pool, &seed_cmd("DEL", 10), None)
-            .await
-            .unwrap();
+        let c = super::insert(
+            &pool,
+            &seed_cmd(&format!("DEL_{}", crate::utils::id::new_id()), 10),
+            None,
+        )
+        .await
+        .unwrap();
         super::delete_by_id(&pool, c.id, None).await.unwrap();
         assert!(
             super::find_by_id(&pool, c.id, None)
@@ -450,9 +476,13 @@ mod tests {
     #[tokio::test]
     async fn count_user_uses_returns_zero() {
         let pool = setup_pool().await;
-        let c = super::insert(&pool, &seed_cmd("CU", 10), None)
-            .await
-            .unwrap();
+        let c = super::insert(
+            &pool,
+            &seed_cmd(&format!("CU_{}", crate::utils::id::new_id()), 10),
+            None,
+        )
+        .await
+        .unwrap();
         let count = super::count_user_uses(&pool, c.id, SnowflakeId(1), None)
             .await
             .unwrap();

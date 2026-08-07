@@ -1040,7 +1040,7 @@ mod tests {
         let cfg = default_config();
         let rule = Rule::parse(r#"status = "published""#, &cfg).unwrap();
         let (sql, params) = rule.to_sql(0, &cfg);
-        assert_eq!(sql, r#""status" = ?"#);
+        assert_eq!(sql, format!(r#""status" = {}"#, crate::db::Driver::ph(1)));
         assert_eq!(params, vec!["published"]);
     }
 
@@ -1049,7 +1049,7 @@ mod tests {
         let cfg = default_config();
         let rule = Rule::parse(r#"status = "published""#, &cfg).unwrap();
         let (sql, params) = rule.to_sql(2, &cfg);
-        assert_eq!(sql, r#""status" = ?"#);
+        assert_eq!(sql, format!(r#""status" = {}"#, crate::db::Driver::ph(3)));
         assert_eq!(params, vec!["published"]);
     }
 
@@ -1067,7 +1067,7 @@ mod tests {
         let cfg = default_config();
         let rule = Rule::parse("created_at > @now", &cfg).unwrap();
         let (sql, _params) = rule.to_sql(0, &cfg);
-        assert!(sql.contains("strftime('%Y-%m-%dT%H:%M:%SZ', 'now')"));
+        assert!(sql.contains(crate::db::Driver::now_fn()));
     }
 
     #[test]

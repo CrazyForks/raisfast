@@ -408,16 +408,36 @@ macro_rules! bind_tenant {
     };
 }
 
-/// Create an in-memory SQLite test pool with schema applied.
+/// Create a test pool with schema applied.
+///
+/// Uses SQLite `:memory:` when the `db-sqlite` feature is active (fresh DB per
+/// test), or a shared PostgreSQL / MySQL test database otherwise. The schema
+/// is fully idempotent (`CREATE TABLE IF NOT EXISTS` + `ON CONFLICT DO NOTHING`
+/// on all seed data), so concurrent tests can safely apply it in parallel.
+/// Tests use unique Snowflake IDs for their data, avoiding cross-test
+/// collisions. Set the env var `RAISFAST_TEST_DB_URL` to override the default
+/// test connection string.
 #[macro_export]
 macro_rules! test_pool {
     () => {{
-        let pool = $crate::db::Pool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query($crate::db::schema::SCHEMA_SQL)
-            .execute(&pool)
-            .await
-            .unwrap();
-        pool
+        #[cfg(feature = "db-sqlite")]
+        {
+            let pool = $crate::db::Pool::connect("sqlite::memory:").await.unwrap();
+            sqlx::query($crate::db::schema::SCHEMA_SQL)
+                .execute(&pool)
+                .await
+                .unwrap();
+            pool
+        }
+        #[cfg(not(feature = "db-sqlite"))]
+        {
+            let url = std::env::var("RAISFAST_TEST_DB_URL").unwrap_or_else(|_| {
+                panic!("RAISFAST_TEST_DB_URL must be set for non-SQLite tests")
+            });
+            let pool = $crate::db::Pool::connect(&url).await.unwrap();
+            $crate::db::connection::execute_schema(&pool).await.unwrap();
+            pool
+        }
     }};
 }
 

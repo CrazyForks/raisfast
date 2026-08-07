@@ -35,6 +35,23 @@ impl JobQueue for DefaultJobQueue {
         let payload = serialize_job(&new_job.job);
         let max_attempts = new_job.max_attempts.unwrap_or(3) as i32;
 
+        // Dedup: skip enqueue if a pending job with the same dedup_key exists.
+        if let Some(ref key) = new_job.dedup_key {
+            let exists: bool = sqlx::query_scalar(&format!(
+                "SELECT EXISTS(SELECT 1 FROM jobs WHERE dedup_key = {} AND status = {})",
+                Driver::ph(1),
+                Driver::ph(2)
+            ))
+            .bind(key)
+            .bind(JobStatus::Pending)
+            .fetch_one(&self.pool)
+            .await?;
+            if exists {
+                tracing::debug!("dedup: job {job_type} with key '{key}' already pending, skipping");
+                return Ok(());
+            }
+        }
+
         raisfast_derive::crud_insert!(&self.pool, "jobs", [
             "id" => id,
             "job_type" => job_type,
@@ -44,6 +61,9 @@ impl JobQueue for DefaultJobQueue {
             "run_after" => new_job.run_after,
             "cron_schedule_id" => new_job.cron_schedule_id,
             "cron_log_id" => new_job.cron_log_id,
+            "priority" => new_job.priority,
+            "timeout_secs" => new_job.timeout_secs,
+            "dedup_key" => new_job.dedup_key,
             "created_at" => now,
             "updated_at" => now
         ])?;
@@ -68,7 +88,7 @@ impl JobQueue for DefaultJobQueue {
             let select_sql = format!(
                 "SELECT {COL_ID} FROM jobs \
                  WHERE status = {} AND (run_after IS NULL OR run_after <= {}) \
-                 ORDER BY created_at ASC LIMIT {} \
+                 ORDER BY priority DESC, created_at ASC LIMIT {} \
                  FOR UPDATE SKIP LOCKED",
                 Driver::ph(1),
                 Driver::ph(2),
@@ -144,7 +164,7 @@ impl JobQueue for DefaultJobQueue {
                  WHERE {COL_ID} IN (
                    SELECT {COL_ID} FROM jobs
                    WHERE status = {} AND (run_after IS NULL OR run_after <= {})
-                   ORDER BY created_at ASC LIMIT {}
+                   ORDER BY priority DESC, created_at ASC LIMIT {}
                  )
                  {returning}",
                 Driver::ph(1),
@@ -206,7 +226,7 @@ impl JobQueue for DefaultJobQueue {
                 "SELECT {COL_ID}, job_type, payload, attempts, max_attempts, created_at, cron_schedule_id, cron_log_id \
                  FROM jobs \
                  WHERE status = {} AND (run_after IS NULL OR run_after <= {}) \
-                 ORDER BY created_at ASC \
+                 ORDER BY priority DESC, created_at ASC \
                  LIMIT {} \
                  FOR UPDATE SKIP LOCKED",
                 Driver::ph(1),
@@ -541,8 +561,9 @@ impl JobQueue for DefaultJobQueue {
 
     async fn requeue_stuck(&self, timeout: std::time::Duration) -> AppResult<u64> {
         let now = crate::utils::tz::now_utc();
-        let cutoff =
-            now - chrono::Duration::from_std(timeout).unwrap_or(chrono::Duration::minutes(5));
+        let timeout_secs = timeout.as_secs() as i64;
+        let cutoff_expr =
+            crate::db::Driver::ago_seconds_expr(&format!("COALESCE(timeout_secs, {timeout_secs})"));
 
         // Jobs that exhausted retries → dead
         let dead_sql = format!(
@@ -552,7 +573,7 @@ impl JobQueue for DefaultJobQueue {
             Driver::ph(2),
             Driver::ph(3),
             Driver::ph(4),
-            Driver::ph(5)
+            cutoff_expr
         );
         let dead_result: crate::db::pool::DbQueryResult =
             sqlx::query::<crate::db::pool::Db>(&dead_sql)
@@ -560,7 +581,6 @@ impl JobQueue for DefaultJobQueue {
                 .bind("visibility timeout exceeded")
                 .bind(now)
                 .bind(JobStatus::Running)
-                .bind(cutoff)
                 .execute(&self.pool)
                 .await?;
         let dead_count = dead_result.rows_affected();
@@ -573,7 +593,7 @@ impl JobQueue for DefaultJobQueue {
             Driver::ph(2),
             Driver::ph(3),
             Driver::ph(4),
-            Driver::ph(5)
+            cutoff_expr
         );
         let requeue_result: crate::db::pool::DbQueryResult =
             sqlx::query::<crate::db::pool::Db>(&requeue_sql)
@@ -581,7 +601,6 @@ impl JobQueue for DefaultJobQueue {
                 .bind("visibility timeout exceeded")
                 .bind(now)
                 .bind(JobStatus::Running)
-                .bind(cutoff)
                 .execute(&self.pool)
                 .await?;
         let requeue_count = requeue_result.rows_affected();
@@ -605,8 +624,9 @@ mod tests {
     use crate::worker::{Job, NewJob};
 
     async fn setup() -> DefaultJobQueue {
-        let pool = Pool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query::<crate::db::pool::Db>(crate::db::schema::SCHEMA_SQL)
+        let pool = crate::test_pool!();
+        // Clear leftover rows from previous test runs (shared PG database).
+        sqlx::query("DELETE FROM jobs")
             .execute(&pool)
             .await
             .unwrap();
@@ -620,17 +640,15 @@ mod tests {
             run_after: None,
             cron_schedule_id: None,
             cron_log_id: None,
+            priority: 0,
+            timeout_secs: None,
+            dedup_key: None,
         }
     }
 
     #[tokio::test]
     async fn enqueue_and_dequeue() {
-        let pool = Pool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query::<crate::db::pool::Db>(crate::db::schema::SCHEMA_SQL)
-            .execute(&pool)
-            .await
-            .unwrap();
-        let q = DefaultJobQueue::new(pool);
+        let q = setup().await;
         q.enqueue(sample_job()).await.unwrap();
         let jobs = q.dequeue(10).await.unwrap();
         assert_eq!(jobs.len(), 1);
@@ -699,6 +717,9 @@ mod tests {
             run_after: None,
             cron_schedule_id: None,
             cron_log_id: None,
+            priority: 0,
+            timeout_secs: None,
+            dedup_key: None,
         })
         .await
         .unwrap();
@@ -761,6 +782,9 @@ mod tests {
             run_after: None,
             cron_schedule_id: None,
             cron_log_id: None,
+            priority: 0,
+            timeout_secs: None,
+            dedup_key: None,
         })
         .await
         .unwrap();
@@ -813,6 +837,9 @@ mod tests {
             run_after: None,
             cron_schedule_id: None,
             cron_log_id: None,
+            priority: 0,
+            timeout_secs: None,
+            dedup_key: None,
         })
         .await
         .unwrap();
@@ -883,6 +910,9 @@ mod tests {
             run_after: Some(future),
             cron_schedule_id: None,
             cron_log_id: None,
+            priority: 0,
+            timeout_secs: None,
+            dedup_key: None,
         })
         .await
         .unwrap();

@@ -214,11 +214,7 @@ mod tests {
 
     async fn setup() -> (EventBus, Arc<DefaultJobQueue>) {
         let bus = EventBus::new(16);
-        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query(crate::db::schema::SCHEMA_SQL)
-            .execute(&pool)
-            .await
-            .unwrap();
+        let pool = crate::test_pool!();
         let queue = Arc::new(DefaultJobQueue::new(pool));
         (bus, queue)
     }

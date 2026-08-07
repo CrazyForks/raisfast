@@ -11,11 +11,11 @@ pub struct PaymentChannel {
     pub tenant_id: Option<String>,
     pub provider: String,
     pub name: String,
-    pub is_live: i64,
+    pub is_live: bool,
     pub credentials: String,
     pub webhook_secret: Option<String>,
     pub settings: Option<String>,
-    pub is_active: i64,
+    pub is_active: bool,
     pub sort_order: i64,
     pub version: i64,
     pub created_at: Timestamp,
@@ -35,7 +35,7 @@ pub async fn find_all_active(
     pool: &crate::db::Pool,
     tenant_id: Option<&str>,
 ) -> AppResult<Vec<PaymentChannel>> {
-    raisfast_derive::crud_find_all!(pool, "payment_channels", PaymentChannel, where: ("is_active", 1_i64), tenant: tenant_id, order_by: "sort_order, created_at DESC")
+    raisfast_derive::crud_find_all!(pool, "payment_channels", PaymentChannel, where: ("is_active", true), tenant: tenant_id, order_by: "sort_order, created_at DESC")
         .map_err(Into::into)
 }
 
@@ -46,11 +46,10 @@ pub async fn find_all_admin_paginated(
     page_size: i64,
     is_active: Option<bool>,
 ) -> AppResult<(Vec<PaymentChannel>, i64)> {
-    let active_val = is_active.map(|a| if a { 1_i64 } else { 0_i64 });
     let result = raisfast_derive::crud_query_paged!(
         pool, PaymentChannel,
         table: "payment_channels",
-        where: ["is_active" => active_val],
+        where: ["is_active" => is_active],
         order_by: "sort_order, created_at DESC",
         tenant: tenant_id,
         page: page,
@@ -98,18 +97,16 @@ pub async fn update(
     cmd: &crate::commands::UpdatePaymentChannelCmd,
     tenant_id: Option<&str>,
 ) -> AppResult<bool> {
-    let is_live_val = if cmd.is_live { 1_i64 } else { 0_i64 };
-    let is_active_val = if cmd.is_active { 1_i64 } else { 0_i64 };
     let affected = raisfast_derive::crud_update!(
         pool, "payment_channels",
         bind: [
             "provider" => &cmd.provider,
             "name" => &cmd.name,
-            "is_live" => is_live_val,
+            "is_live" => cmd.is_live,
             "credentials" => &cmd.credentials,
             "webhook_secret" => &cmd.webhook_secret,
             "settings" => &cmd.settings,
-            "is_active" => is_active_val,
+            "is_active" => cmd.is_active,
             "sort_order" => cmd.sort_order,
         ],
         raw: ["updated_at" => crate::db::Driver::now_fn(), "version" => "version + 1"],
@@ -134,9 +131,37 @@ pub async fn delete_by_id(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::DbDriver;
 
     async fn setup_pool() -> crate::db::Pool {
         crate::test_pool!()
+    }
+
+    fn uniq_tenant() -> String {
+        format!("t_{}", crate::utils::id::new_id())
+    }
+
+    async fn seed_channel_t(
+        pool: &crate::db::Pool,
+        provider: &str,
+        tenant: &str,
+    ) -> PaymentChannel {
+        super::insert(
+            pool,
+            &crate::commands::CreatePaymentChannelCmd {
+                provider: provider.into(),
+                name: format!("{}-channel-{}", provider, uuid::Uuid::now_v7()),
+                is_live: false,
+                credentials: r#"{"api_key":"test"}"#.into(),
+                webhook_secret: None,
+                settings: None,
+                is_active: true,
+                sort_order: 0,
+            },
+            Some(tenant),
+        )
+        .await
+        .unwrap()
     }
 
     async fn seed_channel(pool: &crate::db::Pool, provider: &str) -> PaymentChannel {
@@ -168,8 +193,8 @@ mod tests {
             .unwrap();
         assert_eq!(found.id, ch.id);
         assert_eq!(found.provider, "stripe");
-        assert_eq!(found.is_live, 0);
-        assert_eq!(found.is_active, 1);
+        assert_eq!(found.is_live, false);
+        assert_eq!(found.is_active, true);
         assert_eq!(found.version, 1);
     }
 
@@ -187,14 +212,18 @@ mod tests {
     #[tokio::test]
     async fn find_all_active_channels() {
         let pool = setup_pool().await;
-        let ch1 = seed_channel(&pool, "stripe").await;
-        let _ch2 = seed_channel(&pool, "alipay").await;
-        sqlx::query("UPDATE payment_channels SET is_active = 0 WHERE id = ?")
-            .bind(ch1.id)
-            .execute(&pool)
-            .await
-            .unwrap();
-        let active = super::find_all_active(&pool, None).await.unwrap();
+        let tenant = uniq_tenant();
+        let ch1 = seed_channel_t(&pool, "stripe", &tenant).await;
+        let _ch2 = seed_channel_t(&pool, "alipay", &tenant).await;
+        sqlx::query(&format!(
+            "UPDATE payment_channels SET is_active = FALSE WHERE id = {}",
+            crate::db::Driver::ph(1)
+        ))
+        .bind(ch1.id)
+        .execute(&pool)
+        .await
+        .unwrap();
+        let active = super::find_all_active(&pool, Some(&tenant)).await.unwrap();
         assert_eq!(active.len(), 1);
         assert_eq!(active[0].provider, "alipay");
     }
@@ -202,10 +231,11 @@ mod tests {
     #[tokio::test]
     async fn find_all_admin_paginated_no_filter() {
         let pool = setup_pool().await;
+        let tenant = uniq_tenant();
         for _ in 0..3 {
-            seed_channel(&pool, "stripe").await;
+            seed_channel_t(&pool, "stripe", &tenant).await;
         }
-        let (items, total) = super::find_all_admin_paginated(&pool, None, 1, 10, None)
+        let (items, total) = super::find_all_admin_paginated(&pool, Some(&tenant), 1, 10, None)
             .await
             .unwrap();
         assert_eq!(total, 3);
@@ -215,15 +245,20 @@ mod tests {
     #[tokio::test]
     async fn find_all_admin_paginated_status_filter() {
         let pool = setup_pool().await;
-        let ch = seed_channel(&pool, "wxpay").await;
-        sqlx::query("UPDATE payment_channels SET is_active = 0 WHERE id = ?")
-            .bind(ch.id)
-            .execute(&pool)
-            .await
-            .unwrap();
-        let (items, total) = super::find_all_admin_paginated(&pool, None, 1, 10, Some(true))
-            .await
-            .unwrap();
+        let tenant = uniq_tenant();
+        let ch = seed_channel_t(&pool, "wxpay", &tenant).await;
+        sqlx::query(&format!(
+            "UPDATE payment_channels SET is_active = FALSE WHERE id = {}",
+            crate::db::Driver::ph(1)
+        ))
+        .bind(ch.id)
+        .execute(&pool)
+        .await
+        .unwrap();
+        let (items, total) =
+            super::find_all_admin_paginated(&pool, Some(&tenant), 1, 10, Some(true))
+                .await
+                .unwrap();
         assert_eq!(total, 0);
         assert!(items.is_empty());
     }
@@ -232,12 +267,13 @@ mod tests {
     async fn update_changes_fields() {
         let pool = setup_pool().await;
         let ch = seed_channel(&pool, "stripe").await;
+        let new_name = format!("PayPal Live-{}", crate::utils::id::new_id());
         let ok = super::update(
             &pool,
             &crate::commands::UpdatePaymentChannelCmd {
                 id: ch.id,
                 provider: "paypal".into(),
-                name: "PayPal Live".into(),
+                name: new_name.clone(),
                 is_live: true,
                 credentials: r#"{"client_id":"new"}"#.into(),
                 webhook_secret: Some("secret123".into()),
@@ -256,9 +292,9 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(found.provider, "paypal");
-        assert_eq!(found.name, "PayPal Live");
-        assert_eq!(found.is_live, 1);
-        assert_eq!(found.is_active, 0);
+        assert_eq!(found.name, new_name);
+        assert_eq!(found.is_live, true);
+        assert_eq!(found.is_active, false);
         assert_eq!(found.sort_order, 5);
         assert_eq!(found.version, ch.version + 1);
     }

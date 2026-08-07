@@ -138,6 +138,7 @@ pub async fn tx_insert(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::DbDriver;
     use crate::types::snowflake_id::SnowflakeId;
 
     async fn setup_pool() -> crate::db::Pool {
@@ -147,7 +148,7 @@ mod tests {
     async fn seed_user(pool: &crate::db::Pool) -> i64 {
         let id = crate::utils::id::new_id();
         let username = format!("testuser_{id}");
-        sqlx::query("INSERT INTO users (id, username, status, registered_via) VALUES (?, ?, 'active', 'email')")
+        sqlx::query(&format!("INSERT INTO users (id, username, status, registered_via) VALUES ({}, {}, 'active', 'email')", crate::db::Driver::ph(1), crate::db::Driver::ph(2)))
             .bind(id)
             .bind(&username)
             .execute(pool)
@@ -230,7 +231,7 @@ mod tests {
             pool,
             &crate::commands::CreatePaymentTransactionCmd {
                 payment_order_id: SnowflakeId(payment_order_id),
-                order_id: Some("order-ref-1".into()),
+                order_id: Some(format!("order-ref-{}", crate::utils::id::new_id())),
                 user_id: SnowflakeId(user_id),
                 tx_type: tx_type.into(),
                 amount: 1000,
@@ -251,7 +252,8 @@ mod tests {
         let uid = seed_user(&pool).await;
         let ch_id = seed_channel(&pool).await;
         let po_id = seed_payment_order(&pool, uid, ch_id).await;
-        let tx = seed_tx(&pool, po_id, uid, "charge", "ch_abc123").await;
+        let tx_id = format!("ch_abc123_{}", crate::utils::id::new_id());
+        let tx = seed_tx(&pool, po_id, uid, "charge", &tx_id).await;
         let found = super::find_by_id(&pool, tx.id, None)
             .await
             .unwrap()
@@ -260,7 +262,7 @@ mod tests {
         assert_eq!(found.payment_order_id, SnowflakeId(po_id));
         assert_eq!(found.tx_type, "charge");
         assert_eq!(found.amount, 1000);
-        assert_eq!(found.provider_tx_id, "ch_abc123");
+        assert_eq!(found.provider_tx_id, tx_id);
         assert_eq!(found.status, "succeeded");
     }
 
@@ -281,8 +283,22 @@ mod tests {
         let uid = seed_user(&pool).await;
         let ch_id = seed_channel(&pool).await;
         let po_id = seed_payment_order(&pool, uid, ch_id).await;
-        seed_tx(&pool, po_id, uid, "charge", "ch_001").await;
-        seed_tx(&pool, po_id, uid, "refund", "re_001").await;
+        seed_tx(
+            &pool,
+            po_id,
+            uid,
+            "charge",
+            &format!("ch_001_{}", crate::utils::id::new_id()),
+        )
+        .await;
+        seed_tx(
+            &pool,
+            po_id,
+            uid,
+            "refund",
+            &format!("re_001_{}", crate::utils::id::new_id()),
+        )
+        .await;
         let txs = super::find_by_payment_order_id(&pool, SnowflakeId(po_id), None)
             .await
             .unwrap();
@@ -295,12 +311,19 @@ mod tests {
         let uid = seed_user(&pool).await;
         let ch_id = seed_channel(&pool).await;
         let po_id = seed_payment_order(&pool, uid, ch_id).await;
-        seed_tx(&pool, po_id, uid, "charge", "ch_002").await;
-        let txs = super::find_by_order_id(&pool, "order-ref-1", None)
+        let tx = seed_tx(
+            &pool,
+            po_id,
+            uid,
+            "charge",
+            &format!("ch_002_{}", crate::utils::id::new_id()),
+        )
+        .await;
+        let txs = super::find_by_order_id(&pool, tx.order_id.as_deref().unwrap(), None)
             .await
             .unwrap();
         assert_eq!(txs.len(), 1);
-        assert_eq!(txs[0].order_id.as_deref().unwrap(), "order-ref-1");
+        assert_eq!(txs[0].order_id, tx.order_id);
     }
 
     #[tokio::test]
@@ -309,12 +332,13 @@ mod tests {
         let uid = seed_user(&pool).await;
         let ch_id = seed_channel(&pool).await;
         let po_id = seed_payment_order(&pool, uid, ch_id).await;
-        seed_tx(&pool, po_id, uid, "charge", "ch_unique").await;
-        let found = super::find_by_provider_tx_id(&pool, "ch_unique", None)
+        let tx_id = format!("ch_unique_{}", crate::utils::id::new_id());
+        seed_tx(&pool, po_id, uid, "charge", &tx_id).await;
+        let found = super::find_by_provider_tx_id(&pool, &tx_id, None)
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(found.provider_tx_id, "ch_unique");
+        assert_eq!(found.provider_tx_id, tx_id);
     }
 
     #[tokio::test]
@@ -334,7 +358,14 @@ mod tests {
         let uid = seed_user(&pool).await;
         let ch_id = seed_channel(&pool).await;
         let po_id = seed_payment_order(&pool, uid, ch_id).await;
-        let tx = seed_tx(&pool, po_id, uid, "charge", "ch_payload").await;
+        let tx = seed_tx(
+            &pool,
+            po_id,
+            uid,
+            "charge",
+            &format!("ch_payload_{}", crate::utils::id::new_id()),
+        )
+        .await;
         assert_eq!(tx.raw_payload.unwrap(), r#"{"event":"charge.succeeded"}"#);
     }
 }

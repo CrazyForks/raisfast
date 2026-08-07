@@ -204,6 +204,7 @@ impl CouponService for CouponServiceImpl {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::DbDriver;
 
     async fn setup_pool() -> crate::db::Pool {
         crate::test_pool!()
@@ -235,11 +236,12 @@ mod tests {
         let svc = make_service(pool.clone());
         let a = auth_admin(None);
 
+        let code = format!("SAVE10_{}", crate::utils::id::new_id());
         let c = svc
             .create(
                 &a,
                 CreateCouponRequest {
-                    code: "SAVE10".into(),
+                    code: code.clone(),
                     title: "10% Off".into(),
                     coupon_type: Some("percent".into()),
                     value: 10,
@@ -253,7 +255,7 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(c.code, "SAVE10");
+        assert_eq!(c.code, code);
         assert_eq!(c.value, 10);
     }
 
@@ -263,10 +265,11 @@ mod tests {
         let svc = make_service(pool.clone());
         let a = auth_admin(None);
 
+        let dup_code = format!("DUP_{}", crate::utils::id::new_id());
         svc.create(
             &a,
             CreateCouponRequest {
-                code: "DUP".into(),
+                code: dup_code.clone(),
                 title: "First".into(),
                 coupon_type: None,
                 value: 10,
@@ -284,7 +287,7 @@ mod tests {
             .create(
                 &a,
                 CreateCouponRequest {
-                    code: "DUP".into(),
+                    code: dup_code.clone(),
                     title: "Second".into(),
                     coupon_type: None,
                     value: 20,
@@ -341,7 +344,7 @@ mod tests {
             .create(
                 &a,
                 CreateCouponRequest {
-                    code: "UPD".into(),
+                    code: format!("UPD_{}", crate::utils::id::new_id()),
                     title: "Original".into(),
                     coupon_type: None,
                     value: 10,
@@ -387,7 +390,7 @@ mod tests {
             .create(
                 &a,
                 CreateCouponRequest {
-                    code: "DEL".into(),
+                    code: format!("DEL_{}", crate::utils::id::new_id()),
                     title: "Delete Me".into(),
                     coupon_type: None,
                     value: 10,
@@ -416,11 +419,12 @@ mod tests {
         let svc = make_service(pool.clone());
         let a = auth_admin(None);
 
+        let code = format!("VAL_{}", crate::utils::id::new_id());
         let c = svc
             .create(
                 &a,
                 CreateCouponRequest {
-                    code: "VAL".into(),
+                    code: code.clone(),
                     title: "Validate".into(),
                     coupon_type: None,
                     value: 10,
@@ -438,7 +442,7 @@ mod tests {
             .validate_coupon(Some(c.id), None, SnowflakeId(1), 1000, None)
             .await
             .unwrap();
-        assert_eq!(validated.code, "VAL");
+        assert_eq!(validated.code, code);
     }
 
     #[tokio::test]
@@ -447,10 +451,11 @@ mod tests {
         let svc = make_service(pool.clone());
         let a = auth_admin(None);
 
+        let code = format!("BYCODE_{}", crate::utils::id::new_id());
         svc.create(
             &a,
             CreateCouponRequest {
-                code: "BYCODE".into(),
+                code: code.clone(),
                 title: "By Code".into(),
                 coupon_type: None,
                 value: 10,
@@ -465,10 +470,10 @@ mod tests {
         .unwrap();
 
         let validated = svc
-            .validate_coupon(None, Some("BYCODE"), SnowflakeId(1), 1000, None)
+            .validate_coupon(None, Some(&code), SnowflakeId(1), 1000, None)
             .await
             .unwrap();
-        assert_eq!(validated.code, "BYCODE");
+        assert_eq!(validated.code, code);
     }
 
     #[tokio::test]
@@ -492,7 +497,7 @@ mod tests {
             .create(
                 &a,
                 CreateCouponRequest {
-                    code: "MIN".into(),
+                    code: format!("MIN_{}", crate::utils::id::new_id()),
                     title: "Min Order".into(),
                     coupon_type: None,
                     value: 10,
@@ -523,7 +528,7 @@ mod tests {
             .create(
                 &a,
                 CreateCouponRequest {
-                    code: "INACT".into(),
+                    code: format!("INACT_{}", crate::utils::id::new_id()),
                     title: "Inactive".into(),
                     coupon_type: None,
                     value: 10,
@@ -537,11 +542,14 @@ mod tests {
             .await
             .unwrap();
 
-        sqlx::query("UPDATE coupons SET status = 'inactive' WHERE id = ?")
-            .bind(c.id)
-            .execute(&pool)
-            .await
-            .unwrap();
+        sqlx::query(&format!(
+            "UPDATE coupons SET status = 'inactive' WHERE id = {}",
+            crate::db::Driver::ph(1)
+        ))
+        .bind(c.id)
+        .execute(&pool)
+        .await
+        .unwrap();
 
         let err = svc
             .validate_coupon(Some(c.id), None, SnowflakeId(1), 1000, None)

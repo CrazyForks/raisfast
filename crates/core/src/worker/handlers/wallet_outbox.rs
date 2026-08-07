@@ -150,11 +150,7 @@ mod tests {
 
     #[tokio::test]
     async fn ignores_wrong_job_type() {
-        let pool = Pool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query(crate::db::schema::SCHEMA_SQL)
-            .execute(&pool)
-            .await
-            .unwrap();
+        let pool = crate::test_pool!();
         let config = Arc::new(AppConfig::test_defaults());
         let handler = ProcessWalletOutboxHandler::new(pool, config);
         let job = Job::GenerateSitemap;
@@ -163,11 +159,7 @@ mod tests {
 
     #[tokio::test]
     async fn handles_empty_outbox() {
-        let pool = Pool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query(crate::db::schema::SCHEMA_SQL)
-            .execute(&pool)
-            .await
-            .unwrap();
+        let pool = crate::test_pool!();
         let config = Arc::new(AppConfig::test_defaults());
         let handler = ProcessWalletOutboxHandler::new(pool, config);
         let job = Job::ProcessWalletOutbox;

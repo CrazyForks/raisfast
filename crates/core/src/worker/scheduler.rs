@@ -616,15 +616,62 @@ impl CronScheduler {
 
         let rows = sqlx::query_as::<_, CronScheduleRow>(&format!(
             "SELECT id, label, job_type, payload, cron_expr, enabled, last_run_at, next_run_at, plugin_id, exec_kind, handler_id, params, script_lang, script_source, script_entry, use_shell, timeout_secs, created_at, updated_at
-             FROM cron_schedules WHERE enabled = TRUE AND next_run_at <= {}",
-            Driver::ph(1)
+             FROM cron_schedules WHERE enabled = {} AND next_run_at <= {}",
+            Driver::ph(1),
+            Driver::ph(2)
         ))
+        .bind(true)
         .bind(now)
         .fetch_all(&self.pool)
         .await?;
 
         for row in rows {
             let schedule = cron_row_to_schedule!(row);
+
+            // ── Atomic claim (distributed-safe) ──────────────────────────
+            //
+            // Multiple scheduler instances (multi-node / multi-process) may
+            // SELECT the same due schedule at once. We atomically claim it by
+            // advancing `next_run_at` with an optimistic-concurrency guard
+            // (`WHERE next_run_at = $old`). Only the first scheduler's UPDATE
+            // matches (rows_affected == 1); all others see an already-advanced
+            // value and skip. Race-free on SQLite (single-writer), PostgreSQL
+            // and MySQL — uses `rows_affected()` instead of `RETURNING` for
+            // MySQL compatibility (MySQL lacks RETURNING).
+
+            let next = next_run(&schedule.cron_expr, now).unwrap_or_else(|e| {
+                tracing::warn!(
+                    schedule = %schedule.label,
+                    error = %e,
+                    "cron schedule has no future runs; advancing next_run_at to prevent spin"
+                );
+                now + chrono::Duration::days(365 * 100)
+            });
+
+            let claim_result: crate::db::pool::DbQueryResult = sqlx::query(&format!(
+                "UPDATE cron_schedules SET next_run_at = {}, last_run_at = {}, updated_at = {} \
+                 WHERE id = {} AND next_run_at = {}",
+                Driver::ph(1),
+                Driver::ph(2),
+                Driver::ph(3),
+                Driver::ph(4),
+                Driver::ph(5)
+            ))
+            .bind(next)
+            .bind(now)
+            .bind(now)
+            .bind(schedule.id)
+            .bind(schedule.next_run_at)
+            .execute(&self.pool)
+            .await?;
+
+            if claim_result.rows_affected() == 0 {
+                tracing::debug!(
+                    schedule = %schedule.label,
+                    "cron schedule already claimed by another worker, skipping"
+                );
+                continue;
+            }
 
             if let Err(e) = self.dispatch(&schedule).await {
                 tracing::error!(
@@ -647,8 +694,7 @@ impl CronScheduler {
 
         // Create execution log row (status: running). The real outcome
         // (Completed/Failed/Dead) is written back by `WorkerRunner` after the
-        // job finishes — NOT here. This fixes the "fake log" bug where dispatch
-        // reported Completed based on enqueue success alone.
+        // job finishes — NOT here.
         let log_id: Option<i64> =
             create_execution_log(&self.pool, schedule.id, &schedule.job_type, &schedule.label)
                 .await
@@ -666,46 +712,30 @@ impl CronScheduler {
             Err(e) => Err(e),
         };
 
+        // Update execution log status. `next_run_at` is already advanced by
+        // `tick()` during the atomic claim, so we only record the dispatch
+        // outcome here — no transaction needed (single UPDATE).
         let now = crate::utils::tz::now_utc();
-        // Use UTC consistently — `next_run` accepts any TimeZone, but mixing
-        // site_tz here while `tick()` queries with UTC caused off-by-one-hour
-        // drift near DST boundaries. UTC is the single source of truth.
-        let next = next_run(&schedule.cron_expr, now).ok();
-
-        in_transaction!(&self.pool, tx, {
-            match &dispatch_result {
-                Ok(()) => {
-                    // Mark as "dispatched" (enqueued, not yet executed).
-                    // WorkerRunner will update to Completed/Failed/Dead later.
-                    if let Some(ref lid) = log_id {
-                        raisfast_derive::crud_update!(&mut *tx, "cron_execution_log",
-                            bind: ["status" => CronExecStatus::Dispatched],
-                            where: ("id", lid)
-                        )?;
-                    }
-                }
-                Err(e) => {
-                    // Enqueue itself failed — record immediately as Failed.
-                    if let Some(ref lid) = log_id {
-                        let err_str = e.to_string();
-                        raisfast_derive::crud_update!(&mut *tx, "cron_execution_log",
-                            bind: ["status" => CronExecStatus::Failed, "error" => &err_str, "finished_at" => now],
-                            where: ("id", lid)
-                        )?;
-                    }
-                    tracing::error!("cron dispatch failed for '{}': {e}", schedule.label);
+        match &dispatch_result {
+            Ok(()) => {
+                if let Some(lid) = log_id {
+                    raisfast_derive::crud_update!(&self.pool, "cron_execution_log",
+                        bind: ["status" => CronExecStatus::Dispatched],
+                        where: ("id", lid)
+                    )?;
                 }
             }
-
-            if let Some(next) = &next {
-                raisfast_derive::crud_update!(&mut *tx, "cron_schedules",
-                    bind: ["last_run_at" => now, "next_run_at" => next, "updated_at" => now],
-                    where: ("id", schedule.id)
-                )?;
+            Err(e) => {
+                let err_str = e.to_string();
+                if let Some(lid) = log_id {
+                    raisfast_derive::crud_update!(&self.pool, "cron_execution_log",
+                        bind: ["status" => CronExecStatus::Failed, "error" => &err_str, "finished_at" => now],
+                        where: ("id", lid)
+                    )?;
+                }
+                tracing::error!("cron dispatch failed for '{}': {e}", schedule.label);
             }
-
-            Ok::<_, crate::errors::app_error::AppError>(())
-        })?;
+        }
 
         dispatch_result
     }
@@ -760,27 +790,9 @@ impl CronScheduler {
             });
         }
 
-        // Legacy / plugin path: try tagged-enum round-trip first
-        let tagged = match &schedule.payload {
-            Some(p) if !p.is_empty() => {
-                format!(r#"{{"type":"{}","payload":{}}}"#, schedule.job_type, p)
-            }
-            _ => format!(r#"{{"type":"{}"}}"#, schedule.job_type),
-        };
-
-        if let Ok(job) = serde_json::from_str::<Job>(&tagged) {
-            return Ok(job);
-        }
-
-        let payload_value: serde_json::Value = match &schedule.payload {
-            Some(p) if !p.is_empty() => serde_json::from_str(p).unwrap_or(serde_json::Value::Null),
-            _ => serde_json::Value::Null,
-        };
-
-        Ok(Job::Custom {
-            job_type: schedule.job_type.clone(),
-            payload: payload_value,
-        })
+        // Legacy / plugin path: reuse parse_job's tagged-enum → Custom fallback.
+        let payload_str = schedule.payload.as_deref().unwrap_or("");
+        crate::worker::parse_job(&schedule.job_type, payload_str)
     }
 }
 
@@ -1134,11 +1146,7 @@ mod tests {
 
     #[tokio::test]
     async fn create_and_find_schedule() {
-        let pool = Pool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query(crate::db::schema::SCHEMA_SQL)
-            .execute(&pool)
-            .await
-            .unwrap();
+        let pool = setup().await;
 
         let s = create_schedule(
             &pool,
@@ -1161,11 +1169,7 @@ mod tests {
 
     #[tokio::test]
     async fn toggle_and_delete_schedule() {
-        let pool = Pool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query(crate::db::schema::SCHEMA_SQL)
-            .execute(&pool)
-            .await
-            .unwrap();
+        let pool = setup().await;
 
         let s = create_schedule(
             &pool,
@@ -1188,11 +1192,7 @@ mod tests {
 
     #[tokio::test]
     async fn toggle_nonexistent_returns_not_found() {
-        let pool = Pool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query(crate::db::schema::SCHEMA_SQL)
-            .execute(&pool)
-            .await
-            .unwrap();
+        let pool = setup().await;
 
         let result = toggle_schedule(&pool, SnowflakeId(9999999), true).await;
         assert!(result.is_err());
@@ -1200,11 +1200,7 @@ mod tests {
 
     #[tokio::test]
     async fn list_schedules_returns_all() {
-        let pool = Pool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query(crate::db::schema::SCHEMA_SQL)
-            .execute(&pool)
-            .await
-            .unwrap();
+        let pool = setup().await;
 
         create_schedule(&pool, "A", "generate_sitemap", None, "0 0 * * * *", true)
             .await
@@ -1219,11 +1215,7 @@ mod tests {
 
     #[tokio::test]
     async fn seed_defaults_inserts_when_empty() {
-        let pool = Pool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query(crate::db::schema::SCHEMA_SQL)
-            .execute(&pool)
-            .await
-            .unwrap();
+        let pool = setup().await;
 
         seed_defaults(&pool, &[]).await.unwrap();
 
@@ -1238,30 +1230,35 @@ mod tests {
 
     #[tokio::test]
     async fn scheduler_dispatches_due_schedule() {
-        let pool = Pool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query(crate::db::schema::SCHEMA_SQL)
-            .execute(&pool)
-            .await
-            .unwrap();
+        let pool = setup().await;
 
         let queue = std::sync::Arc::new(super::super::DefaultJobQueue::new(pool.clone()));
 
         // Manually insert a schedule with next_run_at in the past
         let now = Utc::now();
-        let past = (now - chrono::Duration::hours(1)).to_rfc3339();
+        let past = now - chrono::Duration::hours(1);
+        let schedule_id = crate::utils::id::new_id();
 
-        sqlx::query(
+        sqlx::query(&format!(
             "INSERT INTO cron_schedules (id, label, job_type, payload, cron_expr, enabled, next_run_at, plugin_id, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, 1, ?, NULL, ?, ?)",
-        )
-        .bind(1i64)
+             VALUES ({}, {}, {}, {}, {}, TRUE, {}, NULL, {}, {})",
+            crate::db::Driver::ph(1),
+            crate::db::Driver::ph(2),
+            crate::db::Driver::ph(3),
+            crate::db::Driver::ph(4),
+            crate::db::Driver::ph(5),
+            crate::db::Driver::ph(6),
+            crate::db::Driver::ph(7),
+            crate::db::Driver::ph(8)
+        ))
+        .bind(schedule_id)
         .bind("Test Sitemap")
         .bind("generate_sitemap")
         .bind(Option::<String>::None)
         .bind("0 0 */6 * * *")
         .bind(&past)
-        .bind(now.to_rfc3339())
-        .bind(now.to_rfc3339())
+        .bind(&now)
+        .bind(&now)
         .execute(&pool)
         .await
         .unwrap();
@@ -1276,38 +1273,46 @@ mod tests {
         assert_eq!(jobs.len(), 1);
         assert_eq!(jobs[0].0, "generate_sitemap");
 
-        let row: (String,) = sqlx::query_as("SELECT next_run_at FROM cron_schedules WHERE id = 1")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
+        let row: (crate::utils::tz::Timestamp,) = sqlx::query_as(&format!(
+            "SELECT next_run_at FROM cron_schedules WHERE id = {}",
+            crate::db::Driver::ph(1)
+        ))
+        .bind(schedule_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
         assert_ne!(row.0, past);
     }
 
     #[tokio::test]
     async fn scheduler_skips_future_schedule() {
-        let pool = Pool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query(crate::db::schema::SCHEMA_SQL)
-            .execute(&pool)
-            .await
-            .unwrap();
+        let pool = setup().await;
 
         let queue = std::sync::Arc::new(super::super::DefaultJobQueue::new(pool.clone()));
 
         let now = Utc::now();
-        let future = (now + chrono::Duration::hours(1)).to_rfc3339();
+        let future = now + chrono::Duration::hours(1);
 
-        sqlx::query(
+        sqlx::query(&format!(
             "INSERT INTO cron_schedules (id, label, job_type, payload, cron_expr, enabled, next_run_at, plugin_id, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, 1, ?, NULL, ?, ?)",
-        )
-        .bind(2i64)
+             VALUES ({}, {}, {}, {}, {}, TRUE, {}, NULL, {}, {})",
+            crate::db::Driver::ph(1),
+            crate::db::Driver::ph(2),
+            crate::db::Driver::ph(3),
+            crate::db::Driver::ph(4),
+            crate::db::Driver::ph(5),
+            crate::db::Driver::ph(6),
+            crate::db::Driver::ph(7),
+            crate::db::Driver::ph(8)
+        ))
+        .bind(crate::utils::id::new_id())
         .bind("Future Job")
         .bind("generate_sitemap")
         .bind(Option::<String>::None)
         .bind("0 0 */6 * * *")
         .bind(&future)
-        .bind(now.to_rfc3339())
-        .bind(now.to_rfc3339())
+        .bind(&now)
+        .bind(&now)
         .execute(&pool)
         .await
         .unwrap();
@@ -1323,12 +1328,121 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn sync_plugin_crons_creates_entries() {
-        let pool = Pool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query(crate::db::schema::SCHEMA_SQL)
-            .execute(&pool)
+    async fn tick_advances_next_run_at_no_redispatch() {
+        // Regression: after the first tick claims a schedule, a second tick
+        // must NOT re-dispatch it (next_run_at was atomically advanced).
+        let pool = setup().await;
+
+        let queue = std::sync::Arc::new(super::super::DefaultJobQueue::new(pool.clone()));
+
+        let now = Utc::now();
+        let past = now - chrono::Duration::hours(1);
+        sqlx::query(&format!(
+            "INSERT INTO cron_schedules (id, label, job_type, payload, cron_expr, enabled, next_run_at, plugin_id, created_at, updated_at)
+             VALUES ({}, {}, {}, {}, {}, TRUE, {}, NULL, {}, {})",
+            crate::db::Driver::ph(1),
+            crate::db::Driver::ph(2),
+            crate::db::Driver::ph(3),
+            crate::db::Driver::ph(4),
+            crate::db::Driver::ph(5),
+            crate::db::Driver::ph(6),
+            crate::db::Driver::ph(7),
+            crate::db::Driver::ph(8)
+        ))
+        .bind(crate::utils::id::new_id())
+        .bind("Sitemap")
+        .bind("generate_sitemap")
+        .bind(Option::<String>::None)
+        .bind("0 0 */6 * * *")
+        .bind(&past)
+        .bind(&now)
+        .bind(&now)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let scheduler = CronScheduler::new(pool.clone(), queue, std::time::Duration::from_secs(60));
+
+        scheduler.tick().await.unwrap();
+        let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM jobs")
+            .fetch_one(&pool)
             .await
             .unwrap();
+        assert_eq!(count.0, 1);
+
+        // Second tick should find nothing due (next_run_at already advanced).
+        scheduler.tick().await.unwrap();
+        let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM jobs")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(count.0, 1, "second tick must not re-dispatch");
+    }
+
+    #[tokio::test]
+    async fn concurrent_ticks_claim_once() {
+        // Two schedulers racing on the same due schedule: the optimistic-
+        // concurrency claim (`WHERE next_run_at = $old`) must ensure only one
+        // enqueues a job. On SQLite this is effectively serialized; on
+        // PostgreSQL/MySQL this is a true concurrent test.
+        let pool = setup().await;
+
+        let queue = std::sync::Arc::new(super::super::DefaultJobQueue::new(pool.clone()));
+
+        let now = Utc::now();
+        let past = now - chrono::Duration::hours(1);
+        sqlx::query(&format!(
+            "INSERT INTO cron_schedules (id, label, job_type, payload, cron_expr, enabled, next_run_at, plugin_id, created_at, updated_at)
+             VALUES ({}, {}, {}, {}, {}, TRUE, {}, NULL, {}, {})",
+            crate::db::Driver::ph(1),
+            crate::db::Driver::ph(2),
+            crate::db::Driver::ph(3),
+            crate::db::Driver::ph(4),
+            crate::db::Driver::ph(5),
+            crate::db::Driver::ph(6),
+            crate::db::Driver::ph(7),
+            crate::db::Driver::ph(8)
+        ))
+        .bind(crate::utils::id::new_id())
+        .bind("Sitemap")
+        .bind("generate_sitemap")
+        .bind(Option::<String>::None)
+        .bind("0 0 */6 * * *")
+        .bind(&past)
+        .bind(&now)
+        .bind(&now)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let s1 = CronScheduler::new(
+            pool.clone(),
+            queue.clone(),
+            std::time::Duration::from_secs(60),
+        );
+        let s2 = CronScheduler::new(
+            pool.clone(),
+            queue.clone(),
+            std::time::Duration::from_secs(60),
+        );
+
+        let (r1, r2) = tokio::join!(s1.tick(), s2.tick());
+        r1.unwrap();
+        r2.unwrap();
+
+        let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM jobs")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            count.0, 1,
+            "concurrent ticks must not produce duplicate jobs"
+        );
+    }
+
+    #[tokio::test]
+    async fn sync_plugin_crons_creates_entries() {
+        let pool = setup().await;
 
         let entries = vec![CronEntry {
             label: "Cleanup".into(),
@@ -1351,11 +1465,7 @@ mod tests {
 
     #[tokio::test]
     async fn sync_plugin_crons_updates_existing() {
-        let pool = Pool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query(crate::db::schema::SCHEMA_SQL)
-            .execute(&pool)
-            .await
-            .unwrap();
+        let pool = setup().await;
 
         let entries = vec![CronEntry {
             label: "V1".into(),
@@ -1387,11 +1497,7 @@ mod tests {
 
     #[tokio::test]
     async fn sync_plugin_crons_removes_stale_entries() {
-        let pool = Pool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query(crate::db::schema::SCHEMA_SQL)
-            .execute(&pool)
-            .await
-            .unwrap();
+        let pool = setup().await;
 
         let v1 = vec![
             CronEntry {
@@ -1428,11 +1534,7 @@ mod tests {
 
     #[tokio::test]
     async fn remove_plugin_crons_deletes_all() {
-        let pool = Pool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query(crate::db::schema::SCHEMA_SQL)
-            .execute(&pool)
-            .await
-            .unwrap();
+        let pool = setup().await;
 
         let entries = vec![CronEntry {
             label: "X".into(),
@@ -1452,11 +1554,7 @@ mod tests {
 
     #[tokio::test]
     async fn remove_plugin_crons_does_not_affect_others() {
-        let pool = Pool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query(crate::db::schema::SCHEMA_SQL)
-            .execute(&pool)
-            .await
-            .unwrap();
+        let pool = setup().await;
 
         let entries = vec![CronEntry {
             label: "X".into(),
@@ -1486,9 +1584,18 @@ mod tests {
         assert!(list[0].plugin_id.is_none());
     }
 
-    async fn setup_log_tables() -> Pool {
-        let pool = Pool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query(crate::db::schema::SCHEMA_SQL)
+    async fn setup() -> Pool {
+        let pool = crate::test_pool!();
+        // Clear leftover rows from previous test runs (shared PG database).
+        sqlx::query("DELETE FROM cron_execution_log")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM jobs")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM cron_schedules")
             .execute(&pool)
             .await
             .unwrap();
@@ -1498,14 +1605,18 @@ mod tests {
     async fn insert_test_schedule(pool: &Pool) -> i64 {
         let id = crate::utils::id::new_id();
         let now = Utc::now();
-        sqlx::query(
+        sqlx::query(&format!(
             "INSERT INTO cron_schedules (id, label, job_type, payload, cron_expr, enabled, next_run_at, plugin_id, created_at, updated_at)
-             VALUES (?, 'Test', 'test_task', NULL, '0 */5 * * * *', 1, ?, NULL, ?, ?)",
-        )
+             VALUES ({}, 'Test', 'test_task', NULL, '0 */5 * * * *', TRUE, {}, NULL, {}, {})",
+            crate::db::Driver::ph(1),
+            crate::db::Driver::ph(2),
+            crate::db::Driver::ph(3),
+            crate::db::Driver::ph(4)
+        ))
         .bind(id)
-        .bind(now.to_rfc3339())
-        .bind(now.to_rfc3339())
-        .bind(now.to_rfc3339())
+        .bind(&now)
+        .bind(&now)
+        .bind(&now)
         .execute(pool)
         .await
         .unwrap();
@@ -1514,7 +1625,7 @@ mod tests {
 
     #[tokio::test]
     async fn execution_log_create_and_complete() {
-        let pool = setup_log_tables().await;
+        let pool = setup().await;
         let sched_id = insert_test_schedule(&pool).await;
 
         let log_id =
@@ -1522,7 +1633,7 @@ mod tests {
                 .await
                 .unwrap();
 
-        let logs = list_execution_logs(&pool, SnowflakeId(sched_id), 10)
+        let (logs, _total) = list_execution_logs(&pool, SnowflakeId(sched_id), 10, 0)
             .await
             .unwrap();
         assert_eq!(logs.len(), 1);
@@ -1535,7 +1646,7 @@ mod tests {
             .await
             .unwrap();
 
-        let logs = list_execution_logs(&pool, SnowflakeId(sched_id), 10)
+        let (logs, _total) = list_execution_logs(&pool, SnowflakeId(sched_id), 10, 0)
             .await
             .unwrap();
         assert_eq!(logs[0].status, CronExecStatus::Completed);
@@ -1545,7 +1656,7 @@ mod tests {
 
     #[tokio::test]
     async fn execution_log_fail_records_error() {
-        let pool = setup_log_tables().await;
+        let pool = setup().await;
         let sched_id = insert_test_schedule(&pool).await;
 
         let log_id = create_execution_log(&pool, SnowflakeId(sched_id), "my_task", "Task")
@@ -1556,7 +1667,7 @@ mod tests {
             .await
             .unwrap();
 
-        let logs = list_execution_logs(&pool, SnowflakeId(sched_id), 10)
+        let (logs, _total) = list_execution_logs(&pool, SnowflakeId(sched_id), 10, 0)
             .await
             .unwrap();
         assert_eq!(logs[0].status, CronExecStatus::Failed);
@@ -1566,7 +1677,7 @@ mod tests {
 
     #[tokio::test]
     async fn execution_log_list_by_schedule() {
-        let pool = setup_log_tables().await;
+        let pool = setup().await;
         let sched_a = insert_test_schedule(&pool).await;
         let sched_b = insert_test_schedule(&pool).await;
 
@@ -1580,12 +1691,12 @@ mod tests {
             .await
             .unwrap();
 
-        let a = list_execution_logs(&pool, SnowflakeId(sched_a), 10)
+        let (a, _total_a) = list_execution_logs(&pool, SnowflakeId(sched_a), 10, 0)
             .await
             .unwrap();
         assert_eq!(a.len(), 2);
 
-        let b = list_execution_logs(&pool, SnowflakeId(sched_b), 10)
+        let (b, _total_b) = list_execution_logs(&pool, SnowflakeId(sched_b), 10, 0)
             .await
             .unwrap();
         assert_eq!(b.len(), 1);
@@ -1593,7 +1704,7 @@ mod tests {
 
     #[tokio::test]
     async fn execution_log_recent_ordering() {
-        let pool = setup_log_tables().await;
+        let pool = setup().await;
         let s1 = insert_test_schedule(&pool).await;
         let s2 = insert_test_schedule(&pool).await;
 
@@ -1604,14 +1715,14 @@ mod tests {
             .await
             .unwrap();
 
-        let recent = recent_execution_logs(&pool, 10).await.unwrap();
+        let (recent, _total) = recent_execution_logs(&pool, 10, 0).await.unwrap();
         assert_eq!(recent.len(), 2);
         assert_eq!(recent[0].label, "Second");
     }
 
     #[tokio::test]
     async fn execution_log_cleanup_removes_old() {
-        let pool = setup_log_tables().await;
+        let pool = setup().await;
         let s1 = insert_test_schedule(&pool).await;
 
         create_execution_log(&pool, SnowflakeId(s1), "task_1", "Old")
@@ -1621,7 +1732,7 @@ mod tests {
         let count = cleanup_execution_logs(&pool, 0).await.unwrap();
         assert_eq!(count, 1);
 
-        let logs = list_execution_logs(&pool, SnowflakeId(s1), 10)
+        let (logs, _total) = list_execution_logs(&pool, SnowflakeId(s1), 10, 0)
             .await
             .unwrap();
         assert!(logs.is_empty());
@@ -1629,42 +1740,46 @@ mod tests {
 
     #[tokio::test]
     async fn scheduler_dispatch_creates_execution_log() {
-        let pool = Pool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query(crate::db::schema::SCHEMA_SQL)
-            .execute(&pool)
-            .await
-            .unwrap();
+        let pool = setup().await;
 
         let queue = std::sync::Arc::new(super::super::DefaultJobQueue::new(pool.clone()));
         let scheduler = CronScheduler::new(pool.clone(), queue, std::time::Duration::from_secs(60));
 
         let now = Utc::now();
-        let past = (now - chrono::Duration::hours(1)).to_rfc3339();
+        let past = now - chrono::Duration::hours(1);
 
-        sqlx::query(
+        let schedule_id = crate::utils::id::new_id();
+
+        sqlx::query(&format!(
             "INSERT INTO cron_schedules (id, label, job_type, payload, cron_expr, enabled, next_run_at, plugin_id, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, 1, ?, NULL, ?, ?)",
-        )
-        .bind(3i64)
+             VALUES ({}, {}, {}, {}, {}, TRUE, {}, NULL, {}, {})",
+            crate::db::Driver::ph(1),
+            crate::db::Driver::ph(2),
+            crate::db::Driver::ph(3),
+            crate::db::Driver::ph(4),
+            crate::db::Driver::ph(5),
+            crate::db::Driver::ph(6),
+            crate::db::Driver::ph(7),
+            crate::db::Driver::ph(8)
+        ))
+        .bind(schedule_id)
         .bind("Log Test")
         .bind("generate_sitemap")
         .bind(Option::<String>::None)
         .bind("0 0 */6 * * *")
         .bind(&past)
-        .bind(now.to_rfc3339())
-        .bind(now.to_rfc3339())
+        .bind(&now)
+        .bind(&now)
         .execute(&pool)
         .await
         .unwrap();
 
         scheduler.tick().await.unwrap();
 
-        let logs = list_execution_logs(&pool, SnowflakeId(3), 10)
+        let (logs, _total) = list_execution_logs(&pool, SnowflakeId(schedule_id), 10, 0)
             .await
             .unwrap();
         assert_eq!(logs.len(), 1);
-        assert_eq!(logs[0].status, CronExecStatus::Completed);
-        assert!(logs[0].duration_ms.is_some());
-        assert!(logs[0].finished_at.is_some());
+        assert_eq!(logs[0].status, CronExecStatus::Dispatched);
     }
 }

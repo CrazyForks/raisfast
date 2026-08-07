@@ -112,11 +112,7 @@ mod tests {
     use super::*;
 
     async fn setup_pool() -> crate::db::Pool {
-        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query(crate::db::schema::SCHEMA_SQL)
-            .execute(&pool)
-            .await
-            .unwrap();
+        let pool = crate::test_pool!();
         pool
     }
 
@@ -137,46 +133,50 @@ mod tests {
     async fn create_tenant() {
         let pool = setup_pool().await;
         let s = svc(pool);
+        let name = format!("TestCo_{}", crate::utils::id::new_id());
         let t = s
             .create(&CreateTenantRequest {
-                name: "TestCo".into(),
-                domain: Some("test.example.com".into()),
+                name: name.clone(),
+                domain: Some(format!("test-{}.example.com", crate::utils::id::new_id())),
                 config: None,
             })
             .await
             .unwrap();
-        assert_eq!(t.name, "TestCo");
+        assert_eq!(t.name, name);
     }
 
     #[tokio::test]
     async fn get_tenant_by_id() {
         let pool = setup_pool().await;
         let s = svc(pool);
+        let name = format!("Fetch_{}", crate::utils::id::new_id());
         let t = s
             .create(&CreateTenantRequest {
-                name: "Fetch".into(),
+                name: name.clone(),
                 domain: None,
                 config: None,
             })
             .await
             .unwrap();
         let found = s.get(t.id).await.unwrap().unwrap();
-        assert_eq!(found.name, "Fetch");
+        assert_eq!(found.name, name);
     }
 
     #[tokio::test]
     async fn get_tenant_by_domain() {
         let pool = setup_pool().await;
         let s = svc(pool);
+        let name = format!("Dom_{}", crate::utils::id::new_id());
+        let domain = format!("dom-{}.example.com", crate::utils::id::new_id());
         s.create(&CreateTenantRequest {
-            name: "Dom".into(),
-            domain: Some("dom.example.com".into()),
+            name: name.clone(),
+            domain: Some(domain.clone()),
             config: None,
         })
         .await
         .unwrap();
-        let found = s.get_by_domain("dom.example.com").await.unwrap().unwrap();
-        assert_eq!(found.name, "Dom");
+        let found = s.get_by_domain(&domain).await.unwrap().unwrap();
+        assert_eq!(found.name, name);
     }
 
     #[tokio::test]
@@ -185,17 +185,18 @@ mod tests {
         let s = svc(pool);
         let t = s
             .create(&CreateTenantRequest {
-                name: "Old".into(),
+                name: format!("Old_{}", crate::utils::id::new_id()),
                 domain: None,
                 config: None,
             })
             .await
             .unwrap();
+        let new_name = format!("New_{}", crate::utils::id::new_id());
         let updated = s
             .update(
                 t.id,
                 &UpdateTenantRequest {
-                    name: Some("New".into()),
+                    name: Some(new_name.clone()),
                     domain: None,
                     config: None,
                     status: None,
@@ -203,7 +204,7 @@ mod tests {
             )
             .await
             .unwrap();
-        assert_eq!(updated.name, "New");
+        assert_eq!(updated.name, new_name);
     }
 
     #[tokio::test]

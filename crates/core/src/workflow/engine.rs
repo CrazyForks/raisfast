@@ -642,14 +642,11 @@ pub(crate) fn merge_output_into_context(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::DbDriver;
     use crate::workflow::model::{StepDef, StepType};
 
     async fn setup() -> WorkflowService {
-        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query(crate::db::schema::SCHEMA_SQL)
-            .execute(&pool)
-            .await
-            .unwrap();
+        let pool = crate::test_pool!();
         WorkflowService::new(pool)
     }
 
@@ -747,14 +744,13 @@ mod tests {
     async fn list_workflows() {
         let svc = setup().await;
         let steps = vec![task_step("s1", "S1", "")];
-        svc.create_workflow(crate::utils::id::new_snowflake_id(), "A", None, &steps)
-            .await
-            .unwrap();
-        svc.create_workflow(crate::utils::id::new_snowflake_id(), "B", None, &steps)
-            .await
-            .unwrap();
+        let id1 = crate::utils::id::new_snowflake_id();
+        let id2 = crate::utils::id::new_snowflake_id();
+        svc.create_workflow(id1, "A", None, &steps).await.unwrap();
+        svc.create_workflow(id2, "B", None, &steps).await.unwrap();
         let list = svc.list_workflows().await.unwrap();
-        assert_eq!(list.len(), 2);
+        let mine = list.iter().filter(|w| w.id == id1 || w.id == id2).count();
+        assert_eq!(mine, 2);
     }
 
     #[tokio::test]
@@ -804,11 +800,14 @@ mod tests {
             .create_workflow(wf_id, "Dis", None, &steps)
             .await
             .unwrap();
-        sqlx::query("UPDATE workflow_definitions SET enabled = 0 WHERE id = ?")
-            .bind(def.id)
-            .execute(&svc.pool)
-            .await
-            .unwrap();
+        sqlx::query(&format!(
+            "UPDATE workflow_definitions SET enabled = FALSE WHERE id = {}",
+            crate::db::Driver::ph(1)
+        ))
+        .bind(def.id)
+        .execute(&svc.pool)
+        .await
+        .unwrap();
 
         let result = svc.start_workflow(wf_id, &json!({}), None).await;
         assert!(result.is_err());
@@ -1095,13 +1094,13 @@ mod tests {
         svc.execute_step(inst.id, &json!({})).await.unwrap();
 
         let (running, _) = svc
-            .list_instances(None, Some(WorkflowInstanceStatus::Running), 1, 10)
+            .list_instances(Some(*wf_id), Some(WorkflowInstanceStatus::Running), 1, 10)
             .await
             .unwrap();
         assert!(running.is_empty());
 
         let (completed, total) = svc
-            .list_instances(None, Some(WorkflowInstanceStatus::Completed), 1, 10)
+            .list_instances(Some(*wf_id), Some(WorkflowInstanceStatus::Completed), 1, 10)
             .await
             .unwrap();
         assert_eq!(total, 1);

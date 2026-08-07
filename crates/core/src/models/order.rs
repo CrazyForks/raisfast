@@ -491,6 +491,7 @@ pub async fn get_stats_query(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::DbDriver;
     use crate::types::snowflake_id::SnowflakeId;
 
     async fn setup_pool() -> crate::db::Pool {
@@ -500,7 +501,7 @@ mod tests {
     async fn seed_user(pool: &crate::db::Pool) -> i64 {
         let id = crate::utils::id::new_id();
         let username = format!("testuser_{id}");
-        sqlx::query("INSERT INTO users (id, username, status, registered_via) VALUES (?, ?, 'active', 'email')")
+        sqlx::query(&format!("INSERT INTO users (id, username, status, registered_via) VALUES ({}, {}, 'active', 'email')", crate::db::Driver::ph(1), crate::db::Driver::ph(2)))
             .bind(id)
             .bind(&username)
             .execute(pool)
@@ -510,6 +511,10 @@ mod tests {
     }
 
     async fn seed_order(pool: &crate::db::Pool, user_id: i64) -> Order {
+        seed_order_t(pool, user_id, None).await
+    }
+
+    async fn seed_order_t(pool: &crate::db::Pool, user_id: i64, tenant: Option<&str>) -> Order {
         let order_no = format!("ORD-{}", uuid::Uuid::now_v7().to_string().replace('-', ""));
         super::insert(
             pool,
@@ -531,18 +536,25 @@ mod tests {
                 shipping_address_id: None,
                 billing_address_id: None,
             },
-            None,
+            tenant,
         )
         .await
         .unwrap()
     }
 
+    fn uniq_tenant() -> String {
+        format!("t_{}", crate::utils::id::new_id())
+    }
+
     async fn get_status(pool: &crate::db::Pool, id: SnowflakeId) -> String {
-        let (s,): (String,) = sqlx::query_as("SELECT status FROM orders WHERE id = ?")
-            .bind(id)
-            .fetch_one(pool)
-            .await
-            .unwrap();
+        let (s,): (String,) = sqlx::query_as(&format!(
+            "SELECT status FROM orders WHERE id = {}",
+            Driver::ph(1)
+        ))
+        .bind(id)
+        .fetch_one(pool)
+        .await
+        .unwrap();
         s
     }
 
@@ -551,7 +563,10 @@ mod tests {
         id: SnowflakeId,
         col: &str,
     ) -> Option<String> {
-        let sql = format!("SELECT {col} FROM orders WHERE id = ?");
+        let sql = format!(
+            "SELECT {col} FROM orders WHERE id = {}",
+            crate::db::Driver::ph(1)
+        );
         let (v,): (Option<String>,) = sqlx::query_as(&sql).bind(id).fetch_one(pool).await.unwrap();
         v
     }
@@ -769,12 +784,14 @@ mod tests {
     async fn find_all_admin_paginated_no_filter() {
         let pool = setup_pool().await;
         let uid = seed_user(&pool).await;
+        let tenant = uniq_tenant();
         for _ in 0..4 {
-            seed_order(&pool, uid).await;
+            seed_order_t(&pool, uid, Some(&tenant)).await;
         }
-        let (items, total) = super::find_all_admin_paginated(&pool, None, 1, 10, None, None)
-            .await
-            .unwrap();
+        let (items, total) =
+            super::find_all_admin_paginated(&pool, Some(&tenant), 1, 10, None, None)
+                .await
+                .unwrap();
         assert_eq!(total, 4);
         assert_eq!(items.len(), 4);
     }
@@ -783,16 +800,17 @@ mod tests {
     async fn find_all_admin_paginated_status_filter() {
         let pool = setup_pool().await;
         let uid = seed_user(&pool).await;
+        let tenant = uniq_tenant();
         for _ in 0..3 {
-            let o = seed_order(&pool, uid).await;
-            super::update_status(&pool, o.id, "paid", Some("paid_at"), None)
+            let o = seed_order_t(&pool, uid, Some(&tenant)).await;
+            super::update_status(&pool, o.id, "paid", Some("paid_at"), Some(&tenant))
                 .await
                 .unwrap();
         }
-        seed_order(&pool, uid).await;
+        seed_order_t(&pool, uid, Some(&tenant)).await;
 
         let (items, total) =
-            super::find_all_admin_paginated(&pool, None, 1, 10, Some("paid"), None)
+            super::find_all_admin_paginated(&pool, Some(&tenant), 1, 10, Some("paid"), None)
                 .await
                 .unwrap();
         assert_eq!(total, 3);
@@ -803,9 +821,11 @@ mod tests {
     #[tokio::test]
     async fn find_all_admin_paginated_empty() {
         let pool = setup_pool().await;
-        let (items, total) = super::find_all_admin_paginated(&pool, None, 1, 10, None, None)
-            .await
-            .unwrap();
+        let tenant = uniq_tenant();
+        let (items, total) =
+            super::find_all_admin_paginated(&pool, Some(&tenant), 1, 10, None, None)
+                .await
+                .unwrap();
         assert_eq!(total, 0);
         assert!(items.is_empty());
     }

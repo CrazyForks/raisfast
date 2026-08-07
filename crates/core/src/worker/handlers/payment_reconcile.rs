@@ -28,10 +28,13 @@ impl JobHandler for ReconcilePaymentsHandler {
             return Ok(());
         };
 
-        let yesterday_start = (chrono::Utc::now() - chrono::Duration::days(1))
-            .format("%Y-%m-%dT00:00:00Z")
-            .to_string();
-        let yesterday_end = chrono::Utc::now().format("%Y-%m-%dT00:00:00Z").to_string();
+        let today_start = chrono::Utc::now()
+            .date_naive()
+            .and_hms_opt(0, 0, 0)
+            .unwrap()
+            .and_utc();
+        let yesterday_start = today_start - chrono::Duration::days(1);
+        let yesterday_end = today_start;
 
         let sql = format!(
             "SELECT * FROM payment_orders WHERE status = 'paid' AND paid_at >= {} AND paid_at < {} LIMIT 500",
@@ -39,8 +42,8 @@ impl JobHandler for ReconcilePaymentsHandler {
             Driver::ph(2)
         );
         let orders: Vec<crate::models::payment_order::PaymentOrder> = sqlx::query_as(&sql)
-            .bind(&yesterday_start)
-            .bind(&yesterday_end)
+            .bind(yesterday_start)
+            .bind(yesterday_end)
             .fetch_all(&self.pool)
             .await?;
 
@@ -177,11 +180,7 @@ mod tests {
 
     #[tokio::test]
     async fn ignores_wrong_job_type() {
-        let pool = Pool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query(crate::db::schema::SCHEMA_SQL)
-            .execute(&pool)
-            .await
-            .unwrap();
+        let pool = crate::test_pool!();
         let config = Arc::new(AppConfig::test_defaults());
         let handler = ReconcilePaymentsHandler::new(pool, config);
         let job = Job::GenerateSitemap;
@@ -190,11 +189,7 @@ mod tests {
 
     #[tokio::test]
     async fn handles_reconcile_job() {
-        let pool = Pool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query(crate::db::schema::SCHEMA_SQL)
-            .execute(&pool)
-            .await
-            .unwrap();
+        let pool = crate::test_pool!();
         let config = Arc::new(AppConfig::test_defaults());
         let handler = ReconcilePaymentsHandler::new(pool, config);
         let job = Job::ReconcilePayments;

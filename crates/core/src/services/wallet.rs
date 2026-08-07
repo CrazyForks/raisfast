@@ -872,7 +872,6 @@ mod tests {
 
     struct TestContext {
         pool: crate::db::Pool,
-        _guard: TempDbGuard,
     }
 
     impl std::ops::Deref for TestContext {
@@ -882,45 +881,9 @@ mod tests {
         }
     }
 
-    struct TempDbGuard {
-        path: std::path::PathBuf,
-    }
-
-    impl Drop for TempDbGuard {
-        fn drop(&mut self) {
-            let _ = std::fs::remove_file(&self.path);
-            let wal = self.path.with_extension("db-wal");
-            let _ = std::fs::remove_file(&wal);
-            let shm = self.path.with_extension("db-shm");
-            let _ = std::fs::remove_file(&shm);
-        }
-    }
-
     async fn setup() -> TestContext {
-        use std::sync::atomic::{AtomicU64, Ordering};
-        static COUNTER: AtomicU64 = AtomicU64::new(0);
-        let id = COUNTER.fetch_add(1, Ordering::Relaxed);
-        let path = std::env::temp_dir().join(format!("raisfast_wallet_test_{id}.db"));
-        let url = format!("sqlite:{}?mode=rwc", path.display());
-        let pool = crate::db::Pool::connect(&url).await.unwrap();
-        #[cfg(feature = "db-sqlite")]
-        {
-            sqlx::query("PRAGMA journal_mode = WAL")
-                .execute(&pool)
-                .await
-                .unwrap();
-            sqlx::query("PRAGMA foreign_keys = ON")
-                .execute(&pool)
-                .await
-                .unwrap();
-        }
-        sqlx::query(crate::db::schema::SCHEMA_SQL)
-            .execute(&pool)
-            .await
-            .unwrap();
         TestContext {
-            pool,
-            _guard: TempDbGuard { path },
+            pool: crate::test_pool!(),
         }
     }
 

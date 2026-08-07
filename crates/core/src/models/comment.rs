@@ -398,6 +398,7 @@ mod tests {
     mod integration {
         use super::*;
         use crate::commands::CreateCommentCmd;
+        use crate::db::DbDriver;
 
         async fn setup_pool() -> crate::db::Pool {
             crate::test_pool!()
@@ -407,7 +408,7 @@ mod tests {
             let user = crate::models::user::create(
                 pool,
                 &crate::commands::user::CreateUserCmd {
-                    username: "testuser".to_string(),
+                    username: format!("testuser_{}", crate::utils::id::new_id()),
                     registered_via: crate::models::user::RegisteredVia::Email,
                 },
                 None,
@@ -420,9 +421,13 @@ mod tests {
         async fn insert_post(pool: &crate::db::Pool, user_id: i64) -> i64 {
             let post_id = crate::utils::id::new_id();
             let slug = format!("slug-{post_id}");
-            sqlx::query(
-                "INSERT INTO posts (id, title, slug, content, status, created_by, updated_by) VALUES (?, 'Test', ?, 'content', 'published', ?, ?)",
-            )
+            sqlx::query(&format!(
+                "INSERT INTO posts (id, title, slug, content, status, created_by, updated_by) VALUES ({}, 'Test', {}, 'content', 'published', {}, {})",
+                crate::db::Driver::ph(1),
+                crate::db::Driver::ph(2),
+                crate::db::Driver::ph(3),
+                crate::db::Driver::ph(4)
+            ))
             .bind(post_id)
             .bind(&slug)
             .bind(user_id)
@@ -549,19 +554,20 @@ mod tests {
             let pool = setup_pool().await;
             let uid = insert_user(&pool).await;
             let pid = insert_post(&pool, uid).await;
+            let tenant = format!("t_{}", crate::utils::id::new_id());
             for i in 0..5 {
                 let mut cmd = make_cmd(pid);
                 cmd.content = format!("comment {i}");
-                create(&pool, &cmd, None).await.unwrap();
+                create(&pool, &cmd, Some(&tenant)).await.unwrap();
             }
 
-            let (page1, total) = super::super::find_all_paginated(&pool, 1, 2, None)
+            let (page1, total) = super::super::find_all_paginated(&pool, 1, 2, Some(&tenant))
                 .await
                 .unwrap();
             assert_eq!(total, 5);
             assert_eq!(page1.len(), 2);
 
-            let (page3, _) = super::super::find_all_paginated(&pool, 3, 2, None)
+            let (page3, _) = super::super::find_all_paginated(&pool, 3, 2, Some(&tenant))
                 .await
                 .unwrap();
             assert_eq!(page3.len(), 1);

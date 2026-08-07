@@ -33,7 +33,7 @@ impl JobHandler for ExpireOrdersHandler {
             Driver::ph(1)
         );
         let orders: Vec<crate::models::order::Order> = sqlx::query_as(&sql)
-            .bind(cutoff.format("%Y-%m-%d %H:%M:%S").to_string())
+            .bind(&cutoff)
             .fetch_all(&self.pool)
             .await?;
 
@@ -109,22 +109,21 @@ impl ExpireOrdersHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::DbDriver;
 
     async fn setup_pool() -> Pool {
-        let pool = Pool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query(crate::db::schema::SCHEMA_SQL)
-            .execute(&pool)
-            .await
-            .unwrap();
+        let pool = crate::test_pool!();
         pool
     }
 
     async fn seed_user(pool: &Pool) -> i64 {
         let id = crate::utils::id::new_id();
         let username = format!("testuser_{id}");
-        sqlx::query(
-            "INSERT INTO users (id, username, status, registered_via) VALUES (?, ?, 'active', 'email')",
-        )
+        sqlx::query(&format!(
+            "INSERT INTO users (id, username, status, registered_via) VALUES ({}, {}, 'active', 'email')",
+            crate::db::Driver::ph(1),
+            crate::db::Driver::ph(2)
+        ))
         .bind(id)
         .bind(&username)
         .execute(pool)
@@ -232,35 +231,43 @@ mod tests {
 
         if created_at_offset_minutes != 0 {
             let offset = chrono::Duration::minutes(created_at_offset_minutes);
-            let past = (chrono::Utc::now() + offset)
-                .format("%Y-%m-%d %H:%M:%S")
-                .to_string();
-            sqlx::query("UPDATE orders SET created_at = ? WHERE id = ?")
-                .bind(&past)
-                .bind(order.id)
-                .execute(pool)
-                .await
-                .unwrap();
+            let past = chrono::Utc::now() + offset;
+            sqlx::query(&format!(
+                "UPDATE orders SET created_at = {} WHERE id = {}",
+                crate::db::Driver::ph(1),
+                crate::db::Driver::ph(2)
+            ))
+            .bind(&past)
+            .bind(order.id)
+            .execute(pool)
+            .await
+            .unwrap();
         }
 
         order.id
     }
 
     async fn get_product_stock(pool: &Pool, id: crate::types::snowflake_id::SnowflakeId) -> i64 {
-        let (s,): (i64,) = sqlx::query_as("SELECT stock FROM products WHERE id = ?")
-            .bind(id)
-            .fetch_one(pool)
-            .await
-            .unwrap();
+        let (s,): (i64,) = sqlx::query_as(&format!(
+            "SELECT stock FROM products WHERE id = {}",
+            Driver::ph(1)
+        ))
+        .bind(id)
+        .fetch_one(pool)
+        .await
+        .unwrap();
         s
     }
 
     async fn get_order_status(pool: &Pool, id: crate::types::snowflake_id::SnowflakeId) -> String {
-        let (s,): (String,) = sqlx::query_as("SELECT status FROM orders WHERE id = ?")
-            .bind(id)
-            .fetch_one(pool)
-            .await
-            .unwrap();
+        let (s,): (String,) = sqlx::query_as(&format!(
+            "SELECT status FROM orders WHERE id = {}",
+            Driver::ph(1)
+        ))
+        .bind(id)
+        .fetch_one(pool)
+        .await
+        .unwrap();
         s
     }
 
@@ -279,12 +286,16 @@ mod tests {
         let uid = seed_user(&pool).await;
         let pid = seed_product(&pool, 100).await;
 
-        sqlx::query("UPDATE products SET stock = ? WHERE id = ?")
-            .bind(97i64)
-            .bind(pid)
-            .execute(&pool)
-            .await
-            .unwrap();
+        sqlx::query(&format!(
+            "UPDATE products SET stock = {} WHERE id = {}",
+            crate::db::Driver::ph(1),
+            crate::db::Driver::ph(2)
+        ))
+        .bind(97i64)
+        .bind(pid)
+        .execute(&pool)
+        .await
+        .unwrap();
 
         let oid = seed_pending_order_with_items(&pool, uid, pid, 3, -60).await;
         assert_eq!(get_product_stock(&pool, pid).await, 97);
@@ -351,12 +362,16 @@ mod tests {
         let uid = seed_user(&pool).await;
         let pid = seed_product(&pool, 100).await;
 
-        sqlx::query("UPDATE products SET stock = ? WHERE id = ?")
-            .bind(95i64)
-            .bind(pid)
-            .execute(&pool)
-            .await
-            .unwrap();
+        sqlx::query(&format!(
+            "UPDATE products SET stock = {} WHERE id = {}",
+            crate::db::Driver::ph(1),
+            crate::db::Driver::ph(2)
+        ))
+        .bind(95i64)
+        .bind(pid)
+        .execute(&pool)
+        .await
+        .unwrap();
 
         let oid1 = seed_pending_order_with_items(&pool, uid, pid, 2, -60).await;
         let oid2 = seed_pending_order_with_items(&pool, uid, pid, 3, -120).await;
@@ -406,15 +421,17 @@ mod tests {
         .await
         .unwrap();
 
-        let past = (chrono::Utc::now() - chrono::Duration::minutes(60))
-            .format("%Y-%m-%d %H:%M:%S")
-            .to_string();
-        sqlx::query("UPDATE orders SET created_at = ? WHERE id = ?")
-            .bind(&past)
-            .bind(order.id)
-            .execute(&pool)
-            .await
-            .unwrap();
+        let past = chrono::Utc::now() - chrono::Duration::minutes(60);
+        sqlx::query(&format!(
+            "UPDATE orders SET created_at = {} WHERE id = {}",
+            crate::db::Driver::ph(1),
+            crate::db::Driver::ph(2)
+        ))
+        .bind(&past)
+        .bind(order.id)
+        .execute(&pool)
+        .await
+        .unwrap();
 
         let config = Arc::new(AppConfig {
             order_expire_minutes: 30,
@@ -433,12 +450,16 @@ mod tests {
         let uid = seed_user(&pool).await;
         let pid = seed_product(&pool, 100).await;
 
-        sqlx::query("UPDATE products SET stock = ? WHERE id = ?")
-            .bind(95i64)
-            .bind(pid)
-            .execute(&pool)
-            .await
-            .unwrap();
+        sqlx::query(&format!(
+            "UPDATE products SET stock = {} WHERE id = {}",
+            crate::db::Driver::ph(1),
+            crate::db::Driver::ph(2)
+        ))
+        .bind(95i64)
+        .bind(pid)
+        .execute(&pool)
+        .await
+        .unwrap();
 
         let oid = seed_pending_order_with_items(&pool, uid, pid, 5, -60).await;
         assert_eq!(get_product_stock(&pool, pid).await, 95);

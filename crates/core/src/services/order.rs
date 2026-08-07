@@ -765,6 +765,7 @@ impl OrderService for OrderServiceImpl {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::DbDriver;
     use crate::dto::{CreateOrderItemRequest, ShipOrderRequest};
 
     async fn setup_pool() -> crate::db::Pool {
@@ -803,7 +804,7 @@ mod tests {
     async fn seed_user(pool: &crate::db::Pool) -> i64 {
         let id = crate::utils::id::new_id();
         let username = format!("testuser_{id}");
-        let _: crate::db::pool::DbQueryResult = sqlx::query("INSERT INTO users (id, username, status, registered_via) VALUES (?, ?, 'active', 'email')")
+        let _: crate::db::pool::DbQueryResult = sqlx::query(&format!("INSERT INTO users (id, username, status, registered_via) VALUES ({}, {}, 'active', 'email')", crate::db::Driver::ph(1), crate::db::Driver::ph(2)))
             .bind(id)
             .bind(&username)
             .execute(pool)
@@ -816,6 +817,15 @@ mod tests {
         pool: &crate::db::Pool,
         title: &str,
         price: i64,
+    ) -> crate::models::product::Product {
+        seed_active_product_t(pool, title, price, None).await
+    }
+
+    async fn seed_active_product_t(
+        pool: &crate::db::Pool,
+        title: &str,
+        price: i64,
+        tenant: Option<&str>,
     ) -> crate::models::product::Product {
         let p = crate::models::product::insert(
             pool,
@@ -852,17 +862,19 @@ mod tests {
                 og_description: None,
                 og_image: None,
             },
-            None,
+            tenant,
         )
         .await
         .unwrap();
-        let _: crate::db::pool::DbQueryResult =
-            sqlx::query("UPDATE products SET status = 'active' WHERE id = ?")
-                .bind(p.id)
-                .execute(pool)
-                .await
-                .unwrap();
-        crate::models::product::find_by_id(pool, p.id, None)
+        let _: crate::db::pool::DbQueryResult = sqlx::query(&format!(
+            "UPDATE products SET status = 'active' WHERE id = {}",
+            crate::db::Driver::ph(1)
+        ))
+        .bind(p.id)
+        .execute(pool)
+        .await
+        .unwrap();
+        crate::models::product::find_by_id(pool, p.id, tenant)
             .await
             .unwrap()
             .unwrap()
@@ -1413,9 +1425,11 @@ mod tests {
     async fn list_admin_orders() {
         let pool = setup_pool().await;
         let svc = make_service(pool.clone()).await;
-        let a = auth(None);
+        let tenant = format!("t_{}", crate::utils::id::new_id());
+        let _ = crate::models::currencies::create(&pool, &tenant, "USD", "US Dollar", 2).await;
+        let a = auth(Some(&tenant));
         let uid = seed_user(&pool).await;
-        let prod = seed_active_product(&pool, "Widget", 1000).await;
+        let prod = seed_active_product_t(&pool, "Widget", 1000, Some(&tenant)).await;
 
         svc.create(
             &a,
@@ -1451,9 +1465,11 @@ mod tests {
     async fn get_stats() {
         let pool = setup_pool().await;
         let svc = make_service(pool.clone()).await;
-        let a = auth(None);
+        let tenant = format!("t_{}", crate::utils::id::new_id());
+        let _ = crate::models::currencies::create(&pool, &tenant, "USD", "US Dollar", 2).await;
+        let a = auth(Some(&tenant));
         let uid = seed_user(&pool).await;
-        let prod = seed_active_product(&pool, "Widget", 1000).await;
+        let prod = seed_active_product_t(&pool, "Widget", 1000, Some(&tenant)).await;
 
         let (o1, _) = svc
             .create(
@@ -1473,15 +1489,21 @@ mod tests {
             .await
             .unwrap();
 
-        crate::models::order::update_status(&pool, o1.id, "paid", Some("paid_at"), None)
+        crate::models::order::update_status(&pool, o1.id, "paid", Some("paid_at"), Some(&tenant))
             .await
             .unwrap();
-        crate::models::order::update_status(&pool, o1.id, "shipped", None, None)
+        crate::models::order::update_status(&pool, o1.id, "shipped", None, Some(&tenant))
             .await
             .unwrap();
-        crate::models::order::update_status(&pool, o1.id, "completed", Some("completed_at"), None)
-            .await
-            .unwrap();
+        crate::models::order::update_status(
+            &pool,
+            o1.id,
+            "completed",
+            Some("completed_at"),
+            Some(&tenant),
+        )
+        .await
+        .unwrap();
 
         let stats = svc.get_stats(&a).await.unwrap();
         assert_eq!(stats.total_orders, 2);
@@ -1528,11 +1550,14 @@ mod tests {
     }
 
     async fn get_product_stock(pool: &crate::db::Pool, id: SnowflakeId) -> i64 {
-        let (s,): (i64,) = sqlx::query_as("SELECT stock FROM products WHERE id = ?")
-            .bind(id)
-            .fetch_one(pool)
-            .await
-            .unwrap();
+        let (s,): (i64,) = sqlx::query_as(&format!(
+            "SELECT stock FROM products WHERE id = {}",
+            crate::db::Driver::ph(1)
+        ))
+        .bind(id)
+        .fetch_one(pool)
+        .await
+        .unwrap();
         s
     }
 
@@ -1596,13 +1621,16 @@ mod tests {
         let uid = seed_user(&pool).await;
         let prod = seed_active_product(&pool, "Widget", 1000).await;
 
-        let _: crate::db::pool::DbQueryResult =
-            sqlx::query("UPDATE products SET stock = ? WHERE id = ?")
-                .bind(2i64)
-                .bind(prod.id)
-                .execute(&pool)
-                .await
-                .unwrap();
+        let _: crate::db::pool::DbQueryResult = sqlx::query(&format!(
+            "UPDATE products SET stock = {} WHERE id = {}",
+            crate::db::Driver::ph(1),
+            crate::db::Driver::ph(2)
+        ))
+        .bind(2i64)
+        .bind(prod.id)
+        .execute(&pool)
+        .await
+        .unwrap();
 
         let err = svc
             .create(

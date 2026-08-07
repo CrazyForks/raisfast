@@ -156,6 +156,7 @@ pub async fn delete_by_id(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::DbDriver;
 
     async fn setup_pool() -> crate::db::Pool {
         crate::test_pool!()
@@ -202,12 +203,13 @@ mod tests {
     #[tokio::test]
     async fn test_find_all_paginated() {
         let pool = setup_pool().await;
+        let tenant = format!("t_{}", crate::utils::id::new_id());
         for i in 0..5 {
-            super::insert(&pool, &seed_cmd(&format!("T{i}")), None)
+            super::insert(&pool, &seed_cmd(&format!("T{i}")), Some(&tenant))
                 .await
                 .unwrap();
         }
-        let (items, total) = super::find_all_paginated(&pool, None, 1, 3, None)
+        let (items, total) = super::find_all_paginated(&pool, Some(&tenant), 1, 3, None)
             .await
             .unwrap();
         assert_eq!(total, 5);
@@ -217,19 +219,23 @@ mod tests {
     #[tokio::test]
     async fn test_find_all_paginated_status_filter() {
         let pool = setup_pool().await;
-        super::insert(&pool, &seed_cmd("Active"), None)
+        let tenant = format!("t_{}", crate::utils::id::new_id());
+        super::insert(&pool, &seed_cmd("Active"), Some(&tenant))
             .await
             .unwrap();
-        let t2 = super::insert(&pool, &seed_cmd("Inactive"), None)
+        let t2 = super::insert(&pool, &seed_cmd("Inactive"), Some(&tenant))
             .await
             .unwrap();
-        sqlx::query("UPDATE shipping_templates SET status = 'inactive' WHERE id = ?")
-            .bind(t2.id)
-            .execute(&pool)
-            .await
-            .unwrap();
+        sqlx::query(&format!(
+            "UPDATE shipping_templates SET status = 'inactive' WHERE id = {}",
+            crate::db::Driver::ph(1)
+        ))
+        .bind(t2.id)
+        .execute(&pool)
+        .await
+        .unwrap();
 
-        let (items, total) = super::find_all_paginated(&pool, None, 1, 10, Some("active"))
+        let (items, total) = super::find_all_paginated(&pool, Some(&tenant), 1, 10, Some("active"))
             .await
             .unwrap();
         assert_eq!(total, 1);

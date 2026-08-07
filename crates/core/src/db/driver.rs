@@ -57,8 +57,19 @@ pub trait DbDriver: sealed::Sealed {
     /// PRIMARY KEY column type (`INTEGER` / `BIGINT`).
     fn pk_type() -> &'static str;
 
+    /// Auto-incrementing PRIMARY KEY column definition.
+    ///
+    /// SQLite: `INTEGER PRIMARY KEY AUTOINCREMENT`
+    /// PostgreSQL / MySQL: `BIGSERIAL PRIMARY KEY` / `BIGINT AUTO_INCREMENT PRIMARY KEY`
+    fn auto_increment_pk() -> &'static str;
+
     /// Foreign key column type (derived from `pk_type`).
     fn fk_type() -> &'static str;
+
+    /// Scalar "greatest of two values" function.
+    ///
+    /// SQLite uses `max(a, b)` as a scalar; PostgreSQL and MySQL use `GREATEST(a, b)`.
+    fn greatest(a: &str, b: &str) -> String;
 
     // ── SQL dialect (sync) ──────────────────────────────────────
 
@@ -83,6 +94,10 @@ pub trait DbDriver: sealed::Sealed {
 
     /// Expression for `N days ago`.
     fn ago_expr(days: i64) -> String;
+
+    /// Expression for `{secs_expr} seconds ago` where `secs_expr` is a SQL expr
+    /// (e.g. `COALESCE(timeout_secs, 300)`).
+    fn ago_seconds_expr(secs_expr: &str) -> String;
 
     /// Truncate a datetime column to day granularity.
     fn date_trunc_day(col: &str) -> String;
@@ -163,8 +178,16 @@ impl DbDriver for Sqlite {
         "INTEGER PRIMARY KEY"
     }
 
+    fn auto_increment_pk() -> &'static str {
+        "INTEGER PRIMARY KEY AUTOINCREMENT"
+    }
+
     fn fk_type() -> &'static str {
         "INTEGER"
+    }
+
+    fn greatest(a: &str, b: &str) -> String {
+        format!("max({a}, {b})")
     }
 
     fn ph(idx: usize) -> String {
@@ -186,6 +209,12 @@ impl DbDriver for Sqlite {
 
     fn ago_expr(days: i64) -> String {
         format!("strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-{days} days')")
+    }
+
+    fn ago_seconds_expr(secs_expr: &str) -> String {
+        format!(
+            "strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-' || CAST(({secs_expr}) AS TEXT) || ' seconds')"
+        )
     }
 
     fn date_trunc_day(col: &str) -> String {
@@ -313,8 +342,16 @@ impl DbDriver for Postgres {
         "BIGINT PRIMARY KEY"
     }
 
+    fn auto_increment_pk() -> &'static str {
+        "BIGSERIAL PRIMARY KEY"
+    }
+
     fn fk_type() -> &'static str {
         "BIGINT"
+    }
+
+    fn greatest(a: &str, b: &str) -> String {
+        format!("GREATEST({a}, {b})")
     }
 
     fn ph(idx: usize) -> String {
@@ -337,12 +374,16 @@ impl DbDriver for Postgres {
         format!("NOW() - INTERVAL '{days} days'")
     }
 
+    fn ago_seconds_expr(secs_expr: &str) -> String {
+        format!("NOW() - ({secs_expr}) * INTERVAL '1 second'")
+    }
+
     fn date_trunc_day(col: &str) -> String {
         format!("TO_CHAR(DATE_TRUNC('day', {col}::timestamp), 'YYYY-MM-DD')")
     }
 
     fn current_date() -> String {
-        "CURRENT_DATE".to_string()
+        "TO_CHAR(CURRENT_DATE, 'YYYY-MM-DD')".to_string()
     }
 
     fn upsert_clause(conflict_cols: &str, assignments: &str) -> String {
@@ -415,14 +456,14 @@ impl DbDriver for Postgres {
     async fn has_column(pool: &Pool, table: &str, column: &str) -> bool {
         assert!(is_safe_identifier(table), "unsafe table: {table}");
         sqlx::query_scalar::<_, bool>(
-            "SELECT 1 FROM information_schema.columns WHERE table_name = $1 AND column_name = $2",
+            "SELECT EXISTS(SELECT 1 FROM information_schema.columns WHERE table_name = $1 AND column_name = $2)",
         )
         .bind(table)
         .bind(column)
         .fetch_optional(pool)
         .await
         .unwrap_or(None)
-        .is_some()
+        .unwrap_or(false)
     }
 
     async fn table_exists(pool: &Pool, table: &str) -> bool {
@@ -479,8 +520,16 @@ impl DbDriver for MySql {
         "BIGINT PRIMARY KEY"
     }
 
+    fn auto_increment_pk() -> &'static str {
+        "BIGINT AUTO_INCREMENT PRIMARY KEY"
+    }
+
     fn fk_type() -> &'static str {
         "BIGINT"
+    }
+
+    fn greatest(a: &str, b: &str) -> String {
+        format!("GREATEST({a}, {b})")
     }
 
     fn ph(idx: usize) -> String {
@@ -504,12 +553,16 @@ impl DbDriver for MySql {
         format!("DATE_SUB(NOW(), INTERVAL {days} DAY)")
     }
 
+    fn ago_seconds_expr(secs_expr: &str) -> String {
+        format!("DATE_SUB(NOW(), INTERVAL ({secs_expr}) SECOND)")
+    }
+
     fn date_trunc_day(col: &str) -> String {
         format!("CAST(DATE({col}) AS CHAR)")
     }
 
     fn current_date() -> String {
-        "CURDATE()".to_string()
+        "CAST(CURDATE() AS CHAR)".to_string()
     }
 
     fn upsert_clause(conflict_cols: &str, assignments: &str) -> String {

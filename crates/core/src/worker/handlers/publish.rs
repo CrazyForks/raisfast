@@ -77,11 +77,7 @@ mod tests {
     use crate::types::snowflake_id::SnowflakeId;
 
     async fn setup() -> Pool {
-        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query(crate::db::schema::SCHEMA_SQL)
-            .execute(&pool)
-            .await
-            .unwrap();
+        let pool = crate::test_pool!();
         pool
     }
 
@@ -89,7 +85,7 @@ mod tests {
         let u = user::create(
             pool,
             &crate::commands::CreateUserCmd {
-                username: "author".to_string(),
+                username: format!("author_{}", crate::utils::id::new_id()),
                 registered_via: crate::models::user::RegisteredVia::Email,
             },
             None,
@@ -122,7 +118,7 @@ mod tests {
             &pool,
             &crate::commands::CreatePostCmd {
                 title: "Test".to_string(),
-                slug: "test-slug".to_string(),
+                slug: format!("test-slug-{}", crate::utils::id::new_id()),
                 content: "content".to_string(),
                 excerpt: None,
                 cover_image: None,
@@ -162,7 +158,7 @@ mod tests {
             &pool,
             &crate::commands::CreatePostCmd {
                 title: "Test".to_string(),
-                slug: "test-slug-2".to_string(),
+                slug: format!("test-slug-2-{}", crate::utils::id::new_id()),
                 content: "content".to_string(),
                 excerpt: None,
                 cover_image: None,

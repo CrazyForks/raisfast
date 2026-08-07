@@ -166,7 +166,7 @@ pub async fn apply_wallet_delta(
         );
         let result: crate::db::pool::DbQueryResult = sqlx::query(&sql)
             .bind(delta)
-            .bind(crate::utils::tz::now_str())
+            .bind(crate::utils::tz::now_utc())
             .bind(wallet_id)
             .bind(version)
             .execute(&mut *tx)
@@ -189,7 +189,7 @@ pub async fn apply_wallet_delta(
         );
         let result: crate::db::pool::DbQueryResult = sqlx::query(&sql)
             .bind(abs)
-            .bind(crate::utils::tz::now_str())
+            .bind(crate::utils::tz::now_utc())
             .bind(wallet_id)
             .bind(abs)
             .bind(version)
@@ -212,6 +212,37 @@ mod tests {
 
     async fn setup_pool() -> crate::db::Pool {
         crate::test_pool!()
+    }
+
+    async fn create_wallet_t(
+        pool: &crate::db::Pool,
+        user_id: SnowflakeId,
+        currency: &str,
+        tenant: &str,
+    ) {
+        use crate::db::driver::DbDriver;
+        let (id, now) = (
+            crate::utils::id::new_snowflake_id(),
+            crate::utils::tz::now_utc(),
+        );
+        sqlx::query(&format!(
+            "INSERT INTO wallets (id, tenant_id, user_id, currency, created_at, updated_at) VALUES ({}, {}, {}, {}, {}, {})",
+            crate::db::Driver::ph(1),
+            crate::db::Driver::ph(2),
+            crate::db::Driver::ph(3),
+            crate::db::Driver::ph(4),
+            crate::db::Driver::ph(5),
+            crate::db::Driver::ph(6)
+        ))
+        .bind(id)
+        .bind(tenant)
+        .bind(user_id)
+        .bind(currency)
+        .bind(&now)
+        .bind(&now)
+        .execute(pool)
+        .await
+        .unwrap();
     }
 
     async fn insert_user(pool: &crate::db::Pool) -> crate::models::user::User {
@@ -332,11 +363,12 @@ mod tests {
     #[tokio::test]
     async fn find_all_wallets_paginated() {
         let pool = setup_pool().await;
+        let tenant = format!("t_{}", crate::utils::id::new_id());
         let user1 = insert_user(&pool).await;
         let user2 = insert_user(&pool).await;
-        create(&pool, user1.id, "CNY").await.unwrap();
-        create(&pool, user2.id, "CNY").await.unwrap();
-        let (rows, total) = find_all_wallets(&pool, 1, 10, None).await.unwrap();
+        create_wallet_t(&pool, user1.id, "CNY", &tenant).await;
+        create_wallet_t(&pool, user2.id, "CNY", &tenant).await;
+        let (rows, total) = find_all_wallets(&pool, 1, 10, Some(&tenant)).await.unwrap();
         assert_eq!(total, 2);
         assert_eq!(rows.len(), 2);
     }
@@ -344,9 +376,10 @@ mod tests {
     #[tokio::test]
     async fn find_all_wallets_page_two_empty() {
         let pool = setup_pool().await;
+        let tenant = format!("t_{}", crate::utils::id::new_id());
         let user = insert_user(&pool).await;
-        create(&pool, user.id, "CNY").await.unwrap();
-        let (rows, total) = find_all_wallets(&pool, 2, 10, None).await.unwrap();
+        create_wallet_t(&pool, user.id, "CNY", &tenant).await;
+        let (rows, total) = find_all_wallets(&pool, 2, 10, Some(&tenant)).await.unwrap();
         assert_eq!(total, 1);
         assert!(rows.is_empty());
     }

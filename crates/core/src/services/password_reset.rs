@@ -181,9 +181,10 @@ mod tests {
     #[tokio::test]
     async fn forgot_password_existing_user() {
         let pool = setup_pool().await;
-        let user = insert_user(&pool, "reset@test.com").await;
+        let email = format!("reset_{}@test.com", crate::utils::id::new_id());
+        let user = insert_user(&pool, &email).await;
         let ae = emitter();
-        super::forgot_password(&pool, &ae, "reset@test.com", None)
+        super::forgot_password(&pool, &ae, &email, None)
             .await
             .unwrap();
         let sql = format!(
@@ -220,9 +221,10 @@ mod tests {
     #[tokio::test]
     async fn reset_password_weak_password() {
         let pool = setup_pool().await;
-        let user = insert_user(&pool, "weak@test.com").await;
+        let email = format!("weak_{}@test.com", crate::utils::id::new_id());
+        let user = insert_user(&pool, &email).await;
         let ae = emitter();
-        super::forgot_password(&pool, &ae, "weak@test.com", None)
+        super::forgot_password(&pool, &ae, &email, None)
             .await
             .unwrap();
         let sql = format!(
@@ -244,10 +246,11 @@ mod tests {
     #[tokio::test]
     async fn set_password_oauth_user() {
         let pool = setup_pool().await;
+        let email = format!("oauth_{}@test.com", crate::utils::id::new_id());
         let user = crate::models::user::create(
             &pool,
             &CreateUserCmd {
-                username: "oauthu".into(),
+                username: format!("oauthu_{}", crate::utils::id::new_id()),
                 registered_via: crate::models::user::RegisteredVia::Oauth,
             },
             None,
@@ -258,14 +261,14 @@ mod tests {
             &pool,
             user.id,
             crate::models::user_credential::AuthType::Email,
-            "oauth@test.com",
+            &email,
             "",
             true,
         )
         .await
         .unwrap();
         let a = AuthUser::from_parts(Some(*user.id), crate::models::user::UserRole::Author, None);
-        super::set_password(&pool, &a, "oauth@test.com", "StrongPass1")
+        super::set_password(&pool, &a, &email, "StrongPass1")
             .await
             .unwrap();
     }
@@ -273,9 +276,10 @@ mod tests {
     #[tokio::test]
     async fn set_password_already_set_rejected() {
         let pool = setup_pool().await;
-        let user = insert_user(&pool, "already@test.com").await;
+        let email = format!("already_{}@test.com", crate::utils::id::new_id());
+        let user = insert_user(&pool, &email).await;
         let a = AuthUser::from_parts(Some(*user.id), crate::models::user::UserRole::Author, None);
-        let err = super::set_password(&pool, &a, "already@test.com", "NewPass1")
+        let err = super::set_password(&pool, &a, &email, "NewPass1")
             .await
             .unwrap_err();
         let msg = err.to_string();

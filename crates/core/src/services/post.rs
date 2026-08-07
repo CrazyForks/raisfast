@@ -907,11 +907,7 @@ mod tests {
 
     #[tokio::test]
     async fn resolve_id_numeric_no_tenant() {
-        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query(crate::db::schema::SCHEMA_SQL)
-            .execute(&pool)
-            .await
-            .unwrap();
+        let pool = crate::test_pool!();
         sqlx::query("INSERT INTO users (id, username, status, registered_via) VALUES (42, 'u', 'active', 'email')")
             .execute(&pool)
             .await
@@ -922,59 +918,64 @@ mod tests {
 
     #[tokio::test]
     async fn resolve_id_unsafe_table() {
-        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
+        let pool = crate::test_pool!();
         let result = raisfast_derive::crud_resolve_id!(&pool, "drop table", *SnowflakeId(999));
         assert_eq!(result.unwrap(), None);
     }
 
     #[tokio::test]
     async fn resolve_id_with_tenant() {
-        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query(crate::db::schema::SCHEMA_SQL)
-            .execute(&pool)
-            .await
-            .unwrap();
-        sqlx::query("INSERT INTO users (id, username, status, registered_via) VALUES (1, 'user1', 'active', 'email')")
-            .execute(&pool)
-            .await
-            .unwrap();
-        sqlx::query("INSERT INTO posts (id, title, slug, content, status, created_by, updated_by, tenant_id) VALUES (1, 'T', 't', 'c', 'draft', 1, 1, 't1')")
-            .execute(&pool)
-            .await
-            .unwrap();
+        let pool = crate::test_pool!();
+        let uid = crate::utils::id::new_id();
+        let pid = crate::utils::id::new_id();
+        let username = format!("user1_{}", crate::utils::id::new_id());
+        let slug = format!("t_{}", crate::utils::id::new_id());
+        sqlx::query(&format!(
+            "INSERT INTO users (id, username, status, registered_via) VALUES ({uid}, '{username}', 'active', 'email')"
+        ))
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(&format!(
+            "INSERT INTO posts (id, title, slug, content, status, created_by, updated_by, tenant_id) VALUES ({pid}, 'T', '{slug}', 'c', 'draft', {uid}, {uid}, 't1')"
+        ))
+        .execute(&pool)
+        .await
+        .unwrap();
         let result =
-            raisfast_derive::crud_resolve_id!(&pool, "posts", *SnowflakeId(1), tenant: Some("t1"))
+            raisfast_derive::crud_resolve_id!(&pool, "posts", *SnowflakeId(pid), tenant: Some("t1"))
                 .unwrap();
-        assert_eq!(result, Some(1));
+        assert_eq!(result, Some(pid));
     }
 
     #[tokio::test]
     async fn resolve_id_with_wrong_tenant() {
-        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query(crate::db::schema::SCHEMA_SQL)
-            .execute(&pool)
-            .await
-            .unwrap();
-        sqlx::query("INSERT INTO users (id, username, status, registered_via) VALUES (1, 'user1', 'active', 'email')")
-            .execute(&pool)
-            .await
-            .unwrap();
-        sqlx::query("INSERT INTO posts (id, title, slug, content, status, created_by, updated_by, tenant_id) VALUES (1, 'T', 't', 'c', 'draft', 1, 1, 't1')")
-            .execute(&pool)
-            .await
-            .unwrap();
-        let result = raisfast_derive::crud_resolve_id!(&pool, "posts", *SnowflakeId(1), tenant: Some("wrong"))
-            .unwrap();
+        let pool = crate::test_pool!();
+        let uid = crate::utils::id::new_id();
+        let pid = crate::utils::id::new_id();
+        let username = format!("user1_{}", crate::utils::id::new_id());
+        let slug = format!("t_{}", crate::utils::id::new_id());
+        sqlx::query(&format!(
+            "INSERT INTO users (id, username, status, registered_via) VALUES ({uid}, '{username}', 'active', 'email')"
+        ))
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(&format!(
+            "INSERT INTO posts (id, title, slug, content, status, created_by, updated_by, tenant_id) VALUES ({pid}, 'T', '{slug}', 'c', 'draft', {uid}, {uid}, 't1')"
+        ))
+        .execute(&pool)
+        .await
+        .unwrap();
+        let result =
+            raisfast_derive::crud_resolve_id!(&pool, "posts", *SnowflakeId(pid), tenant: Some("wrong"))
+                .unwrap();
         assert_eq!(result, None);
     }
 
     #[tokio::test]
     async fn resolve_id_not_found_with_tenant() {
-        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query(crate::db::schema::SCHEMA_SQL)
-            .execute(&pool)
-            .await
-            .unwrap();
+        let pool = crate::test_pool!();
         let result = raisfast_derive::crud_resolve_id!(&pool, "users", *SnowflakeId(99999), tenant: Some("t1"))
             .unwrap();
         assert_eq!(result, None);

@@ -282,6 +282,7 @@ impl ProductCommentService for ProductCommentServiceImpl {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::DbDriver;
     use crate::dto::product_comment::CreateProductCommentRequest;
 
     async fn setup_pool() -> crate::db::Pool {
@@ -313,9 +314,11 @@ mod tests {
     async fn seed_user(pool: &crate::db::Pool) -> i64 {
         let id = crate::utils::id::new_id();
         let username = format!("testuser_{id}");
-        sqlx::query(
-            "INSERT INTO users (id, username, status, registered_via) VALUES (?, ?, 'active', 'email')",
-        )
+        sqlx::query(&format!(
+            "INSERT INTO users (id, username, status, registered_via) VALUES ({}, {}, 'active', 'email')",
+            crate::db::Driver::ph(1),
+            crate::db::Driver::ph(2)
+        ))
         .bind(id)
         .bind(&username)
         .execute(pool)

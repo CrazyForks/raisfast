@@ -34,7 +34,7 @@ impl JobHandler for ExpirePaymentOrdersHandler {
             Driver::ph(1)
         );
         let orders: Vec<crate::models::payment_order::PaymentOrder> = sqlx::query_as(&sql)
-            .bind(cutoff.format("%Y-%m-%d %H:%M:%S").to_string())
+            .bind(&cutoff)
             .fetch_all(&self.pool)
             .await?;
 
@@ -158,11 +158,7 @@ mod tests {
 
     #[tokio::test]
     async fn ignores_wrong_job_type() {
-        let pool = Pool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query(crate::db::schema::SCHEMA_SQL)
-            .execute(&pool)
-            .await
-            .unwrap();
+        let pool = crate::test_pool!();
         let config = Arc::new(AppConfig::test_defaults());
         let handler = ExpirePaymentOrdersHandler::new(pool, config);
         let job = Job::GenerateSitemap;

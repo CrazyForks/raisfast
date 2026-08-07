@@ -379,12 +379,16 @@ CREATE TABLE IF NOT EXISTS jobs (
     error            TEXT,
     cron_schedule_id BIGINT,
     cron_log_id      BIGINT,
+    priority         SMALLINT NOT NULL DEFAULT 0,
+    timeout_secs     INTEGER,
+    dedup_key        VARCHAR(255),
     created_at       TIMESTAMPTZ(0) NOT NULL DEFAULT NOW(),
     updated_at       TIMESTAMPTZ(0) NOT NULL DEFAULT NOW()
 );
 
 CREATE INDEX IF NOT EXISTS idx_jobs_status_run_after ON jobs(status, run_after) WHERE status = 'pending';
 CREATE INDEX IF NOT EXISTS idx_jobs_type ON jobs(job_type);
+CREATE INDEX IF NOT EXISTS idx_jobs_dedup_key ON jobs(dedup_key) WHERE dedup_key IS NOT NULL;
 
 -- Cron job schedules
 CREATE TABLE IF NOT EXISTS cron_schedules (

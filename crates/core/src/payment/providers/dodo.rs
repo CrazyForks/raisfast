@@ -535,15 +535,15 @@ mod tests {
             crate::payment::crypto::aes256gcm_encrypt(r#"{"api_key":"test_key"}"#, &key).unwrap();
 
         let channel = PaymentChannel {
-            id: 1,
+            id: crate::types::snowflake_id::SnowflakeId(1),
             tenant_id: None,
             provider: "dodo".into(),
             name: "Dodo".into(),
-            is_live: 0,
+            is_live: false,
             credentials: encrypted,
             webhook_secret: None,
             settings: Some(r#"{"product_id":"prod_abc123"}"#.into()),
-            is_active: 1,
+            is_active: true,
             sort_order: 0,
             version: 1,
             created_at: crate::utils::tz::Timestamp::default(),
@@ -557,15 +557,15 @@ mod tests {
     #[test]
     fn extract_product_id_missing_settings() {
         let channel = PaymentChannel {
-            id: 1,
+            id: crate::types::snowflake_id::SnowflakeId(1),
             tenant_id: None,
             provider: "dodo".into(),
             name: "Dodo".into(),
-            is_live: 0,
+            is_live: false,
             credentials: String::new(),
             webhook_secret: None,
             settings: None,
-            is_active: 1,
+            is_active: true,
             sort_order: 0,
             version: 1,
             created_at: crate::utils::tz::Timestamp::default(),
@@ -585,15 +585,15 @@ mod tests {
         .unwrap();
 
         let channel = PaymentChannel {
-            id: 1,
+            id: crate::types::snowflake_id::SnowflakeId(1),
             tenant_id: None,
             provider: "dodo".into(),
             name: "Dodo".into(),
-            is_live: 0,
+            is_live: false,
             credentials: encrypted,
             webhook_secret: None,
             settings: None,
-            is_active: 1,
+            is_active: true,
             sort_order: 0,
             version: 1,
             created_at: crate::utils::tz::Timestamp::default(),
@@ -696,15 +696,15 @@ mod tests {
         headers.insert("webhook-timestamp", timestamp_str.parse().unwrap());
 
         let channel = PaymentChannel {
-            id: 1,
+            id: crate::types::snowflake_id::SnowflakeId(1),
             tenant_id: None,
             provider: "dodo".into(),
             name: "Dodo".into(),
-            is_live: 0,
+            is_live: false,
             credentials: String::new(),
             webhook_secret: Some(encrypted_secret),
             settings: None,
-            is_active: 1,
+            is_active: true,
             sort_order: 0,
             version: 1,
             created_at: crate::utils::tz::Timestamp::default(),
@@ -761,15 +761,15 @@ mod tests {
         headers.insert("webhook-timestamp", timestamp_str.parse().unwrap());
 
         let channel = PaymentChannel {
-            id: 1,
+            id: crate::types::snowflake_id::SnowflakeId(1),
             tenant_id: None,
             provider: "dodo".into(),
             name: "Dodo".into(),
-            is_live: 0,
+            is_live: false,
             credentials: String::new(),
             webhook_secret: Some(encrypted_secret),
             settings: None,
-            is_active: 1,
+            is_active: true,
             sort_order: 0,
             version: 1,
             created_at: crate::utils::tz::Timestamp::default(),
@@ -790,15 +790,15 @@ mod tests {
     async fn cancel_is_noop() {
         let key = test_key();
         let channel = PaymentChannel {
-            id: 1,
+            id: crate::types::snowflake_id::SnowflakeId(1),
             tenant_id: None,
             provider: "dodo".into(),
             name: "Dodo".into(),
-            is_live: 0,
+            is_live: false,
             credentials: String::new(),
             webhook_secret: None,
             settings: None,
-            is_active: 1,
+            is_active: true,
             sort_order: 0,
             version: 1,
             created_at: crate::utils::tz::Timestamp::default(),

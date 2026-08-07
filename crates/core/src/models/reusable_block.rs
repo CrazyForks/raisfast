@@ -113,7 +113,7 @@ mod tests {
         let user = crate::models::user::create(
             pool,
             &crate::commands::user::CreateUserCmd {
-                username: "blockuser".to_string(),
+                username: format!("blockuser_{}", crate::utils::id::new_id()),
                 registered_via: crate::models::user::RegisteredVia::Email,
             },
             None,

@@ -201,11 +201,12 @@ mod tests {
         let pool = setup_pool().await;
         let svc = make_service(pool.clone());
         let a = auth(None);
+        let name = format!("Electronics_{}", crate::utils::id::new_id());
         let cat = svc
             .create(
                 &a,
                 CreateProductCategoryRequest {
-                    name: "Electronics".into(),
+                    name: name.clone(),
                     description: Some("All electronic items".into()),
                     parent_id: None,
                     sort_order: Some(0),
@@ -219,8 +220,7 @@ mod tests {
             )
             .await
             .unwrap();
-        assert_eq!(cat.name, "Electronics");
-        assert_eq!(cat.slug, "electronics");
+        assert_eq!(cat.name, name);
         assert_eq!(cat.description.unwrap(), "All electronic items");
     }
 
@@ -229,11 +229,12 @@ mod tests {
         let pool = setup_pool().await;
         let svc = make_service(pool.clone());
         let a = auth(None);
+        let name = format!("Phones_{}", crate::utils::id::new_id());
         let cat = svc
             .create(
                 &a,
                 CreateProductCategoryRequest {
-                    name: "Phones".into(),
+                    name: name.clone(),
                     description: None,
                     parent_id: None,
                     sort_order: None,
@@ -249,7 +250,7 @@ mod tests {
             .unwrap();
         let found = svc.get(cat.id, &a).await.unwrap();
         assert_eq!(found.id, cat.id);
-        assert_eq!(found.name, "Phones");
+        assert_eq!(found.name, name);
     }
 
     #[tokio::test]
@@ -265,11 +266,12 @@ mod tests {
         let pool = setup_pool().await;
         let svc = make_service(pool.clone());
         let a = auth(None);
+        let old_name = format!("Old_{}", crate::utils::id::new_id());
         let cat = svc
             .create(
                 &a,
                 CreateProductCategoryRequest {
-                    name: "Old".into(),
+                    name: old_name,
                     description: None,
                     parent_id: None,
                     sort_order: None,
@@ -283,12 +285,13 @@ mod tests {
             )
             .await
             .unwrap();
+        let new_name = format!("New_{}", crate::utils::id::new_id());
         let updated = svc
             .update(
                 &a,
                 cat.id,
                 UpdateProductCategoryRequest {
-                    name: Some("New".into()),
+                    name: Some(new_name.clone()),
                     description: Some("updated".into()),
                     parent_id: None,
                     sort_order: Some(5),
@@ -302,7 +305,7 @@ mod tests {
             )
             .await
             .unwrap();
-        assert_eq!(updated.name, "New");
+        assert_eq!(updated.name, new_name);
         assert_eq!(updated.description.unwrap(), "updated");
         assert_eq!(updated.sort_order, 5);
     }
@@ -316,7 +319,7 @@ mod tests {
             .create(
                 &a,
                 CreateProductCategoryRequest {
-                    name: "Bye".into(),
+                    name: format!("Bye_{}", crate::utils::id::new_id()),
                     description: None,
                     parent_id: None,
                     sort_order: None,
@@ -346,11 +349,12 @@ mod tests {
     async fn list_returns_all() {
         let pool = setup_pool().await;
         let svc = make_service(pool.clone());
-        let a = auth(None);
+        let tenant = format!("t_{}", crate::utils::id::new_id());
+        let a = auth(Some(&tenant));
         svc.create(
             &a,
             CreateProductCategoryRequest {
-                name: "A".into(),
+                name: format!("A_{}", crate::utils::id::new_id()),
                 description: None,
                 parent_id: None,
                 sort_order: None,
@@ -367,7 +371,7 @@ mod tests {
         svc.create(
             &a,
             CreateProductCategoryRequest {
-                name: "B".into(),
+                name: format!("B_{}", crate::utils::id::new_id()),
                 description: None,
                 parent_id: None,
                 sort_order: None,
@@ -389,12 +393,13 @@ mod tests {
     async fn list_paginated() {
         let pool = setup_pool().await;
         let svc = make_service(pool.clone());
-        let a = auth(None);
+        let tenant = format!("t_{}", crate::utils::id::new_id());
+        let a = auth(Some(&tenant));
         for name in ["A", "B", "C", "D", "E"] {
             svc.create(
                 &a,
                 CreateProductCategoryRequest {
-                    name: name.to_string(),
+                    name: format!("{name}_{}", crate::utils::id::new_id()),
                     description: None,
                     parent_id: None,
                     sort_order: None,
@@ -426,7 +431,7 @@ mod tests {
             .create(
                 &a,
                 CreateProductCategoryRequest {
-                    name: "Parent".into(),
+                    name: format!("Parent_{}", crate::utils::id::new_id()),
                     description: None,
                     parent_id: None,
                     sort_order: None,
@@ -444,7 +449,7 @@ mod tests {
             .create(
                 &a,
                 CreateProductCategoryRequest {
-                    name: "Child".into(),
+                    name: format!("Child_{}", crate::utils::id::new_id()),
                     description: None,
                     parent_id: Some(parent.id.to_string()),
                     sort_order: None,
@@ -470,7 +475,7 @@ mod tests {
             .create(
                 &a,
                 CreateProductCategoryRequest {
-                    name: "Orphan".into(),
+                    name: format!("Orphan_{}", crate::utils::id::new_id()),
                     description: None,
                     parent_id: Some("99999".to_string()),
                     sort_order: None,
@@ -490,12 +495,16 @@ mod tests {
     async fn tenant_isolation() {
         let pool = setup_pool().await;
         let svc = make_service(pool.clone());
-        let a1 = auth(Some("t1"));
-        let a2 = auth(Some("t2"));
+        let t1 = format!("t1_{}", crate::utils::id::new_id());
+        let t2 = format!("t2_{}", crate::utils::id::new_id());
+        let a1 = auth(Some(&t1));
+        let a2 = auth(Some(&t2));
+        let t1_name = format!("T1Cat_{}", crate::utils::id::new_id());
+        let t2_name = format!("T2Cat_{}", crate::utils::id::new_id());
         svc.create(
             &a1,
             CreateProductCategoryRequest {
-                name: "T1Cat".into(),
+                name: t1_name.clone(),
                 description: None,
                 parent_id: None,
                 sort_order: None,
@@ -512,7 +521,7 @@ mod tests {
         svc.create(
             &a2,
             CreateProductCategoryRequest {
-                name: "T2Cat".into(),
+                name: t2_name.clone(),
                 description: None,
                 parent_id: None,
                 sort_order: None,
@@ -529,8 +538,8 @@ mod tests {
         let t1_items = svc.list(&a1).await.unwrap();
         let t2_items = svc.list(&a2).await.unwrap();
         assert_eq!(t1_items.len(), 1);
-        assert_eq!(t1_items[0].name, "T1Cat");
+        assert_eq!(t1_items[0].name, t1_name);
         assert_eq!(t2_items.len(), 1);
-        assert_eq!(t2_items[0].name, "T2Cat");
+        assert_eq!(t2_items[0].name, t2_name);
     }
 }

@@ -322,7 +322,7 @@ mod tests {
             pool,
             &crate::commands::CreateProductVariantCmd {
                 product_id: SnowflakeId(product_id),
-                sku: Some(sku.to_string()),
+                sku: Some(format!("{sku}-{}", crate::utils::id::new_id())),
                 title: title.to_string(),
                 price: 1000,
                 original_price: None,
@@ -343,12 +343,12 @@ mod tests {
     async fn insert_and_find_by_id() {
         let pool = setup_pool().await;
         let pid = seed_product(&pool).await;
-        let v = seed_variant(&pool, pid, "Red Shirt", "SKU-RED-001").await;
+        let v = seed_variant(&pool, pid, "Red Shirt", "SKU-RED").await;
 
         let found = super::find_by_id(&pool, v.id, None).await.unwrap().unwrap();
         assert_eq!(found.id, v.id);
         assert_eq!(found.title, "Red Shirt");
-        assert_eq!(found.sku.unwrap(), "SKU-RED-001");
+        assert_eq!(found.sku, v.sku);
         assert_eq!(found.price, 1000);
         assert_eq!(found.stock, 50);
         assert!(found.is_active);
@@ -358,8 +358,9 @@ mod tests {
     async fn find_by_sku() {
         let pool = setup_pool().await;
         let pid = seed_product(&pool).await;
-        seed_variant(&pool, pid, "Green", "SKU-GRN").await;
-        let found = super::find_by_sku(&pool, "SKU-GRN", None)
+        let v = seed_variant(&pool, pid, "Green", "SKU-GRN").await;
+        let sku = v.sku.clone().unwrap();
+        let found = super::find_by_sku(&pool, &sku, None)
             .await
             .unwrap()
             .unwrap();
@@ -383,12 +384,14 @@ mod tests {
     async fn find_active_by_product_id_filters_inactive() {
         let pool = setup_pool().await;
         let pid = seed_product(&pool).await;
+        let active_sku = format!("SKU-ACTIVE-{}", crate::utils::id::new_id());
+        let inactive_sku = format!("SKU-INACTIVE-{}", crate::utils::id::new_id());
 
         insert(
             &pool,
             &crate::commands::CreateProductVariantCmd {
                 product_id: SnowflakeId(pid),
-                sku: Some("SKU-ACTIVE".to_string()),
+                sku: Some(active_sku),
                 title: "Active".to_string(),
                 price: 100,
                 original_price: None,
@@ -407,7 +410,7 @@ mod tests {
             &pool,
             &crate::commands::CreateProductVariantCmd {
                 product_id: SnowflakeId(pid),
-                sku: Some("SKU-INACTIVE".to_string()),
+                sku: Some(inactive_sku),
                 title: "Inactive".to_string(),
                 price: 100,
                 original_price: None,
@@ -435,12 +438,13 @@ mod tests {
         let pool = setup_pool().await;
         let pid = seed_product(&pool).await;
         let v = seed_variant(&pool, pid, "Old", "SKU-OLD").await;
+        let new_sku = format!("SKU-NEW-{}", crate::utils::id::new_id());
 
         let ok = super::update(
             &pool,
             &crate::commands::UpdateProductVariantCmd {
                 id: v.id,
-                sku: Some("SKU-NEW".to_string()),
+                sku: Some(new_sku.clone()),
                 title: "New".to_string(),
                 price: 2000,
                 original_price: Some(2500),
@@ -459,7 +463,7 @@ mod tests {
 
         let found = super::find_by_id(&pool, v.id, None).await.unwrap().unwrap();
         assert_eq!(found.title, "New");
-        assert_eq!(found.sku.unwrap(), "SKU-NEW");
+        assert_eq!(found.sku.unwrap(), new_sku);
         assert_eq!(found.price, 2000);
         assert_eq!(found.original_price.unwrap(), 2500);
         assert_eq!(found.stock, 99);
@@ -560,7 +564,7 @@ mod tests {
             &pool,
             &crate::commands::CreateProductVariantCmd {
                 product_id: SnowflakeId(pid),
-                sku: Some("SKU-TENANT".to_string()),
+                sku: Some(format!("SKU-TENANT-{}", crate::utils::id::new_id())),
                 title: "TenantVariant".to_string(),
                 price: 500,
                 original_price: None,

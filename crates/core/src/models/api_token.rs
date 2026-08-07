@@ -201,12 +201,13 @@ mod tests {
     async fn create_and_find_by_hash() {
         let pool = setup_pool().await;
         let user_id = insert_user(&pool).await;
+        let hash = format!("hash123_{}", crate::utils::id::new_id());
         let row = create(
             &pool,
             SnowflakeId(user_id),
             "Test",
             "",
-            "hash123",
+            &hash,
             "enc_ab",
             "[\"read\"]",
             None,
@@ -214,12 +215,12 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(row.name, "Test");
-        assert_eq!(row.token_hash, "hash123");
+        assert_eq!(row.token_hash, hash);
         assert_eq!(row.token_encrypted, "enc_ab");
         assert_eq!(row.scopes, "[\"read\"]");
         assert!(row.expires_at.is_none());
 
-        let found = find_by_hash(&pool, "hash123").await.unwrap().unwrap();
+        let found = find_by_hash(&pool, &hash).await.unwrap().unwrap();
         assert_eq!(found.id, row.id);
     }
 
@@ -241,12 +242,13 @@ mod tests {
     async fn list_by_user_returns_tokens() {
         let pool = setup_pool().await;
         let user_id = insert_user(&pool).await;
+        let h1 = format!("h1_{}", crate::utils::id::new_id());
         create(
             &pool,
             SnowflakeId(user_id),
             "First",
             "",
-            "h1",
+            &h1,
             "enc_a",
             "[\"read\"]",
             None,
@@ -254,12 +256,13 @@ mod tests {
         .await
         .unwrap();
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        let h2 = format!("h2_{}", crate::utils::id::new_id());
         create(
             &pool,
             SnowflakeId(user_id),
             "Second",
             "",
-            "h2",
+            &h2,
             "enc_b",
             "[\"write\"]",
             None,
@@ -284,12 +287,13 @@ mod tests {
     async fn delete_by_id_removes_token() {
         let pool = setup_pool().await;
         let user_id = insert_user(&pool).await;
+        let h3 = format!("h3_{}", crate::utils::id::new_id());
         let row = create(
             &pool,
             SnowflakeId(user_id),
             "Del",
             "",
-            "h3",
+            &h3,
             "enc_c",
             "[\"read\"]",
             None,
@@ -305,12 +309,13 @@ mod tests {
     async fn touch_last_used_updates_field() {
         let pool = setup_pool().await;
         let user_id = insert_user(&pool).await;
+        let h4 = format!("h4_{}", crate::utils::id::new_id());
         let row = create(
             &pool,
             SnowflakeId(user_id),
             "Touch",
             "",
-            "h4",
+            &h4,
             "enc_d",
             "[\"read\"]",
             None,
@@ -328,12 +333,13 @@ mod tests {
     async fn create_with_expires_at() {
         let pool = setup_pool().await;
         let user_id = insert_user(&pool).await;
+        let h5 = format!("h5_{}", crate::utils::id::new_id());
         let row = create(
             &pool,
             SnowflakeId(user_id),
             "Expiring",
             "",
-            "h5",
+            &h5,
             "enc_e",
             "[\"admin\"]",
             Some("2099-12-31T00:00:00+00:00"),
@@ -350,12 +356,13 @@ mod tests {
     async fn list_by_user_does_not_include_hash() {
         let pool = setup_pool().await;
         let user_id = insert_user(&pool).await;
+        let secret_hash = format!("secret_hash_{}", crate::utils::id::new_id());
         create(
             &pool,
             SnowflakeId(user_id),
             "Safe",
             "",
-            "secret_hash",
+            &secret_hash,
             "enc_f",
             "[\"read\"]",
             None,

@@ -37,7 +37,7 @@ fn parse_settings(channel: &PaymentChannel) -> Option<RoutingSettings> {
 pub fn select_channels(channels: &[PaymentChannel], ctx: &RoutingContext) -> Vec<RankedChannel> {
     let mut ranked: Vec<RankedChannel> = channels
         .iter()
-        .filter(|c| c.is_active != 0)
+        .filter(|c| c.is_active)
         .filter_map(|c| rank_channel(c, ctx))
         .collect();
 
@@ -146,11 +146,11 @@ mod tests {
             tenant_id: None,
             provider: provider.to_string(),
             name: provider.to_string(),
-            is_live: 0,
+            is_live: false,
             credentials: "{}".to_string(),
             webhook_secret: None,
             settings: settings.map(String::from),
-            is_active: 1,
+            is_active: true,
             sort_order: 0,
             version: 1,
             created_at: Timestamp::default(),
@@ -277,7 +277,7 @@ mod tests {
     #[test]
     fn inactive_channel_excluded() {
         let mut ch = make_channel("stripe", Some(r#"{"priority":100}"#));
-        ch.is_active = 0;
+        ch.is_active = false;
         let channels = vec![ch];
         let ctx = RoutingContext {
             currency: "USD".into(),

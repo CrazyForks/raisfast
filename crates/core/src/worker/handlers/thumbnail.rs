@@ -103,7 +103,7 @@ mod tests {
 
     #[tokio::test]
     async fn ignores_wrong_job_type() {
-        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
+        let pool = crate::test_pool!();
         let config = Arc::new(crate::config::app::AppConfig::test_defaults());
         let handler = GenerateThumbnailHandler::new(pool, config);
         let job = Job::GenerateSitemap;

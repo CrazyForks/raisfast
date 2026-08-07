@@ -181,9 +181,10 @@ pub async fn tx_insert(
         crate::utils::id::new_snowflake_id(),
         crate::utils::tz::now_utc(),
     );
+    let tenant = tenant_id.unwrap_or(crate::constants::DEFAULT_TENANT);
     raisfast_derive::crud_insert!(
         &mut *tx, "wallet_transactions",
-        ["id" => id, "tenant_id" => tenant_id, "wallet_id" => wallet_id, "user_id" => user_id, "entry_type" => entry_type.as_str(), "amount" => amount, "balance_after" => balance_after, "tx_type" => tx_type.as_str(), "currency" => currency, "transaction_no" => transaction_no, "related_tx_id" => related_tx_id, "reference_type" => reference_type.map(|r| r.as_str()), "reference_id" => reference_id.as_deref(), "counterparty_wallet_id" => counterparty_wallet_id, "metadata" => metadata.as_deref(), "created_at" => now]
+        ["id" => id, "tenant_id" => tenant, "wallet_id" => wallet_id, "user_id" => user_id, "entry_type" => entry_type.as_str(), "amount" => amount, "balance_after" => balance_after, "tx_type" => tx_type.as_str(), "currency" => currency, "transaction_no" => transaction_no, "related_tx_id" => related_tx_id, "reference_type" => reference_type.map(|r| r.as_str()), "reference_id" => reference_id.as_deref(), "counterparty_wallet_id" => counterparty_wallet_id, "metadata" => metadata.as_deref(), "created_at" => now]
     )?;
     Ok(
         raisfast_derive::crud_find_one!(&mut *tx, "wallet_transactions", WalletTransaction, where: ("id", id))?,
@@ -232,10 +233,10 @@ mod tests {
             "id" => tx_id,
             "wallet_id" => w.id,
             "user_id" => user.id,
-            "entry_type" => WalletEntryType::Credit,
+            "entry_type" => WalletEntryType::Credit.as_str(),
             "amount" => 1000_i64,
             "balance_after" => 1000_i64,
-            "tx_type" => WalletTxType::Recharge,
+            "tx_type" => WalletTxType::Recharge.as_str(),
             "currency" => "CNY",
             "transaction_no" => &tx_no,
             "created_at" => now
@@ -345,10 +346,10 @@ mod tests {
             "id" => rev_id,
             "wallet_id" => tx.wallet_id,
             "user_id" => tx.user_id,
-            "entry_type" => WalletEntryType::Debit,
+            "entry_type" => WalletEntryType::Debit.as_str(),
             "amount" => 1000_i64,
             "balance_after" => 0_i64,
-            "tx_type" => WalletTxType::Refund,
+            "tx_type" => WalletTxType::Refund.as_str(),
             "currency" => "CNY",
             "transaction_no" => &rev_no,
             "related_tx_id" => tx.id,

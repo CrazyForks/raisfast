@@ -988,8 +988,8 @@ async fn spawn_workers(
     cache: Arc<dyn crate::cache::CacheStore>,
 ) -> Arc<crate::worker::JobHandlerRegistry> {
     use crate::worker::{
-        CronScheduler, DefaultJobQueue, JobEnqueuer, JobHandlerRegistry, PluginCronDispatcher,
-        StuckJobSweeper, WorkerRunner, seed_defaults,
+        CronScheduler, DefaultJobQueue, JobEnqueuer, PluginCronDispatcher, StuckJobSweeper,
+        WorkerRunner, seed_defaults,
     };
 
     let queue = Arc::new(DefaultJobQueue::new(pool.clone()));
@@ -1006,19 +1006,17 @@ async fn spawn_workers(
         tracing::warn!("worker migration/seed error: {e}");
     }
 
-    let mut registry = JobHandlerRegistry::new();
-    crate::worker::handlers::register_all(
-        &mut registry,
-        pool.clone(),
-        Arc::new(config.clone()),
-        search,
-        cache,
-        crate::notifier::build_email_sender(config),
-        crate::notifier::build_sms_sender(config),
-        plugins.clone(),
-    );
-
-    let registry = Arc::new(registry);
+    let registry = Arc::new(crate::worker::handlers::register_all(
+        crate::worker::handlers::HandlerDeps {
+            pool: pool.clone(),
+            config: Arc::new(config.clone()),
+            search,
+            cache,
+            email_sender: crate::notifier::build_email_sender(config),
+            sms_sender: crate::notifier::build_sms_sender(config),
+            plugins: plugins.clone(),
+        },
+    ));
 
     let cron = CronScheduler::new(
         pool.clone(),

@@ -1,0 +1,12 @@
+{
+  "db_name": "MySQL",
+  "query": "INSERT INTO `jobs` (`id`, `job_type`, `payload`, `status`, `max_attempts`, `run_after`, `cron_schedule_id`, `cron_log_id`, `priority`, `timeout_secs`, `dedup_key`, `created_at`, `updated_at`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 13
+    },
+    "nullable": []
+  },
+  "hash": "634cde6eaff6fa809b88be78a14673fa3ca047207cfde108a00c34fc3335ba3b"
+}

@@ -8,7 +8,7 @@ use std::time::Duration;
 use crate::db::Pool;
 use crate::types::snowflake_id::SnowflakeId;
 
-use super::{CronExecStatus, Job, JobHandlerRegistry, JobQueue, PluginCronDispatcher};
+use super::{CronExecStatus, JobHandlerRegistry, JobQueue, PluginCronDispatcher};
 
 /// Worker executor
 pub struct WorkerRunner {
@@ -79,52 +79,57 @@ impl WorkerRunner {
     }
 
     async fn execute_batch(&self, jobs: &[super::QueuedJob], worker_id: usize) {
-        let mut search_ids: Vec<i64> = Vec::new();
-        let mut search_job_ids: Vec<String> = Vec::new();
+        // Group jobs by their handler's coalesce key.
+        use std::collections::BTreeMap;
+        let mut coalesce_groups: BTreeMap<String, Vec<&super::QueuedJob>> = BTreeMap::new();
 
         for job in jobs {
-            if let Job::RebuildSearchIndex { post_ids } = &job.job {
-                search_ids.extend_from_slice(post_ids);
-                search_job_ids.push(job.id.clone());
-            } else {
-                if let Err(e) = self.execute(job).await {
-                    tracing::error!("worker-{worker_id} job {} error: {e}", job.id);
+            let handler = self.handlers.get_handler(job.job.job_type());
+            let key = handler.and_then(|h| h.coalesce_key(&job.job));
+            match key {
+                Some(k) => coalesce_groups.entry(k).or_default().push(job),
+                None => {
+                    if let Err(e) = self.execute(job).await {
+                        tracing::error!("worker-{worker_id} job {} error: {e}", job.id);
+                    }
                 }
             }
         }
 
-        if !search_ids.is_empty() {
-            search_ids.sort_unstable();
-            search_ids.dedup();
-
-            let merged_job = Job::RebuildSearchIndex {
-                post_ids: search_ids,
+        for (key, group) in coalesce_groups {
+            let job_type = group[0].job.job_type().to_string();
+            let Some(h) = self.handlers.get_handler(&job_type) else {
+                tracing::warn!("no handler for coalesced key '{key}'");
+                continue;
             };
-            let job_type = merged_job.job_type();
-
-            let result = if self.handlers.has_handler(job_type) {
-                self.handlers.handle(&merged_job).await
-            } else {
-                tracing::warn!("no handler for coalesced search index job");
-                Ok(())
+            let Some(merged) = h.coalesce(group.iter().map(|q| q.job.clone()).collect()) else {
+                continue;
             };
+            let handler_start = std::time::Instant::now();
+            let result = self.handlers.handle(&merged).await;
+            let elapsed_ms = handler_start.elapsed().as_millis() as i64;
 
             if let Err(e) = result {
-                tracing::error!("worker-{worker_id} coalesced search index error: {e}");
-                for id in &search_job_ids {
-                    if let Err(e) = self.queue.fail(id, &format!("{e}")).await {
+                tracing::error!("worker-{worker_id} coalesced '{key}' error: {e}");
+                for q in &group {
+                    if let Err(er) = self.queue.fail(&q.id, &format!("{e}")).await {
                         tracing::error!(
-                            "worker-{worker_id} failed to fail coalesced job {id}: {e}"
+                            "worker-{worker_id} failed to fail coalesced job {}: {er}",
+                            q.id
                         );
                     }
+                    self.writeback_cron_log(q, Err(format!("{e} (elapsed {elapsed_ms}ms)")))
+                        .await;
                 }
             } else {
-                for id in &search_job_ids {
-                    if let Err(e) = self.queue.complete(id).await {
+                for q in &group {
+                    if let Err(er) = self.queue.complete(&q.id).await {
                         tracing::error!(
-                            "worker-{worker_id} failed to complete coalesced job {id}: {e}"
+                            "worker-{worker_id} failed to complete coalesced job {}: {er}",
+                            q.id
                         );
                     }
+                    self.writeback_cron_log(q, Ok(elapsed_ms)).await;
                 }
             }
         }
@@ -259,8 +264,9 @@ mod tests {
         Arc<JobHandlerRegistry>,
         crate::db::Pool,
     ) {
-        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query(crate::db::schema::SCHEMA_SQL)
+        let pool = crate::test_pool!();
+        // Clear leftover rows from previous test runs (shared PG database).
+        sqlx::query("DELETE FROM jobs")
             .execute(&pool)
             .await
             .unwrap();
@@ -321,6 +327,9 @@ mod tests {
                 run_after: None,
                 cron_schedule_id: None,
                 cron_log_id: None,
+                priority: 0,
+                timeout_secs: None,
+                dedup_key: None,
             })
             .await
             .unwrap();
@@ -357,6 +366,9 @@ mod tests {
                 run_after: None,
                 cron_schedule_id: None,
                 cron_log_id: None,
+                priority: 0,
+                timeout_secs: None,
+                dedup_key: None,
             })
             .await
             .unwrap();

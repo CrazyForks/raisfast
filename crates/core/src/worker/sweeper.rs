@@ -58,29 +58,40 @@ mod tests {
     use super::*;
     use crate::worker::{DefaultJobQueue, Job, NewJob};
 
-    async fn setup() -> Arc<DefaultJobQueue> {
-        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query(crate::db::schema::SCHEMA_SQL)
+    async fn setup() -> (crate::db::Pool, Arc<DefaultJobQueue>) {
+        let pool = crate::test_pool!();
+        // Clear leftover rows from previous test runs (shared PG database).
+        sqlx::query("DELETE FROM jobs")
             .execute(&pool)
             .await
             .unwrap();
-        Arc::new(DefaultJobQueue::new(pool))
+        let q = Arc::new(DefaultJobQueue::new(pool.clone()));
+        (pool, q)
+    }
+
+    async fn backdate_running(pool: &crate::db::Pool) {
+        sqlx::query(
+            "UPDATE jobs SET updated_at = NOW() - INTERVAL '1 hour' WHERE status = 'running'",
+        )
+        .execute(pool)
+        .await
+        .unwrap();
     }
 
     #[tokio::test]
     async fn requeue_stuck_returns_zero_on_empty() {
-        let q = setup().await;
+        let (_pool, q) = setup().await;
         let count = q.requeue_stuck(Duration::from_secs(1)).await.unwrap();
         assert_eq!(count, 0);
     }
 
     #[tokio::test]
     async fn requeue_stuck_requeues_running_job() {
-        let q = setup().await;
+        let (pool, q) = setup().await;
         q.enqueue(NewJob::from(Job::GenerateSitemap)).await.unwrap();
         let _ = q.dequeue(10).await.unwrap(); // status → running
+        backdate_running(&pool).await;
 
-        // Use 0s timeout so everything is immediately "stuck"
         let count = q.requeue_stuck(Duration::from_secs(0)).await.unwrap();
         assert_eq!(count, 1);
 
@@ -92,17 +103,21 @@ mod tests {
 
     #[tokio::test]
     async fn requeue_stuck_marks_dead_after_max_attempts() {
-        let q = setup().await;
+        let (pool, q) = setup().await;
         q.enqueue(NewJob {
             job: Job::GenerateSitemap,
             max_attempts: Some(1),
             run_after: None,
             cron_schedule_id: None,
             cron_log_id: None,
+            priority: 0,
+            timeout_secs: None,
+            dedup_key: None,
         })
         .await
         .unwrap();
         let _ = q.dequeue(10).await.unwrap(); // attempts 0→1, running
+        backdate_running(&pool).await;
 
         let count = q.requeue_stuck(Duration::from_secs(0)).await.unwrap();
         assert_eq!(count, 1);

@@ -37,6 +37,20 @@ pub struct HandlerMeta {
 #[async_trait::async_trait]
 pub trait JobHandler: Send + Sync {
     async fn handle(&self, job: &Job) -> AppResult<()>;
+
+    /// Return a coalesce key for this job. If two or more jobs in a batch share
+    /// the same key, they are merged via [`JobHandler::coalesce`] and executed
+    /// once instead of N times.
+    #[allow(unused_variables)]
+    fn coalesce_key(&self, job: &Job) -> Option<String> {
+        None
+    }
+
+    /// Merge multiple jobs with the same coalesce key into a single job.
+    #[allow(unused_variables)]
+    fn coalesce(&self, jobs: Vec<Job>) -> Option<Job> {
+        None
+    }
 }
 
 /// Handler registry
@@ -74,6 +88,12 @@ impl JobHandlerRegistry {
     #[must_use]
     pub fn has_handler(&self, job_type: &str) -> bool {
         self.handlers.contains_key(job_type)
+    }
+
+    /// Returns a reference to the registered handler, if any.
+    #[must_use]
+    pub fn get_handler(&self, job_type: &str) -> Option<&dyn JobHandler> {
+        self.handlers.get(job_type).map(|b| b.as_ref())
     }
 
     /// Returns the metadata for a registered handler, if it has one.

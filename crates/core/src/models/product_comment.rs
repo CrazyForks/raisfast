@@ -259,18 +259,24 @@ pub async fn get_stats(
     tenant_id: Option<&str>,
 ) -> AppResult<ProductCommentStats> {
     let avg_sql = format!(
-        "SELECT COALESCE(AVG(rating), 0.0), COUNT(*) FROM product_comments WHERE product_id = {} AND status = 'approved'{}",
+        "SELECT {}, COUNT(*) FROM product_comments WHERE product_id = {} AND status = 'approved'{}",
+        crate::db::Driver::cast_int("COALESCE(SUM(rating), 0)"),
         crate::db::Driver::ph(1),
         crate::db::tenant::tenant_filter_ph(tenant_id, 2)
     );
-    let (avg, total): (f64, i64) = raisfast_derive::crud_query!(
+    let (sum_rating, total): (i64, i64) = raisfast_derive::crud_query!(
         pool,
-        (f64, i64),
+        (i64, i64),
         &avg_sql,
         [product_id],
         fetch_one,
         tenant: tenant_id
     )?;
+    let avg = if total > 0 {
+        sum_rating as f64 / total as f64
+    } else {
+        0.0
+    };
 
     let dist_sql = format!(
         "SELECT rating, COUNT(*) as cnt FROM product_comments WHERE product_id = {} AND status = 'approved'{} GROUP BY rating ORDER BY rating DESC",
@@ -306,6 +312,7 @@ pub async fn get_stats(
 mod tests {
     use super::*;
     use crate::commands::CreateProductCommentCmd;
+    use crate::db::DbDriver;
 
     async fn setup_pool() -> crate::db::Pool {
         crate::test_pool!()
@@ -314,7 +321,7 @@ mod tests {
     async fn seed_user(pool: &crate::db::Pool) -> i64 {
         let id = crate::utils::id::new_id();
         let username = format!("testuser_{id}");
-        sqlx::query("INSERT INTO users (id, username, status, registered_via) VALUES (?, ?, 'active', 'email')")
+        sqlx::query(&format!("INSERT INTO users (id, username, status, registered_via) VALUES ({}, {}, 'active', 'email')", crate::db::Driver::ph(1), crate::db::Driver::ph(2)))
             .bind(id)
             .bind(&username)
             .execute(pool)

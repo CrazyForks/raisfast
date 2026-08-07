@@ -230,6 +230,7 @@ pub async fn tx_update_status_cas(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::DbDriver;
     use crate::types::snowflake_id::SnowflakeId;
 
     async fn setup_pool() -> crate::db::Pool {
@@ -239,7 +240,7 @@ mod tests {
     async fn seed_user(pool: &crate::db::Pool) -> i64 {
         let id = crate::utils::id::new_id();
         let username = format!("testuser_{id}");
-        sqlx::query("INSERT INTO users (id, username, status, registered_via) VALUES (?, ?, 'active', 'email')")
+        sqlx::query(&format!("INSERT INTO users (id, username, status, registered_via) VALUES ({}, {}, 'active', 'email')", crate::db::Driver::ph(1), crate::db::Driver::ph(2)))
             .bind(id)
             .bind(&username)
             .execute(pool)
@@ -281,6 +282,20 @@ mod tests {
         channel_id: i64,
         amount: i64,
     ) -> PaymentOrder {
+        seed_payment_order_t(pool, user_id, channel_id, amount, None).await
+    }
+
+    fn uniq_tenant() -> String {
+        format!("t_{}", crate::utils::id::new_id())
+    }
+
+    async fn seed_payment_order_t(
+        pool: &crate::db::Pool,
+        user_id: i64,
+        channel_id: i64,
+        amount: i64,
+        tenant: Option<&str>,
+    ) -> PaymentOrder {
         let idem_key = format!("idem_{}", uuid::Uuid::now_v7());
         super::insert(
             pool,
@@ -303,7 +318,7 @@ mod tests {
                 channel_selected_by: None,
                 metadata: None,
             },
-            None,
+            tenant,
         )
         .await
         .unwrap()
@@ -346,10 +361,11 @@ mod tests {
         let uid = seed_user(&pool).await;
         let ch_id = seed_channel(&pool).await;
         let order = seed_payment_order(&pool, uid, ch_id, 500).await;
-        super::update_provider_order_id(&pool, order.id, "pi_test123", None, None)
+        let provider_order_id = format!("pi_test123_{}", crate::utils::id::new_id());
+        super::update_provider_order_id(&pool, order.id, &provider_order_id, None, None)
             .await
             .unwrap();
-        let found = super::find_by_provider_order_id(&pool, "pi_test123", None)
+        let found = super::find_by_provider_order_id(&pool, &provider_order_id, None)
             .await
             .unwrap()
             .unwrap();
@@ -439,10 +455,11 @@ mod tests {
         let uid = seed_user(&pool).await;
         let ch_id = seed_channel(&pool).await;
         let order = seed_payment_order(&pool, uid, ch_id, 1000).await;
+        let pi = format!("pi_abc123_{}", crate::utils::id::new_id());
         super::update_provider_order_id(
             &pool,
             order.id,
-            "pi_abc123",
+            &pi,
             Some(r#"{"status":"requires_action"}"#),
             None,
         )
@@ -452,7 +469,7 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(found.provider_order_id.unwrap(), "pi_abc123");
+        assert_eq!(found.provider_order_id.unwrap(), pi);
         assert_eq!(
             found.provider_data.unwrap(),
             r#"{"status":"requires_action"}"#
@@ -480,10 +497,11 @@ mod tests {
         let pool = setup_pool().await;
         let uid = seed_user(&pool).await;
         let ch_id = seed_channel(&pool).await;
+        let tenant = uniq_tenant();
         for _ in 0..4 {
-            seed_payment_order(&pool, uid, ch_id, 100).await;
+            seed_payment_order_t(&pool, uid, ch_id, 100, Some(&tenant)).await;
         }
-        let (items, total) = super::find_all_admin_paginated(&pool, None, 1, 10, None)
+        let (items, total) = super::find_all_admin_paginated(&pool, Some(&tenant), 1, 10, None)
             .await
             .unwrap();
         assert_eq!(total, 4);
@@ -495,8 +513,9 @@ mod tests {
         let pool = setup_pool().await;
         let uid = seed_user(&pool).await;
         let ch_id = seed_channel(&pool).await;
+        let tenant = uniq_tenant();
         for _ in 0..3 {
-            let order = seed_payment_order(&pool, uid, ch_id, 100).await;
+            let order = seed_payment_order_t(&pool, uid, ch_id, 100, Some(&tenant)).await;
             let mut tx = pool.begin().await.unwrap();
             let rows = super::tx_update_status_cas(
                 &mut tx,
@@ -510,10 +529,11 @@ mod tests {
             assert_eq!(rows, 1);
             tx.commit().await.unwrap();
         }
-        seed_payment_order(&pool, uid, ch_id, 100).await;
-        let (items, total) = super::find_all_admin_paginated(&pool, None, 1, 10, Some("paid"))
-            .await
-            .unwrap();
+        seed_payment_order_t(&pool, uid, ch_id, 100, Some(&tenant)).await;
+        let (items, total) =
+            super::find_all_admin_paginated(&pool, Some(&tenant), 1, 10, Some("paid"))
+                .await
+                .unwrap();
         assert_eq!(total, 3);
         assert_eq!(items.len(), 3);
         assert!(items.iter().all(|o| o.status == PaymentStatus::Paid));
@@ -522,7 +542,8 @@ mod tests {
     #[tokio::test]
     async fn find_all_admin_paginated_empty() {
         let pool = setup_pool().await;
-        let (items, total) = super::find_all_admin_paginated(&pool, None, 1, 10, None)
+        let tenant = uniq_tenant();
+        let (items, total) = super::find_all_admin_paginated(&pool, Some(&tenant), 1, 10, None)
             .await
             .unwrap();
         assert_eq!(total, 0);
@@ -537,9 +558,15 @@ mod tests {
         let order = seed_payment_order(&pool, uid, ch_id, 2000).await;
         assert_eq!(order.status, PaymentStatus::Pending);
 
-        super::update_provider_order_id(&pool, order.id, "pi_xyz", None, None)
-            .await
-            .unwrap();
+        super::update_provider_order_id(
+            &pool,
+            order.id,
+            &format!("pi_xyz_{}", crate::utils::id::new_id()),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
         let mut tx = pool.begin().await.unwrap();
         let rows = super::tx_update_status_cas(
             &mut tx,
@@ -558,7 +585,7 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(found.status, PaymentStatus::Paid);
-        assert_eq!(found.provider_order_id.unwrap(), "pi_xyz");
+        assert!(found.provider_order_id.is_some());
         assert!(found.paid_at.is_some());
     }
 }

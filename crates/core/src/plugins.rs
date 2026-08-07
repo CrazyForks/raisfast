@@ -3058,11 +3058,7 @@ end
         let lua_code = "Plugin = { on_cron_tick = function(data) RaisFastHost.setData(\"last_job\", data.job_type or \"\") end }";
         std::fs::write(plugin_dir.join("init.lua"), lua_code).unwrap();
 
-        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query(crate::db::schema::SCHEMA_SQL)
-            .execute(&pool)
-            .await
-            .unwrap();
+        let pool = crate::test_pool!();
 
         let mut config = crate::config::app::AppConfig::test_defaults();
         config.plugin_dir = Some(dir.path().to_string_lossy().to_string());

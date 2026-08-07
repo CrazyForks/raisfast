@@ -13,7 +13,7 @@ use raisfast::db::tenant;
 use raisfast::services::post::{PostService, PostServiceImpl};
 use raisfast::services::{auth, options, stats, user};
 
-fn build_post_service(pool: Arc<sqlx::SqlitePool>) -> Arc<dyn PostService> {
+fn build_post_service(pool: Arc<raisfast::db::Pool>) -> Arc<dyn PostService> {
     let emitter =
         raisfast::event::EventEmitter::eventbus_only(raisfast::eventbus::EventBus::new(16));
     let search: Arc<dyn raisfast::search::SearchEngine> =
@@ -56,18 +56,10 @@ fn cache_ct(ct: &mut raisfast::content_type::schema::ContentTypeSchema) {
     ct.cache_protocol_columns(&test_protocol_registry());
 }
 
-async fn setup_pool() -> sqlx::SqlitePool {
-    let pool = raisfast::db::Pool::connect("sqlite::memory:")
-        .await
-        .unwrap();
-    sqlx::query(raisfast::db::schema::SCHEMA_SQL)
-        .execute(&pool)
-        .await
-        .unwrap();
-    tenant::invalidate_cache().await;
-    pool
+async fn setup_pool() -> raisfast::db::Pool {
+    raisfast::test_pool!()
 }
-async fn create_test_user(pool: &sqlx::SqlitePool, label: &str) -> (i64, String) {
+async fn create_test_user(pool: &raisfast::db::Pool, label: &str) -> (i64, String) {
     let emitter =
         raisfast::event::EventEmitter::eventbus_only(raisfast::eventbus::EventBus::new(16));
     let req = raisfast::dto::RegisterRequest {

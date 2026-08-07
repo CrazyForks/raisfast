@@ -612,7 +612,7 @@ immutable = true
 
     #[tokio::test]
     async fn validate_create_missing_required() {
-        let pool = crate::db::Pool::connect(":memory:").await.unwrap();
+        let pool = crate::test_pool!();
         let ct = make_test_ct();
         let repo = crate::content_type::repository::ContentRepository::new(pool.clone());
         repo.migrate(&ct, &test_protocol_registry()).await.unwrap();
@@ -626,7 +626,7 @@ immutable = true
 
     #[tokio::test]
     async fn validate_create_bad_enum() {
-        let pool = crate::db::Pool::connect(":memory:").await.unwrap();
+        let pool = crate::test_pool!();
         let ct = make_test_ct();
         let repo = crate::content_type::repository::ContentRepository::new(pool.clone());
         repo.migrate(&ct, &test_protocol_registry()).await.unwrap();
@@ -640,7 +640,7 @@ immutable = true
 
     #[tokio::test]
     async fn validate_create_exceeds_max_length() {
-        let pool = crate::db::Pool::connect(":memory:").await.unwrap();
+        let pool = crate::test_pool!();
         let ct = make_test_ct();
         let repo = crate::content_type::repository::ContentRepository::new(pool.clone());
         repo.migrate(&ct, &test_protocol_registry()).await.unwrap();
@@ -657,7 +657,7 @@ immutable = true
 
     #[tokio::test]
     async fn validate_create_number_out_of_range() {
-        let pool = crate::db::Pool::connect(":memory:").await.unwrap();
+        let pool = crate::test_pool!();
         let ct = make_test_ct();
         let repo = crate::content_type::repository::ContentRepository::new(pool.clone());
         repo.migrate(&ct, &test_protocol_registry()).await.unwrap();
@@ -671,22 +671,23 @@ immutable = true
 
     #[tokio::test]
     async fn validate_create_unique_duplicate() {
-        let pool = crate::db::Pool::connect(":memory:").await.unwrap();
+        let pool = crate::test_pool!();
         let ct = make_test_ct();
         let repo = crate::content_type::repository::ContentRepository::new(pool.clone());
         repo.migrate(&ct, &test_protocol_registry()).await.unwrap();
 
         let now = crate::utils::tz::now_str();
+        let code = format!("ABC_{}", crate::utils::id::new_id());
         repo.create(
             &ct,
-            json!({"name": "A", "code": "ABC", "created_at": now, "updated_at": now}),
+            json!({"name": "A", "code": code, "created_at": now, "updated_at": now}),
             None,
             &Default::default(),
         )
         .await
         .unwrap();
 
-        let data = json!({"name": "B", "code": "ABC"});
+        let data = json!({"name": "B", "code": code});
         let result = validate_create(&pool, &ct, &data).await;
         assert!(result.is_err());
         let msg = result.unwrap_err().to_string();
@@ -698,7 +699,7 @@ immutable = true
 
     #[tokio::test]
     async fn validate_update_immutable_field() {
-        let pool = crate::db::Pool::connect(":memory:").await.unwrap();
+        let pool = crate::test_pool!();
         let ct = make_test_ct();
         let repo = crate::content_type::repository::ContentRepository::new(pool.clone());
         repo.migrate(&ct, &test_protocol_registry()).await.unwrap();
@@ -726,16 +727,17 @@ immutable = true
 
     #[tokio::test]
     async fn validate_update_unique_excludes_self() {
-        let pool = crate::db::Pool::connect(":memory:").await.unwrap();
+        let pool = crate::test_pool!();
         let ct = make_test_ct();
         let repo = crate::content_type::repository::ContentRepository::new(pool.clone());
         repo.migrate(&ct, &test_protocol_registry()).await.unwrap();
 
         let now = crate::utils::tz::now_str();
+        let code = format!("XYZ_{}", crate::utils::id::new_id());
         let created = repo
             .create(
                 &ct,
-                json!({"name": "Test", "code": "XYZ", "created_at": now, "updated_at": now}),
+                json!({"name": "Test", "code": code, "created_at": now, "updated_at": now}),
                 None,
                 &Default::default(),
             )
@@ -747,7 +749,7 @@ immutable = true
             &pool,
             &ct,
             SnowflakeId(id),
-            &json!({"name": "Updated", "code": "XYZ"}),
+            &json!({"name": "Updated", "code": code}),
         )
         .await;
         assert!(result.is_ok(), "updating same unique value should be ok");
@@ -843,7 +845,7 @@ immutable = true
 
     #[tokio::test]
     async fn validate_create_non_object_body() {
-        let pool = crate::db::Pool::connect(":memory:").await.unwrap();
+        let pool = crate::test_pool!();
         let ct = make_test_ct();
         let repo = crate::content_type::repository::ContentRepository::new(pool.clone());
         repo.migrate(&ct, &test_protocol_registry()).await.unwrap();
@@ -854,7 +856,7 @@ immutable = true
 
     #[tokio::test]
     async fn validate_update_non_object_body() {
-        let pool = crate::db::Pool::connect(":memory:").await.unwrap();
+        let pool = crate::test_pool!();
         let ct = make_test_ct();
         let repo = crate::content_type::repository::ContentRepository::new(pool.clone());
         repo.migrate(&ct, &test_protocol_registry()).await.unwrap();
@@ -879,7 +881,7 @@ pattern = "^[A-Z]{3}$"
 "#,
         )
         .unwrap();
-        let pool = crate::db::Pool::connect(":memory:").await.unwrap();
+        let pool = crate::test_pool!();
         let repo = crate::content_type::repository::ContentRepository::new(pool.clone());
         repo.migrate(&ct, &test_protocol_registry()).await.unwrap();
 
@@ -905,7 +907,7 @@ pattern = "^[A-Z]{3}$"
 "#,
         )
         .unwrap();
-        let pool = crate::db::Pool::connect(":memory:").await.unwrap();
+        let pool = crate::test_pool!();
         let repo = crate::content_type::repository::ContentRepository::new(pool.clone());
         repo.migrate(&ct, &test_protocol_registry()).await.unwrap();
 
@@ -915,7 +917,7 @@ pattern = "^[A-Z]{3}$"
 
     #[tokio::test]
     async fn validate_create_max_exceeded() {
-        let pool = crate::db::Pool::connect(":memory:").await.unwrap();
+        let pool = crate::test_pool!();
         let ct = ContentTypeSchema::parse_from_str(
             r#"
 [content_type]
@@ -941,7 +943,7 @@ max = 100
 
     #[tokio::test]
     async fn validate_create_wrong_type_for_field() {
-        let pool = crate::db::Pool::connect(":memory:").await.unwrap();
+        let pool = crate::test_pool!();
         let ct = ContentTypeSchema::parse_from_str(
             r#"
 [content_type]
@@ -984,7 +986,7 @@ target = "users"
 "#,
         )
         .unwrap();
-        let pool = crate::db::Pool::connect(":memory:").await.unwrap();
+        let pool = crate::test_pool!();
         let repo = crate::content_type::repository::ContentRepository::new(pool.clone());
         repo.migrate(&ct, &test_protocol_registry()).await.unwrap();
 
@@ -1014,7 +1016,7 @@ target = "tags"
 "#,
         )
         .unwrap();
-        let pool = crate::db::Pool::connect(":memory:").await.unwrap();
+        let pool = crate::test_pool!();
         let repo = crate::content_type::repository::ContentRepository::new(pool.clone());
         repo.migrate(&ct, &test_protocol_registry()).await.unwrap();
 
@@ -1029,7 +1031,7 @@ target = "tags"
 
     #[tokio::test]
     async fn validate_create_required_but_empty_string() {
-        let pool = crate::db::Pool::connect(":memory:").await.unwrap();
+        let pool = crate::test_pool!();
         let ct = ContentTypeSchema::parse_from_str(
             r#"
 [content_type]
@@ -1053,7 +1055,7 @@ required = true
 
     #[tokio::test]
     async fn validate_create_required_but_null() {
-        let pool = crate::db::Pool::connect(":memory:").await.unwrap();
+        let pool = crate::test_pool!();
         let ct = ContentTypeSchema::parse_from_str(
             r#"
 [content_type]

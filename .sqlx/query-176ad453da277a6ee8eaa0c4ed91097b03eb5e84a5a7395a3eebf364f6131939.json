@@ -1,0 +1,12 @@
+{
+  "db_name": "MySQL",
+  "query": "INSERT INTO `workflow_instances` (`id`, `definition_id`, `status`, `context`, `triggered_by`, `started_at`, `updated_at`) VALUES (?, ?, ?, ?, ?, ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 7
+    },
+    "nullable": []
+  },
+  "hash": "176ad453da277a6ee8eaa0c4ed91097b03eb5e84a5a7395a3eebf364f6131939"
+}

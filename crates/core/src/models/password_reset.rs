@@ -109,7 +109,7 @@ pub async fn tx_mark_used(
     tx: &mut crate::db::pool::DbConnection,
     id: SnowflakeId,
 ) -> AppResult<()> {
-    let now = crate::utils::tz::now_str();
+    let now = crate::utils::tz::now_utc();
     raisfast_derive::crud_update!(&mut *tx, "password_reset_tokens",
         bind: ["used_at" => now],
         where: ("id", id)
@@ -174,7 +174,7 @@ mod tests {
             "SELECT used_at FROM password_reset_tokens WHERE id = {}",
             crate::db::Driver::ph(1),
         );
-        let (used_at,): (Option<String>,) = sqlx::query_as(&sql)
+        let (used_at,): (Option<crate::utils::tz::Timestamp>,) = sqlx::query_as(&sql)
             .bind(row.id)
             .fetch_one(&pool)
             .await

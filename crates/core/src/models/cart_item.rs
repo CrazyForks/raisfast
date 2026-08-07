@@ -161,6 +161,7 @@ pub async fn count_by_user(
 
 #[cfg(test)]
 mod tests {
+    use crate::db::DbDriver;
     use crate::types::snowflake_id::SnowflakeId;
 
     async fn setup_pool() -> crate::db::Pool {
@@ -170,9 +171,11 @@ mod tests {
     async fn seed_user(pool: &crate::db::Pool) -> i64 {
         let id = crate::utils::id::new_id();
         let username = format!("testuser_{id}");
-        sqlx::query(
-            "INSERT INTO users (id, username, status, registered_via) VALUES (?, ?, 'active', 'email')",
-        )
+        sqlx::query(&format!(
+            "INSERT INTO users (id, username, status, registered_via) VALUES ({}, {}, 'active', 'email')",
+            crate::db::Driver::ph(1),
+            crate::db::Driver::ph(2)
+        ))
         .bind(id)
         .bind(&username)
         .execute(pool)

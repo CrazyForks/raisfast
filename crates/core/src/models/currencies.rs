@@ -128,7 +128,7 @@ pub async fn update(
 
     let name = name.unwrap_or(&existing.name);
     let is_active = is_active.unwrap_or(existing.is_active);
-    let now = crate::utils::tz::now_str();
+    let now = crate::utils::tz::now_utc();
 
     let result = raisfast_derive::crud_update!(pool, "currencies",
         bind: ["name" => name, "is_active" => is_active, "updated_at" => now],
@@ -180,7 +180,8 @@ mod tests {
     #[tokio::test]
     async fn create_and_find_currency() {
         let pool = setup_pool().await;
-        let c = create(&pool, "test_tenant", "CNY", "Chinese Yuan", 2)
+        let tenant = format!("t_{}", crate::utils::id::new_id());
+        let c = create(&pool, &tenant, "CNY", "Chinese Yuan", 2)
             .await
             .unwrap();
         assert_eq!(c.code, "CNY");
@@ -188,7 +189,7 @@ mod tests {
         assert_eq!(c.decimals, 2);
         assert!(c.is_active);
 
-        let found = find_by_code(&pool, "CNY", Some("test_tenant"))
+        let found = find_by_code(&pool, "CNY", Some(&tenant))
             .await
             .unwrap()
             .unwrap();
@@ -209,20 +210,13 @@ mod tests {
     #[tokio::test]
     async fn update_currency() {
         let pool = setup_pool().await;
-        create(&pool, "test_tenant", "USD", "US Dollar", 2)
-            .await
-            .unwrap();
+        let tenant = format!("t_{}", crate::utils::id::new_id());
+        create(&pool, &tenant, "USD", "US Dollar", 2).await.unwrap();
 
-        let updated = update(
-            &pool,
-            "USD",
-            Some("US Dollar Updated"),
-            None,
-            Some("test_tenant"),
-        )
-        .await
-        .unwrap()
-        .unwrap();
+        let updated = update(&pool, "USD", Some("US Dollar Updated"), None, Some(&tenant))
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(updated.name, "US Dollar Updated");
         assert_eq!(updated.decimals, 2);
     }
@@ -230,21 +224,20 @@ mod tests {
     #[tokio::test]
     async fn deactivate_currency() {
         let pool = setup_pool().await;
-        create(&pool, "test_tenant", "EUR", "Euro", 2)
-            .await
-            .unwrap();
+        let tenant = format!("t_{}", crate::utils::id::new_id());
+        create(&pool, &tenant, "EUR", "Euro", 2).await.unwrap();
 
-        update(&pool, "EUR", None, Some(false), Some("test_tenant"))
+        update(&pool, "EUR", None, Some(false), Some(&tenant))
             .await
             .unwrap();
-        let c = find_by_code(&pool, "EUR", Some("test_tenant"))
+        let c = find_by_code(&pool, "EUR", Some(&tenant))
             .await
             .unwrap()
             .unwrap();
         assert!(!c.is_active);
 
         assert!(
-            find_active_by_code(&pool, "EUR", Some("test_tenant"))
+            find_active_by_code(&pool, "EUR", Some(&tenant))
                 .await
                 .unwrap()
                 .is_none()
@@ -311,13 +304,12 @@ mod tests {
     #[tokio::test]
     async fn find_all_currencies() {
         let pool = setup_pool().await;
-        create(&pool, "test_tenant", "CNY", "Chinese Yuan", 2)
+        let tenant = format!("t_{}", crate::utils::id::new_id());
+        create(&pool, &tenant, "CNY", "Chinese Yuan", 2)
             .await
             .unwrap();
-        create(&pool, "test_tenant", "USD", "US Dollar", 2)
-            .await
-            .unwrap();
-        let all = find_all(&pool, Some("test_tenant")).await.unwrap();
+        create(&pool, &tenant, "USD", "US Dollar", 2).await.unwrap();
+        let all = find_all(&pool, Some(&tenant)).await.unwrap();
         assert_eq!(all.len(), 2);
         assert_eq!(all[0].code, "CNY");
         assert_eq!(all[1].code, "USD");

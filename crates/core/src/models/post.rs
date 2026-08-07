@@ -1013,21 +1013,26 @@ pub async fn find_published_joined(
 mod tests {
     use super::*;
     use crate::commands::CreatePostCmd;
+    use crate::db::DbDriver;
 
     async fn setup_pool() -> crate::db::Pool {
         crate::test_pool!()
     }
 
-    async fn create_user(pool: &crate::db::Pool) -> i64 {
+    async fn create_user(pool: &crate::db::Pool) -> (i64, String) {
         let uid = crate::utils::id::new_id();
-        sqlx::query(
-            "INSERT INTO users (id, username, status, registered_via) VALUES (?, 'testuser', 'active', 'email')",
-        )
+        let username = format!("testuser_{}", crate::utils::id::new_id());
+        sqlx::query(&format!(
+            "INSERT INTO users (id, username, status, registered_via) VALUES ({}, {}, 'active', 'email')",
+            crate::db::Driver::ph(1),
+            crate::db::Driver::ph(2)
+        ))
         .bind(uid)
+        .bind(&username)
         .execute(pool)
         .await
         .unwrap();
-        uid
+        (uid, username)
     }
 
     async fn create_test_post(
@@ -1040,7 +1045,11 @@ mod tests {
             pool,
             &CreatePostCmd {
                 title: title.to_string(),
-                slug: title.to_lowercase().replace(' ', "-"),
+                slug: format!(
+                    "{}-{}",
+                    title.to_lowercase().replace(' ', "-"),
+                    crate::utils::id::new_id()
+                ),
                 content: format!("Content of {title}"),
                 excerpt: None,
                 cover_image: None,
@@ -1073,19 +1082,19 @@ mod tests {
     #[tokio::test]
     async fn find_joined_by_ids_single() {
         let pool = setup_pool().await;
-        let uid = create_user(&pool).await;
+        let (uid, username) = create_user(&pool).await;
         let p = create_test_post(&pool, uid, "published", "Test Post").await;
         let result = find_joined_by_ids(&pool, &[*p.id], None).await.unwrap();
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].id, p.id);
         assert_eq!(result[0].title, "Test Post");
-        assert_eq!(result[0].author_name.as_deref(), Some("testuser"));
+        assert_eq!(result[0].author_name.as_deref(), Some(username.as_str()));
     }
 
     #[tokio::test]
     async fn find_joined_by_ids_multiple() {
         let pool = setup_pool().await;
-        let uid = create_user(&pool).await;
+        let (uid, _) = create_user(&pool).await;
         let p1 = create_test_post(&pool, uid, "published", "Post A").await;
         let p2 = create_test_post(&pool, uid, "published", "Post B").await;
         let p3 = create_test_post(&pool, uid, "published", "Post C").await;
@@ -1102,7 +1111,7 @@ mod tests {
     #[tokio::test]
     async fn find_joined_by_ids_filters_draft() {
         let pool = setup_pool().await;
-        let uid = create_user(&pool).await;
+        let (uid, _) = create_user(&pool).await;
         let p = create_test_post(&pool, uid, "draft", "Draft Post").await;
         let result = find_joined_by_ids(&pool, &[*p.id], None).await.unwrap();
         assert!(result.is_empty());
@@ -1118,7 +1127,7 @@ mod tests {
     #[tokio::test]
     async fn find_joined_by_ids_mixed_published_and_draft() {
         let pool = setup_pool().await;
-        let uid = create_user(&pool).await;
+        let (uid, _) = create_user(&pool).await;
         let pub_post = create_test_post(&pool, uid, "published", "Published").await;
         let draft_post = create_test_post(&pool, uid, "draft", "Draft").await;
         let result = find_joined_by_ids(&pool, &[*pub_post.id, *draft_post.id], None)
@@ -1131,18 +1140,27 @@ mod tests {
     #[tokio::test]
     async fn find_joined_by_ids_with_category() {
         let pool = setup_pool().await;
-        let uid = create_user(&pool).await;
+        let (uid, _) = create_user(&pool).await;
         let cat_id = crate::utils::id::new_id();
-        sqlx::query("INSERT INTO categories (id, name, slug) VALUES (?, 'Tech', 'tech')")
-            .bind(cat_id)
-            .execute(&pool)
-            .await
-            .unwrap();
+        let cat_name = format!("Tech_{}", crate::utils::id::new_id());
+        let cat_slug = format!("tech_{}", crate::utils::id::new_id());
+        sqlx::query(&format!(
+            "INSERT INTO categories (id, name, slug) VALUES ({}, {}, {})",
+            crate::db::Driver::ph(1),
+            crate::db::Driver::ph(2),
+            crate::db::Driver::ph(3)
+        ))
+        .bind(cat_id)
+        .bind(&cat_name)
+        .bind(&cat_slug)
+        .execute(&pool)
+        .await
+        .unwrap();
         let p = create(
             &pool,
             &CreatePostCmd {
                 title: "Category Post".to_string(),
-                slug: "cat-post".to_string(),
+                slug: format!("cat-post-{}", crate::utils::id::new_id()),
                 content: "Content".to_string(),
                 excerpt: None,
                 cover_image: None,
@@ -1165,7 +1183,7 @@ mod tests {
         .unwrap();
         let result = find_joined_by_ids(&pool, &[*p.id], None).await.unwrap();
         assert_eq!(result.len(), 1);
-        assert_eq!(result[0].category_name.as_deref(), Some("Tech"));
+        assert_eq!(result[0].category_name.as_deref(), Some(cat_name.as_str()));
     }
 
     #[tokio::test]
@@ -1178,7 +1196,7 @@ mod tests {
     #[tokio::test]
     async fn count_published_by_ids_single() {
         let pool = setup_pool().await;
-        let uid = create_user(&pool).await;
+        let (uid, _) = create_user(&pool).await;
         let p = create_test_post(&pool, uid, "published", "Count Post").await;
         let count = count_published_by_ids(&pool, &[*p.id], None).await.unwrap();
         assert_eq!(count, 1);
@@ -1187,7 +1205,7 @@ mod tests {
     #[tokio::test]
     async fn count_published_by_ids_filters_draft() {
         let pool = setup_pool().await;
-        let uid = create_user(&pool).await;
+        let (uid, _) = create_user(&pool).await;
         let p = create_test_post(&pool, uid, "draft", "Draft").await;
         let count = count_published_by_ids(&pool, &[*p.id], None).await.unwrap();
         assert_eq!(count, 0);
@@ -1196,7 +1214,7 @@ mod tests {
     #[tokio::test]
     async fn count_published_by_ids_multiple() {
         let pool = setup_pool().await;
-        let uid = create_user(&pool).await;
+        let (uid, _) = create_user(&pool).await;
         let p1 = create_test_post(&pool, uid, "published", "A").await;
         let p2 = create_test_post(&pool, uid, "draft", "B").await;
         let p3 = create_test_post(&pool, uid, "published", "C").await;

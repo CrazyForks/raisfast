@@ -466,11 +466,11 @@ pub async fn update_channel(
             id: channel.id,
             provider: channel.provider.clone(),
             name: req.name.clone().unwrap_or(channel.name.clone()),
-            is_live: req.is_live.unwrap_or(channel.is_live != 0),
+            is_live: req.is_live.unwrap_or(channel.is_live),
             credentials: encrypted_credentials,
             webhook_secret: encrypted_webhook_secret,
             settings: req.settings.clone().or(channel.settings.clone()),
-            is_active: req.is_active.unwrap_or(channel.is_active != 0),
+            is_active: req.is_active.unwrap_or(channel.is_active),
             sort_order: req.sort_order.unwrap_or(channel.sort_order),
             version: req.version,
         },
@@ -623,7 +623,7 @@ pub async fn create_payment_order(
         let ch = crate::models::payment_channel::find_by_id(pool, ch_id, auth.tenant_id())
             .await?
             .ok_or_else(|| AppError::not_found("payment_channel"))?;
-        if ch.is_active == 0 {
+        if !ch.is_active {
             return Err(AppError::BadRequest("channel_inactive".into()));
         }
         (ch, "manual")
@@ -885,7 +885,7 @@ pub async fn handle_callback(
         .await?
         .ok_or_else(|| AppError::not_found("payment_channel"))?;
 
-    if channel.is_active == 0 {
+    if !channel.is_active {
         return Err(AppError::BadRequest("channel_inactive".into()));
     }
 
@@ -1280,14 +1280,11 @@ mod tests {
     use super::*;
     use crate::commands::CreateOrderCmd;
     use crate::config::app::AppConfig;
+    use crate::db::DbDriver;
     use crate::models::payment_order::PaymentStatus;
 
     async fn setup_pool() -> crate::db::Pool {
-        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query(crate::db::schema::SCHEMA_SQL)
-            .execute(&pool)
-            .await
-            .unwrap();
+        let pool = crate::test_pool!();
         let _ = crate::models::currencies::create(&pool, "default", "CNY", "Chinese Yuan", 2).await;
         let _ = crate::models::currencies::create(&pool, "default", "USD", "US Dollar", 2).await;
         pool
@@ -1317,9 +1314,11 @@ mod tests {
     async fn seed_user(pool: &crate::db::Pool) -> i64 {
         let id = crate::utils::id::new_id();
         let username = format!("testuser_{id}");
-        sqlx::query(
-            "INSERT INTO users (id, username, status, registered_via) VALUES (?, ?, 'active', 'email')",
-        )
+        sqlx::query(&format!(
+            "INSERT INTO users (id, username, status, registered_via) VALUES ({}, {}, 'active', 'email')",
+            crate::db::Driver::ph(1),
+            crate::db::Driver::ph(2)
+        ))
         .bind(id)
         .bind(&username)
         .execute(pool)
@@ -1331,9 +1330,11 @@ mod tests {
     async fn seed_admin(pool: &crate::db::Pool) -> i64 {
         let id = crate::utils::id::new_id();
         let username = format!("admin_{id}");
-        sqlx::query(
-            "INSERT INTO users (id, username, status, registered_via) VALUES (?, ?, 'active', 'email')",
-        )
+        sqlx::query(&format!(
+            "INSERT INTO users (id, username, status, registered_via) VALUES ({}, {}, 'active', 'email')",
+            crate::db::Driver::ph(1),
+            crate::db::Driver::ph(2)
+        ))
         .bind(id)
         .bind(&username)
         .execute(pool)
@@ -1347,9 +1348,33 @@ mod tests {
             pool,
             &CreatePaymentChannelCmd {
                 provider: provider.into(),
-                name: format!("{provider}-test"),
+                name: format!("{provider}-test-{}", crate::utils::id::new_id()),
                 is_live: false,
                 credentials: r#"{"api_key":"test"}"#.into(),
+                webhook_secret: None,
+                settings: None,
+                is_active: true,
+                sort_order: 0,
+            },
+            None,
+        )
+        .await
+        .unwrap()
+    }
+
+    async fn seed_channel_encrypted(
+        pool: &crate::db::Pool,
+        provider: &str,
+        config: &AppConfig,
+    ) -> PaymentChannel {
+        let credentials = super::encrypt_credential(r#"{"api_key":"test"}"#, config).unwrap();
+        crate::models::payment_channel::insert(
+            pool,
+            &CreatePaymentChannelCmd {
+                provider: provider.into(),
+                name: format!("{provider}-test-{}", crate::utils::id::new_id()),
+                is_live: false,
+                credentials,
                 webhook_secret: None,
                 settings: None,
                 is_active: true,
@@ -1429,6 +1454,76 @@ mod tests {
         .unwrap()
     }
 
+    fn uniq_tenant() -> String {
+        format!("t_{}", crate::utils::id::new_id())
+    }
+
+    fn user_auth_t(user_int_id: i64, tenant: &str) -> AuthUser {
+        AuthUser::from_parts(
+            Some(user_int_id),
+            crate::models::user::UserRole::Reader,
+            Some(tenant.to_string()),
+        )
+    }
+
+    async fn seed_channel_t(
+        pool: &crate::db::Pool,
+        provider: &str,
+        tenant: &str,
+        settings: Option<String>,
+    ) -> PaymentChannel {
+        crate::models::payment_channel::insert(
+            pool,
+            &CreatePaymentChannelCmd {
+                provider: provider.into(),
+                name: format!("{provider}-test-{}", crate::utils::id::new_id()),
+                is_live: false,
+                credentials: r#"{"api_key":"test"}"#.into(),
+                webhook_secret: None,
+                settings,
+                is_active: true,
+                sort_order: 0,
+            },
+            Some(tenant),
+        )
+        .await
+        .unwrap()
+    }
+
+    async fn seed_order_t(
+        pool: &crate::db::Pool,
+        user_id: i64,
+        amount: i64,
+        currency: &str,
+        tenant: &str,
+    ) -> crate::models::order::Order {
+        let order_no = format!("ORD-{}", uuid::Uuid::now_v7().to_string().replace('-', ""));
+        crate::models::order::insert(
+            pool,
+            &CreateOrderCmd {
+                user_id: SnowflakeId(user_id),
+                order_no,
+                subtotal: amount,
+                discount_amount: 0,
+                shipping_amount: 0,
+                total_amount: amount,
+                currency: currency.into(),
+                buyer_name: None,
+                buyer_phone: None,
+                buyer_email: None,
+                shipping_address: None,
+                remark: None,
+                tax_amount: 0,
+                coupon_id: None,
+                shipping_address_id: None,
+                billing_address_id: None,
+            },
+            Some(tenant),
+        )
+        .await
+        .unwrap()
+    }
+
     #[tokio::test]
     async fn create_payment_order_rejects_non_owner() {
         let pool = setup_pool().await;
@@ -1477,7 +1572,7 @@ mod tests {
         let config = test_config();
         let owner_id = seed_user(&pool).await;
 
-        let channel = seed_channel(&pool, "stripe").await;
+        let channel = seed_channel_encrypted(&pool, "stripe", &config).await;
         let order = seed_order(&pool, owner_id, 1000, "CNY").await;
 
         let owner_auth = user_auth(owner_id);
@@ -1892,11 +1987,11 @@ mod tests {
         let pool = setup_pool().await;
         let config = test_config();
 
-        let channel_a = seed_channel(&pool, "stripe").await;
-        let channel_b = seed_channel(&pool, "stripe").await;
+        let channel_a = seed_channel_encrypted(&pool, "stripe", &config).await;
+        let channel_b = seed_channel_encrypted(&pool, "stripe", &config).await;
         let user_id = seed_user(&pool).await;
 
-        let mut po = seed_payment_order(&pool, user_id, channel_a.id, 500, "CNY").await;
+        let mut po = seed_payment_order(&pool, user_id, channel_a.id.0, 500, "CNY").await;
         po.provider_order_id = Some("prov_123".to_string());
         crate::models::payment_order::update_provider_order_id(
             &pool, po.id, "prov_123", None, None,
@@ -1930,7 +2025,7 @@ mod tests {
         let config = test_config();
         let user_id = seed_user(&pool).await;
 
-        let channel = seed_channel(&pool, "stripe").await;
+        let channel = seed_channel_encrypted(&pool, "stripe", &config).await;
         let po = seed_payment_order(&pool, user_id, *channel.id, 500, "CNY").await;
 
         let mut tx = pool.begin().await.unwrap();
@@ -2044,13 +2139,14 @@ mod tests {
     #[tokio::test]
     async fn list_available_channels_returns_ranked() {
         let pool = setup_pool().await;
+        let tenant = uniq_tenant();
         let user_id = seed_user(&pool).await;
 
         let ch_cny = crate::models::payment_channel::insert(
             &pool,
             &CreatePaymentChannelCmd {
                 provider: "alipay".into(),
-                name: "Alipay CN".into(),
+                name: format!("Alipay CN-{}", crate::utils::id::new_id()),
                 is_live: false,
                 credentials: r#"{"api_key":"test"}"#.into(),
                 webhook_secret: None,
@@ -2060,7 +2156,7 @@ mod tests {
                 is_active: true,
                 sort_order: 0,
             },
-            None,
+            Some(&tenant),
         )
         .await
         .unwrap();
@@ -2068,7 +2164,7 @@ mod tests {
             &pool,
             &CreatePaymentChannelCmd {
                 provider: "stripe".into(),
-                name: "Stripe Global".into(),
+                name: format!("Stripe Global-{}", crate::utils::id::new_id()),
                 is_live: false,
                 credentials: r#"{"api_key":"test"}"#.into(),
                 webhook_secret: None,
@@ -2078,13 +2174,13 @@ mod tests {
                 is_active: true,
                 sort_order: 1,
             },
-            None,
+            Some(&tenant),
         )
         .await
         .unwrap();
 
-        let order = seed_order(&pool, user_id, 1000, "CNY").await;
-        let auth = user_auth(user_id);
+        let order = seed_order_t(&pool, user_id, 1000, "CNY", &tenant).await;
+        let auth = user_auth_t(user_id, &tenant);
 
         let result = super::list_available_channels(
             &pool,
@@ -2106,27 +2202,19 @@ mod tests {
     #[tokio::test]
     async fn list_available_channels_currency_filter() {
         let pool = setup_pool().await;
+        let tenant = uniq_tenant();
         let user_id = seed_user(&pool).await;
 
-        crate::models::payment_channel::insert(
+        seed_channel_t(
             &pool,
-            &CreatePaymentChannelCmd {
-                provider: "stripe".into(),
-                name: "Stripe".into(),
-                is_live: false,
-                credentials: r#"{"api_key":"test"}"#.into(),
-                webhook_secret: None,
-                settings: Some(r#"{"currencies":["USD"]}"#.into()),
-                is_active: true,
-                sort_order: 0,
-            },
-            None,
+            "stripe",
+            &tenant,
+            Some(r#"{"currencies":["USD"]}"#.into()),
         )
-        .await
-        .unwrap();
+        .await;
 
-        let order = seed_order(&pool, user_id, 1000, "JPY").await;
-        let auth = user_auth(user_id);
+        let order = seed_order_t(&pool, user_id, 1000, "JPY", &tenant).await;
+        let auth = user_auth_t(user_id, &tenant);
 
         let result =
             super::list_available_channels(&pool, &auth, &order.id.to_string(), None, None)
@@ -2156,20 +2244,16 @@ mod tests {
         let config = test_config();
         let user_id = seed_user(&pool).await;
 
-        let _ch = crate::models::payment_channel::insert(
-            &pool,
-            &CreatePaymentChannelCmd {
-                provider: "stripe".into(),
-                name: "Stripe".into(),
-                is_live: false,
-                credentials: r#"{"api_key":"test"}"#.into(),
-                webhook_secret: None,
-                settings: Some(r#"{"currencies":["CNY"]}"#.into()),
-                is_active: true,
-                sort_order: 0,
-            },
-            None,
-        )
+        let _ch = seed_channel_encrypted(&pool, "stripe", &config).await;
+        let extra_settings = r#"{"currencies":["CNY"]}"#;
+        sqlx::query(&format!(
+            "UPDATE payment_channels SET settings = {} WHERE id = {}",
+            crate::db::Driver::ph(1),
+            crate::db::Driver::ph(2)
+        ))
+        .bind(extra_settings)
+        .bind(*_ch.id)
+        .execute(&pool)
         .await
         .unwrap();
 
@@ -2201,7 +2285,7 @@ mod tests {
         #[cfg(feature = "payment-stripe")]
         {
             let (po, _) = result.unwrap();
-            assert_eq!(po.channel_id, ch.id);
+            assert_eq!(po.channel_id, _ch.id);
             assert_eq!(po.channel_selected_by.unwrap(), "auto");
             assert_eq!(po.client_country, None);
             assert_eq!(po.client_language.unwrap(), "zh-CN");
@@ -2215,11 +2299,12 @@ mod tests {
     async fn create_payment_order_auto_no_channel_error() {
         let pool = setup_pool().await;
         let config = test_config();
+        let tenant = uniq_tenant();
         let user_id = seed_user(&pool).await;
 
-        let order = seed_order(&pool, user_id, 1000, "JPY").await;
+        let order = seed_order_t(&pool, user_id, 1000, "JPY", &tenant).await;
 
-        let auth = user_auth(user_id);
+        let auth = user_auth_t(user_id, &tenant);
         let req = CreatePaymentOrderRequest {
             order_id: order.id.to_string(),
             channel_id: None,
@@ -2256,7 +2341,7 @@ mod tests {
         let config = test_config();
         let user_id = seed_user(&pool).await;
 
-        let ch = seed_channel(&pool, "stripe").await;
+        let ch = seed_channel_encrypted(&pool, "stripe", &config).await;
         let order = seed_order(&pool, user_id, 1000, "CNY").await;
 
         let auth = user_auth(user_id);

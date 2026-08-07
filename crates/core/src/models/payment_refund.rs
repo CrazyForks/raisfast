@@ -103,7 +103,8 @@ pub async fn sum_refunded_by_order(
     tenant_id: Option<&str>,
 ) -> AppResult<i64> {
     let sql = format!(
-        "SELECT COALESCE(SUM(amount), 0) as total FROM payment_refunds WHERE payment_order_id = {} AND status IN ('pending', 'processing', 'succeeded'){}",
+        "SELECT {} as total FROM payment_refunds WHERE payment_order_id = {} AND status IN ('pending', 'processing', 'succeeded'){}",
+        Driver::cast_int("COALESCE(SUM(amount), 0)"),
         Driver::ph(1),
         tenant_filter_ph(tenant_id, 2)
     );
@@ -171,13 +172,15 @@ pub async fn tx_sum_refunded_by_order(
 ) -> AppResult<i64> {
     let sql = if tenant_id.is_some() {
         format!(
-            "SELECT COALESCE(SUM(amount), 0) FROM payment_refunds WHERE payment_order_id = {} AND tenant_id = {} AND status IN ('succeeded', 'pending', 'processing')",
+            "SELECT {} FROM payment_refunds WHERE payment_order_id = {} AND tenant_id = {} AND status IN ('succeeded', 'pending', 'processing')",
+            Driver::cast_int("COALESCE(SUM(amount), 0)"),
             Driver::ph(1),
             Driver::ph(2)
         )
     } else {
         format!(
-            "SELECT COALESCE(SUM(amount), 0) FROM payment_refunds WHERE payment_order_id = {} AND status IN ('succeeded', 'pending', 'processing')",
+            "SELECT {} FROM payment_refunds WHERE payment_order_id = {} AND status IN ('succeeded', 'pending', 'processing')",
+            Driver::cast_int("COALESCE(SUM(amount), 0)"),
             Driver::ph(1)
         )
     };
@@ -210,6 +213,7 @@ pub async fn tx_find_by_provider_refund_id(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::DbDriver;
     use crate::types::snowflake_id::SnowflakeId;
 
     async fn setup_pool() -> crate::db::Pool {
@@ -219,7 +223,7 @@ mod tests {
     async fn seed_user(pool: &crate::db::Pool) -> i64 {
         let id = crate::utils::id::new_id();
         let username = format!("testuser_{id}");
-        sqlx::query("INSERT INTO users (id, username, status, registered_via) VALUES (?, ?, 'active', 'email')")
+        sqlx::query(&format!("INSERT INTO users (id, username, status, registered_via) VALUES ({}, {}, 'active', 'email')", crate::db::Driver::ph(1), crate::db::Driver::ph(2)))
             .bind(id)
             .bind(&username)
             .execute(pool)
@@ -261,7 +265,7 @@ mod tests {
             pool,
             &crate::commands::CreatePaymentOrderCmd {
                 user_id: SnowflakeId(user_id),
-                order_id: Some("order-ref-1".into()),
+                order_id: Some(format!("order-ref-{}", crate::utils::id::new_id())),
                 title: "Test Payment".into(),
                 amount: 1000,
                 currency: "USD".into(),
@@ -303,7 +307,7 @@ mod tests {
             pool,
             &crate::commands::CreatePaymentRefundCmd {
                 payment_order_id: SnowflakeId(payment_order_id),
-                order_id: Some("order-ref-1".into()),
+                order_id: Some(format!("order-ref-{}", crate::utils::id::new_id())),
                 user_id: SnowflakeId(user_id),
                 amount,
                 currency: "USD".into(),
@@ -368,12 +372,13 @@ mod tests {
         let uid = seed_user(&pool).await;
         let ch_id = seed_channel(&pool).await;
         let po_id = seed_payment_order(&pool, uid, ch_id).await;
-        seed_refund(&pool, po_id, uid, 500, "pending").await;
-        let refunds = super::find_by_order_id(&pool, "order-ref-1", None)
+        let refund = seed_refund(&pool, po_id, uid, 500, "pending").await;
+        let order_id = refund.order_id.clone().unwrap();
+        let refunds = super::find_by_order_id(&pool, &order_id, None)
             .await
             .unwrap();
         assert_eq!(refunds.len(), 1);
-        assert_eq!(refunds[0].order_id.as_deref().unwrap(), "order-ref-1");
+        assert_eq!(refunds[0].order_id.as_deref().unwrap(), order_id);
     }
 
     #[tokio::test]

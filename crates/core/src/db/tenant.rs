@@ -294,7 +294,10 @@ mod tests {
     fn inject_where_with_existing() {
         assert_eq!(
             inject_where("SELECT * FROM posts WHERE id = ?", 2),
-            "SELECT * FROM posts WHERE id = ? AND tenant_id = ?"
+            format!(
+                "SELECT * FROM posts WHERE id = ? AND tenant_id = {}",
+                crate::db::Driver::ph(2)
+            )
         );
     }
 
@@ -302,16 +305,20 @@ mod tests {
     fn inject_where_without_existing() {
         assert_eq!(
             inject_where("SELECT * FROM posts", 1),
-            "SELECT * FROM posts WHERE tenant_id = ?"
+            format!(
+                "SELECT * FROM posts WHERE tenant_id = {}",
+                crate::db::Driver::ph(1)
+            )
         );
     }
 
     #[tokio::test]
     async fn prepare_select_injects_when_has_column() {
-        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query(
-            "CREATE TABLE posts (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT, tenant_id TEXT)",
-        )
+        let pool = crate::test_pool!();
+        sqlx::query(&format!(
+            "CREATE TABLE IF NOT EXISTS tt_posts (id {}, title TEXT, tenant_id TEXT)",
+            crate::db::Driver::auto_increment_pk()
+        ))
         .execute(&pool)
         .await
         .unwrap();
@@ -319,7 +326,7 @@ mod tests {
 
         let tp = TenantPool::new(pool, "t1");
         let (sql, bind) = tp
-            .prepare_select("posts", "SELECT * FROM posts WHERE id = ?")
+            .prepare_select("tt_posts", "SELECT * FROM tt_posts WHERE id = ?")
             .await;
         assert!(bind);
         assert!(sql.contains("tenant_id"));
@@ -327,16 +334,19 @@ mod tests {
 
     #[tokio::test]
     async fn prepare_select_skips_when_no_column() {
-        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query("CREATE TABLE logs (id INTEGER PRIMARY KEY AUTOINCREMENT, msg TEXT)")
-            .execute(&pool)
-            .await
-            .unwrap();
+        let pool = crate::test_pool!();
+        sqlx::query(&format!(
+            "CREATE TABLE IF NOT EXISTS tt_logs (id {}, msg TEXT)",
+            crate::db::Driver::auto_increment_pk()
+        ))
+        .execute(&pool)
+        .await
+        .unwrap();
         invalidate_cache().await;
 
         let tp = TenantPool::new(pool, "t1");
         let (sql, bind) = tp
-            .prepare_select("logs", "SELECT * FROM logs WHERE id = ?")
+            .prepare_select("tt_logs", "SELECT * FROM tt_logs WHERE id = ?")
             .await;
         assert!(!bind);
         assert!(!sql.contains("tenant_id"));
@@ -344,36 +354,42 @@ mod tests {
 
     #[tokio::test]
     async fn prepare_insert_injects_column() {
-        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query(
-            "CREATE TABLE items (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, tenant_id TEXT)",
-        )
+        let pool = crate::test_pool!();
+        sqlx::query(&format!(
+            "CREATE TABLE IF NOT EXISTS tt_items (id {}, name TEXT, tenant_id TEXT)",
+            crate::db::Driver::auto_increment_pk()
+        ))
         .execute(&pool)
         .await
         .unwrap();
         invalidate_cache().await;
 
         let tp = TenantPool::new(pool, "t1");
-        let (sql, bind) = tp.prepare_insert("items", "id, name", 2).await;
+        let (sql, bind) = tp.prepare_insert("tt_items", "id, name", 2).await;
         assert!(bind);
         assert!(sql.contains("tenant_id"));
-        assert!(sql.contains("?, ?")); // 2 user + 1 tenant
+        assert!(sql.contains("id, name, tenant_id"));
     }
 
     #[tokio::test]
     async fn end_to_end_select_filters_by_tenant() {
-        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query(
-            "CREATE TABLE posts (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT, tenant_id TEXT NOT NULL DEFAULT 'default')",
-        )
+        let pool = crate::test_pool!();
+        sqlx::query(&format!(
+            "CREATE TABLE IF NOT EXISTS tt_posts (id {}, title TEXT, tenant_id TEXT NOT NULL DEFAULT 'default')",
+            crate::db::Driver::auto_increment_pk()
+        ))
         .execute(&pool)
         .await
         .unwrap();
-        sqlx::query("INSERT INTO posts (id, title, tenant_id) VALUES (1, 'Hello', 't1')")
+        sqlx::query("DELETE FROM tt_posts")
             .execute(&pool)
             .await
             .unwrap();
-        sqlx::query("INSERT INTO posts (id, title, tenant_id) VALUES (2, 'World', 't2')")
+        sqlx::query("INSERT INTO tt_posts (id, title, tenant_id) VALUES (1, 'Hello', 't1')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO tt_posts (id, title, tenant_id) VALUES (2, 'World', 't2')")
             .execute(&pool)
             .await
             .unwrap();
@@ -387,7 +403,13 @@ mod tests {
 
         let tp = TenantPool::new(pool, "t1");
         let (sql, bind) = tp
-            .prepare_select("posts", "SELECT title FROM posts WHERE id = ?")
+            .prepare_select(
+                "tt_posts",
+                &format!(
+                    "SELECT title FROM tt_posts WHERE id = {}",
+                    crate::db::Driver::ph(1)
+                ),
+            )
             .await;
         let mut q = sqlx::query_as::<_, Post>(&sql).bind(1i64);
         if bind {
@@ -397,7 +419,13 @@ mod tests {
         assert_eq!(p.title, "Hello");
 
         let (sql, bind) = tp
-            .prepare_select("posts", "SELECT title FROM posts WHERE id = ?")
+            .prepare_select(
+                "tt_posts",
+                &format!(
+                    "SELECT title FROM tt_posts WHERE id = {}",
+                    crate::db::Driver::ph(1)
+                ),
+            )
             .await;
         let mut q = sqlx::query_as::<_, Post>(&sql).bind(2i64);
         if bind {
@@ -408,24 +436,29 @@ mod tests {
 
     #[tokio::test]
     async fn end_to_end_insert_auto_tenant() {
-        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query(
-            "CREATE TABLE items (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, tenant_id TEXT NOT NULL DEFAULT 'default')",
-        )
+        let pool = crate::test_pool!();
+        sqlx::query(&format!(
+            "CREATE TABLE IF NOT EXISTS tt_items (id {}, name TEXT, tenant_id TEXT NOT NULL DEFAULT 'default')",
+            crate::db::Driver::auto_increment_pk()
+        ))
         .execute(&pool)
         .await
         .unwrap();
+        sqlx::query("DELETE FROM tt_items")
+            .execute(&pool)
+            .await
+            .unwrap();
         invalidate_cache().await;
 
         let tp = TenantPool::new(pool.clone(), "t1");
-        let (sql, bind) = tp.prepare_insert("items", "id, name", 2).await;
+        let (sql, bind) = tp.prepare_insert("tt_items", "id, name", 2).await;
         let mut q = sqlx::query(&sql).bind(1i64).bind("Test");
         if bind {
             q = q.bind(tp.tenant_id());
         }
         q.execute(tp.pool()).await.unwrap();
 
-        let row: (i64, String, String) = sqlx::query_as("SELECT id, name, tenant_id FROM items")
+        let row: (i64, String, String) = sqlx::query_as("SELECT id, name, tenant_id FROM tt_items")
             .fetch_one(&pool)
             .await
             .unwrap();
@@ -434,18 +467,23 @@ mod tests {
 
     #[tokio::test]
     async fn end_to_end_delete_respects_tenant() {
-        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query(
-            "CREATE TABLE items (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, tenant_id TEXT NOT NULL DEFAULT 'default')",
-        )
+        let pool = crate::test_pool!();
+        sqlx::query(&format!(
+            "CREATE TABLE IF NOT EXISTS tt_items (id {}, name TEXT, tenant_id TEXT NOT NULL DEFAULT 'default')",
+            crate::db::Driver::auto_increment_pk()
+        ))
         .execute(&pool)
         .await
         .unwrap();
-        sqlx::query("INSERT INTO items (id, name, tenant_id) VALUES (1, 'A', 't1')")
+        sqlx::query("DELETE FROM tt_items")
             .execute(&pool)
             .await
             .unwrap();
-        sqlx::query("INSERT INTO items (id, name, tenant_id) VALUES (2, 'B', 't2')")
+        sqlx::query("INSERT INTO tt_items (id, name, tenant_id) VALUES (1, 'A', 't1')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO tt_items (id, name, tenant_id) VALUES (2, 'B', 't2')")
             .execute(&pool)
             .await
             .unwrap();
@@ -454,28 +492,40 @@ mod tests {
         let tp = TenantPool::new(pool.clone(), "t1");
 
         let (sql, bind) = tp
-            .prepare_modify("items", "DELETE FROM items WHERE id = ?")
+            .prepare_modify(
+                "tt_items",
+                &format!(
+                    "DELETE FROM tt_items WHERE id = {}",
+                    crate::db::Driver::ph(1)
+                ),
+            )
             .await;
         let mut q = sqlx::query(&sql).bind(2i64);
         if bind {
             q = q.bind(tp.tenant_id());
         }
         q.execute(tp.pool()).await.unwrap();
-        let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM items")
+        let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM tt_items")
             .fetch_one(&pool)
             .await
             .unwrap();
         assert_eq!(count.0, 2);
 
         let (sql, bind) = tp
-            .prepare_modify("items", "DELETE FROM items WHERE id = ?")
+            .prepare_modify(
+                "tt_items",
+                &format!(
+                    "DELETE FROM tt_items WHERE id = {}",
+                    crate::db::Driver::ph(1)
+                ),
+            )
             .await;
         let mut q = sqlx::query(&sql).bind(1i64);
         if bind {
             q = q.bind(tp.tenant_id());
         }
         q.execute(tp.pool()).await.unwrap();
-        let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM items")
+        let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM tt_items")
             .fetch_one(&pool)
             .await
             .unwrap();

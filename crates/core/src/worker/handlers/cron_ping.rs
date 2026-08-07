@@ -13,11 +13,11 @@ use crate::worker::{Job, JobHandler};
 /// Metadata for the admin task menu.
 pub const META: HandlerMeta = HandlerMeta {
     id: "ping",
-    display_name: "Ping 测试",
-    description: "向 cron-ping.log 追加一行时间戳，用于验证调度链路是否畅通",
-    category: "系统维护",
+    display_name: "Ping Test",
+    description: "Appends a timestamped line to cron-ping.log to verify the cron pipeline",
+    category: "System Maintenance",
     params_schema: Some(
-        r#"{"type":"object","title":"Ping 参数","properties":{"message":{"type":"string","title":"消息内容","default":"hello","description":"写入日志的自定义消息"}}}"#,
+        r#"{"type":"object","title":"Ping Params","properties":{"message":{"type":"string","title":"Message","default":"hello","description":"Custom message written to the log"}}}"#,
     ),
     icon: Some("activity"),
 };
@@ -103,3 +103,7 @@ mod tests {
         assert!(content.contains("test-ping"));
     }
 }
+
+crate::register_cron_handler!(&META, |deps| {
+    Box::new(PingHandler::new(deps.config.clone()))
+});

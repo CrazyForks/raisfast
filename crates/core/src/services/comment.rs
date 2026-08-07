@@ -261,7 +261,7 @@ mod tests {
             pool,
             &crate::commands::CreatePostCmd {
                 title: "Test".into(),
-                slug: "test".into(),
+                slug: format!("test-{}", crate::utils::id::new_id()),
                 content: "body".into(),
                 excerpt: None,
                 cover_image: None,

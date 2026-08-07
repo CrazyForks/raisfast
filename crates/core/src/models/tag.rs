@@ -135,57 +135,71 @@ mod tests {
     #[tokio::test]
     async fn create_and_find_by_id() {
         let pool = setup_pool().await;
-        let tag = create(&pool, "rust", "rust", None, None).await.unwrap();
-        assert_eq!(tag.name, "rust");
-        assert_eq!(tag.slug, "rust");
+        let name = format!("rust_{}", crate::utils::id::new_id());
+        let slug = format!("rust_{}", crate::utils::id::new_id());
+        let tag = create(&pool, &name, &slug, None, None).await.unwrap();
+        assert_eq!(tag.name, name);
+        assert_eq!(tag.slug, slug);
 
         let found = find_by_id(&pool, tag.id, None).await.unwrap();
         assert_eq!(found.id, tag.id);
-        assert_eq!(found.name, "rust");
+        assert_eq!(found.name, name);
     }
 
     #[tokio::test]
     async fn find_all_returns_all() {
         let pool = setup_pool().await;
-        create(&pool, "rust", "rust", None, None).await.unwrap();
-        create(&pool, "axum", "axum", None, None).await.unwrap();
-        create(&pool, "tokio", "tokio", None, None).await.unwrap();
+        let s1 = format!("rust_{}", crate::utils::id::new_id());
+        let s2 = format!("axum_{}", crate::utils::id::new_id());
+        let s3 = format!("tokio_{}", crate::utils::id::new_id());
+        create(&pool, &s1, &s1, None, None).await.unwrap();
+        create(&pool, &s2, &s2, None, None).await.unwrap();
+        create(&pool, &s3, &s3, None, None).await.unwrap();
 
         let tags = find_all(&pool, None).await.unwrap();
-        assert_eq!(tags.len(), 3);
+        assert!(tags.len() >= 3);
     }
 
     #[tokio::test]
     async fn find_paginated() {
         let pool = setup_pool().await;
-        create(&pool, "rust", "rust", None, None).await.unwrap();
-        create(&pool, "axum", "axum", None, None).await.unwrap();
-        create(&pool, "tokio", "tokio", None, None).await.unwrap();
-        create(&pool, "serde", "serde", None, None).await.unwrap();
-        create(&pool, "clap", "clap", None, None).await.unwrap();
+        let s1 = format!("rust_{}", crate::utils::id::new_id());
+        let s2 = format!("axum_{}", crate::utils::id::new_id());
+        let s3 = format!("tokio_{}", crate::utils::id::new_id());
+        let s4 = format!("serde_{}", crate::utils::id::new_id());
+        let s5 = format!("clap_{}", crate::utils::id::new_id());
+        create(&pool, &s1, &s1, None, None).await.unwrap();
+        create(&pool, &s2, &s2, None, None).await.unwrap();
+        create(&pool, &s3, &s3, None, None).await.unwrap();
+        create(&pool, &s4, &s4, None, None).await.unwrap();
+        create(&pool, &s5, &s5, None, None).await.unwrap();
 
         let (items, total) = super::find_paginated(&pool, None, 1, 3).await.unwrap();
-        assert_eq!(total, 5);
+        assert!(total >= 5);
         assert_eq!(items.len(), 3);
     }
 
     #[tokio::test]
     async fn update_changes_name() {
         let pool = setup_pool().await;
-        let tag = create(&pool, "rust", "rust", None, None).await.unwrap();
+        let slug = format!("rust_{}", crate::utils::id::new_id());
+        let tag = create(&pool, &slug, &slug, None, None).await.unwrap();
 
-        let updated = update(&pool, tag.id, "Rust Lang", "rust-lang", None)
+        let new_name = format!("Rust Lang_{}", crate::utils::id::new_id());
+        let new_slug = format!("rust-lang_{}", crate::utils::id::new_id());
+        let updated = update(&pool, tag.id, &new_name, &new_slug, None)
             .await
             .unwrap();
-        assert_eq!(updated.name, "Rust Lang");
-        assert_eq!(updated.slug, "rust-lang");
+        assert_eq!(updated.name, new_name);
+        assert_eq!(updated.slug, new_slug);
         assert_eq!(updated.id, tag.id);
     }
 
     #[tokio::test]
     async fn delete_removes_tag() {
         let pool = setup_pool().await;
-        let tag = create(&pool, "rust", "rust", None, None).await.unwrap();
+        let slug = format!("rust_{}", crate::utils::id::new_id());
+        let tag = create(&pool, &slug, &slug, None, None).await.unwrap();
 
         delete(&pool, tag.id, None).await.unwrap();
         let result = find_by_id(&pool, tag.id, None).await;
@@ -195,7 +209,8 @@ mod tests {
     #[tokio::test]
     async fn delete_tag_in_use_rejected() {
         let pool = setup_pool().await;
-        let tag = create(&pool, "rust", "rust", None, None).await.unwrap();
+        let slug = format!("rust_{}", crate::utils::id::new_id());
+        let tag = create(&pool, &slug, &slug, None, None).await.unwrap();
 
         let id = crate::utils::id::new_snowflake_id();
         raisfast_derive::crud_insert!(

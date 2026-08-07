@@ -94,7 +94,8 @@ Handler → Service → Model (SQL)
 - **`unsafe` is banned.** `#![deny(unsafe_code)]` at crate root.
 - **No `unwrap()` / `expect()`** in non-test code. Use `?` or explicit error handling.
 - **Error handling:** `thiserror` for `AppError` at handler boundaries; `anyhow` for internal service propagation.
-- **Database:** SQLite via sqlx. All timestamps as TEXT in ISO 8601.
+- **Database:** SQLite / PostgreSQL / MySQL via sqlx. Timestamps as `TIMESTAMPTZ` (PG/MySQL) or TEXT (SQLite). Always bind `DateTime<Utc>`, never strings.
+- **Cross-DB portability is mandatory.** All code must run on SQLite, PostgreSQL, and MySQL. Every SQL statement — including hand-written `sqlx::query()`, macro-generated CRUD, and test fixtures — must consider cross-database compatibility. Default to `Driver::` helpers for dialect-specific syntax (`?` vs `$N`, `MAX(a,b)` vs `GREATEST`, `AUTOINCREMENT`, `STRFTIME`, etc.). When a `Driver::` helper doesn't exist or a fundamental difference can't be abstracted, use `#[cfg(feature = "db-sqlite")]` / `#[cfg(feature = "db-postgres")]` / `#[cfg(feature = "db-mysql")]` to handle the edge case explicitly.
 - **Primary keys:** Snowflake ID (ferroid) with multiplicative inverse cipher + base62 encoding.
 - **Auth:** JWT (HS256) with short-lived access tokens + DB-stored refresh tokens.
 - **Write lock:** All transactions go through `acquire_write()` (tokio Mutex) to serialize SQLite writes and eliminate `SQLITE_BUSY` tail latency.
@@ -108,6 +109,21 @@ All DB operations use the Where DSL macro system (`raisfast-derive`):
 - `crud_find_page!`, `crud_join_paged!` — pagination with JOINs
 - `crud_resolve_id!`, `crud_resolve_ids!` — ID resolution
 - `in_transaction!` — transaction wrapper (auto-acquires write lock)
+
+## Cross-Database Development Rules
+
+The project supports SQLite, PostgreSQL, and MySQL simultaneously. SQLite's "everything is TEXT" model and loose type checking hides type mismatches that PostgreSQL's strict typing will reject. Follow these rules to stay portable:
+
+1. **Placeholders** — Use `Driver::ph(N)` for all SQL placeholders. Never hardcode `?` (SQLite/MySQL) or `$N` (PostgreSQL).
+2. **Timestamps** — `.bind()` with `now_utc()` (`DateTime<Utc>`), never `now_str()` (returns `String`). PG rejects `text → TIMESTAMPTZ` implicit conversion.
+3. **Aggregates** — Wrap `COUNT(*)` and `SUM(...)` in `Driver::cast_int(...)`. PG's `SUM(bigint)` returns `numeric`; MySQL returns `DECIMAL` — both fail to decode as `i64`.
+4. **Booleans** — `.bind(true)`/`.bind(false)` for BOOLEAN columns; use `TRUE`/`FALSE` in SQL literals. Never `.bind(1_i64)` or `= 1` in SQL.
+5. **Dialect functions** — Use `Driver::` helpers (`greatest()`, `now_fn()`, `date_trunc_day()`, `auto_increment_pk()`, `cast_int()`, `cast_ts()`, `like_op()`, `current_date()`). Never hand-write dialect-specific SQL keywords.
+6. **WHERE clause placeholders** — When combining SET + WHERE (e.g., `db_update`, `db_increment`), WHERE clause placeholders must be offset by the number of SET parameters. Use `build_where_clause_with_offset(where_json, set_param_count)`.
+7. **Test data uniqueness** — Always use `crate::utils::id::new_id()` for usernames, slugs, names, etc. in test inserts. Never use fixed strings like `"testuser"` — they collide on shared databases.
+8. **Test INSERTs must include `id`** — `BIGINT PRIMARY KEY` does not auto-increment on PostgreSQL/MySQL (unlike SQLite's `INTEGER PRIMARY KEY`). Always bind an explicit `id` from `new_id()`.
+9. **Test assertions** — Never assert `COUNT(*) == N` on a shared database (accumulated data from prior tests inflates the count). Filter by unique IDs or use `>=` comparisons.
+10. **Returning clause** — MySQL does not support `RETURNING`. Use `rows_affected()` instead of `RETURNING id` for cross-database claim/dedup patterns.
 
 ## Style
 

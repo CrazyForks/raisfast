@@ -95,6 +95,7 @@ pub async fn delete_by_key(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::DbDriver;
 
     async fn setup_pool() -> crate::db::Pool {
         crate::test_pool!()
@@ -105,12 +106,20 @@ mod tests {
         key: &str,
         value: &str,
         autoload: bool,
-        updated_at: &str,
+        updated_at: &crate::utils::tz::Timestamp,
     ) {
-        sqlx::query(
-            "INSERT INTO options (option_key, value, type, group_name, label, autoload, sort_order, updated_at) \
-             VALUES (?, ?, ?, 'test', 'test', ?, 0, ?)",
-        )
+        let id = crate::utils::id::new_id();
+        sqlx::query(&format!(
+            "INSERT INTO options (id, option_key, value, type, group_name, label, autoload, sort_order, updated_at) \
+             VALUES ({}, {}, {}, {}, 'test', 'test', {}, 0, {})",
+            crate::db::Driver::ph(1),
+            crate::db::Driver::ph(2),
+            crate::db::Driver::ph(3),
+            crate::db::Driver::ph(4),
+            crate::db::Driver::ph(5),
+            crate::db::Driver::ph(6)
+        ))
+        .bind(id)
         .bind(key)
         .bind(value)
         .bind(OptionType::Text)
@@ -125,9 +134,9 @@ mod tests {
     async fn upsert_and_find_by_key() {
         let pool = setup_pool().await;
         let key = format!("test.{}", crate::utils::id::new_id());
-        let now_str = crate::utils::tz::now_utc().to_rfc3339();
+        let now = crate::utils::tz::now_utc();
 
-        insert_test_option(&pool, &key, "initial", true, &now_str).await;
+        insert_test_option(&pool, &key, "initial", true, &now).await;
         upsert_value(&pool, &key, "updated", None).await.unwrap();
 
         let found = find_by_key(&pool, &key, None).await.unwrap();
@@ -141,14 +150,13 @@ mod tests {
     async fn find_all_returns_all() {
         let pool = setup_pool().await;
         let now = crate::utils::tz::now_utc();
-        let now_str = now.to_rfc3339();
 
         let k1 = format!("test.{}", crate::utils::id::new_id());
         let k2 = format!("test.{}", crate::utils::id::new_id());
         let k3 = format!("test.{}", crate::utils::id::new_id());
-        insert_test_option(&pool, &k1, "v1", true, &now_str).await;
-        insert_test_option(&pool, &k2, "v2", true, &now_str).await;
-        insert_test_option(&pool, &k3, "v3", true, &now_str).await;
+        insert_test_option(&pool, &k1, "v1", true, &now).await;
+        insert_test_option(&pool, &k2, "v2", true, &now).await;
+        insert_test_option(&pool, &k3, "v3", true, &now).await;
 
         let all = find_all(&pool, None).await.unwrap();
         assert!(all.len() >= 3);
@@ -159,9 +167,8 @@ mod tests {
         let pool = setup_pool().await;
         let key = format!("test.{}", crate::utils::id::new_id());
         let now = crate::utils::tz::now_utc();
-        let now_str = now.to_rfc3339();
 
-        insert_test_option(&pool, &key, "v1", true, &now_str).await;
+        insert_test_option(&pool, &key, "v1", true, &now).await;
         upsert_value(&pool, &key, "v2", None).await.unwrap();
 
         let found = find_by_key(&pool, &key, None).await.unwrap().unwrap();
@@ -172,9 +179,9 @@ mod tests {
     async fn delete_by_key_removes() {
         let pool = setup_pool().await;
         let key = format!("test.{}", crate::utils::id::new_id());
-        let now_str = crate::utils::tz::now_utc().to_rfc3339();
+        let now = crate::utils::tz::now_utc();
 
-        insert_test_option(&pool, &key, "val", true, &now_str).await;
+        insert_test_option(&pool, &key, "val", true, &now).await;
         delete_by_key(&pool, &key, None).await.unwrap();
 
         let found = find_by_key(&pool, &key, None).await.unwrap();
@@ -184,14 +191,14 @@ mod tests {
     #[tokio::test]
     async fn find_autoload_test() {
         let pool = setup_pool().await;
-        let now_str = crate::utils::tz::now_utc().to_rfc3339();
+        let now = crate::utils::tz::now_utc();
 
         let k1 = format!("test.{}", crate::utils::id::new_id());
         let k2 = format!("test.{}", crate::utils::id::new_id());
         let k3 = format!("test.{}", crate::utils::id::new_id());
-        insert_test_option(&pool, &k1, "v1", true, &now_str).await;
-        insert_test_option(&pool, &k2, "v2", true, &now_str).await;
-        insert_test_option(&pool, &k3, "v3", false, &now_str).await;
+        insert_test_option(&pool, &k1, "v1", true, &now).await;
+        insert_test_option(&pool, &k2, "v2", true, &now).await;
+        insert_test_option(&pool, &k3, "v3", false, &now).await;
 
         let autoloaded = find_autoload(&pool).await.unwrap();
         assert!(autoloaded.iter().any(|r| r.option_key == k1));

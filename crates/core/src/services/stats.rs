@@ -442,67 +442,14 @@ fn validate_table_name(table: &str) -> Result<(), AppError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::DbDriver;
 
     #[tokio::test]
     async fn stats_overview_empty_db() {
-        let pool = Pool::connect(":memory:").await.unwrap();
+        let pool = crate::test_pool!();
 
         sqlx::query(
-            "CREATE TABLE posts (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT, slug TEXT, created_at TEXT NOT NULL, tenant_id TEXT NOT NULL DEFAULT 'default')",
-        )
-        .execute(&pool)
-        .await
-        .unwrap();
-
-        sqlx::query(
-            "CREATE TABLE users (id INTEGER PRIMARY KEY AUTOINCREMENT, tenant_id TEXT NOT NULL DEFAULT 'default', username TEXT NOT NULL, status TEXT NOT NULL, registered_via TEXT NOT NULL)",
-        )
-        .execute(&pool)
-        .await
-        .unwrap();
-
-        sqlx::query(
-            "CREATE TABLE comments (id INTEGER PRIMARY KEY AUTOINCREMENT, content TEXT, created_at TEXT NOT NULL, tenant_id TEXT NOT NULL DEFAULT 'default')",
-        )
-        .execute(&pool)
-        .await
-        .unwrap();
-
-        sqlx::query(
-            "CREATE TABLE media (id INTEGER PRIMARY KEY AUTOINCREMENT, tenant_id TEXT NOT NULL DEFAULT 'default')",
-        )
-        .execute(&pool)
-        .await
-        .unwrap();
-
-        sqlx::query("CREATE TABLE categories (id INTEGER PRIMARY KEY AUTOINCREMENT, tenant_id TEXT NOT NULL DEFAULT 'default')")
-            .execute(&pool)
-            .await
-            .unwrap();
-
-        sqlx::query(
-            "CREATE TABLE tags (id INTEGER PRIMARY KEY AUTOINCREMENT, tenant_id TEXT NOT NULL DEFAULT 'default')",
-        )
-        .execute(&pool)
-        .await
-        .unwrap();
-
-        sqlx::query(
-            "CREATE TABLE products (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT, created_at TEXT NOT NULL, tenant_id TEXT NOT NULL DEFAULT 'default')",
-        )
-        .execute(&pool)
-        .await
-        .unwrap();
-
-        sqlx::query(
-            "CREATE TABLE orders (id INTEGER PRIMARY KEY AUTOINCREMENT, order_no TEXT NOT NULL, total_amount INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL, created_at TEXT NOT NULL, tenant_id TEXT NOT NULL DEFAULT 'default')",
-        )
-        .execute(&pool)
-        .await
-        .unwrap();
-
-        sqlx::query(
-            "CREATE TABLE coupons (id INTEGER PRIMARY KEY AUTOINCREMENT, tenant_id TEXT NOT NULL DEFAULT 'default')",
+            "TRUNCATE TABLE posts, users, comments, media, categories, tags, products, orders, coupons RESTART IDENTITY CASCADE",
         )
         .execute(&pool)
         .await
@@ -523,78 +470,26 @@ mod tests {
 
     #[tokio::test]
     async fn stats_overview_with_data() {
-        let pool = Pool::connect(":memory:").await.unwrap();
+        let pool = crate::test_pool!();
 
         sqlx::query(
-            "CREATE TABLE posts (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT, slug TEXT, created_at TEXT NOT NULL, tenant_id TEXT NOT NULL DEFAULT 'default')",
+            "TRUNCATE TABLE posts, users, comments, media, categories, tags, products, orders, coupons RESTART IDENTITY CASCADE",
         )
         .execute(&pool)
         .await
         .unwrap();
 
-        sqlx::query(
-            "CREATE TABLE users (id INTEGER PRIMARY KEY AUTOINCREMENT, tenant_id TEXT NOT NULL DEFAULT 'default', username TEXT NOT NULL, status TEXT NOT NULL, registered_via TEXT NOT NULL)",
-        )
-        .execute(&pool)
-        .await
-        .unwrap();
-
-        sqlx::query(
-            "CREATE TABLE comments (id INTEGER PRIMARY KEY AUTOINCREMENT, content TEXT, created_at TEXT NOT NULL, tenant_id TEXT NOT NULL DEFAULT 'default')",
-        )
-        .execute(&pool)
-        .await
-        .unwrap();
-
-        sqlx::query(
-            "CREATE TABLE media (id INTEGER PRIMARY KEY AUTOINCREMENT, tenant_id TEXT NOT NULL DEFAULT 'default')",
-        )
-        .execute(&pool)
-        .await
-        .unwrap();
-
-        sqlx::query("CREATE TABLE categories (id INTEGER PRIMARY KEY AUTOINCREMENT, tenant_id TEXT NOT NULL DEFAULT 'default')")
+        sqlx::query("INSERT INTO posts (id, title, slug, content, created_by) VALUES (1, 'Hello', 'hello', 'body', 1)")
             .execute(&pool)
             .await
             .unwrap();
-
         sqlx::query(
-            "CREATE TABLE tags (id INTEGER PRIMARY KEY AUTOINCREMENT, tenant_id TEXT NOT NULL DEFAULT 'default')",
+            "INSERT INTO users (id, username, registered_via) VALUES (1, 'user1', 'email')",
         )
         .execute(&pool)
         .await
         .unwrap();
-
-        sqlx::query(
-            "CREATE TABLE products (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT, created_at TEXT NOT NULL, tenant_id TEXT NOT NULL DEFAULT 'default')",
-        )
-        .execute(&pool)
-        .await
-        .unwrap();
-
-        sqlx::query(
-            "CREATE TABLE orders (id INTEGER PRIMARY KEY AUTOINCREMENT, order_no TEXT NOT NULL, total_amount INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL, created_at TEXT NOT NULL, tenant_id TEXT NOT NULL DEFAULT 'default')",
-        )
-        .execute(&pool)
-        .await
-        .unwrap();
-
-        sqlx::query(
-            "CREATE TABLE coupons (id INTEGER PRIMARY KEY AUTOINCREMENT, tenant_id TEXT NOT NULL DEFAULT 'default')",
-        )
-        .execute(&pool)
-        .await
-        .unwrap();
-
-        sqlx::query("INSERT INTO posts (id, title, slug, created_at) VALUES (1, 'Hello', 'hello', '2024-01-01T00:00:00Z')")
-            .execute(&pool)
-            .await
-            .unwrap();
-        sqlx::query("INSERT INTO users (id, username, status, registered_via) VALUES (1, 'user1', 'active', 'email')")
-            .execute(&pool)
-            .await
-            .unwrap();
-        sqlx::query("INSERT INTO orders (id, order_no, total_amount, status, created_at) VALUES (1, 'ORD-001', 9900, 'completed', '2024-01-02T00:00:00Z')")
+        sqlx::query("INSERT INTO orders (id, user_id, order_no, total_amount, status) VALUES (1, 1, 'ORD-001', 9900, 'completed')")
             .execute(&pool)
             .await
             .unwrap();
@@ -614,14 +509,19 @@ mod tests {
 
     #[tokio::test]
     async fn stats_content_stats_with_status() {
-        let pool = Pool::connect(":memory:").await.unwrap();
+        let pool = crate::test_pool!();
 
-        sqlx::query(
-            "CREATE TABLE ct_test (id INTEGER PRIMARY KEY AUTOINCREMENT, status TEXT, tenant_id TEXT NOT NULL DEFAULT 'default')",
-        )
+        sqlx::query(&format!(
+            "CREATE TABLE IF NOT EXISTS ct_test (id {}, status TEXT, tenant_id TEXT NOT NULL DEFAULT 'default')",
+            crate::db::Driver::auto_increment_pk()
+        ))
         .execute(&pool)
         .await
         .unwrap();
+        sqlx::query("DELETE FROM ct_test")
+            .execute(&pool)
+            .await
+            .unwrap();
 
         sqlx::query("INSERT INTO ct_test (id, status) VALUES (1, 'draft')")
             .execute(&pool)
@@ -646,21 +546,34 @@ mod tests {
 
     #[tokio::test]
     async fn stats_trends() {
-        let pool = Pool::connect(":memory:").await.unwrap();
+        let pool = crate::test_pool!();
 
-        sqlx::query(
-            "CREATE TABLE ct_trends (id INTEGER PRIMARY KEY AUTOINCREMENT, created_at TEXT NOT NULL, tenant_id TEXT NOT NULL DEFAULT 'default')",
-        )
-        .execute(&pool)
-        .await
-        .unwrap();
+        #[cfg(feature = "db-postgres")]
+        let ts_type = "TIMESTAMPTZ";
+        #[cfg(not(feature = "db-postgres"))]
+        let ts_type = "TEXT";
 
-        let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
-        sqlx::query("INSERT INTO ct_trends (id, created_at) VALUES (1, ?)")
-            .bind(&today)
+        sqlx::query("DROP TABLE IF EXISTS ct_trends")
             .execute(&pool)
             .await
             .unwrap();
+        sqlx::query(&format!(
+            "CREATE TABLE ct_trends (id {}, created_at {} NOT NULL, tenant_id TEXT NOT NULL DEFAULT 'default')",
+            crate::db::Driver::auto_increment_pk(),
+            ts_type,
+        ))
+        .execute(&pool)
+        .await
+        .unwrap();
+        let now = crate::utils::tz::now_utc();
+        sqlx::query(&format!(
+            "INSERT INTO ct_trends (id, created_at) VALUES (1, {})",
+            crate::db::Driver::ph(1)
+        ))
+        .bind(&now)
+        .execute(&pool)
+        .await
+        .unwrap();
 
         let svc = StatsService::new(pool);
         let result = svc.trends("ct_trends", 7, None).await.unwrap();

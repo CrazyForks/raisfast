@@ -341,7 +341,7 @@ pub async fn tx_find_by_id(
 }
 
 pub async fn update_avatar(pool: &crate::db::Pool, id: SnowflakeId, avatar: &str) -> AppResult<()> {
-    let now = crate::utils::tz::now_str();
+    let now = crate::utils::tz::now_utc();
     raisfast_derive::crud_update!(pool, "users",
         bind: ["avatar" => avatar, "updated_at" => now],
         where: ("id", id)
@@ -395,12 +395,17 @@ mod tests {
     #[tokio::test]
     async fn find_all_paginated() {
         let pool = setup_pool().await;
+        let tenant = format!("t_{}", crate::utils::id::new_id());
         for i in 0..5 {
-            create(&pool, &new_cmd(&format!("user{i}")), None)
-                .await
-                .unwrap();
+            create(
+                &pool,
+                &new_cmd(&format!("user{i}_{}", crate::utils::id::new_id())),
+                Some(&tenant),
+            )
+            .await
+            .unwrap();
         }
-        let (users, total) = find_all(&pool, 1, 3, None).await.unwrap();
+        let (users, total) = find_all(&pool, 1, 3, Some(&tenant)).await.unwrap();
         assert_eq!(users.len(), 3);
         assert_eq!(total, 5);
     }

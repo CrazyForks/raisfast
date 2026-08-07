@@ -178,6 +178,15 @@ pub struct NewJob {
     /// Cron execution-log row id, created by `scheduler::dispatch`.
     /// `WorkerRunner` writes the real result back to this row on complete/fail/dead.
     pub cron_log_id: Option<SnowflakeId>,
+    /// Priority (higher = dequeued first). Default 0.
+    pub priority: i16,
+    /// Per-job visibility timeout in seconds. `None` = use global
+    /// `worker_visibility_timeout_secs`. Prevents long jobs being reclaimed
+    /// by `StuckJobSweeper`.
+    pub timeout_secs: Option<i32>,
+    /// Dedup key: enqueue is a no-op if a pending job with the same key exists.
+    /// Prevents event-storm duplicate jobs (e.g. RebuildSearchIndex).
+    pub dedup_key: Option<String>,
 }
 
 impl NewJob {
@@ -198,6 +207,9 @@ impl From<Job> for NewJob {
             run_after: None,
             cron_schedule_id: None,
             cron_log_id: None,
+            priority: 0,
+            timeout_secs: None,
+            dedup_key: None,
         }
     }
 }
@@ -288,7 +300,7 @@ fn rand_id(seed: u32) -> u32 {
 /// Parses a payload JSON into a Job
 ///
 /// First attempts to match built-in enum variants; on failure, falls back to `Job::Custom`.
-fn parse_job(job_type: &str, payload: &str) -> AppResult<Job> {
+pub(crate) fn parse_job(job_type: &str, payload: &str) -> AppResult<Job> {
     let tagged = if payload.is_empty() || payload == "null" {
         format!(r#"{{"type":"{job_type}"}}"#)
     } else {

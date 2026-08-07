@@ -424,6 +424,10 @@ mod tests {
     }
 
     async fn seed_product(pool: &crate::db::Pool, title: &str, _status: &str) -> Product {
+        seed_product_t(pool, title, None).await
+    }
+
+    async fn seed_product_t(pool: &crate::db::Pool, title: &str, tenant: Option<&str>) -> Product {
         insert(
             pool,
             &CreateProductCmd {
@@ -459,10 +463,14 @@ mod tests {
                 has_variants: false,
                 tag_ids: None,
             },
-            None,
+            tenant,
         )
         .await
         .unwrap()
+    }
+
+    fn uniq_tenant() -> String {
+        format!("t_{}", crate::utils::id::new_id())
     }
 
     async fn set_status(pool: &crate::db::Pool, id: SnowflakeId, status: &str) {
@@ -698,14 +706,15 @@ mod tests {
     #[tokio::test]
     async fn find_active_paginated_filters_status() {
         let pool = setup_pool().await;
+        let tenant = uniq_tenant();
         for i in 0..5 {
-            let p = seed_product(&pool, &format!("P{i}"), "draft").await;
+            let p = seed_product_t(&pool, &format!("P{i}"), Some(&tenant)).await;
             set_status(&pool, p.id, "active").await;
         }
-        let p = seed_product(&pool, "Draft", "draft").await;
+        let p = seed_product_t(&pool, "Draft", Some(&tenant)).await;
         set_status(&pool, p.id, "draft").await;
 
-        let (items, total) = super::find_active_paginated(&pool, None, 1, 3)
+        let (items, total) = super::find_active_paginated(&pool, Some(&tenant), 1, 3)
             .await
             .unwrap();
         assert_eq!(total, 5);
@@ -716,11 +725,12 @@ mod tests {
     #[tokio::test]
     async fn find_active_paginated_page_two() {
         let pool = setup_pool().await;
+        let tenant = uniq_tenant();
         for i in 0..5 {
-            let p = seed_product(&pool, &format!("P{i}"), "draft").await;
+            let p = seed_product_t(&pool, &format!("P{i}"), Some(&tenant)).await;
             set_status(&pool, p.id, "active").await;
         }
-        let (items, total) = super::find_active_paginated(&pool, None, 2, 3)
+        let (items, total) = super::find_active_paginated(&pool, Some(&tenant), 2, 3)
             .await
             .unwrap();
         assert_eq!(total, 5);
@@ -730,10 +740,11 @@ mod tests {
     #[tokio::test]
     async fn find_all_admin_no_filter() {
         let pool = setup_pool().await;
+        let tenant = uniq_tenant();
         for i in 0..4 {
-            seed_product(&pool, &format!("P{i}"), "draft").await;
+            seed_product_t(&pool, &format!("P{i}"), Some(&tenant)).await;
         }
-        let (items, total) = super::find_all_admin(&pool, None, 1, 10, None, None, None)
+        let (items, total) = super::find_all_admin(&pool, Some(&tenant), 1, 10, None, None, None)
             .await
             .unwrap();
         assert_eq!(total, 4);
@@ -743,15 +754,17 @@ mod tests {
     #[tokio::test]
     async fn find_all_admin_with_status_filter() {
         let pool = setup_pool().await;
+        let tenant = uniq_tenant();
         for i in 0..3 {
-            let p = seed_product(&pool, &format!("Active{i}"), "draft").await;
+            let p = seed_product_t(&pool, &format!("Active{i}"), Some(&tenant)).await;
             set_status(&pool, p.id, "active").await;
         }
-        seed_product(&pool, "Draft1", "draft").await;
+        seed_product_t(&pool, "Draft1", Some(&tenant)).await;
 
-        let (items, total) = super::find_all_admin(&pool, None, 1, 10, Some("active"), None, None)
-            .await
-            .unwrap();
+        let (items, total) =
+            super::find_all_admin(&pool, Some(&tenant), 1, 10, Some("active"), None, None)
+                .await
+                .unwrap();
         assert_eq!(total, 3);
         assert_eq!(items.len(), 3);
         assert!(items.iter().all(|p| p.status == ProductStatus::Active));
@@ -760,7 +773,8 @@ mod tests {
     #[tokio::test]
     async fn find_active_paginated_empty() {
         let pool = setup_pool().await;
-        let (items, total) = super::find_active_paginated(&pool, None, 1, 10)
+        let tenant = uniq_tenant();
+        let (items, total) = super::find_active_paginated(&pool, Some(&tenant), 1, 10)
             .await
             .unwrap();
         assert_eq!(total, 0);

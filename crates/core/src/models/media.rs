@@ -131,7 +131,8 @@ pub async fn stats(
     let filter = tenant_filter_ph(tenant_id, 2);
 
     let total_sql = format!(
-        "SELECT COUNT(*), COALESCE(SUM(size), 0) FROM media WHERE user_id = {}{filter}",
+        "SELECT COUNT(*), {} FROM media WHERE user_id = {}{filter}",
+        Driver::cast_int("COALESCE(SUM(size), 0)"),
         Driver::ph(1)
     );
     let (total_files, total_size) = raisfast_derive::crud_query!(
@@ -144,7 +145,8 @@ pub async fn stats(
     )?;
 
     let by_type_sql = format!(
-        "SELECT mimetype, COUNT(*), COALESCE(SUM(size), 0) FROM media WHERE user_id = {}{filter} GROUP BY mimetype ORDER BY COUNT(*) DESC",
+        "SELECT mimetype, COUNT(*), {} FROM media WHERE user_id = {}{filter} GROUP BY mimetype ORDER BY COUNT(*) DESC",
+        Driver::cast_int("COALESCE(SUM(size), 0)"),
         Driver::ph(1)
     );
     let rows = raisfast_derive::crud_query!(
@@ -213,7 +215,7 @@ mod tests {
         let user = crate::models::user::create(
             pool,
             &crate::commands::user::CreateUserCmd {
-                username: "mediauser".to_string(),
+                username: format!("mediauser_{}", crate::utils::id::new_id()),
                 registered_via: crate::models::user::RegisteredVia::Email,
             },
             None,

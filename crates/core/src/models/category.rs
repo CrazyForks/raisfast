@@ -240,8 +240,11 @@ mod tests {
     #[tokio::test]
     async fn create_and_find_by_id() {
         let pool = setup_pool().await;
-        let cat = create(&pool, &make_cmd("Tech"), None, None).await.unwrap();
-        let found = find_by_id(&pool, cat.id, None).await.unwrap();
+        let tenant = format!("t_{}", crate::utils::id::new_id());
+        let cat = create(&pool, &make_cmd("Tech"), Some(&tenant), None)
+            .await
+            .unwrap();
+        let found = find_by_id(&pool, cat.id, Some(&tenant)).await.unwrap();
         assert_eq!(found.id, cat.id);
         assert_eq!(found.name, "Tech");
     }
@@ -249,20 +252,32 @@ mod tests {
     #[tokio::test]
     async fn find_all_returns_all() {
         let pool = setup_pool().await;
-        create(&pool, &make_cmd("A"), None, None).await.unwrap();
-        create(&pool, &make_cmd("B"), None, None).await.unwrap();
-        create(&pool, &make_cmd("C"), None, None).await.unwrap();
-        let all = find_all(&pool, None).await.unwrap();
+        let tenant = format!("t_{}", crate::utils::id::new_id());
+        create(&pool, &make_cmd("A"), Some(&tenant), None)
+            .await
+            .unwrap();
+        create(&pool, &make_cmd("B"), Some(&tenant), None)
+            .await
+            .unwrap();
+        create(&pool, &make_cmd("C"), Some(&tenant), None)
+            .await
+            .unwrap();
+        let all = find_all(&pool, Some(&tenant)).await.unwrap();
         assert_eq!(all.len(), 3);
     }
 
     #[tokio::test]
     async fn find_paginated() {
         let pool = setup_pool().await;
+        let tenant = format!("t_{}", crate::utils::id::new_id());
         for name in ["A", "B", "C", "D", "E"] {
-            create(&pool, &make_cmd(name), None, None).await.unwrap();
+            create(&pool, &make_cmd(name), Some(&tenant), None)
+                .await
+                .unwrap();
         }
-        let (items, total) = super::find_paginated(&pool, None, 1, 3).await.unwrap();
+        let (items, total) = super::find_paginated(&pool, Some(&tenant), 1, 3)
+            .await
+            .unwrap();
         assert_eq!(total, 5);
         assert_eq!(items.len(), 3);
     }
@@ -270,7 +285,10 @@ mod tests {
     #[tokio::test]
     async fn update_changes_name() {
         let pool = setup_pool().await;
-        let cat = create(&pool, &make_cmd("Old"), None, None).await.unwrap();
+        let tenant = format!("t_{}", crate::utils::id::new_id());
+        let cat = create(&pool, &make_cmd("Old"), Some(&tenant), None)
+            .await
+            .unwrap();
         let updated = update(
             &pool,
             &UpdateCategoryCmd {
@@ -287,7 +305,7 @@ mod tests {
                 og_description: None,
                 og_image: None,
             },
-            None,
+            Some(&tenant),
             None,
         )
         .await
