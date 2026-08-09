@@ -446,13 +446,18 @@ pub async fn update_channel(
         .await?
         .ok_or_else(|| AppError::not_found("payment_channel"))?;
 
+    let existing_creds = channel
+        .credentials
+        .as_str()
+        .map(|s| s.to_string())
+        .unwrap_or_default();
     let encrypted_credentials = if req.credentials.is_some() {
         encrypt_credential(
-            req.credentials.as_deref().unwrap_or(&channel.credentials),
+            req.credentials.as_deref().unwrap_or(&existing_creds),
             config,
         )?
     } else {
-        channel.credentials.clone()
+        existing_creds
     };
 
     let encrypted_webhook_secret = match req.webhook_secret.as_deref() {
@@ -469,7 +474,10 @@ pub async fn update_channel(
             is_live: req.is_live.unwrap_or(channel.is_live),
             credentials: encrypted_credentials,
             webhook_secret: encrypted_webhook_secret,
-            settings: req.settings.clone().or(channel.settings.clone()),
+            settings: req
+                .settings
+                .clone()
+                .or(channel.settings.as_ref().map(|v| v.to_string())),
             is_active: req.is_active.unwrap_or(channel.is_active),
             sort_order: req.sort_order.unwrap_or(channel.sort_order),
             version: req.version,
@@ -2245,13 +2253,12 @@ mod tests {
         let user_id = seed_user(&pool).await;
 
         let _ch = seed_channel_encrypted(&pool, "stripe", &config).await;
-        let extra_settings = r#"{"currencies":["CNY"]}"#;
         sqlx::query(&format!(
             "UPDATE payment_channels SET settings = {} WHERE id = {}",
             crate::db::Driver::ph(1),
             crate::db::Driver::ph(2)
         ))
-        .bind(extra_settings)
+        .bind(serde_json::json!({"currencies": ["CNY"]}))
         .bind(*_ch.id)
         .execute(&pool)
         .await

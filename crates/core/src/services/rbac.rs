@@ -59,11 +59,14 @@ fn perm_to_view(p: &Permission) -> PermissionView {
         role_id: p.role_id,
         action: p.action.clone(),
         subject: p.subject.clone(),
-        fields: p.fields.as_ref().and_then(|f| serde_json::from_str(f).ok()),
+        fields: p
+            .fields
+            .as_ref()
+            .and_then(|f| serde_json::from_value(f.clone()).ok()),
         conditions: p
             .conditions
             .as_ref()
-            .and_then(|c| serde_json::from_str(c).ok()),
+            .and_then(|c| serde_json::from_value(c.clone()).ok()),
         created_at: p.created_at,
     }
 }

@@ -114,7 +114,8 @@ pub struct ProductResponse {
     pub price: i64,
     pub currency: String,
     pub status: String,
-    pub attributes: Option<String>,
+    #[cfg_attr(feature = "export-types", ts(type = "unknown"))]
+    pub attributes: Option<serde_json::Value>,
     #[cfg_attr(feature = "export-types", ts(type = "number"))]
     pub sort_order: i64,
     pub slug: Option<String>,
@@ -124,7 +125,7 @@ pub struct ProductResponse {
     #[cfg_attr(feature = "export-types", ts(type = "number"))]
     pub original_price: Option<i64>,
     #[cfg_attr(feature = "export-types", ts(type = "unknown"))]
-    pub specs: Option<String>,
+    pub specs: Option<serde_json::Value>,
     pub unit: String,
     #[cfg_attr(feature = "export-types", ts(type = "number"))]
     pub min_purchase: i64,

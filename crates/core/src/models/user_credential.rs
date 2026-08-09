@@ -18,24 +18,18 @@ define_enum!(
     }
 );
 
-pub fn wrap_password_hash(hash: &str) -> String {
-    serde_json::json!({"password_hash": hash}).to_string()
+pub fn wrap_password_hash(hash: &str) -> serde_json::Value {
+    serde_json::json!({"password_hash": hash})
 }
 
-pub fn extract_password_hash(credential_data: &str) -> AppResult<String> {
-    if credential_data.starts_with('{') {
-        let val: serde_json::Value = serde_json::from_str(credential_data).map_err(|e| {
-            AppError::Internal(anyhow::anyhow!("invalid credential_data JSON: {e}"))
-        })?;
-        val.get("password_hash")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string())
-            .ok_or_else(|| {
-                AppError::Internal(anyhow::anyhow!("missing password_hash in credential_data"))
-            })
-    } else {
-        Ok(credential_data.to_string())
-    }
+pub fn extract_password_hash(credential_data: &serde_json::Value) -> AppResult<String> {
+    credential_data
+        .get("password_hash")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+        .ok_or_else(|| {
+            AppError::Internal(anyhow::anyhow!("missing password_hash in credential_data"))
+        })
 }
 
 #[derive(Debug, FromRow, Serialize, Deserialize, Clone)]
@@ -44,7 +38,7 @@ pub struct UserCredential {
     pub user_id: SnowflakeId,
     pub auth_type: AuthType,
     pub identifier: String,
-    pub credential_data: String,
+    pub credential_data: serde_json::Value,
     pub verified: bool,
     pub created_at: Timestamp,
     pub updated_at: Timestamp,
@@ -76,7 +70,7 @@ pub async fn create(
     user_id: SnowflakeId,
     auth_type: AuthType,
     identifier: &str,
-    credential_data: &str,
+    credential_data: &serde_json::Value,
     verified: bool,
 ) -> AppResult<UserCredential> {
     let (id, now) = (
@@ -100,7 +94,7 @@ pub async fn create(
 pub async fn update_credential_data(
     pool: &crate::db::Pool,
     id: SnowflakeId,
-    credential_data: &str,
+    credential_data: &serde_json::Value,
 ) -> AppResult<()> {
     let now = crate::utils::tz::now_utc();
     raisfast_derive::crud_update!(pool, "user_credentials",
@@ -143,7 +137,7 @@ pub async fn tx_create(
     user_id: SnowflakeId,
     auth_type: AuthType,
     identifier: &str,
-    credential_data: &str,
+    credential_data: &serde_json::Value,
     verified: bool,
 ) -> AppResult<()> {
     let (id, now) = (
@@ -178,7 +172,7 @@ pub async fn tx_find_email_cred_by_user(
 pub async fn tx_update_credential_data(
     tx: &mut crate::db::pool::DbConnection,
     id: SnowflakeId,
-    credential_data: &str,
+    credential_data: &serde_json::Value,
 ) -> AppResult<()> {
     let now = crate::utils::tz::now_utc();
     raisfast_derive::crud_update!(&mut *tx, "user_credentials",

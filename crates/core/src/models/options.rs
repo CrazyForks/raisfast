@@ -26,14 +26,16 @@ pub struct OptionRow {
     pub id: SnowflakeId,
     pub tenant_id: Option<String>,
     pub option_key: String,
-    pub value: String,
+    #[cfg_attr(feature = "export-types", ts(type = "unknown"))]
+    pub value: serde_json::Value,
     #[serde(rename = "type")]
     #[sqlx(rename = "type")]
     pub type_: OptionType,
     pub group_name: String,
     pub label: String,
     pub description: Option<String>,
-    pub validation: Option<String>,
+    #[cfg_attr(feature = "export-types", ts(type = "unknown"))]
+    pub validation: Option<serde_json::Value>,
     pub is_public: bool,
     pub autoload: bool,
     pub sort_order: i64,
@@ -70,7 +72,7 @@ pub async fn find_all(
 pub async fn upsert_value(
     pool: &crate::db::Pool,
     key: &str,
-    value: &str,
+    value: &serde_json::Value,
     tenant_id: Option<&str>,
 ) -> AppResult<()> {
     let now = crate::utils::tz::now_utc();
@@ -121,7 +123,7 @@ mod tests {
         ))
         .bind(id)
         .bind(key)
-        .bind(value)
+        .bind(serde_json::Value::String(value.to_string()))
         .bind(OptionType::Text)
         .bind(autoload)
         .bind(updated_at)
@@ -137,7 +139,7 @@ mod tests {
         let now = crate::utils::tz::now_utc();
 
         insert_test_option(&pool, &key, "initial", true, &now).await;
-        upsert_value(&pool, &key, "updated", None).await.unwrap();
+        upsert_value(&pool, &key, &serde_json::json!("updated"), None).await.unwrap();
 
         let found = find_by_key(&pool, &key, None).await.unwrap();
         assert!(found.is_some());
@@ -169,7 +171,7 @@ mod tests {
         let now = crate::utils::tz::now_utc();
 
         insert_test_option(&pool, &key, "v1", true, &now).await;
-        upsert_value(&pool, &key, "v2", None).await.unwrap();
+        upsert_value(&pool, &key, &serde_json::json!("v2"), None).await.unwrap();
 
         let found = find_by_key(&pool, &key, None).await.unwrap().unwrap();
         assert_eq!(found.value, "v2");

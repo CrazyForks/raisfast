@@ -30,8 +30,8 @@ struct RoutingSettings {
 fn parse_settings(channel: &PaymentChannel) -> Option<RoutingSettings> {
     channel
         .settings
-        .as_deref()
-        .and_then(|s| serde_json::from_str(s).ok())
+        .as_ref()
+        .and_then(|v| serde_json::from_value(v.clone()).ok())
 }
 
 pub fn select_channels(channels: &[PaymentChannel], ctx: &RoutingContext) -> Vec<RankedChannel> {
@@ -147,9 +147,9 @@ mod tests {
             provider: provider.to_string(),
             name: provider.to_string(),
             is_live: false,
-            credentials: "{}".to_string(),
+            credentials: serde_json::json!({}),
             webhook_secret: None,
-            settings: settings.map(String::from),
+            settings: settings.map(|s| serde_json::from_str::<serde_json::Value>(s).unwrap()),
             is_active: true,
             sort_order: 0,
             version: 1,

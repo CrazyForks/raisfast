@@ -31,7 +31,10 @@ fn decrypt_credentials(
     channel: &PaymentChannel,
     encrypt_key: &[u8; 32],
 ) -> AppResult<DodoCredentials> {
-    let decrypted = aes256gcm_decrypt(&channel.credentials, encrypt_key)?;
+    let decrypted = aes256gcm_decrypt(
+        channel.credentials.as_str().unwrap_or_default(),
+        encrypt_key,
+    )?;
     serde_json::from_str(&decrypted)
         .map_err(|e| AppError::Internal(anyhow::Error::from(e).context("dodo credentials parse")))
 }
@@ -61,8 +64,7 @@ fn dodo_error(e: reqwest::Error) -> AppError {
 fn extract_product_id(channel: &PaymentChannel) -> AppResult<String> {
     channel
         .settings
-        .as_deref()
-        .and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok())
+        .as_ref()
         .and_then(|v| v.get("product_id").cloned())
         .and_then(|v| v.as_str().map(String::from))
         .ok_or_else(|| {
@@ -540,9 +542,9 @@ mod tests {
             provider: "dodo".into(),
             name: "Dodo".into(),
             is_live: false,
-            credentials: encrypted,
+            credentials: serde_json::Value::String(encrypted),
             webhook_secret: None,
-            settings: Some(r#"{"product_id":"prod_abc123"}"#.into()),
+            settings: Some(serde_json::json!({"product_id": "prod_abc123"})),
             is_active: true,
             sort_order: 0,
             version: 1,
@@ -562,7 +564,7 @@ mod tests {
             provider: "dodo".into(),
             name: "Dodo".into(),
             is_live: false,
-            credentials: String::new(),
+            credentials: serde_json::json!(""),
             webhook_secret: None,
             settings: None,
             is_active: true,
@@ -590,7 +592,7 @@ mod tests {
             provider: "dodo".into(),
             name: "Dodo".into(),
             is_live: false,
-            credentials: encrypted,
+            credentials: serde_json::Value::String(encrypted),
             webhook_secret: None,
             settings: None,
             is_active: true,
@@ -701,7 +703,7 @@ mod tests {
             provider: "dodo".into(),
             name: "Dodo".into(),
             is_live: false,
-            credentials: String::new(),
+            credentials: serde_json::json!(""),
             webhook_secret: Some(encrypted_secret),
             settings: None,
             is_active: true,
@@ -766,7 +768,7 @@ mod tests {
             provider: "dodo".into(),
             name: "Dodo".into(),
             is_live: false,
-            credentials: String::new(),
+            credentials: serde_json::json!(""),
             webhook_secret: Some(encrypted_secret),
             settings: None,
             is_active: true,
@@ -795,7 +797,7 @@ mod tests {
             provider: "dodo".into(),
             name: "Dodo".into(),
             is_live: false,
-            credentials: String::new(),
+            credentials: serde_json::json!(""),
             webhook_secret: None,
             settings: None,
             is_active: true,

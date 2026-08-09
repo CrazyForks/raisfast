@@ -25,7 +25,8 @@ pub struct Tenant {
     pub id: SnowflakeId,
     pub name: String,
     pub domain: Option<String>,
-    pub config: String,
+    #[cfg_attr(feature = "export-types", ts(type = "unknown"))]
+    pub config: serde_json::Value,
     pub status: TenantStatus,
     pub created_at: Timestamp,
     pub updated_at: Timestamp,
@@ -64,7 +65,7 @@ pub async fn create(
     pool: &crate::db::Pool,
     name: &str,
     domain: Option<&str>,
-    config: &str,
+    config: &serde_json::Value,
 ) -> AppResult<Tenant> {
     let (id, now) = (
         crate::utils::id::new_snowflake_id(),
@@ -96,7 +97,7 @@ pub async fn update(
     id: SnowflakeId,
     name: Option<&str>,
     domain: Option<&str>,
-    config: Option<&str>,
+    config: Option<&serde_json::Value>,
     status: Option<TenantStatus>,
 ) -> AppResult<Tenant> {
     let now = crate::utils::tz::now_utc();
@@ -132,7 +133,9 @@ mod tests {
         let pool = setup_pool().await;
         let name = format!("Test Tenant {}", crate::utils::id::new_id());
         let domain = format!("test-{}.example.com", crate::utils::id::new_id());
-        let row = create(&pool, &name, Some(&domain), "{}").await.unwrap();
+        let row = create(&pool, &name, Some(&domain), &serde_json::json!({}))
+            .await
+            .unwrap();
         assert_eq!(row.name, name);
         assert_eq!(row.domain.unwrap(), domain);
 
@@ -145,7 +148,9 @@ mod tests {
         let pool = setup_pool().await;
         let name = format!("Dom Tenant {}", crate::utils::id::new_id());
         let domain = format!("dom-{}.example.com", crate::utils::id::new_id());
-        create(&pool, &name, Some(&domain), "{}").await.unwrap();
+        create(&pool, &name, Some(&domain), &serde_json::json!({}))
+            .await
+            .unwrap();
 
         let found = find_by_domain(&pool, &domain).await.unwrap().unwrap();
         assert_eq!(found.name, name);
@@ -161,7 +166,7 @@ mod tests {
             &pool,
             &format!("Alpha {}", crate::utils::id::new_id()),
             None,
-            "{}",
+            &serde_json::json!({}),
         )
         .await
         .unwrap();
@@ -169,7 +174,7 @@ mod tests {
             &pool,
             &format!("Bravo {}", crate::utils::id::new_id()),
             None,
-            "{}",
+            &serde_json::json!({}),
         )
         .await
         .unwrap();
@@ -177,7 +182,7 @@ mod tests {
             &pool,
             &format!("Charlie {}", crate::utils::id::new_id()),
             None,
-            "{}",
+            &serde_json::json!({}),
         )
         .await
         .unwrap();
@@ -194,7 +199,7 @@ mod tests {
             &pool,
             &format!("Original {}", crate::utils::id::new_id()),
             Some(&domain),
-            "{}",
+            &serde_json::json!({}),
         )
         .await
         .unwrap();
@@ -210,7 +215,9 @@ mod tests {
     #[tokio::test]
     async fn delete_removes_tenant() {
         let pool = setup_pool().await;
-        let row = create(&pool, "ToDelete", None, "{}").await.unwrap();
+        let row = create(&pool, "ToDelete", None, &serde_json::json!({}))
+            .await
+            .unwrap();
 
         delete(&pool, row.id).await.unwrap();
         let found = find_by_id(&pool, row.id).await.unwrap();

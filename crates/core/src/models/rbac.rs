@@ -33,8 +33,10 @@ pub struct Permission {
     pub role_id: SnowflakeId,
     pub action: String,
     pub subject: String,
-    pub fields: Option<String>,
-    pub conditions: Option<String>,
+    #[cfg_attr(feature = "export-types", ts(type = "unknown"))]
+    pub fields: Option<serde_json::Value>,
+    #[cfg_attr(feature = "export-types", ts(type = "unknown"))]
+    pub conditions: Option<serde_json::Value>,
     pub created_at: Timestamp,
 }
 
@@ -198,8 +200,8 @@ pub async fn insert_permission(pool: &crate::db::Pool, cmd: &CreatePermissionCmd
         "role_id" => cmd.role_id,
         "action" => &cmd.action,
         "subject" => &cmd.subject,
-        "fields" => cmd.fields.clone(),
-        "conditions" => cmd.conditions.clone(),
+        "fields" => cmd.fields.as_deref().and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok()),
+        "conditions" => cmd.conditions.as_deref().and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok()),
         "created_at" => now,
     ])?;
     Ok(())
@@ -219,8 +221,8 @@ pub async fn tx_insert_permission(
         "role_id" => cmd.role_id,
         "action" => &cmd.action,
         "subject" => &cmd.subject,
-        "fields" => cmd.fields.clone(),
-        "conditions" => cmd.conditions.clone(),
+        "fields" => cmd.fields.as_deref().and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok()),
+        "conditions" => cmd.conditions.as_deref().and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok()),
         "created_at" => now,
     ])?;
     Ok(())

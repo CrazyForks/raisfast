@@ -22,6 +22,7 @@ const CACHE_MAX_ENTRIES: usize = 10_000;
 const CACHE_TTL_SECS: u64 = 600;
 const CACHE_IDLE_SECS: u64 = 300;
 
+#[cfg(test)]
 fn parse_value(value_str: &str) -> Value {
     serde_json::from_str::<Value>(value_str).unwrap_or(Value::String(value_str.to_string()))
 }
@@ -62,14 +63,11 @@ impl From<&OptionRow> for OptionEntry {
     fn from(row: &OptionRow) -> Self {
         Self {
             option_key: row.option_key.clone(),
-            value: parse_value(&row.value),
+            value: row.value.clone(),
             type_: row.type_.to_string(),
             label: row.label.clone(),
             description: row.description.clone(),
-            validation: row
-                .validation
-                .as_ref()
-                .and_then(|v| serde_json::from_str::<Value>(v).ok()),
+            validation: row.validation.clone(),
             is_public: row.is_public,
             tenant_id: row.tenant_id.clone(),
         }
@@ -183,8 +181,7 @@ impl OptionsService {
         key: &str,
         value: Value,
     ) -> Result<(), AppError> {
-        let value_str = serde_json::to_string(&value).map_err(|e| AppError::Internal(e.into()))?;
-        crate::models::options::upsert_value(&self.pool, key, &value_str, tenant_id).await?;
+        crate::models::options::upsert_value(&self.pool, key, &value, tenant_id).await?;
         let ck = cache_key(tenant_id, key);
         self.cache.invalidate(&ck);
         Ok(())
@@ -196,9 +193,7 @@ impl OptionsService {
         pairs: HashMap<String, Value>,
     ) -> Result<(), AppError> {
         for (key, value) in &pairs {
-            let value_str =
-                serde_json::to_string(value).map_err(|e| AppError::Internal(e.into()))?;
-            crate::models::options::upsert_value(&self.pool, key, &value_str, tenant_id).await?;
+            crate::models::options::upsert_value(&self.pool, key, value, tenant_id).await?;
         }
         for key in pairs.keys() {
             let ck = cache_key(tenant_id, key);
@@ -246,7 +241,7 @@ impl OptionsService {
             .unwrap_or_default();
         rows.iter()
             .filter(|r| r.is_public)
-            .map(|r| (r.option_key.clone(), parse_value(&r.value)))
+            .map(|r| (r.option_key.clone(), r.value.clone()))
             .collect()
     }
 }

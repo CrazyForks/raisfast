@@ -295,15 +295,19 @@ fn expand_insert(input: TokenStream) -> TokenStream {
         .iter()
         .zip(&val_idents)
         .map(|(col, ident)| {
-            if d == crate::schema::Dialect::Postgres
-                && get_schema().tables.get(&table_str).is_some_and(|t| {
-                    t.columns
-                        .iter()
-                        .find(|c| c.name == *col)
-                        .is_some_and(|c| matches!(c.ty, crate::schema::SqlType::BigInt))
-                })
+            let col_ty = get_schema()
+                .tables
+                .get(&table_str)
+                .and_then(|t| t.columns.iter().find(|c| c.name == *col))
+                .map(|c| c.ty);
+            if col_ty
+                .is_some_and(|ty| matches!(ty, crate::schema::SqlType::BigInt))
             {
-                quote! { crate::db::bigint::PgBigInt::pg_bigint(#ident) }
+                quote! { crate::db::bigint::DbBigint::to_bigint(#ident) }
+            } else if col_ty
+                .is_some_and(|ty| matches!(ty, crate::schema::SqlType::Json))
+            {
+                quote! { crate::db::json::DbJson::to_json(#ident) }
             } else {
                 quote! { #ident }
             }
@@ -840,6 +844,27 @@ fn expand_update(input: TokenStream) -> TokenStream {
         }
     };
 
+    // Coerce SET values for BIGINT/JSON columns (same as crud_insert).
+    // Applied to the bind expressions so both static and optional paths benefit.
+    let bind_exprs: Vec<proc_macro2::TokenStream> = bind_cols
+        .iter()
+        .zip(&val_idents)
+        .map(|(col, ident)| {
+            let col_ty = get_schema()
+                .tables
+                .get(&table.value())
+                .and_then(|t| t.columns.iter().find(|c| c.name == col.value()))
+                .map(|c| c.ty);
+            if col_ty.is_some_and(|ty| matches!(ty, crate::schema::SqlType::BigInt)) {
+                quote! { crate::db::bigint::DbBigint::to_bigint(#ident) }
+            } else if col_ty.is_some_and(|ty| matches!(ty, crate::schema::SqlType::Json)) {
+                quote! { crate::db::json::DbJson::to_json(#ident) }
+            } else {
+                quote! { #ident }
+            }
+        })
+        .collect();
+
     let opt_bind_code = if has_optional {
         quote! {
             #(
@@ -871,7 +896,7 @@ fn expand_update(input: TokenStream) -> TokenStream {
             #tenant_sql
             let __sql = format!("UPDATE {} SET {} WHERE {}{}", #table_lit, #set_join, __where_sql, __tenant_sql);
             let mut __q = sqlx::query::<crate::db::pool::Db>(&__sql);
-            #(__q = __q.bind(#val_idents);)*
+            #(__q = __q.bind(#bind_exprs);)*
             #opt_bind_code
             #(#where_bind_stmts)*
             #tenant_bind

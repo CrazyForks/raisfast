@@ -19,6 +19,7 @@ pub struct CreateShippingTemplateRequest {
     pub additional_price: Option<i64>,
     #[cfg_attr(feature = "export-types", ts(type = "number"))]
     pub free_shipping_amount: Option<i64>,
+    #[cfg_attr(feature = "export-types", ts(type = "unknown"))]
     pub regions: Option<String>,
 }
 
@@ -33,6 +34,7 @@ pub struct UpdateShippingTemplateRequest {
     pub additional_unit: Option<i64>,
     pub additional_price: Option<i64>,
     pub free_shipping_amount: Option<i64>,
+    #[cfg_attr(feature = "export-types", ts(type = "unknown"))]
     pub regions: Option<String>,
     pub status: Option<String>,
 }
@@ -54,7 +56,8 @@ pub struct ShippingTemplateResponse {
     pub additional_price: i64,
     #[cfg_attr(feature = "export-types", ts(type = "number"))]
     pub free_shipping_amount: i64,
-    pub regions: Option<String>,
+    #[cfg_attr(feature = "export-types", ts(type = "unknown"))]
+    pub regions: Option<serde_json::Value>,
     pub status: String,
     pub created_at: String,
     pub updated_at: String,

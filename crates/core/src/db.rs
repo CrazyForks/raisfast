@@ -7,6 +7,7 @@ pub mod backup;
 pub mod bigint;
 pub mod connection;
 pub mod driver;
+pub mod json;
 pub mod pool;
 pub mod schema;
 pub mod sql_type;

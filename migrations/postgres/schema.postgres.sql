@@ -11,7 +11,7 @@ CREATE TABLE IF NOT EXISTS tenants (
     id BIGINT PRIMARY KEY,
     name VARCHAR(255) NOT NULL UNIQUE,
     domain VARCHAR(255) UNIQUE,
-    config TEXT NOT NULL DEFAULT '{}',
+    config JSONB NOT NULL DEFAULT '{}'::jsonb,
     status VARCHAR(50) NOT NULL DEFAULT 'active',
     created_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW()
@@ -30,8 +30,8 @@ CREATE TABLE IF NOT EXISTS users (
     display_name VARCHAR(100),
     slug VARCHAR(100) UNIQUE,
     locale VARCHAR(10),
-    social_links TEXT,
-    metadata TEXT,
+    social_links JSONB,
+    metadata JSONB,
     created_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW()
 );
@@ -44,7 +44,7 @@ CREATE TABLE IF NOT EXISTS user_credentials (
     user_id BIGINT NOT NULL,
     auth_type VARCHAR(100) NOT NULL,
     identifier VARCHAR(500) NOT NULL,
-    credential_data TEXT NOT NULL,
+    credential_data JSONB NOT NULL,
     verified BOOLEAN NOT NULL DEFAULT FALSE,
     created_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW(),
@@ -157,12 +157,12 @@ CREATE TABLE IF NOT EXISTS options (
     id BIGINT PRIMARY KEY,
     tenant_id TEXT NOT NULL DEFAULT 'default',
     option_key VARCHAR(255) NOT NULL,
-    value TEXT NOT NULL,
+    value JSONB NOT NULL,
     type VARCHAR(50) NOT NULL DEFAULT 'text',
     group_name VARCHAR(100) NOT NULL DEFAULT 'general',
     label VARCHAR(255) NOT NULL DEFAULT '',
     description TEXT,
-    validation TEXT,
+    validation JSONB,
     is_public BOOLEAN NOT NULL DEFAULT FALSE,
     autoload BOOLEAN NOT NULL DEFAULT TRUE,
     sort_order BIGINT NOT NULL DEFAULT 0,
@@ -191,14 +191,12 @@ CREATE TABLE IF NOT EXISTS permissions (
     role_id BIGINT NOT NULL,
     action VARCHAR(255) NOT NULL,
     subject VARCHAR(255) NOT NULL,
-    fields TEXT,
-    conditions TEXT,
+    fields JSONB,
+    conditions JSONB,
     created_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW(),
     UNIQUE(role_id, action, subject)
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS idx_permissions_role_action_subject
-    ON permissions(role_id, action, subject);
 CREATE INDEX IF NOT EXISTS idx_permissions_tenant ON permissions(tenant_id);
 
 -- User-role assignments (many-to-many)
@@ -207,7 +205,7 @@ CREATE TABLE IF NOT EXISTS user_roles (
     tenant_id TEXT NOT NULL DEFAULT 'default',
     user_id BIGINT NOT NULL,
     role_id BIGINT NOT NULL,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    created_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW(),
     UNIQUE(tenant_id, user_id, role_id)
 );
 
@@ -224,7 +222,7 @@ CREATE TABLE IF NOT EXISTS audit_log (
     action VARCHAR(255) NOT NULL,
     subject VARCHAR(255) NOT NULL,
     subject_id VARCHAR(36),
-    detail TEXT,
+    detail JSONB,
     ip_address VARCHAR(45),
     user_agent TEXT,
     created_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW()
@@ -242,7 +240,7 @@ CREATE TABLE IF NOT EXISTS api_tokens (
     token_hash VARCHAR(255) UNIQUE NOT NULL,
     token_encrypted TEXT NOT NULL,
     description TEXT DEFAULT '',
-    scopes TEXT NOT NULL,
+    scopes JSONB NOT NULL,
     last_used_at TIMESTAMPTZ,
     expires_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW()
@@ -257,7 +255,7 @@ CREATE TABLE IF NOT EXISTS webhook_subscriptions (
     name VARCHAR(255) NOT NULL DEFAULT '',
     url VARCHAR(1024) NOT NULL,
     secret VARCHAR(255) NOT NULL,
-    events TEXT NOT NULL DEFAULT '[]',
+    events JSONB NOT NULL DEFAULT '[]'::jsonb,
     enabled BOOLEAN NOT NULL DEFAULT TRUE,
     description TEXT,
     created_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW(),
@@ -285,7 +283,7 @@ CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_created ON webhook_deliveries(
 CREATE TABLE IF NOT EXISTS plugin_storage (
     plugin_id VARCHAR(100) NOT NULL,
     storage_key VARCHAR(255) NOT NULL,
-    value TEXT NOT NULL,
+    value JSONB NOT NULL,
     expires_at TIMESTAMPTZ,
     updated_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW(),
     PRIMARY KEY (plugin_id, storage_key)
@@ -299,7 +297,7 @@ CREATE TABLE IF NOT EXISTS content_revisions (
     content_type VARCHAR(100) NOT NULL,
     record_id BIGINT NOT NULL,
     revision_number BIGINT NOT NULL,
-    snapshot TEXT NOT NULL,
+    snapshot JSONB NOT NULL,
     created_by BIGINT,
     created_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW(),
     UNIQUE(content_type, record_id, revision_number)
@@ -346,7 +344,7 @@ CREATE TABLE IF NOT EXISTS user_device_codes (
     refresh_token TEXT NOT NULL,
     expires_at TIMESTAMPTZ NOT NULL,
     used_at TIMESTAMPTZ,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    created_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW()
 );
 
 CREATE INDEX IF NOT EXISTS idx_user_device_codes_code ON user_device_codes(code);
@@ -371,7 +369,7 @@ CREATE INDEX IF NOT EXISTS idx_email_verification_tokens_expires ON email_verifi
 CREATE TABLE IF NOT EXISTS jobs (
     id               BIGINT PRIMARY KEY,
     job_type         VARCHAR(100) NOT NULL,
-    payload          TEXT NOT NULL,
+    payload          JSONB NOT NULL,
     status           VARCHAR(50) NOT NULL DEFAULT 'pending',
     attempts         INTEGER NOT NULL DEFAULT 0,
     max_attempts     INTEGER NOT NULL DEFAULT 3,
@@ -395,7 +393,7 @@ CREATE TABLE IF NOT EXISTS cron_schedules (
     id           BIGINT PRIMARY KEY,
     label        VARCHAR(255) NOT NULL,
     job_type     VARCHAR(100) NOT NULL,
-    payload      TEXT,
+    payload      JSONB,
     cron_expr    VARCHAR(100) NOT NULL,
     enabled      BOOLEAN NOT NULL DEFAULT TRUE,
     last_run_at  TIMESTAMPTZ,
@@ -403,7 +401,7 @@ CREATE TABLE IF NOT EXISTS cron_schedules (
     plugin_id    VARCHAR(100),
     exec_kind    VARCHAR(20) NOT NULL DEFAULT 'builtin',
     handler_id   VARCHAR(100),
-    params       TEXT,
+    params       JSONB,
     script_lang    VARCHAR(20),
     script_source  TEXT,
     script_entry   VARCHAR(100) NOT NULL DEFAULT 'on_cron_tick',
@@ -514,7 +512,7 @@ CREATE TABLE IF NOT EXISTS posts (
     id BIGINT PRIMARY KEY,
     tenant_id TEXT NOT NULL DEFAULT 'default',
     title TEXT NOT NULL,
-    slug VARCHAR(255) UNIQUE NOT NULL,
+    slug VARCHAR(255) NOT NULL,
     content TEXT NOT NULL,
     excerpt TEXT,
     cover_image VARCHAR(500),
@@ -551,6 +549,7 @@ CREATE INDEX IF NOT EXISTS idx_posts_status_category
 CREATE INDEX IF NOT EXISTS idx_posts_status_author
     ON posts(status, created_by);
 CREATE INDEX IF NOT EXISTS idx_posts_tenant ON posts(tenant_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_posts_tenant_slug ON posts(tenant_id, slug);
 
 -- Posts-Tags (many-to-many)
 CREATE TABLE IF NOT EXISTS posts_tags (
@@ -607,7 +606,7 @@ CREATE TABLE IF NOT EXISTS pages (
     title            TEXT NOT NULL,
     slug             VARCHAR(255) NOT NULL UNIQUE,
     content          TEXT,
-    blocks           TEXT,
+    blocks           JSONB,
     meta_title       VARCHAR(255),
     meta_description VARCHAR(500),
     og_image         VARCHAR(500),
@@ -679,7 +678,7 @@ CREATE TABLE IF NOT EXISTS workflow_definitions (
     id BIGINT PRIMARY KEY,
     name VARCHAR(255) NOT NULL,
     description TEXT,
-    steps TEXT NOT NULL,
+    steps JSONB NOT NULL,
     initial_step VARCHAR(100) NOT NULL,
     version BIGINT NOT NULL DEFAULT 1,
     enabled BOOLEAN NOT NULL DEFAULT TRUE,
@@ -692,7 +691,7 @@ CREATE TABLE IF NOT EXISTS workflow_instances (
     definition_id BIGINT NOT NULL,
     status VARCHAR(50) NOT NULL DEFAULT 'running',
     current_step VARCHAR(100),
-    context TEXT NOT NULL DEFAULT '{}',
+    context JSONB NOT NULL DEFAULT '{}'::jsonb,
     triggered_by BIGINT,
     started_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW(),
     completed_at TIMESTAMPTZ,
@@ -708,8 +707,8 @@ CREATE TABLE IF NOT EXISTS workflow_step_logs (
     step_id VARCHAR(100) NOT NULL,
     step_name VARCHAR(255) NOT NULL,
     status VARCHAR(50) NOT NULL DEFAULT 'running',
-    input TEXT,
-    output TEXT,
+    input JSONB,
+    output JSONB,
     error TEXT,
     started_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW(),
     completed_at TIMESTAMPTZ
@@ -733,15 +732,15 @@ CREATE TABLE IF NOT EXISTS products (
     price BIGINT NOT NULL CHECK(price >= 0),
     currency VARCHAR(50) NOT NULL DEFAULT 'USD',
     status VARCHAR(50) NOT NULL DEFAULT 'draft',
-    attributes TEXT,
+    attributes JSONB,
     sort_order BIGINT NOT NULL DEFAULT 0,
     version BIGINT NOT NULL DEFAULT 1,
     created_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW(),
-    slug VARCHAR(255) UNIQUE,
+    slug VARCHAR(255),
     content TEXT,
     image_ids TEXT,
     original_price BIGINT,
-    specs TEXT,
+    specs JSONB,
     unit VARCHAR(50) NOT NULL DEFAULT 'piece',
     min_purchase BIGINT NOT NULL DEFAULT 1,
     max_purchase BIGINT,
@@ -764,6 +763,7 @@ CREATE INDEX IF NOT EXISTS idx_products_status ON products(status);
 CREATE INDEX IF NOT EXISTS idx_products_type ON products(product_type);
 CREATE INDEX IF NOT EXISTS idx_products_tenant ON products(tenant_id);
 CREATE INDEX IF NOT EXISTS idx_products_tenant_status ON products(tenant_id, status);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_products_tenant_slug ON products(tenant_id, slug);
 
 -- Product Variants
 CREATE TABLE IF NOT EXISTS product_variants (
@@ -775,7 +775,7 @@ CREATE TABLE IF NOT EXISTS product_variants (
     price BIGINT NOT NULL CHECK(price >= 0),
     original_price BIGINT,
     stock BIGINT NOT NULL DEFAULT 0,
-    attributes TEXT,
+    attributes JSONB,
     image_url TEXT,
     weight BIGINT,
     sort_order BIGINT NOT NULL DEFAULT 0,
@@ -867,7 +867,7 @@ CREATE TABLE IF NOT EXISTS order_items (
     subtotal BIGINT NOT NULL,
     tax_amount BIGINT NOT NULL DEFAULT 0,
     cover_url VARCHAR(500),
-    attributes TEXT,
+    attributes JSONB,
     created_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW()
 );
 
@@ -895,9 +895,9 @@ CREATE TABLE IF NOT EXISTS payment_channels (
     provider VARCHAR(50) NOT NULL,
     name VARCHAR(200) NOT NULL,
     is_live BOOLEAN NOT NULL DEFAULT FALSE,
-    credentials TEXT NOT NULL,
+    credentials JSONB NOT NULL,
     webhook_secret TEXT,
-    settings TEXT,
+    settings JSONB,
     is_active BOOLEAN NOT NULL DEFAULT TRUE,
     sort_order BIGINT NOT NULL DEFAULT 0,
     version BIGINT NOT NULL DEFAULT 1,
@@ -935,7 +935,7 @@ CREATE TABLE IF NOT EXISTS payment_orders (
     client_country VARCHAR(2),
     client_user_agent VARCHAR(512),
     channel_selected_by VARCHAR(20),
-    metadata TEXT,
+    metadata JSONB,
     paid_at TIMESTAMPTZ,
     cancelled_at TIMESTAMPTZ,
     expired_at TIMESTAMPTZ,
@@ -1031,8 +1031,8 @@ CREATE TABLE IF NOT EXISTS product_comments (
     status VARCHAR(32) NOT NULL DEFAULT 'approved',
     admin_reply TEXT,
     admin_replied_at TIMESTAMPTZ,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    created_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW()
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_product_comments_unique ON product_comments(product_id, order_id, user_id);
@@ -1055,8 +1055,8 @@ CREATE TABLE IF NOT EXISTS coupons (
     starts_at TIMESTAMPTZ,
     expires_at TIMESTAMPTZ,
     status VARCHAR(32) NOT NULL DEFAULT 'active',
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    created_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW()
 );
 
 CREATE INDEX IF NOT EXISTS idx_coupons_status ON coupons(status);
@@ -1073,10 +1073,10 @@ CREATE TABLE IF NOT EXISTS shipping_templates (
     additional_unit BIGINT NOT NULL DEFAULT 1,
     additional_price BIGINT NOT NULL DEFAULT 0,
     free_shipping_amount BIGINT NOT NULL DEFAULT 0,
-    regions TEXT NOT NULL DEFAULT '[]',
+    regions JSONB NOT NULL DEFAULT '[]'::jsonb,
     status TEXT NOT NULL DEFAULT 'active',
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    created_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW()
 );
 
 CREATE INDEX IF NOT EXISTS idx_shipping_templates_tenant ON shipping_templates(tenant_id);
@@ -1110,27 +1110,55 @@ ON CONFLICT (tenant_id, name) DO NOTHING;
 
 -- Admin global permissions
 INSERT INTO permissions (id, tenant_id, role_id, action, subject, fields, conditions, created_at) VALUES
-    (10001, 'default', (SELECT id FROM roles WHERE name = 'admin'), '*', '*', '["*"]', NULL, NOW())
-ON CONFLICT (role_id, action, subject) DO NOTHING;
+    (10001, 'default', (SELECT id FROM roles WHERE name = 'admin'), '*', '*', NULL, NULL, NOW())
+ON CONFLICT DO NOTHING;
 
 -- Editor permissions
 INSERT INTO permissions (id, tenant_id, role_id, action, subject, fields, conditions, created_at) VALUES
-    (10002, 'default', (SELECT id FROM roles WHERE name = 'editor'), 'content-type::*.*', 'content-type::*', '["*"]', NULL, NOW())
-ON CONFLICT (role_id, action, subject) DO NOTHING;
+    (10002, 'default', (SELECT id FROM roles WHERE name = 'editor'), '*.*', '*', NULL, NULL, NOW())
+ON CONFLICT DO NOTHING;
 
 -- Author permissions
 INSERT INTO permissions (id, tenant_id, role_id, action, subject, fields, conditions, created_at) VALUES
-    (10003, 'default', (SELECT id FROM roles WHERE name = 'author'), 'content-type::post.create', 'content-type::post', '["*"]', NULL, NOW()),
-    (10004, 'default', (SELECT id FROM roles WHERE name = 'author'), 'content-type::post.read', 'content-type::post', '["*"]', NULL, NOW()),
-    (10005, 'default', (SELECT id FROM roles WHERE name = 'author'), 'content-type::post.update', 'content-type::post', '["*"]', '{"author_id":"$user.id"}', NOW()),
-    (10006, 'default', (SELECT id FROM roles WHERE name = 'author'), 'content-type::post.delete', 'content-type::post', '["*"]', '{"author_id":"$user.id"}', NOW())
-ON CONFLICT (role_id, action, subject) DO NOTHING;
+    (10003, 'default', (SELECT id FROM roles WHERE name = 'author'), 'create', 'posts', NULL, NULL, NOW()),
+    (10004, 'default', (SELECT id FROM roles WHERE name = 'author'), 'read', 'posts', NULL, NULL, NOW()),
+    (10005, 'default', (SELECT id FROM roles WHERE name = 'author'), 'update', 'posts', NULL, NULL, NOW()),
+    (10006, 'default', (SELECT id FROM roles WHERE name = 'author'), 'delete', 'posts', NULL, NULL, NOW()),
+    (10007, 'default', (SELECT id FROM roles WHERE name = 'author'), 'create', 'pages', NULL, NULL, NOW()),
+    (10008, 'default', (SELECT id FROM roles WHERE name = 'author'), 'read', 'pages', NULL, NULL, NOW()),
+    (10009, 'default', (SELECT id FROM roles WHERE name = 'author'), 'update', 'pages', NULL, NULL, NOW()),
+    (10010, 'default', (SELECT id FROM roles WHERE name = 'author'), 'delete', 'pages', NULL, NULL, NOW()),
+    (10036, 'default', (SELECT id FROM roles WHERE name = 'author'), 'create', 'media', NULL, NULL, NOW()),
+    (10011, 'default', (SELECT id FROM roles WHERE name = 'author'), 'read', 'media', NULL, NULL, NOW()),
+    (10012, 'default', (SELECT id FROM roles WHERE name = 'author'), 'delete', 'media', NULL, NULL, NOW()),
+    (10013, 'default', (SELECT id FROM roles WHERE name = 'author'), 'create', 'tags', NULL, NULL, NOW()),
+    (10014, 'default', (SELECT id FROM roles WHERE name = 'author'), 'update', 'tags', NULL, NULL, NOW()),
+    (10015, 'default', (SELECT id FROM roles WHERE name = 'author'), 'delete', 'tags', NULL, NULL, NOW()),
+    (10016, 'default', (SELECT id FROM roles WHERE name = 'author'), 'create', 'categories', NULL, NULL, NOW()),
+    (10017, 'default', (SELECT id FROM roles WHERE name = 'author'), 'update', 'categories', NULL, NULL, NOW()),
+    (10018, 'default', (SELECT id FROM roles WHERE name = 'author'), 'delete', 'categories', NULL, NULL, NOW()),
+    (10019, 'default', (SELECT id FROM roles WHERE name = 'author'), 'create', 'reusable_blocks', NULL, NULL, NOW()),
+    (10020, 'default', (SELECT id FROM roles WHERE name = 'author'), 'read', 'reusable_blocks', NULL, NULL, NOW()),
+    (10021, 'default', (SELECT id FROM roles WHERE name = 'author'), 'update', 'reusable_blocks', NULL, NULL, NOW()),
+    (10022, 'default', (SELECT id FROM roles WHERE name = 'author'), 'delete', 'reusable_blocks', NULL, NULL, NOW()),
+    (10023, 'default', (SELECT id FROM roles WHERE name = 'author'), 'create', 'comments', NULL, NULL, NOW()),
+    (10024, 'default', (SELECT id FROM roles WHERE name = 'author'), 'delete', 'comments', NULL, NULL, NOW()),
+    (10025, 'default', (SELECT id FROM roles WHERE name = 'author'), 'create', 'product_categories', NULL, NULL, NOW()),
+    (10026, 'default', (SELECT id FROM roles WHERE name = 'author'), 'update', 'product_categories', NULL, NULL, NOW()),
+    (10027, 'default', (SELECT id FROM roles WHERE name = 'author'), 'delete', 'product_categories', NULL, NULL, NOW())
+ON CONFLICT DO NOTHING;
 
 -- Reader permissions
 INSERT INTO permissions (id, tenant_id, role_id, action, subject, fields, conditions, created_at) VALUES
-    (10007, 'default', (SELECT id FROM roles WHERE name = 'reader'), 'content-type::post.read', 'content-type::post', '["title","slug","content","excerpt","status"]', NULL, NOW()),
-    (10008, 'default', (SELECT id FROM roles WHERE name = 'reader'), 'content-type::comment.create', 'content-type::comment', '["content","nickname","email"]', NULL, NOW())
-ON CONFLICT (role_id, action, subject) DO NOTHING;
+    (10028, 'default', (SELECT id FROM roles WHERE name = 'reader'), 'read', 'posts', NULL, NULL, NOW()),
+    (10029, 'default', (SELECT id FROM roles WHERE name = 'reader'), 'read', 'pages', NULL, NULL, NOW()),
+    (10030, 'default', (SELECT id FROM roles WHERE name = 'reader'), 'create', 'comments', NULL, NULL, NOW()),
+    (10031, 'default', (SELECT id FROM roles WHERE name = 'reader'), 'delete', 'comments', NULL, NULL, NOW()),
+    (10032, 'default', (SELECT id FROM roles WHERE name = 'reader'), 'create', 'user_addresses', NULL, NULL, NOW()),
+    (10033, 'default', (SELECT id FROM roles WHERE name = 'reader'), 'read', 'user_addresses', NULL, NULL, NOW()),
+    (10034, 'default', (SELECT id FROM roles WHERE name = 'reader'), 'update', 'user_addresses', NULL, NULL, NOW()),
+    (10035, 'default', (SELECT id FROM roles WHERE name = 'reader'), 'delete', 'user_addresses', NULL, NULL, NOW())
+ON CONFLICT DO NOTHING;
 
 -- Site options
 INSERT INTO options (id, tenant_id, option_key, value, type, group_name, label, description, validation, is_public, autoload, sort_order, updated_at) VALUES

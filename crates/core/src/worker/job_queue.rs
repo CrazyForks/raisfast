@@ -124,7 +124,8 @@ impl JobQueue for DefaultJobQueue {
                 };
                 let id: i64 = r.get::<i64, _>("id");
                 let job_type: String = r.get::<String, _>("job_type");
-                let payload: String = r.get::<String, _>("payload");
+                let payload: serde_json::Value = r.get::<serde_json::Value, _>("payload");
+                let payload = payload.to_string();
                 let attempts: i32 = r.get::<i32, _>("attempts");
                 let max_attempts: i32 = r.get::<i32, _>("max_attempts");
                 let created_at: Timestamp = r.get::<Timestamp, _>("created_at");
@@ -187,7 +188,8 @@ impl JobQueue for DefaultJobQueue {
             for row in rows {
                 let id: i64 = row.get::<Option<i64>, _>("id").unwrap_or_default();
                 let job_type: String = row.get::<String, _>("job_type");
-                let payload: String = row.get::<String, _>("payload");
+                let payload: serde_json::Value = row.get::<serde_json::Value, _>("payload");
+                let payload = payload.to_string();
                 let attempts: i32 = row.get::<i32, _>("attempts");
                 let max_attempts: i32 = row.get::<i32, _>("max_attempts");
                 let created_at: Timestamp = row.get::<Timestamp, _>("created_at");
@@ -255,8 +257,7 @@ impl JobQueue for DefaultJobQueue {
                 placeholders.join(", ")
             );
 
-            let mut q = sqlx::query::<crate::db::pool::Db>(&update_sql)
-                .bind(now);
+            let mut q = sqlx::query::<crate::db::pool::Db>(&update_sql).bind(now);
             for id in &ids {
                 q = q.bind(id);
             }
@@ -268,7 +269,8 @@ impl JobQueue for DefaultJobQueue {
             for row in rows {
                 let id: i64 = row.get::<i64, _>(COL_ID);
                 let job_type: String = row.get::<String, _>("job_type");
-                let payload: String = row.get::<String, _>("payload");
+                let payload: serde_json::Value = row.get::<serde_json::Value, _>("payload");
+                let payload = payload.to_string();
                 let attempts: i32 = row.get::<i32, _>("attempts");
                 let max_attempts: i32 = row.get::<i32, _>("max_attempts");
                 let created_at: Timestamp = row.get::<Timestamp, _>("created_at");
@@ -386,11 +388,21 @@ impl JobQueue for DefaultJobQueue {
                 {p3} as failed,
                 {p4} as dead
              FROM jobs",
-            p0 = Driver::cast_int(&format!("COALESCE(SUM(CASE WHEN status = {p1} THEN 1 ELSE 0 END), 0)")),
-            p1 = Driver::cast_int(&format!("COALESCE(SUM(CASE WHEN status = {p2} THEN 1 ELSE 0 END), 0)")),
-            p2 = Driver::cast_int(&format!("COALESCE(SUM(CASE WHEN status = {p3} THEN 1 ELSE 0 END), 0)")),
-            p3 = Driver::cast_int(&format!("COALESCE(SUM(CASE WHEN status = {p4} THEN 1 ELSE 0 END), 0)")),
-            p4 = Driver::cast_int(&format!("COALESCE(SUM(CASE WHEN status = {p5} THEN 1 ELSE 0 END), 0)")),
+            p0 = Driver::cast_int(&format!(
+                "COALESCE(SUM(CASE WHEN status = {p1} THEN 1 ELSE 0 END), 0)"
+            )),
+            p1 = Driver::cast_int(&format!(
+                "COALESCE(SUM(CASE WHEN status = {p2} THEN 1 ELSE 0 END), 0)"
+            )),
+            p2 = Driver::cast_int(&format!(
+                "COALESCE(SUM(CASE WHEN status = {p3} THEN 1 ELSE 0 END), 0)"
+            )),
+            p3 = Driver::cast_int(&format!(
+                "COALESCE(SUM(CASE WHEN status = {p4} THEN 1 ELSE 0 END), 0)"
+            )),
+            p4 = Driver::cast_int(&format!(
+                "COALESCE(SUM(CASE WHEN status = {p5} THEN 1 ELSE 0 END), 0)"
+            )),
         ))
         .bind(JobStatus::Pending.as_str())
         .bind(JobStatus::Running.as_str())
@@ -446,7 +458,7 @@ impl JobQueue for DefaultJobQueue {
                         .map(|i: i64| i.to_string())
                         .unwrap_or_default(),
                     job_type: r.get::<String, _>("job_type"),
-                    payload: r.get::<String, _>("payload"),
+                    payload: r.get::<serde_json::Value, _>("payload"),
                     status: r.get::<super::JobStatus, _>("status"),
                     attempts: r.get::<i32, _>("attempts") as u32,
                     max_attempts: r.get::<i32, _>("max_attempts") as u32,
@@ -483,7 +495,7 @@ impl JobQueue for DefaultJobQueue {
                         .map(|i: i64| i.to_string())
                         .unwrap_or_default(),
                     job_type: r.get::<String, _>("job_type"),
-                    payload: r.get::<String, _>("payload"),
+                    payload: r.get::<serde_json::Value, _>("payload"),
                     status: r.get::<super::JobStatus, _>("status"),
                     attempts: r.get::<i32, _>("attempts") as u32,
                     max_attempts: r.get::<i32, _>("max_attempts") as u32,

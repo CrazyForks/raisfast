@@ -12,7 +12,8 @@ pub struct TenantResponse {
     pub name: String,
     pub domain: Option<String>,
     pub status: String,
-    pub config: Option<String>,
+    #[cfg_attr(feature = "export-types", ts(type = "unknown"))]
+    pub config: Option<serde_json::Value>,
     pub created_at: String,
     pub updated_at: String,
 }

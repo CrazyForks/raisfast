@@ -22,7 +22,8 @@ pub struct ContentRevision {
     pub content_type: String,
     pub record_id: SnowflakeId,
     pub revision_number: i64,
-    pub snapshot: String,
+    #[cfg_attr(feature = "export-types", ts(type = "unknown"))]
+    pub snapshot: serde_json::Value,
     pub created_by: Option<SnowflakeId>,
     pub created_at: Timestamp,
 }
@@ -50,15 +51,12 @@ pub async fn create_revision(
 
     let next_rev = next_revision_number(pool, content_type, record_id).await?;
 
-    let snapshot_str = serde_json::to_string(snapshot)
-        .map_err(|e| AppError::Internal(anyhow::anyhow!("snapshot serialize: {e}")))?;
-
     raisfast_derive::crud_insert!(pool, "content_revisions", [
         "id" => id,
         "content_type" => content_type,
         "record_id" => record_id,
         "revision_number" => next_rev,
-        "snapshot" => &snapshot_str,
+        "snapshot" => snapshot,
         "created_by" => created_by,
         "created_at" => now,
     ])?;

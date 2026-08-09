@@ -59,7 +59,8 @@ pub struct PaymentOrder {
     pub client_country: Option<String>,
     pub client_user_agent: Option<String>,
     pub channel_selected_by: Option<String>,
-    pub metadata: Option<String>,
+    #[cfg_attr(feature = "export-types", ts(type = "unknown"))]
+    pub metadata: Option<serde_json::Value>,
     pub paid_at: Option<Timestamp>,
     pub cancelled_at: Option<Timestamp>,
     pub expired_at: Option<Timestamp>,
@@ -159,7 +160,7 @@ pub async fn insert(
             "client_country" => cmd.client_country.as_deref(),
             "client_user_agent" => cmd.client_user_agent.as_deref(),
             "channel_selected_by" => cmd.channel_selected_by.as_deref(),
-            "metadata" => cmd.metadata.as_deref(),
+            "metadata" => cmd.metadata.as_deref().and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok()),
             "created_at" => &now,
             "updated_at" => &now
         ],

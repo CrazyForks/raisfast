@@ -448,7 +448,17 @@ mod tests {
     async fn stats_overview_empty_db() {
         let pool = crate::test_pool!();
 
-        for table in &["posts", "users", "comments", "media", "categories", "tags", "products", "orders", "coupons"] {
+        for table in &[
+            "posts",
+            "users",
+            "comments",
+            "media",
+            "categories",
+            "tags",
+            "products",
+            "orders",
+            "coupons",
+        ] {
             sqlx::query(&format!("DELETE FROM {table}"))
                 .execute(&pool)
                 .await
@@ -472,7 +482,17 @@ mod tests {
     async fn stats_overview_with_data() {
         let pool = crate::test_pool!();
 
-        for table in &["posts", "users", "comments", "media", "categories", "tags", "products", "orders", "coupons"] {
+        for table in &[
+            "posts",
+            "users",
+            "comments",
+            "media",
+            "categories",
+            "tags",
+            "products",
+            "orders",
+            "coupons",
+        ] {
             sqlx::query(&format!("DELETE FROM {table}"))
                 .execute(&pool)
                 .await

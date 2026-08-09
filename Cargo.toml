@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/core", "crates/derive", "3rd/bore"]
+members = ["crates/core", "crates/derive"]
 resolver = "3"
 
 [profile.dev]

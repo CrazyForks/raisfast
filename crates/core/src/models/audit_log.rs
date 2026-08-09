@@ -19,7 +19,8 @@ pub struct AuditEntry {
     pub action: String,
     pub subject: String,
     pub subject_id: Option<String>,
-    pub detail: Option<String>,
+    #[cfg_attr(feature = "export-types", ts(type = "unknown"))]
+    pub detail: Option<serde_json::Value>,
     pub ip_address: Option<String>,
     pub user_agent: Option<String>,
     pub created_at: Timestamp,
@@ -37,7 +38,7 @@ pub async fn insert(pool: &crate::db::Pool, entry: &AuditEntry) -> AppResult<()>
             "action" => &entry.action,
             "subject" => &entry.subject,
             "subject_id" => entry.subject_id.as_deref(),
-            "detail" => entry.detail.as_deref(),
+            "detail" => entry.detail.as_ref(),
             "ip_address" => entry.ip_address.as_deref(),
             "user_agent" => entry.user_agent.as_deref(),
             "created_at" => entry.created_at

@@ -112,7 +112,7 @@ pub async fn verify_sms_and_auth(
                 user.id,
                 crate::models::user_credential::AuthType::Phone,
                 phone,
-                "",
+                &serde_json::json!({}),
                 true,
             )
             .await?;
@@ -213,7 +213,7 @@ pub async fn bind_phone(
         _user.id,
         crate::models::user_credential::AuthType::Phone,
         phone,
-        "",
+        &serde_json::json!({}),
         true,
     )
     .await?;

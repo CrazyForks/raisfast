@@ -460,9 +460,9 @@ impl HostContext {
                 handle.block_on(async { pool.acquire().await });
             match acquire {
                 Ok(mut conn) => {
-                    match handle.block_on(async {
-                        sqlx::raw_sql("BEGIN").execute(&mut *conn).await
-                    }) {
+                    match handle
+                        .block_on(async { sqlx::raw_sql("BEGIN").execute(&mut *conn).await })
+                    {
                         Ok(_r) => {
                             let _: crate::db::pool::DbQueryResult = _r;
                             tracing::info!("[plugin:{}] transaction begun", self.plugin_id);
@@ -486,9 +486,9 @@ impl HostContext {
         };
         let handle = tokio::runtime::Handle::current();
         tokio::task::block_in_place(|| {
-            match handle.block_on(async {
-                sqlx::raw_sql("COMMIT").execute(&mut *tx_state.conn).await
-            }) {
+            match handle
+                .block_on(async { sqlx::raw_sql("COMMIT").execute(&mut *tx_state.conn).await })
+            {
                 Ok(_r) => {
                     let _: crate::db::pool::DbQueryResult = _r;
                     tracing::info!("[plugin:{}] transaction committed", self.plugin_id);
@@ -497,9 +497,7 @@ impl HostContext {
                 Err(e) => {
                     let _: Result<crate::db::pool::DbQueryResult, sqlx::Error> =
                         handle.block_on(async {
-                            sqlx::raw_sql("ROLLBACK")
-                                .execute(&mut *tx_state.conn)
-                                .await
+                            sqlx::raw_sql("ROLLBACK").execute(&mut *tx_state.conn).await
                         });
                     format!(r#"{{"error":"COMMIT failed, rolled back: {e}"}}"#)
                 }
@@ -516,9 +514,9 @@ impl HostContext {
         };
         let handle = tokio::runtime::Handle::current();
         tokio::task::block_in_place(|| {
-            match handle.block_on(async {
-                sqlx::raw_sql("ROLLBACK").execute(&mut *tx_state.conn).await
-            }) {
+            match handle
+                .block_on(async { sqlx::raw_sql("ROLLBACK").execute(&mut *tx_state.conn).await })
+            {
                 Ok(_r) => {
                     let _: crate::db::pool::DbQueryResult = _r;
                     tracing::info!("[plugin:{}] transaction rolled back", self.plugin_id);
@@ -537,9 +535,7 @@ impl HostContext {
             let plugin_id = self.plugin_id.clone();
             tokio::task::block_in_place(|| {
                 let _ = handle.block_on(async {
-                    sqlx::raw_sql("ROLLBACK")
-                        .execute(&mut *tx_state.conn)
-                        .await
+                    sqlx::raw_sql("ROLLBACK").execute(&mut *tx_state.conn).await
                 });
                 tracing::warn!(
                     "[plugin:{plugin_id}] cleaned up dangling transaction (rolled back)"
@@ -2316,7 +2312,11 @@ mod tests {
         let (json, name, slug) = tag_json("Python");
         let _ = ctx.db_insert("tags", &json, "{}");
 
-        let found = ctx.db_fetch_one("tags", &format!(r#"["name = {}", "{}"]"#, ctx.db_ph(1), name), "{}");
+        let found = ctx.db_fetch_one(
+            "tags",
+            &format!(r#"["name = {}", "{}"]"#, ctx.db_ph(1), name),
+            "{}",
+        );
         assert!(
             found.contains(&format!(r#""slug":"{slug}""#)),
             "array where: {found}"
@@ -2396,7 +2396,11 @@ mod tests {
 
         let result = ctx.db_count(
             "tags",
-            &format!(r#"["slug IN ({}, {})", "{s1}", "{s2}"]"#, ctx.db_ph(1), ctx.db_ph(2)),
+            &format!(
+                r#"["slug IN ({}, {})", "{s1}", "{s2}"]"#,
+                ctx.db_ph(1),
+                ctx.db_ph(2)
+            ),
             "{}",
         );
         assert!(result.contains(r#""count":2"#), "count: {result}");
@@ -2412,7 +2416,11 @@ mod tests {
         let (j_rust, rust_name, _) = tag_json("Rust");
         let _ = ctx.db_insert("tags", &j_rust, "{}");
 
-        let result = ctx.db_count("tags", &format!(r#"["name = {}", "{}"]"#, ctx.db_ph(1), rust_name), "{}");
+        let result = ctx.db_count(
+            "tags",
+            &format!(r#"["name = {}", "{}"]"#, ctx.db_ph(1), rust_name),
+            "{}",
+        );
         assert!(
             result.contains(r#""count":1"#),
             "count with where: {result}"
@@ -2624,7 +2632,11 @@ mod tests {
         let r = ctx.db_sum(
             "categories",
             "sort_order",
-            &format!(r#"["slug IN ({}, {})", "{s1}", "{s2}"]"#, ctx.db_ph(1), ctx.db_ph(2)),
+            &format!(
+                r#"["slug IN ({}, {})", "{s1}", "{s2}"]"#,
+                ctx.db_ph(1),
+                ctx.db_ph(2)
+            ),
             "{}",
         );
         assert!(r.contains(r#""sum":10"#), "sum: {r}");

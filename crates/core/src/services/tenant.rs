@@ -54,8 +54,8 @@ impl TenantService {
     /// Create a tenant
     pub async fn create(&self, req: &CreateTenantRequest) -> Result<Tenant, AppError> {
         let config = req.config.as_ref().map_or_else(
-            || "{}".into(),
-            |c| serde_json::to_string(c).unwrap_or_else(|_| "{}".into()),
+            || serde_json::json!({}),
+            |c| serde_json::to_value(c).unwrap_or_else(|_| serde_json::json!({})),
         );
         crate::models::tenant::create(&self.pool, &req.name, req.domain.as_deref(), &config).await
     }
@@ -69,7 +69,7 @@ impl TenantService {
         let config = req
             .config
             .as_ref()
-            .map(|c| serde_json::to_string(c).unwrap_or_else(|_| "{}".into()));
+            .map(|c| serde_json::to_value(c).unwrap_or_else(|_| serde_json::json!({})));
         let status = req
             .status
             .as_deref()
@@ -81,7 +81,7 @@ impl TenantService {
             id,
             req.name.as_deref(),
             req.domain.as_deref(),
-            config.as_deref(),
+            config.as_ref(),
             status,
         )
         .await

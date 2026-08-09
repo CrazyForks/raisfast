@@ -10,7 +10,6 @@ use raisfast::content_type::repository::{
     ContentQuery, ContentRepository, FieldFilter, FilterOp, SaveContext,
 };
 use raisfast::content_type::schema::ContentTypeSchema;
-use raisfast::db::tenant;
 use raisfast::types::snowflake_id::SnowflakeId;
 
 const PRODUCT_TOML: &str = r#"
@@ -1199,7 +1198,7 @@ async fn versioning_creates_revision_on_update() {
     .await
     .unwrap()
     .unwrap();
-    let snapshot: serde_json::Value = serde_json::from_str(&rev.snapshot).unwrap();
+    let snapshot: serde_json::Value = rev.snapshot.clone();
     assert_eq!(snapshot["title"], "V1 Title");
     assert_eq!(snapshot["content"], "V1 Content");
 }

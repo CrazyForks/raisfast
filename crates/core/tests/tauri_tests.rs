@@ -9,7 +9,6 @@ use std::sync::Arc;
 use raisfast::config::app::AppConfig;
 use raisfast::content_type::repository::{ContentQuery, ContentRepository, SaveContext};
 use raisfast::content_type::schema::ContentTypeSchema;
-use raisfast::db::tenant;
 use raisfast::services::post::{PostService, PostServiceImpl};
 use raisfast::services::{auth, options, stats, user};
 

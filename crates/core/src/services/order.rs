@@ -330,8 +330,18 @@ impl OrderService for OrderServiceImpl {
                 });
 
                 let (variant_id, sku, unit_price, attributes) = match variant_opt {
-                    Some(v) => (Some(*v.id), v.sku.clone(), v.price, v.attributes.clone()),
-                    None => (None, None, product.price, product.attributes.clone()),
+                    Some(v) => (
+                        Some(*v.id),
+                        v.sku.clone(),
+                        v.price,
+                        v.attributes.as_ref().map(|val| val.to_string()),
+                    ),
+                    None => (
+                        None,
+                        None,
+                        product.price,
+                        product.attributes.as_ref().map(|val| val.to_string()),
+                    ),
                 };
 
                 let actual_line_total = unit_price

@@ -28,7 +28,8 @@ pub struct Page {
     pub title: String,
     pub slug: String,
     pub content: Option<String>,
-    pub blocks: Option<String>,
+    #[cfg_attr(feature = "export-types", ts(type = "unknown"))]
+    pub blocks: Option<serde_json::Value>,
     pub meta_title: Option<String>,
     pub meta_description: Option<String>,
     pub og_image: Option<String>,
@@ -386,7 +387,7 @@ pub async fn create(
             "title" => &cmd.title,
             "slug" => &cmd.slug,
             "content" => cmd.content.as_deref(),
-            "blocks" => cmd.blocks.as_deref(),
+            "blocks" => cmd.blocks.as_deref().and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok()),
             "meta_title" => cmd.meta_title.as_deref(),
             "meta_description" => cmd.meta_description.as_deref(),
             "og_image" => cmd.og_image.as_deref(),
@@ -522,7 +523,9 @@ pub async fn update(
         q = q.bind(v);
     }
     if let Some(ref v) = cmd.blocks {
-        q = q.bind(v);
+        let parsed =
+            serde_json::from_str::<serde_json::Value>(v).unwrap_or(serde_json::Value::Null);
+        q = q.bind(parsed);
     }
     if let Some(ref v) = cmd.meta_title {
         q = q.bind(v);

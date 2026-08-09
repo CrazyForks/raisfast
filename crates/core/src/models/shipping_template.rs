@@ -36,7 +36,8 @@ pub struct ShippingTemplate {
     pub additional_unit: i64,
     pub additional_price: i64,
     pub free_shipping_amount: i64,
-    pub regions: Option<String>,
+    #[cfg_attr(feature = "export-types", ts(type = "unknown"))]
+    pub regions: Option<serde_json::Value>,
     pub status: ShippingTemplateStatus,
     pub created_at: Timestamp,
     pub updated_at: Timestamp,
@@ -98,7 +99,7 @@ pub async fn insert(
             "additional_unit" => cmd.additional_unit,
             "additional_price" => cmd.additional_price,
             "free_shipping_amount" => cmd.free_shipping_amount,
-            "regions" => &cmd.regions,
+            "regions" => serde_json::from_str::<serde_json::Value>(&cmd.regions).unwrap_or_else(|_| serde_json::json!([])),
             "created_at" => &now,
             "updated_at" => &now
         ],
@@ -129,7 +130,10 @@ pub async fn update(
             "additional_unit" => cmd.additional_unit.unwrap_or(existing.additional_unit),
             "additional_price" => cmd.additional_price.unwrap_or(existing.additional_price),
             "free_shipping_amount" => cmd.free_shipping_amount.unwrap_or(existing.free_shipping_amount),
-            "regions" => cmd.regions.as_deref().or(existing.regions.as_deref()).unwrap_or("[]"),
+            "regions" => cmd.regions.as_ref()
+                .map(|r| serde_json::from_str::<serde_json::Value>(r).unwrap_or_else(|_| serde_json::json!([])))
+                .or(existing.regions.clone())
+                .unwrap_or_else(|| serde_json::json!([])),
             "status" => cmd.status.as_deref().unwrap_or(existing.status.as_str()),
         ],
         raw: ["updated_at" => crate::db::Driver::now_fn()],

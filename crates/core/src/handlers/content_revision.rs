@@ -99,8 +99,7 @@ pub async fn get_revision(
     )
     .await?;
 
-    let snapshot: serde_json::Value = serde_json::from_str(&revision.snapshot)
-        .map_err(|e| AppError::Internal(anyhow::anyhow!("snapshot parse: {e}")))?;
+    let snapshot: serde_json::Value = revision.snapshot.clone();
 
     Ok(ApiResponse::success(json!({
         "id": revision.id,

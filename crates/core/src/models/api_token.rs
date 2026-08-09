@@ -24,7 +24,8 @@ pub struct ApiToken {
     pub description: String,
     pub token_hash: String,
     pub token_encrypted: String,
-    pub scopes: String,
+    #[cfg_attr(feature = "export-types", ts(type = "unknown"))]
+    pub scopes: serde_json::Value,
     pub last_used_at: Option<Timestamp>,
     pub expires_at: Option<Timestamp>,
     pub created_at: Timestamp,
@@ -51,7 +52,7 @@ struct ApiTokenRow {
     name: String,
     description: String,
     token_encrypted: String,
-    scopes: String,
+    scopes: serde_json::Value,
     last_used_at: Option<Timestamp>,
     expires_at: Option<Timestamp>,
     created_at: Timestamp,
@@ -66,7 +67,7 @@ pub async fn create(
     description: &str,
     token_hash: &str,
     token_encrypted: &str,
-    scopes: &str,
+    scopes: &serde_json::Value,
     expires_at: Option<&str>,
 ) -> AppResult<ApiToken> {
     let (id, now) = (
@@ -129,7 +130,7 @@ pub async fn list_by_user(
             name: r.name,
             description: r.description,
             token: r.token_encrypted,
-            scopes: serde_json::from_str(&r.scopes).unwrap_or_default(),
+            scopes: serde_json::from_value(r.scopes).unwrap_or_default(),
             last_used_at: r.last_used_at,
             expires_at: r.expires_at,
             created_at: r.created_at,
@@ -155,7 +156,7 @@ pub async fn update_name_desc_scopes(
     id: SnowflakeId,
     name: &str,
     description: &str,
-    scopes: &str,
+    scopes: &serde_json::Value,
 ) -> AppResult<()> {
     raisfast_derive::crud_update!(pool, "api_tokens",
         bind: ["name" => name, "description" => description, "scopes" => scopes],
@@ -209,7 +210,7 @@ mod tests {
             "",
             &hash,
             "enc_ab",
-            "[\"read\"]",
+            &serde_json::json!(["read"]),
             None,
         )
         .await
@@ -217,7 +218,7 @@ mod tests {
         assert_eq!(row.name, "Test");
         assert_eq!(row.token_hash, hash);
         assert_eq!(row.token_encrypted, "enc_ab");
-        assert_eq!(row.scopes, "[\"read\"]");
+        assert_eq!(row.scopes, serde_json::json!(["read"]));
         assert!(row.expires_at.is_none());
 
         let found = find_by_hash(&pool, &hash).await.unwrap().unwrap();
@@ -250,7 +251,7 @@ mod tests {
             "",
             &h1,
             "enc_a",
-            "[\"read\"]",
+            &serde_json::json!(["read"]),
             None,
         )
         .await
@@ -264,7 +265,7 @@ mod tests {
             "",
             &h2,
             "enc_b",
-            "[\"write\"]",
+            &serde_json::json!(["write"]),
             None,
         )
         .await
@@ -295,7 +296,7 @@ mod tests {
             "",
             &h3,
             "enc_c",
-            "[\"read\"]",
+            &serde_json::json!(["read"]),
             None,
         )
         .await
@@ -317,7 +318,7 @@ mod tests {
             "",
             &h4,
             "enc_d",
-            "[\"read\"]",
+            &serde_json::json!(["read"]),
             None,
         )
         .await
@@ -341,7 +342,7 @@ mod tests {
             "",
             &h5,
             "enc_e",
-            "[\"admin\"]",
+            &serde_json::json!(["admin"]),
             Some("2099-12-31T00:00:00+00:00"),
         )
         .await
@@ -364,7 +365,7 @@ mod tests {
             "",
             &secret_hash,
             "enc_f",
-            "[\"read\"]",
+            &serde_json::json!(["read"]),
             None,
         )
         .await

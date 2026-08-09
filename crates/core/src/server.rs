@@ -859,7 +859,7 @@ pub fn spawn_webhook_subscriber(
 
                     for sub in subs {
                         let events: Vec<String> =
-                            serde_json::from_str(&sub.events).unwrap_or_default();
+                            serde_json::from_value(sub.events.clone()).unwrap_or_default();
                         if !events.iter().any(|e| {
                             e == &event_type || e == "*" || event_type.starts_with(&format!("{e}."))
                         }) {

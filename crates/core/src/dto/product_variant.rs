@@ -51,7 +51,8 @@ pub struct ProductVariantResponse {
     pub original_price: Option<i64>,
     #[cfg_attr(feature = "export-types", ts(type = "number"))]
     pub stock: i64,
-    pub attributes: Option<String>,
+    #[cfg_attr(feature = "export-types", ts(type = "unknown"))]
+    pub attributes: Option<serde_json::Value>,
     pub image_url: Option<String>,
     pub weight: Option<i64>,
     #[cfg_attr(feature = "export-types", ts(type = "number"))]

@@ -62,7 +62,8 @@ pub struct OrderItemResponse {
     #[cfg_attr(feature = "export-types", ts(type = "number"))]
     pub subtotal: i64,
     pub cover_url: Option<String>,
-    pub attributes: Option<String>,
+    #[cfg_attr(feature = "export-types", ts(type = "unknown"))]
+    pub attributes: Option<serde_json::Value>,
     pub created_at: String,
 }
 

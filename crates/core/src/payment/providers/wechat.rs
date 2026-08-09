@@ -110,7 +110,10 @@ fn decrypt_credentials(
     channel: &PaymentChannel,
     encrypt_key: &[u8; 32],
 ) -> AppResult<WechatCredentials> {
-    let decrypted = aes256gcm_decrypt(&channel.credentials, encrypt_key)?;
+    let decrypted = aes256gcm_decrypt(
+        channel.credentials.as_str().unwrap_or_default(),
+        encrypt_key,
+    )?;
     serde_json::from_str(&decrypted)
         .map_err(|e| AppError::Internal(anyhow::Error::from(e).context("wechat credentials parse")))
 }
@@ -305,8 +308,7 @@ fn decrypt_callback_resource(
 fn extract_notify_url(channel: &PaymentChannel) -> Option<String> {
     channel
         .settings
-        .as_deref()
-        .and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok())
+        .as_ref()
         .and_then(|v| v.get("notify_url").cloned())
         .and_then(|v| v.as_str().map(String::from))
 }
@@ -619,9 +621,9 @@ mod tests {
             provider: "wechat".into(),
             name: "Wechat".into(),
             is_live: false,
-            credentials: String::new(),
+            credentials: serde_json::json!(""),
             webhook_secret: None,
-            settings: Some(r#"{"notify_url":"https://example.com/callback"}"#.into()),
+            settings: Some(serde_json::json!({"notify_url": "https://example.com/callback"})),
             is_active: true,
             sort_order: 0,
             version: 1,
@@ -642,7 +644,7 @@ mod tests {
             provider: "wechat".into(),
             name: "Wechat".into(),
             is_live: false,
-            credentials: String::new(),
+            credentials: serde_json::json!(""),
             webhook_secret: None,
             settings: None,
             is_active: true,

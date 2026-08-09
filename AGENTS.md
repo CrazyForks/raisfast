@@ -110,6 +110,12 @@ All DB operations use the Where DSL macro system (`raisfast-derive`):
 - `crud_resolve_id!`, `crud_resolve_ids!` — ID resolution
 - `in_transaction!` — transaction wrapper (auto-acquires write lock)
 
+**Auto-coercion:** Both `crud_insert!` and `crud_update!` apply schema-driven type coercion on bind values:
+- `SqlType::BigInt` → `DbBigint::to_bigint()` (converts `SnowflakeId`/`i32`/`&`/`Option` → `i64`)
+- `SqlType::Json` → `DbJson::to_json()` (converts `String`/`&str`/`Option` → `serde_json::Value`)
+
+This means callers never need to manually convert types for BIGINT or JSON columns — the macro reads the schema file, detects the column type, and wraps the bind value automatically.
+
 ## Cross-Database Development Rules
 
 The project supports SQLite, PostgreSQL, and MySQL simultaneously. SQLite's "everything is TEXT" model and loose type checking hides type mismatches that PostgreSQL's strict typing will reject. Follow these rules to stay portable:
@@ -124,6 +130,9 @@ The project supports SQLite, PostgreSQL, and MySQL simultaneously. SQLite's "eve
 8. **Test INSERTs must include `id`** — `BIGINT PRIMARY KEY` does not auto-increment on PostgreSQL/MySQL (unlike SQLite's `INTEGER PRIMARY KEY`). Always bind an explicit `id` from `new_id()`.
 9. **Test assertions** — Never assert `COUNT(*) == N` on a shared database (accumulated data from prior tests inflates the count). Filter by unique IDs or use `>=` comparisons.
 10. **Returning clause** — MySQL does not support `RETURNING`. Use `rows_affected()` instead of `RETURNING id` for cross-database claim/dedup patterns.
+11. **JSON columns** — Use native JSON types in schema (`JSONB` on PostgreSQL, `JSON` on MySQL, `TEXT` on SQLite). Model-layer Rust types are `serde_json::Value` / `Option<serde_json::Value>`. The `crud_insert!` / `crud_update!` macros auto-coerce via `DbJson::to_json()` — callers can pass `String`, `&str`, or `serde_json::Value` and the macro handles conversion. Never call `serde_json::to_string()` before binding to a JSON column; never call `serde_json::from_str()` after reading a JSON column (the field is already `serde_json::Value`). For hand-written `sqlx::query()` (bypassing macros), bind `serde_json::Value` directly — PG's Strong param checking rejects `String` on JSONB columns at runtime.
+12. **BIGINT auto-coercion** — The `crud_insert!` / `crud_update!` macros auto-coerce values bound to BIGINT columns via `DbBigint::to_bigint()`. Callers can pass `SnowflakeId`, `i64`, `i32` (and `&` / `Option` wrappers) freely. This is not gated by dialect — it applies on all backends so the code is future-proof if sqlx tightens param checking.
+13. **Macro type coercion architecture** — `crud_insert!` uses `sqlx::query!()` (compile-time checked, Strong on PG). `crud_update!` uses `sqlx::query()` (runtime, no compile-time check) because WHERE clauses are dynamically built. Both macros apply `DbBigint` / `DbJson` coercion via schema-driven column type detection (`SqlType::BigInt` / `SqlType::Json`). When adding a new column type that needs coercion, add a variant to `SqlType`, update the parser in `crates/derive/src/schema.rs`, add a coercion trait in `crates/core/src/db/`, and wire it into the coerce logic in `crates/derive/src/crud.rs`.
 
 ## Style
 

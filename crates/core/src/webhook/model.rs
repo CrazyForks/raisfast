@@ -15,7 +15,8 @@ pub struct WebhookSubscription {
     pub name: String,
     pub url: String,
     pub secret: String,
-    pub events: String,
+    #[cfg_attr(feature = "export-types", ts(type = "unknown"))]
+    pub events: serde_json::Value,
     pub enabled: bool,
     pub description: Option<String>,
     pub created_at: Timestamp,

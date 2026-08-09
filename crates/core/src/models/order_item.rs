@@ -22,7 +22,8 @@ pub struct OrderItem {
     pub subtotal: i64,
     pub tax_amount: i64,
     pub cover_url: Option<String>,
-    pub attributes: Option<String>,
+    #[cfg_attr(feature = "export-types", ts(type = "unknown"))]
+    pub attributes: Option<serde_json::Value>,
     pub created_at: Timestamp,
 }
 
@@ -60,7 +61,7 @@ pub async fn insert(
             "subtotal" => cmd.subtotal,
             "tax_amount" => cmd.tax_amount,
             "cover_url" => cmd.cover_url.as_deref(),
-            "attributes" => cmd.attributes.as_deref(),
+            "attributes" => cmd.attributes.as_deref().and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok()),
             "created_at" => &now
         ],
         tenant: tenant_id
@@ -105,7 +106,7 @@ pub async fn tx_insert(
             "subtotal" => cmd.subtotal,
             "tax_amount" => cmd.tax_amount,
             "cover_url" => cmd.cover_url.as_deref(),
-            "attributes" => cmd.attributes.as_deref(),
+            "attributes" => cmd.attributes.as_deref().and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok()),
             "created_at" => &now
         ],
         tenant: tenant_id
@@ -247,7 +248,7 @@ mod tests {
                 subtotal: 2000,
                 tax_amount: 0,
                 cover_url: Some("https://img.test/widget.jpg".into()),
-                attributes: Some(r#"{"color":"red"}"#.into()),
+                attributes: Some(r#"{"color":"red"}"#.to_string()),
             },
             None,
         )
@@ -265,7 +266,7 @@ mod tests {
         assert_eq!(item.subtotal, 2000);
         assert_eq!(item.description.unwrap(), "A nice widget");
         assert_eq!(item.cover_url.unwrap(), "https://img.test/widget.jpg");
-        assert_eq!(item.attributes.unwrap(), r#"{"color":"red"}"#);
+        assert_eq!(item.attributes.unwrap(), serde_json::json!({"color":"red"}));
     }
 
     #[tokio::test]

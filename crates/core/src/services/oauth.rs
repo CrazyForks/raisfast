@@ -353,7 +353,7 @@ async fn auto_register_user(
             user.id,
             crate::models::user_credential::AuthType::Email,
             &email,
-            "",
+            &serde_json::json!({}),
             true,
         )
         .await?;
@@ -466,7 +466,7 @@ async fn do_bind_oauth(
             user_id,
             crate::models::user_credential::AuthType::Oauth,
             &oauth_identifier,
-            &oauth_data,
+            &serde_json::from_str(&oauth_data).unwrap_or_default(),
             true,
         )
         .await?;

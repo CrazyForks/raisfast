@@ -302,7 +302,7 @@ impl CartService for CartServiceImpl {
                     subtotal: *line_total,
                     tax_amount: 0,
                     cover_url: product.cover_url.clone(),
-                    attributes: product.attributes.clone(),
+                    attributes: product.attributes.as_ref().map(|v| v.to_string()),
                 });
             }
             crate::models::order_item::tx_insert_batch(&mut tx, items, auth.tenant_id()).await?;

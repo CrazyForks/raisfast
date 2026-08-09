@@ -269,7 +269,8 @@ pub struct JobStats {
 pub struct JobRow {
     pub id: String,
     pub job_type: String,
-    pub payload: String,
+    #[cfg_attr(feature = "export-types", ts(type = "unknown"))]
+    pub payload: serde_json::Value,
     pub status: JobStatus,
     pub attempts: u32,
     pub max_attempts: u32,
@@ -323,20 +324,15 @@ pub(crate) fn parse_job(job_type: &str, payload: &str) -> AppResult<Job> {
     })
 }
 
-/// Serializes a Job into a payload JSON
-fn serialize_job(job: &Job) -> String {
+/// Serializes a Job into a payload JSON value
+fn serialize_job(job: &Job) -> serde_json::Value {
     if let Job::Custom { payload, .. } = job {
-        if payload.is_null() {
-            "null".to_string()
-        } else {
-            payload.to_string()
-        }
+        payload.clone()
     } else {
         let full = serde_json::to_value(job).unwrap_or_default();
-        match full.get("payload") {
-            Some(v) => v.to_string(),
-            None => "null".to_string(),
-        }
+        full.get("payload")
+            .cloned()
+            .unwrap_or(serde_json::Value::Null)
     }
 }
 
@@ -362,7 +358,7 @@ mod tests {
         let job = Job::RebuildSearchIndex {
             post_ids: vec![1, 2],
         };
-        let payload = serialize_job(&job);
+        let payload = serialize_job(&job).to_string();
         let parsed = parse_job("rebuild_search_index", &payload).unwrap();
         assert!(matches!(parsed, Job::RebuildSearchIndex { .. }));
     }
@@ -370,7 +366,7 @@ mod tests {
     #[test]
     fn serialize_roundtrip_unit_variant() {
         let job = Job::GenerateSitemap;
-        let payload = serialize_job(&job);
+        let payload = serialize_job(&job).to_string();
         let parsed = parse_job("generate_sitemap", &payload).unwrap();
         assert!(matches!(parsed, Job::GenerateSitemap));
     }
@@ -423,7 +419,7 @@ mod tests {
         };
         assert_eq!(job.job_type(), "my_task");
 
-        let payload = serialize_job(&job);
+        let payload = serialize_job(&job).to_string();
         let parsed = parse_job("my_task", &payload).unwrap();
         match parsed {
             Job::Custom { job_type, payload } => {

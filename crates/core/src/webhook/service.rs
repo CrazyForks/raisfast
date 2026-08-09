@@ -26,14 +26,16 @@ impl WebhookService {
             crate::utils::id::new_snowflake_id(),
             crate::utils::tz::now_utc(),
         );
-        let secret = custom_secret.unwrap_or_default();
+        let secret = custom_secret.unwrap_or_else(Self::generate_secret);
         let sub = model::WebhookSubscription {
             id,
             tenant_id: tenant_id.map(|t| t.to_string()),
             name,
             url,
             secret,
-            events: serde_json::to_string(&events).unwrap_or_default(),
+            events: serde_json::Value::Array(
+                events.into_iter().map(serde_json::Value::String).collect(),
+            ),
             enabled,
             description,
             created_at: now,
@@ -80,7 +82,8 @@ impl WebhookService {
             sub.url = u;
         }
         if let Some(e) = events {
-            sub.events = serde_json::to_string(&e).unwrap_or_default();
+            sub.events =
+                serde_json::Value::Array(e.into_iter().map(serde_json::Value::String).collect());
         }
         if description.is_some() {
             sub.description = description;
@@ -107,7 +110,7 @@ impl WebhookService {
         model::find_enabled_by_tenant(&self.pool, tenant_id).await
     }
 
-    fn generate_secret() -> String {
+    pub fn generate_secret() -> String {
         crate::utils::id::random_hex(32)
     }
 

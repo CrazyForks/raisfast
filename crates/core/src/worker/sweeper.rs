@@ -71,15 +71,13 @@ mod tests {
 
     async fn backdate_running(pool: &crate::db::Pool) {
         #[cfg(feature = "db-sqlite")]
-        let sql = "UPDATE jobs SET updated_at = datetime('now', '-1 hour') WHERE status = 'running'";
+        let sql =
+            "UPDATE jobs SET updated_at = datetime('now', '-1 hour') WHERE status = 'running'";
         #[cfg(feature = "db-mysql")]
         let sql = "UPDATE jobs SET updated_at = DATE_SUB(NOW(), INTERVAL 1 HOUR) WHERE status = 'running'";
         #[cfg(feature = "db-postgres")]
         let sql = "UPDATE jobs SET updated_at = NOW() - INTERVAL '1 hour' WHERE status = 'running'";
-        sqlx::query(sql)
-            .execute(pool)
-            .await
-            .unwrap();
+        sqlx::query(sql).execute(pool).await.unwrap();
     }
 
     #[tokio::test]

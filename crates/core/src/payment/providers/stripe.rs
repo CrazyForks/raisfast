@@ -71,7 +71,10 @@ impl PaymentProvider for StripeProvider {
         return_url: Option<&str>,
         _notify_url: Option<&str>,
     ) -> AppResult<ProviderResponse> {
-        let client = create_client(&channel.credentials, &self.encrypt_key)?;
+        let client = create_client(
+            channel.credentials.as_str().unwrap_or_default(),
+            &self.encrypt_key,
+        )?;
         let currency_str = order.currency.to_lowercase();
         let currency = stripe::Currency::from_str(&currency_str).map_err(|_| {
             AppError::BadRequest(format!("unsupported stripe currency: {currency_str}"))
@@ -106,7 +109,10 @@ impl PaymentProvider for StripeProvider {
         channel: &PaymentChannel,
         provider_order_id: &str,
     ) -> AppResult<ProviderStatus> {
-        let client = create_client(&channel.credentials, &self.encrypt_key)?;
+        let client = create_client(
+            channel.credentials.as_str().unwrap_or_default(),
+            &self.encrypt_key,
+        )?;
         let id: stripe::PaymentIntentId = provider_order_id
             .parse()
             .map_err(|e| AppError::BadRequest(format!("invalid stripe payment intent id: {e}")))?;
@@ -124,7 +130,10 @@ impl PaymentProvider for StripeProvider {
     }
 
     async fn cancel(&self, channel: &PaymentChannel, provider_order_id: &str) -> AppResult<()> {
-        let client = create_client(&channel.credentials, &self.encrypt_key)?;
+        let client = create_client(
+            channel.credentials.as_str().unwrap_or_default(),
+            &self.encrypt_key,
+        )?;
         stripe::PaymentIntent::cancel(
             &client,
             provider_order_id,
@@ -142,7 +151,10 @@ impl PaymentProvider for StripeProvider {
         amount: i64,
         reason: Option<&str>,
     ) -> AppResult<RefundResponse> {
-        let client = create_client(&channel.credentials, &self.encrypt_key)?;
+        let client = create_client(
+            channel.credentials.as_str().unwrap_or_default(),
+            &self.encrypt_key,
+        )?;
         let pi_id: stripe::PaymentIntentId = provider_order_id
             .parse()
             .map_err(|e| AppError::BadRequest(format!("invalid stripe payment intent id: {e}")))?;

@@ -471,7 +471,7 @@ pub async fn run_now(
     // Mark log as dispatched
     if let Some(lid) = log_id {
         raisfast_derive::crud_update!(&state.pool, "cron_execution_log",
-            bind: ["status" => crate::worker::CronExecStatus::Dispatched],
+            bind: ["status" => CronExecStatus::Dispatched],
             where: ("id", lid)
         )?;
     }

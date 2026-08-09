@@ -89,7 +89,8 @@ pub struct PaymentOrderResponse {
     pub client_country: Option<String>,
     pub client_user_agent: Option<String>,
     pub channel_selected_by: Option<String>,
-    pub metadata: Option<String>,
+    #[cfg_attr(feature = "export-types", ts(type = "unknown"))]
+    pub metadata: Option<serde_json::Value>,
     pub redirect_url: Option<String>,
     pub qr_code: Option<String>,
     pub client_secret: Option<String>,
@@ -109,7 +110,8 @@ pub struct PaymentChannelResponse {
     pub is_live: bool,
     pub credentials_masked: String,
     pub webhook_secret_set: bool,
-    pub settings: Option<String>,
+    #[cfg_attr(feature = "export-types", ts(type = "unknown"))]
+    pub settings: Option<serde_json::Value>,
     pub is_active: bool,
     #[cfg_attr(feature = "export-types", ts(type = "number"))]
     pub sort_order: i64,
@@ -126,7 +128,7 @@ impl From<crate::models::payment_channel::PaymentChannel> for PaymentChannelResp
             provider: ch.provider,
             name: ch.name,
             is_live: ch.is_live,
-            credentials_masked: mask_credentials(&ch.credentials),
+            credentials_masked: mask_credentials(ch.credentials.as_str().unwrap_or_default()),
             webhook_secret_set: ch.webhook_secret.is_some(),
             settings: ch.settings,
             is_active: ch.is_active,

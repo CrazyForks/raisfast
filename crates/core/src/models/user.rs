@@ -126,29 +126,29 @@ pub struct User {
     pub display_name: Option<String>,
     pub slug: Option<String>,
     pub locale: Option<String>,
-    pub social_links: Option<String>,
-    pub metadata: Option<String>,
+    #[cfg_attr(feature = "export-types", ts(type = "unknown"))]
+    pub social_links: Option<serde_json::Value>,
+    #[cfg_attr(feature = "export-types", ts(type = "unknown"))]
+    pub metadata: Option<serde_json::Value>,
     pub created_at: Timestamp,
     pub updated_at: Timestamp,
 }
 
-pub fn parse_social_links(raw: &Option<String>) -> Option<SocialLinks> {
-    raw.as_ref().and_then(|s| serde_json::from_str(s).ok())
+pub fn parse_social_links(raw: &Option<serde_json::Value>) -> Option<SocialLinks> {
+    raw.as_ref()
+        .and_then(|v| serde_json::from_value(v.clone()).ok())
 }
 
-pub fn encode_social_links(links: &Option<SocialLinks>) -> Option<String> {
-    links
-        .as_ref()
-        .map(|m| serde_json::to_string(m).unwrap_or_default())
+pub fn encode_social_links(links: &Option<SocialLinks>) -> Option<serde_json::Value> {
+    links.as_ref().and_then(|m| serde_json::to_value(m).ok())
 }
 
-pub fn parse_metadata(raw: &Option<String>) -> Option<UserMetadata> {
-    raw.as_ref().and_then(|s| serde_json::from_str(s).ok())
+pub fn parse_metadata(raw: &Option<serde_json::Value>) -> Option<UserMetadata> {
+    raw.clone()
 }
 
-pub fn encode_metadata(meta: &Option<UserMetadata>) -> Option<String> {
-    meta.as_ref()
-        .map(|v| serde_json::to_string(v).unwrap_or_default())
+pub fn encode_metadata(meta: &Option<UserMetadata>) -> Option<serde_json::Value> {
+    meta.clone()
 }
 
 /// Find user by username
@@ -225,13 +225,9 @@ pub async fn update_profile(
     let social_links = cmd
         .social_links
         .as_ref()
-        .map(|m| serde_json::to_string(m).unwrap_or_default())
+        .map(|m| serde_json::to_value(m).unwrap_or_default())
         .or_else(|| user.social_links.clone());
-    let metadata = cmd
-        .metadata
-        .as_ref()
-        .map(|v| serde_json::to_string(v).unwrap_or_default())
-        .or_else(|| user.metadata.clone());
+    let metadata = cmd.metadata.clone().or_else(|| user.metadata.clone());
     let now = crate::utils::tz::now_utc();
     raisfast_derive::crud_update!(pool, "users",
         bind: ["username" => username, "bio" => bio, "website" => website, "avatar" => avatar, "social_links" => social_links, "metadata" => metadata, "updated_at" => &now],

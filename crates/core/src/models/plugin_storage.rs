@@ -15,7 +15,7 @@ use crate::utils::tz::Timestamp;
 pub struct PluginStorageRow {
     pub plugin_id: String,
     pub storage_key: String,
-    pub value: String,
+    pub value: serde_json::Value,
     pub expires_at: Option<Timestamp>,
     pub updated_at: Timestamp,
 }
@@ -43,7 +43,7 @@ pub async fn get(pool: &Pool, plugin_id: &str, key: &str) -> AppResult<Option<St
                     return Ok(None);
                 }
             }
-            Ok(Some(r.value))
+            Ok(Some(r.value.as_str().unwrap_or_default().to_string()))
         }
         None => Ok(None),
     }
@@ -63,11 +63,12 @@ pub async fn set(
             .unwrap_or_else(crate::utils::tz::now_utc)
     });
     let now = crate::utils::tz::now_utc();
+    let json_value = serde_json::Value::String(value.to_string());
 
     raisfast_derive::crud_upsert!(
         pool, "plugin_storage",
         key: ["plugin_id", "storage_key"],
-        bind: ["plugin_id" => plugin_id, "storage_key" => key, "value" => value, "expires_at" => expires_at, "updated_at" => now],
+        bind: ["plugin_id" => plugin_id, "storage_key" => key, "value" => &json_value, "expires_at" => expires_at, "updated_at" => now],
         update: ["value", "expires_at", "updated_at"]
     )?;
 

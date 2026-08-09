@@ -102,7 +102,9 @@ impl ProductVariantService for ProductVariantServiceImpl {
                 price: req.price.unwrap_or(existing.price),
                 original_price: req.original_price.or(existing.original_price),
                 stock: req.stock.unwrap_or(existing.stock),
-                attributes: req.attributes.or(existing.attributes),
+                attributes: req
+                    .attributes
+                    .or(existing.attributes.as_ref().map(|v| v.to_string())),
                 image_url: req.image_url.or(existing.image_url),
                 weight: req.weight.or(existing.weight),
                 sort_order: req.sort_order.unwrap_or(existing.sort_order),

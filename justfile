@@ -60,7 +60,7 @@ _link-cache:
     set -euo pipefail
     CACHE="{{sqlx_cache}}"
     if [ -d "$CACHE" ]; then
-        rm -f .sqlx
+        rm -rf .sqlx
         ln -s "$CACHE" .sqlx
     elif [ -d .sqlx ] && [ ! -L .sqlx ]; then
         echo ">> WARNING: .sqlx exists but $CACHE does not. Run: just db-prepare"
@@ -178,8 +178,7 @@ db-prepare:
     TEST_URL="{{test_db_url}}"
     SCHEMA="{{schema_file}}"
     CACHE_DIR="{{sqlx_cache}}"
-    # Remove symlink/old dir so prepare creates a fresh real directory.
-    rm -f .sqlx
+    rm -rf .sqlx
     rm -rf "$CACHE_DIR"
     if [ "$DB" = "sqlite" ]; then
         TMPDB="$(mktemp -d)/raisfast_prepare.db"

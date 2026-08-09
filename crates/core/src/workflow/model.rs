@@ -78,7 +78,8 @@ pub struct WorkflowDefinition {
     pub id: SnowflakeId,
     pub name: String,
     pub description: Option<String>,
-    pub steps: String,
+    #[cfg_attr(feature = "export-types", ts(type = "unknown"))]
+    pub steps: serde_json::Value,
     pub initial_step: String,
     pub version: i64,
     pub enabled: bool,
@@ -89,7 +90,7 @@ pub struct WorkflowDefinition {
 impl WorkflowDefinition {
     /// Parse steps JSON
     pub fn parse_steps(&self) -> anyhow::Result<Vec<StepDef>> {
-        Ok(serde_json::from_str(&self.steps)?)
+        Ok(serde_json::from_value(self.steps.clone())?)
     }
 }
 
@@ -101,7 +102,8 @@ pub struct WorkflowInstance {
     pub definition_id: SnowflakeId,
     pub status: WorkflowInstanceStatus,
     pub current_step: Option<String>,
-    pub context: String,
+    #[cfg_attr(feature = "export-types", ts(type = "unknown"))]
+    pub context: serde_json::Value,
     pub triggered_by: Option<SnowflakeId>,
     pub started_at: Timestamp,
     pub completed_at: Option<Timestamp>,
@@ -111,7 +113,7 @@ pub struct WorkflowInstance {
 impl WorkflowInstance {
     /// Parse context JSON
     pub fn parse_context(&self) -> serde_json::Value {
-        serde_json::from_str(&self.context).unwrap_or(serde_json::json!({}))
+        self.context.clone()
     }
 }
 
@@ -124,8 +126,10 @@ pub struct StepLog {
     pub step_id: String,
     pub step_name: String,
     pub status: WorkflowStepStatus,
-    pub input: Option<String>,
-    pub output: Option<String>,
+    #[cfg_attr(feature = "export-types", ts(type = "unknown"))]
+    pub input: Option<serde_json::Value>,
+    #[cfg_attr(feature = "export-types", ts(type = "unknown"))]
+    pub output: Option<serde_json::Value>,
     pub error: Option<String>,
     pub started_at: Timestamp,
     pub completed_at: Option<Timestamp>,
@@ -141,9 +145,11 @@ pub async fn create_definition(
     initial_step: &str,
 ) -> anyhow::Result<WorkflowDefinition> {
     let now = crate::utils::tz::now_utc();
+    let steps_val = serde_json::from_str::<serde_json::Value>(steps)
+        .unwrap_or(serde_json::Value::Array(vec![]));
     raisfast_derive::crud_insert!(
         pool, "workflow_definitions",
-        ["id" => id, "name" => name, "description" => description, "steps" => steps, "initial_step" => initial_step, "created_at" => now, "updated_at" => now]
+        ["id" => id, "name" => name, "description" => description, "steps" => &steps_val, "initial_step" => initial_step, "created_at" => now, "updated_at" => now]
     )?;
     get_definition(pool, id)
         .await?
@@ -182,10 +188,9 @@ pub async fn create_instance(
     triggered_by: Option<i64>,
 ) -> anyhow::Result<WorkflowInstance> {
     let now = crate::utils::tz::now_utc();
-    let ctx_str = serde_json::to_string(context)?;
     raisfast_derive::crud_insert!(
         pool, "workflow_instances",
-        ["id" => id, "definition_id" => definition_id, "status" => WorkflowInstanceStatus::Running.as_str(), "context" => ctx_str, "triggered_by" => triggered_by, "started_at" => now, "updated_at" => now]
+        ["id" => id, "definition_id" => definition_id, "status" => WorkflowInstanceStatus::Running.as_str(), "context" => context, "triggered_by" => triggered_by, "started_at" => now, "updated_at" => now]
     )?;
     get_instance(pool, id)
         .await?
@@ -257,7 +262,6 @@ pub async fn update_instance_step(
     context: &serde_json::Value,
 ) -> anyhow::Result<()> {
     let now = crate::utils::tz::now_utc();
-    let ctx_str = serde_json::to_string(context)?;
     let completed_at = if status == WorkflowInstanceStatus::Completed
         || status == WorkflowInstanceStatus::Failed
         || status == WorkflowInstanceStatus::Cancelled
@@ -278,7 +282,7 @@ pub async fn update_instance_step(
     sqlx::query(&sql)
         .bind(status)
         .bind(current_step)
-        .bind(&ctx_str)
+        .bind(context)
         .bind(completed_at)
         .bind(now)
         .bind(id)
@@ -297,10 +301,9 @@ pub async fn create_step_log(
     input: Option<&serde_json::Value>,
 ) -> anyhow::Result<StepLog> {
     let now = crate::utils::tz::now_utc();
-    let input_str = input.map(|v| serde_json::to_string(v).unwrap_or_default());
     raisfast_derive::crud_insert!(
         pool, "workflow_step_logs",
-        ["id" => id, "instance_id" => instance_id, "step_id" => step_id, "step_name" => step_name, "status" => WorkflowStepStatus::Running.as_str(), "input" => input_str.as_deref(), "started_at" => now]
+        ["id" => id, "instance_id" => instance_id, "step_id" => step_id, "step_name" => step_name, "status" => WorkflowStepStatus::Running.as_str(), "input" => input.cloned(), "started_at" => now]
     )?;
     let result: StepLog =
         raisfast_derive::crud_find_one!(pool, "workflow_step_logs", StepLog, where: ("id", id))
@@ -315,10 +318,9 @@ pub async fn complete_step_log(
     output: Option<&serde_json::Value>,
 ) -> anyhow::Result<()> {
     let now = crate::utils::tz::now_utc();
-    let output_str = output.map(|v| serde_json::to_string(v).unwrap_or_default());
     raisfast_derive::crud_update!(
         pool, "workflow_step_logs",
-        bind: ["status" => WorkflowStepStatus::Completed.as_str(), "output" => output_str, "completed_at" => now],
+        bind: ["status" => WorkflowStepStatus::Completed.as_str(), "output" => output.cloned(), "completed_at" => now],
         where: ("id", id)
     )?;
     Ok(())
@@ -524,7 +526,7 @@ mod tests {
     async fn parse_steps_invalid_json() {
         let pool = setup_pool().await;
         let id = crate::utils::id::new_snowflake_id();
-        let steps = "not valid json!!!";
+        let steps = r#"{"invalid":"structure"}"#;
         let def = super::create_definition(&pool, id, "WF", None, steps, "s1")
             .await
             .unwrap();

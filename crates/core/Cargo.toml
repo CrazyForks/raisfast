@@ -76,16 +76,16 @@ tokio = { version = "1", features = ["full"] }
 tokio-stream = { version = "0.1", features = ["sync"] }
 futures = "0.3"
 tower = "0.5"
-tower-http = { version = "0.6", features = ["cors", "trace", "limit", "fs", "compression-gzip"] }
+tower-http = { version = "0.7", features = ["cors", "trace", "limit", "fs", "compression-gzip"] }
 rust-embed = { version = "8", features = ["mime-guess", "include-exclude", "interpolate-folder-path"] }
 mime_guess = "2"
 
 # Observability
 metrics = "0.24"
-metrics-exporter-prometheus = { version = "0.16", default-features = false, features = ["http-listener"] }
+metrics-exporter-prometheus = { version = "0.18", default-features = false, features = ["http-listener"] }
 
 # Database
-sqlx = { version = "0.8", features = ["runtime-tokio", "macros", "chrono"] }
+sqlx = { version = "0.9", features = ["runtime-tokio", "macros", "chrono"] }
 
 # Serialization
 serde = { version = "1", features = ["derive"] }
@@ -93,9 +93,9 @@ serde_json = "1"
 
 # Bulk import file parsing
 csv = "1.3"
-calamine = "0.26"
+calamine = "0.36"
 # Bulk export spreadsheet writing
-rust_xlsxwriter = "0.34"
+rust_xlsxwriter = "0.97"
 
 # Data types
 uuid = { version = "1", features = ["v7", "serde"] }
@@ -103,16 +103,16 @@ chrono = { version = "0.4", features = ["serde", "clock"] }
 chrono-tz = "0.10"
 hex = "0.4"
 hmac = "0.12"
- sha2 = "0.10"
- sha1 = "0.10"
+sha2 = "0.11"
+sha1 = "0.11"
 rsa = { version = "0.9", features = ["pem", "sha2"], optional = true }
-x509-cert = { version = "0.2", optional = true }
-base64 = "0.22"
+x509-cert = { version = "0.3", optional = true }
+base64 = "0.23"
 
 # Security
 argon2 = "0.5"
-getrandom = "0.2"
-jsonwebtoken = "9"
+getrandom = "0.4"
+jsonwebtoken = "11"
 ammonia = "4"
 
 # Error handling
@@ -129,14 +129,14 @@ tracing-appender = "0.2"
 dotenvy = "0.15"
 
 # Validation
-validator = { version = "0.19", features = ["derive"] }
+validator = { version = "0.21", features = ["derive"] }
 
 # URL encoding
 serde_urlencoded = "0.7"
 urlencoding = "2"
 
 # Content
-comrak = { version = "0.36", default-features = false, features = ["shortcodes"] }
+comrak = { version = "0.54", default-features = false, features = ["shortcodes"] }
 slug = "0.1"
 
 # Media（仅启用博客常用格式：jpeg/png/gif/webp/ico）
@@ -147,19 +147,19 @@ cron = "0.15"
 
 # RSS
 rss = "2"
-rust-i18n = "3.1.5"
-clap = { version = "4.6.0", features = ["derive"] }
-nix = { version = "0.31.2", features = ["signal"] }
+rust-i18n = "4"
+clap = { version = "4.6", features = ["derive"] }
+nix = { version = "0.31", features = ["signal"] }
 
 # Plugin system
-wasmtime = { version = "26", optional = true }
-wasmtime-wasi = { version = "26", optional = true }
-rquickjs = { version = "0.11", features = ["futures", "parallel", "loader", "macro"], optional = true }
-mlua = { version = "0.11", features = ["lua54", "vendored", "send", "serde", "macros"], optional = true }
-rhai = { version = "1.24", features = ["serde", "sync", "internals"], optional = true }
-reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
-toml = { version = "0.8", features = ["preserve_order"] }
-notify = { version = "7", features = ["macos_kqueue"] }
+wasmtime = { version = "47", optional = true }
+wasmtime-wasi = { version = "47", optional = true }
+rquickjs = { version = "0.12", features = ["futures", "parallel", "loader", "macro"], optional = true }
+mlua = { version = "0.12", features = ["lua54", "vendored", "send", "serde", "macros"], optional = true }
+rhai = { version = "1.25", features = ["serde", "sync", "internals"], optional = true }
+reqwest = { version = "0.13", features = ["json", "rustls"], default-features = false }
+toml = { version = "1", features = ["preserve_order"] }
+notify = { version = "8", features = ["macos_kqueue"] }
 
 # Search engine (optional)
 tantivy = { version = "0.26", optional = true }
@@ -172,14 +172,14 @@ tokio-rustls = { version = "0.26", optional = true }
 # S3 Storage (optional)
 aws-sdk-s3 = { version = "1", optional = true }
 aws-config = { version = "1", optional = true }
-regex = "1.12.3"
-tera = "1"
+regex = "1"
+tera = "2"
 sqlparser = "0.62"
 lettre = { version = "0.11", default-features = false, features = ["smtp-transport", "builder", "tokio1-rustls-tls", "hostname"] }
 tauri = { version = "2", features = ["devtools"], optional = true }
 
-aes-gcm = "0.10"
-async-stripe = { version = "0.39", features = ["runtime-tokio-hyper", "webhook-events"], optional = true }
+aes-gcm = "0.11"
+async-stripe = { version = "0.41", features = ["runtime-tokio-hyper", "webhook-events"], optional = true }
 dashmap = "6"
 moka = { version = "0.12", features = ["sync"] }
 arc-swap = "1"
@@ -191,21 +191,21 @@ http-body-util = { version = "0.1", optional = true }
 tokio-util = { version = "0.7", features = ["rt"], optional = true }
 
 # Tunnel client
-bore-cli = { path = "../../3rd/bore", optional = true }
+bore-cli = { version = "0.6", optional = true }
 
 # OpenAPI
 utoipa = { version = "5", features = ["axum_extras", "chrono", "uuid"] }
 
 # TypeScript type generation
 ts-rs = { version = "12", optional = true, features = ["chrono-impl"] }
-inventory = "0.3.24"
+inventory = "0.3"
 raisfast-derive = { version = "0.1.0", path = "../derive" }
 ferroid = { version = "2.0.0", features = ["snowflake", "atomic", "basic", "std", "alloc"] }
 shell-words = { version = "1.1", optional = true }
 
 [dev-dependencies]
 http-body-util = "0.1.3"
-rstest = "0.23"
+rstest = "0.26"
 tempfile = "3"
 
 [[example]]

@@ -164,7 +164,7 @@ pub async fn create_token(
 
     let (plain, hash) = generate_token(name.trim());
     let encrypted = encrypt_token(&plain, config)?;
-    let scopes_json = serde_json::to_string(&scopes).unwrap_or_default();
+    let scopes_json = serde_json::to_value(&scopes).unwrap_or_default();
 
     let user_id = auth.ensure_snowflake_user_id()?;
 
@@ -289,7 +289,7 @@ pub async fn update_token(
         }
     }
 
-    let scopes_json = serde_json::to_string(&scopes).unwrap_or_default();
+    let scopes_json = serde_json::to_value(&scopes).unwrap_or_default();
     api_token::update_name_desc_scopes(pool, id, name.trim(), description, &scopes_json).await?;
 
     // Invalidate cache
@@ -366,7 +366,7 @@ pub async fn verify_api_token(
         .await
         .unwrap_or_default();
     // Fail-closed: malformed scopes → deny (Unauthorized), never grant full access
-    let scopes: Vec<String> = serde_json::from_str(&token.scopes).map_err(|e| {
+    let scopes: Vec<String> = serde_json::from_value(token.scopes.clone()).map_err(|e| {
         tracing::error!(
             "api_token {} scopes parse error (fail-closed): {e}",
             token.id
@@ -609,7 +609,7 @@ mod tests {
             "",
             &token_hash,
             "enc_expired",
-            "[\"read\"]",
+            &serde_json::json!(["read"]),
             Some(past),
         )
         .await
@@ -638,7 +638,7 @@ mod tests {
             "",
             &token_hash,
             "enc_valid",
-            "[\"admin\"]",
+            &serde_json::json!(["admin"]),
             Some(future),
         )
         .await
@@ -665,7 +665,7 @@ mod tests {
             "",
             &token_hash,
             "enc_touch",
-            "[\"read\"]",
+            &serde_json::json!(["read"]),
             None,
         )
         .await
@@ -701,7 +701,7 @@ mod tests {
             "",
             &format!("h-del_{}", crate::utils::id::new_id()),
             "enc_del",
-            "[\"read\"]",
+            &serde_json::json!(["read"]),
             None,
         )
         .await
@@ -735,7 +735,7 @@ mod tests {
             "",
             &format!("h-adm_{}", crate::utils::id::new_id()),
             "enc_adm",
-            "[\"read\"]",
+            &serde_json::json!(["read"]),
             None,
         )
         .await
@@ -763,7 +763,7 @@ mod tests {
             "",
             &hash,
             "enc_fb",
-            "[\"read\"]",
+            &serde_json::json!(["read"]),
             None,
         )
         .await
@@ -810,7 +810,7 @@ mod tests {
             "",
             &token_hash,
             "enc_cache",
-            "[\"read\"]",
+            &serde_json::json!(["read"]),
             None,
         )
         .await
@@ -852,7 +852,7 @@ mod tests {
             "",
             &token_hash,
             "enc_cache_exp",
-            "[\"read\"]",
+            &serde_json::json!(["read"]),
             Some(past),
         )
         .await

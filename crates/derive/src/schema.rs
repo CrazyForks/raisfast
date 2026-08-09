@@ -183,6 +183,7 @@ pub struct ColumnSchema {
 }
 
 /// Simplified SQL type classification.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SqlType {
     /// `INTEGER` / `INT` / `SMALLINT` / `TINYINT` — sqlx maps these to `i32`.
     Integer,
@@ -191,6 +192,8 @@ pub enum SqlType {
     Real,
     Text,
     Blob,
+    /// `JSON` / `JSONB` — sqlx maps these to `serde_json::Value`.
+    Json,
 }
 
 fn workspace_root() -> PathBuf {
@@ -386,6 +389,8 @@ fn parse_column_line(line: &str) -> Option<ColumnSchema> {
 
     let ty = if rest.starts_with("BIGINT") || rest.starts_with("INT8") {
         SqlType::BigInt
+    } else if rest.starts_with("JSON") {
+        SqlType::Json
     } else if rest.starts_with("INTEGER") || rest.starts_with("INT") {
         SqlType::Integer
     } else if rest.starts_with("REAL") || rest.starts_with("FLOAT") || rest.starts_with("DOUBLE") {

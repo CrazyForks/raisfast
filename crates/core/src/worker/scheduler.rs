@@ -94,7 +94,7 @@ struct CronScheduleRow {
     id: SnowflakeId,
     label: String,
     job_type: String,
-    payload: Option<String>,
+    payload: Option<serde_json::Value>,
     cron_expr: String,
     enabled: bool,
     last_run_at: Option<Timestamp>,
@@ -102,7 +102,7 @@ struct CronScheduleRow {
     plugin_id: Option<String>,
     exec_kind: String,
     handler_id: Option<String>,
-    params: Option<String>,
+    params: Option<serde_json::Value>,
     script_lang: Option<String>,
     script_source: Option<String>,
     script_entry: String,
@@ -138,7 +138,8 @@ pub struct CronSchedule {
     pub id: SnowflakeId,
     pub label: String,
     pub job_type: String,
-    pub payload: Option<String>,
+    #[cfg_attr(feature = "export-types", ts(type = "unknown"))]
+    pub payload: Option<serde_json::Value>,
     pub cron_expr: String,
     pub enabled: bool,
     pub last_run_at: Option<Timestamp>,
@@ -146,7 +147,8 @@ pub struct CronSchedule {
     pub plugin_id: Option<String>,
     pub exec_kind: String,
     pub handler_id: Option<String>,
-    pub params: Option<String>,
+    #[cfg_attr(feature = "export-types", ts(type = "unknown"))]
+    pub params: Option<serde_json::Value>,
     pub script_lang: Option<String>,
     pub script_source: Option<String>,
     pub script_entry: String,
@@ -204,14 +206,14 @@ pub async fn create_schedule_with_plugin(
         "id" => id,
         "label" => label,
         "job_type" => job_type,
-        "payload" => payload,
+        "payload" => payload.and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok()),
         "cron_expr" => cron_expr,
         "enabled" => enabled,
         "next_run_at" => next,
         "plugin_id" => plugin_id,
         "exec_kind" => "builtin",
         "handler_id" => job_type,
-        "params" => payload,
+        "params" => payload.and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok()),
         "created_at" => now,
         "updated_at" => now
     ])?;
@@ -220,7 +222,7 @@ pub async fn create_schedule_with_plugin(
         id,
         label: label.to_string(),
         job_type: job_type.to_string(),
-        payload: payload.map(|s| s.to_string()),
+        payload: payload.and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok()),
         cron_expr: cron_expr.to_string(),
         enabled,
         last_run_at: None,
@@ -228,7 +230,7 @@ pub async fn create_schedule_with_plugin(
         plugin_id: plugin_id.map(|s| s.to_string()),
         exec_kind: "builtin".into(),
         handler_id: Some(job_type.to_string()),
-        params: payload.map(|s| s.to_string()),
+        params: payload.and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok()),
         script_lang: None,
         script_source: None,
         script_entry: "on_cron_tick".to_string(),
@@ -259,14 +261,14 @@ pub async fn create_schedule_v2(
         "id" => id,
         "label" => label,
         "job_type" => handler_id.unwrap_or(if exec_kind == "script" { "run_script" } else { "custom" }),
-        "payload" => params,
+        "payload" => params.and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok()),
         "cron_expr" => cron_expr,
         "enabled" => enabled,
         "next_run_at" => next,
         "plugin_id" => Option::<&str>::None,
         "exec_kind" => exec_kind,
         "handler_id" => handler_id,
-        "params" => params,
+        "params" => params.and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok()),
         "created_at" => now,
         "updated_at" => now
     ])?;
@@ -281,7 +283,7 @@ pub async fn create_schedule_v2(
                 "custom"
             })
             .to_string(),
-        payload: params.map(|s| s.to_string()),
+        payload: params.and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok()),
         cron_expr: cron_expr.to_string(),
         enabled,
         last_run_at: None,
@@ -289,7 +291,7 @@ pub async fn create_schedule_v2(
         plugin_id: None,
         exec_kind: exec_kind.to_string(),
         handler_id: handler_id.map(|s| s.to_string()),
-        params: params.map(|s| s.to_string()),
+        params: params.and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok()),
         script_lang: None,
         script_source: None,
         script_entry: "on_cron_tick".to_string(),
@@ -320,14 +322,14 @@ pub async fn create_system_schedule(
         "id" => id,
         "label" => label,
         "job_type" => "run_system",
-        "payload" => Option::<&str>::None,
+        "payload" => Option::<serde_json::Value>::None,
         "cron_expr" => cron_expr,
         "enabled" => enabled,
         "next_run_at" => next,
         "plugin_id" => Option::<&str>::None,
         "exec_kind" => "system",
         "handler_id" => Option::<&str>::None,
-        "params" => Option::<&str>::None,
+        "params" => Option::<serde_json::Value>::None,
         "script_lang" => Option::<&str>::None,
         "script_source" => command,
         "script_entry" => "on_cron_tick",
@@ -383,14 +385,14 @@ pub async fn create_script_schedule(
         "id" => id,
         "label" => label,
         "job_type" => "run_script",
-        "payload" => Option::<&str>::None,
+        "payload" => Option::<serde_json::Value>::None,
         "cron_expr" => cron_expr,
         "enabled" => enabled,
         "next_run_at" => next,
         "plugin_id" => Option::<&str>::None,
         "exec_kind" => "script",
         "handler_id" => Option::<&str>::None,
-        "params" => Option::<&str>::None,
+        "params" => Option::<serde_json::Value>::None,
         "script_lang" => script_lang,
         "script_source" => script_source,
         "script_entry" => entry,
@@ -523,8 +525,10 @@ pub async fn update_schedule(
         schedule.job_type = schedule.handler_id.clone().unwrap_or(schedule.job_type);
     }
     if let Some(v) = params {
-        schedule.params = Some(v);
-        schedule.payload = schedule.params.clone();
+        let parsed =
+            serde_json::from_str::<serde_json::Value>(&v).unwrap_or(serde_json::Value::Null);
+        schedule.params = Some(parsed.clone());
+        schedule.payload = Some(parsed);
     }
     if let Some(v) = script_lang {
         schedule.script_lang = Some(v);
@@ -543,12 +547,12 @@ pub async fn update_schedule(
         bind: [
             "label" => &schedule.label,
             "job_type" => &schedule.job_type,
-            "payload" => &schedule.payload,
+            "payload" => schedule.payload.as_ref(),
             "cron_expr" => &schedule.cron_expr,
             "enabled" => schedule.enabled,
             "exec_kind" => &schedule.exec_kind,
             "handler_id" => &schedule.handler_id,
-            "params" => &schedule.params,
+            "params" => schedule.params.as_ref(),
             "script_lang" => &schedule.script_lang,
             "script_source" => &schedule.script_source,
             "script_entry" => &schedule.script_entry,
@@ -746,16 +750,13 @@ impl CronScheduler {
             let job_type = schedule.handler_id.as_deref().unwrap_or(&schedule.job_type);
             let payload: serde_json::Value = schedule
                 .params
-                .as_deref()
-                .filter(|s| !s.is_empty())
-                .and_then(|s| serde_json::from_str(s).ok())
+                .clone()
+                .filter(|v| !v.is_null())
                 .unwrap_or_else(|| {
-                    // Fall back to legacy payload field for backward compat
                     schedule
                         .payload
-                        .as_deref()
-                        .filter(|s| !s.is_empty())
-                        .and_then(|s| serde_json::from_str(s).ok())
+                        .clone()
+                        .filter(|v| !v.is_null())
                         .unwrap_or(serde_json::Value::Null)
                 });
             return Ok(Job::Custom {
@@ -791,8 +792,12 @@ impl CronScheduler {
         }
 
         // Legacy / plugin path: reuse parse_job's tagged-enum → Custom fallback.
-        let payload_str = schedule.payload.as_deref().unwrap_or("");
-        crate::worker::parse_job(&schedule.job_type, payload_str)
+        let payload_str = schedule
+            .payload
+            .as_ref()
+            .map(|v| v.to_string())
+            .unwrap_or_default();
+        crate::worker::parse_job(&schedule.job_type, &payload_str)
     }
 }
 
@@ -1073,7 +1078,7 @@ pub async fn sync_plugin_crons(
                 let now = crate::utils::tz::now_utc();
                 let next = next_run(&entry.cron_expr, crate::utils::tz::now_utc())?;
                 raisfast_derive::crud_update!(&mut *tx, "cron_schedules",
-                    bind: ["label" => &entry.label, "payload" => &entry.payload, "cron_expr" => &entry.cron_expr, "enabled" => entry.enabled, "next_run_at" => next, "updated_at" => now],
+                    bind: ["label" => &entry.label, "payload" => entry.payload.as_deref().and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok()), "cron_expr" => &entry.cron_expr, "enabled" => entry.enabled, "next_run_at" => next, "updated_at" => now],
                     where: ("id", existing_row.0)
                 )?;
 
@@ -1086,14 +1091,14 @@ pub async fn sync_plugin_crons(
                     "id" => id,
                     "label" => &entry.label,
                     "job_type" => &entry.job_type,
-                    "payload" => entry.payload.as_deref(),
+                    "payload" => entry.payload.as_deref().and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok()),
                     "cron_expr" => &entry.cron_expr,
                     "enabled" => entry.enabled,
                     "next_run_at" => next,
                     "plugin_id" => plugin_id,
                     "exec_kind" => "plugin",
                     "handler_id" => Option::<&str>::None,
-                    "params" => entry.payload.as_deref(),
+                    "params" => entry.payload.as_deref().and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok()),
                     "created_at" => now,
                     "updated_at" => now
                 ])?;
@@ -1254,7 +1259,7 @@ mod tests {
         .bind(schedule_id)
         .bind("Test Sitemap")
         .bind("generate_sitemap")
-        .bind(Option::<String>::None)
+        .bind(Option::<serde_json::Value>::None)
         .bind("0 0 */6 * * *")
         .bind(&past)
         .bind(&now)
@@ -1308,7 +1313,7 @@ mod tests {
         .bind(crate::utils::id::new_id())
         .bind("Future Job")
         .bind("generate_sitemap")
-        .bind(Option::<String>::None)
+        .bind(Option::<serde_json::Value>::None)
         .bind("0 0 */6 * * *")
         .bind(&future)
         .bind(&now)
@@ -1352,7 +1357,7 @@ mod tests {
         .bind(crate::utils::id::new_id())
         .bind("Sitemap")
         .bind("generate_sitemap")
-        .bind(Option::<String>::None)
+        .bind(Option::<serde_json::Value>::None)
         .bind("0 0 */6 * * *")
         .bind(&past)
         .bind(&now)
@@ -1406,7 +1411,7 @@ mod tests {
         .bind(crate::utils::id::new_id())
         .bind("Sitemap")
         .bind("generate_sitemap")
-        .bind(Option::<String>::None)
+        .bind(Option::<serde_json::Value>::None)
         .bind("0 0 */6 * * *")
         .bind(&past)
         .bind(&now)
@@ -1765,7 +1770,7 @@ mod tests {
         .bind(schedule_id)
         .bind("Log Test")
         .bind("generate_sitemap")
-        .bind(Option::<String>::None)
+        .bind(Option::<serde_json::Value>::None)
         .bind("0 0 */6 * * *")
         .bind(&past)
         .bind(&now)

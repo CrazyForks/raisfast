@@ -42,7 +42,9 @@ impl AuditService {
             action: action.to_string(),
             subject: subject.to_string(),
             subject_id: subject_id.map(|s| s.to_string()),
-            detail: detail.map(|s| s.to_string()),
+            detail: detail.map(|s| {
+                serde_json::from_str(s).unwrap_or_else(|_| serde_json::Value::String(s.to_string()))
+            }),
             ip_address: ip_address.map(|s| s.to_string()),
             user_agent: user_agent.map(|s| s.to_string()),
             created_at: now,

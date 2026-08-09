@@ -196,11 +196,6 @@ mod tests {
         crate::test_pool!()
     }
 
-    fn auth(id: &str) -> AuthUser {
-        let uid: i64 = id.parse().unwrap_or(1);
-        AuthUser::from_parts(Some(uid), crate::models::user::UserRole::Admin, None)
-    }
-
     async fn insert_user(pool: &crate::db::Pool, username: &str) -> crate::models::user::User {
         crate::models::user::create(
             pool,

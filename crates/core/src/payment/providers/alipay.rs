@@ -104,7 +104,10 @@ fn decrypt_credentials(
     channel: &PaymentChannel,
     encrypt_key: &[u8; 32],
 ) -> AppResult<AlipayCredentials> {
-    let decrypted = aes256gcm_decrypt(&channel.credentials, encrypt_key)?;
+    let decrypted = aes256gcm_decrypt(
+        channel.credentials.as_str().unwrap_or_default(),
+        encrypt_key,
+    )?;
     serde_json::from_str(&decrypted)
         .map_err(|e| AppError::Internal(anyhow::Error::from(e).context("alipay credentials parse")))
 }
@@ -701,7 +704,7 @@ mod tests {
             provider: "alipay".into(),
             name: "Alipay".into(),
             is_live: false,
-            credentials: String::new(),
+            credentials: serde_json::json!(""),
             webhook_secret: Some(pub_key_pem),
             settings: None,
             is_active: true,

@@ -102,7 +102,7 @@ pub async fn set_password(
     let creds = crate::models::user_credential::find_by_user_id(pool, user.id).await?;
     let has_password = creds.iter().any(|c| {
         c.auth_type == crate::models::user_credential::AuthType::Email
-            && !c.credential_data.is_empty()
+            && c.credential_data.get("password_hash").is_some()
     });
 
     if has_password {
@@ -262,7 +262,7 @@ mod tests {
             user.id,
             crate::models::user_credential::AuthType::Email,
             &email,
-            "",
+            &serde_json::json!(""),
             true,
         )
         .await

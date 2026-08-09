@@ -389,8 +389,9 @@ CREATE TABLE IF NOT EXISTS jobs (
     updated_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
 
-CREATE INDEX IF NOT EXISTS idx_jobs_status_run_after ON jobs(status, run_after);
+CREATE INDEX IF NOT EXISTS idx_jobs_status_run_after ON jobs(status, run_after) WHERE status = 'pending';
 CREATE INDEX IF NOT EXISTS idx_jobs_type ON jobs(job_type);
+CREATE INDEX IF NOT EXISTS idx_jobs_dedup_key ON jobs(dedup_key) WHERE dedup_key IS NOT NULL;
 
 -- Cron job schedules
 CREATE TABLE IF NOT EXISTS cron_schedules (
@@ -768,6 +769,7 @@ CREATE INDEX IF NOT EXISTS idx_products_status ON products(status);
 CREATE INDEX IF NOT EXISTS idx_products_type ON products(product_type);
 CREATE INDEX IF NOT EXISTS idx_products_tenant ON products(tenant_id);
 CREATE INDEX IF NOT EXISTS idx_products_tenant_status ON products(tenant_id, status);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_products_tenant_slug ON products(tenant_id, slug);
 
 -- Product Variants
 CREATE TABLE IF NOT EXISTS product_variants (
