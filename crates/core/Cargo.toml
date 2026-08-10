@@ -102,7 +102,7 @@ uuid = { version = "1", features = ["v7", "serde"] }
 chrono = { version = "0.4", features = ["serde", "clock"] }
 chrono-tz = "0.10"
 hex = "0.4"
-hmac = "0.12"
+hmac = "0.13"
 sha2 = "0.11"
 sha1 = "0.11"
 rsa = { version = "0.9", features = ["pem", "sha2"], optional = true }
@@ -112,7 +112,7 @@ base64 = "0.23"
 # Security
 argon2 = "0.5"
 getrandom = "0.4"
-jsonwebtoken = "11"
+jsonwebtoken = { version = "11", features = ["rust_crypto"] }
 ammonia = "4"
 
 # Error handling
@@ -157,7 +157,7 @@ wasmtime-wasi = { version = "47", optional = true }
 rquickjs = { version = "0.12", features = ["futures", "parallel", "loader", "macro"], optional = true }
 mlua = { version = "0.12", features = ["lua54", "vendored", "send", "serde", "macros"], optional = true }
 rhai = { version = "1.25", features = ["serde", "sync", "internals"], optional = true }
-reqwest = { version = "0.13", features = ["json", "rustls"], default-features = false }
+reqwest = { version = "0.13", features = ["json", "rustls", "form"], default-features = false }
 toml = { version = "1", features = ["preserve_order"] }
 notify = { version = "8", features = ["macos_kqueue"] }
 

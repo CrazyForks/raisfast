@@ -191,7 +191,7 @@ mod tests {
             "SELECT COUNT(*) FROM password_reset_tokens WHERE user_id = {} AND used_at IS NULL",
             crate::db::Driver::ph(1),
         );
-        let (count,): (i64,) = sqlx::query_as(&sql)
+        let (count,): (i64,) = sqlx::query_as(crate::db::safe_sql(&sql))
             .bind(user.id)
             .fetch_one(&pool)
             .await
@@ -231,7 +231,7 @@ mod tests {
             "SELECT token FROM password_reset_tokens WHERE user_id = {} AND used_at IS NULL LIMIT 1",
             crate::db::Driver::ph(1),
         );
-        let (token_str,): (String,) = sqlx::query_as(&sql)
+        let (token_str,): (String,) = sqlx::query_as(crate::db::safe_sql(&sql))
             .bind(user.id)
             .fetch_one(&pool)
             .await

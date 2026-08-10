@@ -945,10 +945,10 @@ mod tests {
                 )
                 .await
                 .unwrap();
-            sqlx::query(&format!(
+            sqlx::query(crate::db::safe_sql(&format!(
                 "UPDATE products SET status = 'active' WHERE id = {}",
                 crate::db::Driver::ph(1)
-            ))
+            )))
             .bind(p.id)
             .execute(&pool)
             .await
@@ -1005,10 +1005,10 @@ mod tests {
             )
             .await
             .unwrap();
-        sqlx::query(&format!(
+        sqlx::query(crate::db::safe_sql(&format!(
             "UPDATE products SET status = 'active' WHERE id = {}",
             crate::db::Driver::ph(1)
-        ))
+        )))
         .bind(p.id)
         .execute(&pool)
         .await

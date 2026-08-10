@@ -67,7 +67,7 @@ pub async fn delete_expired(pool: &crate::db::Pool) -> AppResult<u64> {
         "DELETE FROM user_device_codes WHERE expires_at < {} AND used_at IS NULL",
         Driver::ph(1),
     );
-    let result = sqlx::query(&sql)
+    let result = sqlx::query(crate::db::safe_sql(&sql))
         .bind(now)
         .execute(pool)
         .await

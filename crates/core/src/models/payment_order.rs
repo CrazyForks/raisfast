@@ -219,7 +219,7 @@ pub async fn tx_update_status_cas(
             Driver::ph(3)
         )
     };
-    let result = sqlx::query(&sql)
+    let result = sqlx::query(crate::db::safe_sql(&sql))
         .bind(new_status)
         .bind(id)
         .bind(expected_status)
@@ -241,7 +241,7 @@ mod tests {
     async fn seed_user(pool: &crate::db::Pool) -> i64 {
         let id = crate::utils::id::new_id();
         let username = format!("testuser_{id}");
-        sqlx::query(&format!("INSERT INTO users (id, username, status, registered_via) VALUES ({}, {}, 'active', 'email')", crate::db::Driver::ph(1), crate::db::Driver::ph(2)))
+        sqlx::query(crate::db::safe_sql(&format!("INSERT INTO users (id, username, status, registered_via) VALUES ({}, {}, 'active', 'email')", crate::db::Driver::ph(1), crate::db::Driver::ph(2))))
             .bind(id)
             .bind(&username)
             .execute(pool)

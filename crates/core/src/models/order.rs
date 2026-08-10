@@ -119,7 +119,7 @@ pub async fn find_all_admin_paginated(
             crate::db::Driver::ph(5),
             crate::db::Driver::ph(6),
         );
-        let mut q = sqlx::query_as::<_, Order>(&sql)
+        let mut q = sqlx::query_as::<_, Order>(crate::db::safe_sql(&sql))
             .bind(&pattern)
             .bind(&pattern);
         if let Some(s) = status {
@@ -137,7 +137,7 @@ pub async fn find_all_admin_paginated(
             crate::db::Driver::ph(2),
             status_filter,
         );
-        let mut cq = sqlx::query_as::<_, (i64,)>(&count_sql)
+        let mut cq = sqlx::query_as::<_, (i64,)>(crate::db::safe_sql(&count_sql))
             .bind(&pattern)
             .bind(&pattern);
         if let Some(s) = status {
@@ -250,7 +250,7 @@ pub async fn update_status(
             tenant_filter_ph(tenant_id, 3)
         )
     };
-    let mut q = sqlx::query(&sql).bind(status).bind(id);
+    let mut q = sqlx::query(crate::db::safe_sql(&sql)).bind(status).bind(id);
     if let Some(tid) = tenant_id {
         q = q.bind(tid);
     }
@@ -387,7 +387,7 @@ pub async fn tx_update_status_cas(
             Driver::ph(3)
         )
     };
-    let result = sqlx::query(&sql)
+    let result = sqlx::query(crate::db::safe_sql(&sql))
         .bind(new_status)
         .bind(id)
         .bind(expected_status)
@@ -501,7 +501,7 @@ mod tests {
     async fn seed_user(pool: &crate::db::Pool) -> i64 {
         let id = crate::utils::id::new_id();
         let username = format!("testuser_{id}");
-        sqlx::query(&format!("INSERT INTO users (id, username, status, registered_via) VALUES ({}, {}, 'active', 'email')", crate::db::Driver::ph(1), crate::db::Driver::ph(2)))
+        sqlx::query(crate::db::safe_sql(&format!("INSERT INTO users (id, username, status, registered_via) VALUES ({}, {}, 'active', 'email')", crate::db::Driver::ph(1), crate::db::Driver::ph(2))))
             .bind(id)
             .bind(&username)
             .execute(pool)
@@ -547,10 +547,10 @@ mod tests {
     }
 
     async fn get_status(pool: &crate::db::Pool, id: SnowflakeId) -> String {
-        let (s,): (String,) = sqlx::query_as(&format!(
+        let (s,): (String,) = sqlx::query_as(crate::db::safe_sql(&format!(
             "SELECT status FROM orders WHERE id = {}",
             Driver::ph(1)
-        ))
+        )))
         .bind(id)
         .fetch_one(pool)
         .await
@@ -567,7 +567,11 @@ mod tests {
             "SELECT {col} FROM orders WHERE id = {}",
             crate::db::Driver::ph(1)
         );
-        let (v,): (Option<String>,) = sqlx::query_as(&sql).bind(id).fetch_one(pool).await.unwrap();
+        let (v,): (Option<String>,) = sqlx::query_as(crate::db::safe_sql(&sql))
+            .bind(id)
+            .fetch_one(pool)
+            .await
+            .unwrap();
         v
     }
 

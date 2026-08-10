@@ -394,13 +394,16 @@ async fn check_unique_fields(
         let sql = &sql_builder;
 
         let row = if let Some(id) = exclude_id {
-            sqlx::query(sql)
+            sqlx::query(crate::db::safe_sql(sql))
                 .bind(&val_str)
                 .bind(id)
                 .fetch_one(pool)
                 .await
         } else {
-            sqlx::query(sql).bind(&val_str).fetch_one(pool).await
+            sqlx::query(crate::db::safe_sql(sql))
+                .bind(&val_str)
+                .fetch_one(pool)
+                .await
         }
         .map_err(|e| AppError::Internal(anyhow::anyhow!("unique check failed: {e}")))?;
 

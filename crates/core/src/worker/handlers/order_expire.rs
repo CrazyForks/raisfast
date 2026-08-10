@@ -32,7 +32,7 @@ impl JobHandler for ExpireOrdersHandler {
             "SELECT * FROM orders WHERE status = 'pending' AND created_at < {} LIMIT 500",
             Driver::ph(1)
         );
-        let orders: Vec<crate::models::order::Order> = sqlx::query_as(&sql)
+        let orders: Vec<crate::models::order::Order> = sqlx::query_as(crate::db::safe_sql(&sql))
             .bind(&cutoff)
             .fetch_all(&self.pool)
             .await?;
@@ -119,11 +119,11 @@ mod tests {
     async fn seed_user(pool: &Pool) -> i64 {
         let id = crate::utils::id::new_id();
         let username = format!("testuser_{id}");
-        sqlx::query(&format!(
+        sqlx::query(crate::db::safe_sql(&format!(
             "INSERT INTO users (id, username, status, registered_via) VALUES ({}, {}, 'active', 'email')",
             crate::db::Driver::ph(1),
             crate::db::Driver::ph(2)
-        ))
+        )))
         .bind(id)
         .bind(&username)
         .execute(pool)
@@ -232,11 +232,11 @@ mod tests {
         if created_at_offset_minutes != 0 {
             let offset = chrono::Duration::minutes(created_at_offset_minutes);
             let past = chrono::Utc::now() + offset;
-            sqlx::query(&format!(
+            sqlx::query(crate::db::safe_sql(&format!(
                 "UPDATE orders SET created_at = {} WHERE id = {}",
                 crate::db::Driver::ph(1),
                 crate::db::Driver::ph(2)
-            ))
+            )))
             .bind(&past)
             .bind(order.id)
             .execute(pool)
@@ -248,10 +248,10 @@ mod tests {
     }
 
     async fn get_product_stock(pool: &Pool, id: crate::types::snowflake_id::SnowflakeId) -> i64 {
-        let (s,): (i64,) = sqlx::query_as(&format!(
+        let (s,): (i64,) = sqlx::query_as(crate::db::safe_sql(&format!(
             "SELECT stock FROM products WHERE id = {}",
             Driver::ph(1)
-        ))
+        )))
         .bind(id)
         .fetch_one(pool)
         .await
@@ -260,10 +260,10 @@ mod tests {
     }
 
     async fn get_order_status(pool: &Pool, id: crate::types::snowflake_id::SnowflakeId) -> String {
-        let (s,): (String,) = sqlx::query_as(&format!(
+        let (s,): (String,) = sqlx::query_as(crate::db::safe_sql(&format!(
             "SELECT status FROM orders WHERE id = {}",
             Driver::ph(1)
-        ))
+        )))
         .bind(id)
         .fetch_one(pool)
         .await
@@ -286,11 +286,11 @@ mod tests {
         let uid = seed_user(&pool).await;
         let pid = seed_product(&pool, 100).await;
 
-        sqlx::query(&format!(
+        sqlx::query(crate::db::safe_sql(&format!(
             "UPDATE products SET stock = {} WHERE id = {}",
             crate::db::Driver::ph(1),
             crate::db::Driver::ph(2)
-        ))
+        )))
         .bind(97i64)
         .bind(pid)
         .execute(&pool)
@@ -362,11 +362,11 @@ mod tests {
         let uid = seed_user(&pool).await;
         let pid = seed_product(&pool, 100).await;
 
-        sqlx::query(&format!(
+        sqlx::query(crate::db::safe_sql(&format!(
             "UPDATE products SET stock = {} WHERE id = {}",
             crate::db::Driver::ph(1),
             crate::db::Driver::ph(2)
-        ))
+        )))
         .bind(95i64)
         .bind(pid)
         .execute(&pool)
@@ -422,11 +422,11 @@ mod tests {
         .unwrap();
 
         let past = chrono::Utc::now() - chrono::Duration::minutes(60);
-        sqlx::query(&format!(
+        sqlx::query(crate::db::safe_sql(&format!(
             "UPDATE orders SET created_at = {} WHERE id = {}",
             crate::db::Driver::ph(1),
             crate::db::Driver::ph(2)
-        ))
+        )))
         .bind(&past)
         .bind(order.id)
         .execute(&pool)
@@ -450,11 +450,11 @@ mod tests {
         let uid = seed_user(&pool).await;
         let pid = seed_product(&pool, 100).await;
 
-        sqlx::query(&format!(
+        sqlx::query(crate::db::safe_sql(&format!(
             "UPDATE products SET stock = {} WHERE id = {}",
             crate::db::Driver::ph(1),
             crate::db::Driver::ph(2)
-        ))
+        )))
         .bind(95i64)
         .bind(pid)
         .execute(&pool)

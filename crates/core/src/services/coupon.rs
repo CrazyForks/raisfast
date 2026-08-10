@@ -542,10 +542,10 @@ mod tests {
             .await
             .unwrap();
 
-        sqlx::query(&format!(
+        sqlx::query(crate::db::safe_sql(&format!(
             "UPDATE coupons SET status = 'inactive' WHERE id = {}",
             crate::db::Driver::ph(1)
-        ))
+        )))
         .bind(c.id)
         .execute(&pool)
         .await

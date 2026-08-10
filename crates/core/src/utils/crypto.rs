@@ -5,7 +5,7 @@
 /// The key is automatically appended with a `&` suffix (OAuth 1.0 signing spec).
 pub fn hmac_sha1_sign(key: &str, data: &str) -> String {
     use base64::Engine;
-    use hmac::{Hmac, Mac};
+    use hmac::{Hmac, KeyInit, Mac};
     use sha1::Sha1;
     type HmacSha1 = Hmac<Sha1>;
 

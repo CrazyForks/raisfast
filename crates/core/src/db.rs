@@ -32,3 +32,13 @@ pub use driver::Driver;
 pub use pool::{
     Db, DbArguments, DbConnection, DbPoolConnection, DbQueryResult, DbRow, Pool, Transaction,
 };
+
+/// Wrap a dynamic SQL string with [`sqlx::AssertSqlSafe`].
+///
+/// Asserts that the SQL string has been manually audited for injection
+/// vulnerabilities. Required by sqlx 0.9+ which gates `query()` on the
+/// `SqlSafeStr` trait.
+#[inline(always)]
+pub fn safe_sql(sql: &str) -> sqlx::AssertSqlSafe<&str> {
+    sqlx::AssertSqlSafe(sql)
+}

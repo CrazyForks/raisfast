@@ -73,7 +73,7 @@ pub async fn consume_state(
         Driver::ph(1),
         crate::db::Driver::now_fn(),
     );
-    let state = sqlx::query_as::<_, OAuthState>(&sql)
+    let state = sqlx::query_as::<_, OAuthState>(crate::db::safe_sql(&sql))
         .bind(id)
         .fetch_optional(pool)
         .await?;
@@ -91,7 +91,7 @@ pub async fn cleanup_expired_states(pool: &crate::db::Pool) -> AppResult<u64> {
         "DELETE FROM oauth_states WHERE expires_at <= {}",
         crate::db::Driver::now_fn(),
     );
-    let result = sqlx::query(&sql).execute(pool).await?;
+    let result = sqlx::query(crate::db::safe_sql(&sql)).execute(pool).await?;
     Ok(result.rows_affected())
 }
 

@@ -82,7 +82,7 @@ async fn next_revision_number(
         Driver::ph(1),
         Driver::ph(2),
     );
-    let max: i64 = sqlx::query_scalar(&sql)
+    let max: i64 = sqlx::query_scalar(crate::db::safe_sql(&sql))
         .bind(content_type)
         .bind(record_id)
         .fetch_one(pool)

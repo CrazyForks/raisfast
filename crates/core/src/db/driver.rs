@@ -284,10 +284,11 @@ impl DbDriver for Sqlite {
     async fn has_column(pool: &Pool, table: &str, column: &str) -> bool {
         assert!(is_safe_identifier(table), "unsafe table: {table}");
         let sql = format!("PRAGMA table_info({table})");
-        let rows: Vec<(i32, String, String, bool, Option<String>, bool)> = sqlx::query_as(&sql)
-            .fetch_all(pool)
-            .await
-            .unwrap_or_default();
+        let rows: Vec<(i32, String, String, bool, Option<String>, bool)> =
+            sqlx::query_as(crate::db::safe_sql(&sql))
+                .fetch_all(pool)
+                .await
+                .unwrap_or_default();
         rows.iter().any(|(_, name, _, _, _, _)| name == column)
     }
 
@@ -295,7 +296,7 @@ impl DbDriver for Sqlite {
         assert!(is_safe_identifier(table), "unsafe table: {table}");
         let sql =
             format!("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='{table}'");
-        sqlx::query_scalar::<_, i64>(&sql)
+        sqlx::query_scalar::<_, i64>(crate::db::safe_sql(&sql))
             .fetch_one(pool)
             .await
             .unwrap_or(0)
@@ -306,7 +307,7 @@ impl DbDriver for Sqlite {
         let sql = format!(
             "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%%' AND name NOT IN ({excluded})"
         );
-        let rows = sqlx::query_as::<_, (String,)>(&sql)
+        let rows = sqlx::query_as::<_, (String,)>(crate::db::safe_sql(&sql))
             .fetch_all(pool)
             .await
             .unwrap_or_default();
@@ -319,7 +320,9 @@ impl DbDriver for Sqlite {
     ) -> Result<Vec<(String, String)>, sqlx::Error> {
         use sqlx::Row;
         let sql = format!("PRAGMA table_info({table})");
-        let rows = sqlx::query(&sql).fetch_all(pool).await?;
+        let rows = sqlx::query(crate::db::safe_sql(&sql))
+            .fetch_all(pool)
+            .await?;
         let mut cols = Vec::new();
         for row in &rows {
             let name: String = row.try_get(1).unwrap_or_default();
@@ -471,7 +474,7 @@ impl DbDriver for Postgres {
         let sql = format!(
             "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public' AND table_name = '{table}'"
         );
-        sqlx::query_scalar::<_, i64>(&sql)
+        sqlx::query_scalar::<_, i64>(crate::db::safe_sql(&sql))
             .fetch_one(pool)
             .await
             .unwrap_or(0)
@@ -482,7 +485,7 @@ impl DbDriver for Postgres {
         let sql = format!(
             "SELECT tablename FROM pg_tables WHERE schemaname = 'public' AND tablename NOT IN ({excluded})"
         );
-        let rows = sqlx::query_as::<_, (String,)>(&sql)
+        let rows = sqlx::query_as::<_, (String,)>(crate::db::safe_sql(&sql))
             .fetch_all(pool)
             .await
             .unwrap_or_default();
@@ -497,7 +500,9 @@ impl DbDriver for Postgres {
         let sql = format!(
             "SELECT column_name, data_type FROM information_schema.columns WHERE table_name = '{table}'"
         );
-        let rows = sqlx::query(&sql).fetch_all(pool).await?;
+        let rows = sqlx::query(crate::db::safe_sql(&sql))
+            .fetch_all(pool)
+            .await?;
         let mut cols = Vec::new();
         for row in &rows {
             let name: String = row.try_get(0).unwrap_or_default();
@@ -648,7 +653,7 @@ impl DbDriver for MySql {
         let sql = format!(
             "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = '{table}'"
         );
-        sqlx::query_scalar::<crate::db::pool::Db, i64>(&sql)
+        sqlx::query_scalar::<crate::db::pool::Db, i64>(crate::db::safe_sql(&sql))
             .fetch_one(pool)
             .await
             .unwrap_or(0)
@@ -659,7 +664,7 @@ impl DbDriver for MySql {
         let sql = format!(
             "SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name NOT IN ({excluded})"
         );
-        let rows = sqlx::query_as::<crate::db::pool::Db, (String,)>(&sql)
+        let rows = sqlx::query_as::<crate::db::pool::Db, (String,)>(crate::db::safe_sql(&sql))
             .fetch_all(pool)
             .await
             .unwrap_or_default();
@@ -674,7 +679,7 @@ impl DbDriver for MySql {
         let sql = format!(
             "SELECT column_name, CAST(column_type AS CHAR) FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = '{table}'"
         );
-        let rows = sqlx::query::<crate::db::pool::Db>(&sql)
+        let rows = sqlx::query::<crate::db::pool::Db>(crate::db::safe_sql(&sql))
             .fetch_all(pool)
             .await?;
         let mut cols = Vec::new();

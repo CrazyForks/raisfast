@@ -163,7 +163,7 @@ pub async fn execute_schema(pool: &Pool) -> anyhow::Result<()> {
     #[cfg(not(feature = "db-sqlite"))]
     {
         for stmt in split_sql_statements(crate::db::schema::SCHEMA_SQL) {
-            sqlx::query::<crate::db::pool::Db>(&stmt)
+            sqlx::query::<crate::db::pool::Db>(crate::db::safe_sql(&stmt))
                 .execute(pool)
                 .await
                 .map_err(|e| anyhow::anyhow!("schema statement failed: {e}\nSQL: {stmt}"))?;
@@ -274,12 +274,12 @@ pub async fn ensure_schema(pool: &Pool) -> anyhow::Result<()> {
         }
 
         let ph = crate::db::Driver::ph;
-        sqlx::query(&format!(
+        sqlx::query(crate::db::safe_sql(&format!(
             "INSERT INTO _migrations (filename, batch, checksum) VALUES ({}, {}, {})",
             ph(1),
             ph(2),
             ph(3)
-        ))
+        )))
         .bind(format!("schema.{schema_label}.sql"))
         .bind(0i32)
         .bind(&checksum)
@@ -334,7 +334,7 @@ pub async fn run_pending_migrations(pool: &Pool) -> anyhow::Result<()> {
     let mut applied = 0u32;
 
     for filename in &filenames {
-        let existing: Option<(String,)> = sqlx::query_as(&check_sql)
+        let existing: Option<(String,)> = sqlx::query_as(crate::db::safe_sql(&check_sql))
             .bind(filename)
             .fetch_optional(pool)
             .await
@@ -368,13 +368,13 @@ pub async fn run_pending_migrations(pool: &Pool) -> anyhow::Result<()> {
         let statements = split_sql_statements(&sql);
 
         for stmt in statements {
-            sqlx::query(&stmt)
+            sqlx::query(crate::db::safe_sql(&stmt))
                 .execute(pool)
                 .await
                 .map_err(|e| anyhow::anyhow!("migration {filename} failed: {e}\nSQL: {stmt}"))?;
         }
 
-        sqlx::query(&insert_sql)
+        sqlx::query(crate::db::safe_sql(&insert_sql))
             .bind(filename)
             .bind(batch)
             .bind(&checksum)
@@ -410,7 +410,7 @@ pub async fn rollback_migrations(pool: &Pool, step: Option<u32>) -> anyhow::Resu
             "SELECT filename FROM _migrations WHERE batch > 0 ORDER BY applied_at DESC, filename DESC LIMIT {}",
             ph(1)
         );
-        let rows: Vec<(String,)> = sqlx::query_as(&sql)
+        let rows: Vec<(String,)> = sqlx::query_as(crate::db::safe_sql(&sql))
             .bind(limit)
             .fetch_all(pool)
             .await
@@ -433,7 +433,7 @@ pub async fn rollback_migrations(pool: &Pool, step: Option<u32>) -> anyhow::Resu
             "SELECT filename FROM _migrations WHERE batch = {} ORDER BY applied_at DESC, filename DESC",
             ph(1)
         );
-        let rows: Vec<(String,)> = sqlx::query_as(&sql)
+        let rows: Vec<(String,)> = sqlx::query_as(crate::db::safe_sql(&sql))
             .bind(max_batch)
             .fetch_all(pool)
             .await
@@ -470,12 +470,12 @@ pub async fn rollback_migrations(pool: &Pool, step: Option<u32>) -> anyhow::Resu
         };
 
         tracing::info!(filename = %filename, "rolling back...");
-        sqlx::query(&sql)
+        sqlx::query(crate::db::safe_sql(&sql))
             .execute(pool)
             .await
             .map_err(|e| anyhow::anyhow!("rollback {filename} failed: {e}"))?;
 
-        sqlx::query(&delete_sql)
+        sqlx::query(crate::db::safe_sql(&delete_sql))
             .bind(filename)
             .execute(pool)
             .await

@@ -194,7 +194,8 @@ pub async fn resolve_id(
         "SELECT id FROM media WHERE id = {}{filter}",
         crate::db::Driver::ph(1)
     );
-    let mut q = sqlx::query_scalar::<_, i64>(&sql).bind(media_id.parse::<i64>().unwrap_or(0));
+    let mut q = sqlx::query_scalar::<_, i64>(crate::db::safe_sql(&sql))
+        .bind(media_id.parse::<i64>().unwrap_or(0));
     if let Some(tid) = tenant_id {
         q = q.bind(tid);
     }

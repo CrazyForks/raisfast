@@ -170,7 +170,7 @@ pub async fn increment_used(
         crate::db::Driver::ph(1),
         crate::db::tenant::tenant_filter_ph(tenant_id, 2)
     );
-    let mut q = sqlx::query(&sql).bind(id);
+    let mut q = sqlx::query(crate::db::safe_sql(&sql)).bind(id);
     if let Some(tid) = tenant_id {
         q = q.bind(tid);
     }
@@ -190,7 +190,7 @@ pub async fn tx_increment_used(
         crate::db::Driver::ph(1),
         crate::db::tenant::tenant_filter_ph(tenant_id, 2)
     );
-    let mut q = sqlx::query(&sql).bind(id);
+    let mut q = sqlx::query(crate::db::safe_sql(&sql)).bind(id);
     if let Some(tid) = tenant_id {
         q = q.bind(tid);
     }
@@ -225,7 +225,7 @@ pub async fn count_user_uses(
         crate::db::Driver::ph(2),
         crate::db::tenant::tenant_filter_ph(tenant_id, 3)
     );
-    let mut q = sqlx::query_scalar::<_, i64>(&sql)
+    let mut q = sqlx::query_scalar::<_, i64>(crate::db::safe_sql(&sql))
         .bind(coupon_id)
         .bind(user_id);
     if let Some(tid) = tenant_id {
@@ -346,10 +346,10 @@ mod tests {
         )
         .await
         .unwrap();
-        sqlx::query(&format!(
+        sqlx::query(crate::db::safe_sql(&format!(
             "UPDATE coupons SET status = 'inactive' WHERE id = {}",
             crate::db::Driver::ph(1)
-        ))
+        )))
         .bind(c2.id)
         .execute(&pool)
         .await

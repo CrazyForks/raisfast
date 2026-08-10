@@ -41,11 +41,12 @@ impl JobHandler for ReconcilePaymentsHandler {
             Driver::ph(1),
             Driver::ph(2)
         );
-        let orders: Vec<crate::models::payment_order::PaymentOrder> = sqlx::query_as(&sql)
-            .bind(yesterday_start)
-            .bind(yesterday_end)
-            .fetch_all(&self.pool)
-            .await?;
+        let orders: Vec<crate::models::payment_order::PaymentOrder> =
+            sqlx::query_as(crate::db::safe_sql(&sql))
+                .bind(yesterday_start)
+                .bind(yesterday_end)
+                .fetch_all(&self.pool)
+                .await?;
 
         let mut reconciled = 0u64;
         let mut mismatches = 0u64;

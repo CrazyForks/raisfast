@@ -421,13 +421,13 @@ mod tests {
         async fn insert_post(pool: &crate::db::Pool, user_id: i64) -> i64 {
             let post_id = crate::utils::id::new_id();
             let slug = format!("slug-{post_id}");
-            sqlx::query(&format!(
+            sqlx::query(crate::db::safe_sql(&format!(
                 "INSERT INTO posts (id, title, slug, content, status, created_by, updated_by) VALUES ({}, 'Test', {}, 'content', 'published', {}, {})",
                 crate::db::Driver::ph(1),
                 crate::db::Driver::ph(2),
                 crate::db::Driver::ph(3),
                 crate::db::Driver::ph(4)
-            ))
+            )))
             .bind(post_id)
             .bind(&slug)
             .bind(user_id)

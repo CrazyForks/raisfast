@@ -101,7 +101,7 @@ impl StatsService {
                     crate::db::Driver::ph(1)
                 );
                 let rows: Vec<(String, i64)> =
-                    sqlx::query_as::<crate::db::pool::Db, (String, i64)>(&sql)
+                    sqlx::query_as::<crate::db::pool::Db, (String, i64)>(crate::db::safe_sql(&sql))
                         .bind(&tid)
                         .fetch_all(&self.pool)
                         .await
@@ -110,7 +110,7 @@ impl StatsService {
             } else {
                 let sql = format!("SELECT status, {cnt_expr} as cnt FROM {table} GROUP BY status");
                 let rows: Vec<(String, i64)> =
-                    sqlx::query_as::<crate::db::pool::Db, (String, i64)>(&sql)
+                    sqlx::query_as::<crate::db::pool::Db, (String, i64)>(crate::db::safe_sql(&sql))
                         .fetch_all(&self.pool)
                         .await
                         .map_err(|e: sqlx::Error| AppError::Internal(e.into()))?;
@@ -168,7 +168,7 @@ impl StatsService {
             )
         };
 
-        let mut q = sqlx::query_as::<crate::db::pool::Db, (String, i64)>(&sql);
+        let mut q = sqlx::query_as::<crate::db::pool::Db, (String, i64)>(crate::db::safe_sql(&sql));
         if has_tenant {
             let tid = crate::db::tenant::resolve_tenant(tenant_id).to_string();
             q = q.bind(tid);
@@ -213,7 +213,7 @@ impl StatsService {
         let tf = crate::db::tenant::tenant_filter_ph(tenant_id, 1);
         let sum_expr = crate::db::Driver::cast_int("COALESCE(SUM(total_amount), 0)");
         let sql = format!("SELECT {sum_expr} FROM orders WHERE status = 'completed'{tf}");
-        let mut q = sqlx::query_scalar::<crate::db::pool::Db, i64>(&sql);
+        let mut q = sqlx::query_scalar::<crate::db::pool::Db, i64>(crate::db::safe_sql(&sql));
         if let Some(tid) = tenant_id {
             q = q.bind(crate::db::tenant::resolve_tenant(Some(tid)));
         }
@@ -245,14 +245,14 @@ impl StatsService {
                 "SELECT status, {cnt_expr} as cnt FROM {table} WHERE tenant_id = {} GROUP BY status",
                 crate::db::Driver::ph(1)
             );
-            sqlx::query_as::<crate::db::pool::Db, (String, i64)>(&sql)
+            sqlx::query_as::<crate::db::pool::Db, (String, i64)>(crate::db::safe_sql(&sql))
                 .bind(&tid)
                 .fetch_all(&self.pool)
                 .await
                 .map_err(|e: sqlx::Error| AppError::Internal(e.into()))?
         } else {
             let sql = format!("SELECT status, {cnt_expr} as cnt FROM {table} GROUP BY status");
-            sqlx::query_as::<crate::db::pool::Db, (String, i64)>(&sql)
+            sqlx::query_as::<crate::db::pool::Db, (String, i64)>(crate::db::safe_sql(&sql))
                 .fetch_all(&self.pool)
                 .await
                 .map_err(|e: sqlx::Error| AppError::Internal(e.into()))?
@@ -404,7 +404,7 @@ async fn count_table(
     validate_table_name(table)?;
     let cnt_expr = crate::db::Driver::cast_int("COUNT(*)");
     let sql = format!("SELECT {cnt_expr} FROM {table} WHERE 1=1{tenant_filter}");
-    let mut q = sqlx::query_scalar::<crate::db::pool::Db, i64>(&sql);
+    let mut q = sqlx::query_scalar::<crate::db::pool::Db, i64>(crate::db::safe_sql(&sql));
     if tenant_id.is_some() {
         q = q.bind(crate::db::tenant::resolve_tenant(tenant_id));
     }
@@ -459,7 +459,7 @@ mod tests {
             "orders",
             "coupons",
         ] {
-            sqlx::query(&format!("DELETE FROM {table}"))
+            sqlx::query(crate::db::safe_sql(&format!("DELETE FROM {table}")))
                 .execute(&pool)
                 .await
                 .unwrap();
@@ -493,7 +493,7 @@ mod tests {
             "orders",
             "coupons",
         ] {
-            sqlx::query(&format!("DELETE FROM {table}"))
+            sqlx::query(crate::db::safe_sql(&format!("DELETE FROM {table}")))
                 .execute(&pool)
                 .await
                 .unwrap();
@@ -531,10 +531,10 @@ mod tests {
     async fn stats_content_stats_with_status() {
         let pool = crate::test_pool!();
 
-        sqlx::query(&format!(
+        sqlx::query(crate::db::safe_sql(&format!(
             "CREATE TABLE IF NOT EXISTS ct_test (id {}, status TEXT, tenant_id VARCHAR(64) NOT NULL DEFAULT 'default')",
             crate::db::Driver::auto_increment_pk()
-        ))
+        )))
         .execute(&pool)
         .await
         .unwrap();
@@ -577,19 +577,19 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
-        sqlx::query(&format!(
+        sqlx::query(crate::db::safe_sql(&format!(
             "CREATE TABLE ct_trends (id {}, created_at {} NOT NULL, tenant_id VARCHAR(64) NOT NULL DEFAULT 'default')",
             crate::db::Driver::auto_increment_pk(),
             ts_type,
-        ))
+        )))
         .execute(&pool)
         .await
         .unwrap();
         let now = crate::utils::tz::now_utc();
-        sqlx::query(&format!(
+        sqlx::query(crate::db::safe_sql(&format!(
             "INSERT INTO ct_trends (id, created_at) VALUES (1, {})",
             crate::db::Driver::ph(1)
-        ))
+        )))
         .bind(&now)
         .execute(&pool)
         .await

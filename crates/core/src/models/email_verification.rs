@@ -34,7 +34,7 @@ pub async fn create(
     );
 
     let mut token_bytes = [0u8; 32];
-    getrandom::getrandom(&mut token_bytes).map_err(|e| {
+    getrandom::fill(&mut token_bytes).map_err(|e| {
         crate::errors::app_error::AppError::Internal(anyhow::anyhow!(
             "verification token generation failed: {e}"
         ))
@@ -100,7 +100,10 @@ pub async fn cleanup_expired(pool: &crate::db::Pool) -> AppResult<u64> {
         "DELETE FROM email_verification_tokens WHERE expires_at < {} AND verified_at IS NULL",
         Driver::ph(1),
     );
-    let result = sqlx::query(&sql).bind(now).execute(pool).await?;
+    let result = sqlx::query(crate::db::safe_sql(&sql))
+        .bind(now)
+        .execute(pool)
+        .await?;
     Ok(result.rows_affected())
 }
 
@@ -183,7 +186,7 @@ mod tests {
             "SELECT COUNT(*) FROM email_verification_tokens WHERE user_id = {}",
             Driver::ph(1),
         );
-        let (count,): (i64,) = sqlx::query_as(&sql)
+        let (count,): (i64,) = sqlx::query_as(crate::db::safe_sql(&sql))
             .bind(user_id)
             .fetch_one(&pool)
             .await

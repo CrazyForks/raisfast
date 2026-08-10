@@ -225,7 +225,7 @@ pub async fn list_instances(
         Driver::ph(5),
         Driver::ph(6)
     );
-    let rows = sqlx::query_as::<_, WorkflowInstance>(&sql)
+    let rows = sqlx::query_as::<_, WorkflowInstance>(crate::db::safe_sql(&sql))
         .bind(definition_id)
         .bind(definition_id)
         .bind(status)
@@ -242,7 +242,7 @@ pub async fn list_instances(
         Driver::ph(3),
         Driver::ph(4)
     );
-    let (count,): (i64,) = sqlx::query_as(&count_sql)
+    let (count,): (i64,) = sqlx::query_as(crate::db::safe_sql(&count_sql))
         .bind(definition_id)
         .bind(definition_id)
         .bind(status)
@@ -279,7 +279,7 @@ pub async fn update_instance_step(
         Driver::ph(5),
         Driver::ph(6)
     );
-    sqlx::query(&sql)
+    sqlx::query(crate::db::safe_sql(&sql))
         .bind(status)
         .bind(current_step)
         .bind(context)

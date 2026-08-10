@@ -88,7 +88,7 @@ impl WorkflowService {
             crate::db::Driver::ph(1)
         );
         let result: Option<WorkflowDefinition> =
-            sqlx::query_as::<crate::db::pool::Db, WorkflowDefinition>(&sql)
+            sqlx::query_as::<crate::db::pool::Db, WorkflowDefinition>(crate::db::safe_sql(&sql))
                 .bind(id)
                 .fetch_optional(&self.pool)
                 .await
@@ -800,10 +800,10 @@ mod tests {
             .create_workflow(wf_id, "Dis", None, &steps)
             .await
             .unwrap();
-        sqlx::query(&format!(
+        sqlx::query(crate::db::safe_sql(&format!(
             "UPDATE workflow_definitions SET enabled = FALSE WHERE id = {}",
             crate::db::Driver::ph(1)
-        ))
+        )))
         .bind(def.id)
         .execute(&svc.pool)
         .await

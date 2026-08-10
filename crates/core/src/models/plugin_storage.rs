@@ -22,11 +22,11 @@ pub struct PluginStorageRow {
 
 /// Get a plugin's KV data
 pub async fn get(pool: &Pool, plugin_id: &str, key: &str) -> AppResult<Option<String>> {
-    let row = sqlx::query_as::<_, PluginStorageRow>(&format!(
+    let row = sqlx::query_as::<_, PluginStorageRow>(crate::db::safe_sql(&format!(
         "SELECT * FROM plugin_storage WHERE plugin_id = {} AND storage_key = {}",
         Driver::ph(1),
         Driver::ph(2),
-    ))
+    )))
     .bind(plugin_id)
     .bind(key)
     .fetch_optional(pool)

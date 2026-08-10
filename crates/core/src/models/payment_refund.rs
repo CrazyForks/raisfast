@@ -203,7 +203,7 @@ pub async fn tx_find_by_provider_refund_id(
         "SELECT * FROM payment_refunds WHERE provider_refund_id = {} LIMIT 1",
         crate::db::Driver::ph(1)
     );
-    sqlx::query_as::<crate::db::pool::Db, PaymentRefund>(&sql)
+    sqlx::query_as::<crate::db::pool::Db, PaymentRefund>(crate::db::safe_sql(&sql))
         .bind(provider_refund_id)
         .fetch_one(&mut *tx)
         .await
@@ -223,7 +223,7 @@ mod tests {
     async fn seed_user(pool: &crate::db::Pool) -> i64 {
         let id = crate::utils::id::new_id();
         let username = format!("testuser_{id}");
-        sqlx::query(&format!("INSERT INTO users (id, username, status, registered_via) VALUES ({}, {}, 'active', 'email')", crate::db::Driver::ph(1), crate::db::Driver::ph(2)))
+        sqlx::query(crate::db::safe_sql(&format!("INSERT INTO users (id, username, status, registered_via) VALUES ({}, {}, 'active', 'email')", crate::db::Driver::ph(1), crate::db::Driver::ph(2))))
             .bind(id)
             .bind(&username)
             .execute(pool)

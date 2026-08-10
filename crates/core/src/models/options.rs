@@ -111,7 +111,7 @@ mod tests {
         updated_at: &crate::utils::tz::Timestamp,
     ) {
         let id = crate::utils::id::new_id();
-        sqlx::query(&format!(
+        sqlx::query(crate::db::safe_sql(&format!(
             "INSERT INTO options (id, option_key, value, type, group_name, label, autoload, sort_order, updated_at) \
              VALUES ({}, {}, {}, {}, 'test', 'test', {}, 0, {})",
             crate::db::Driver::ph(1),
@@ -120,7 +120,7 @@ mod tests {
             crate::db::Driver::ph(4),
             crate::db::Driver::ph(5),
             crate::db::Driver::ph(6)
-        ))
+        )))
         .bind(id)
         .bind(key)
         .bind(serde_json::Value::String(value.to_string()))
@@ -139,7 +139,9 @@ mod tests {
         let now = crate::utils::tz::now_utc();
 
         insert_test_option(&pool, &key, "initial", true, &now).await;
-        upsert_value(&pool, &key, &serde_json::json!("updated"), None).await.unwrap();
+        upsert_value(&pool, &key, &serde_json::json!("updated"), None)
+            .await
+            .unwrap();
 
         let found = find_by_key(&pool, &key, None).await.unwrap();
         assert!(found.is_some());
@@ -171,7 +173,9 @@ mod tests {
         let now = crate::utils::tz::now_utc();
 
         insert_test_option(&pool, &key, "v1", true, &now).await;
-        upsert_value(&pool, &key, &serde_json::json!("v2"), None).await.unwrap();
+        upsert_value(&pool, &key, &serde_json::json!("v2"), None)
+            .await
+            .unwrap();
 
         let found = find_by_key(&pool, &key, None).await.unwrap().unwrap();
         assert_eq!(found.value, "v2");

@@ -27,7 +27,7 @@ pub fn generate_code(length: u32) -> String {
     let digits: Vec<u8> = (0..length)
         .map(|_| {
             let mut byte = [0u8; 1];
-            getrandom::getrandom(&mut byte).unwrap_or_default();
+            getrandom::fill(&mut byte).unwrap_or_default();
             byte[0] % 10
         })
         .collect();
@@ -162,7 +162,10 @@ pub enum VerifyResult {
 pub async fn cleanup_expired(pool: &crate::db::Pool) -> AppResult<u64> {
     let now = crate::utils::tz::now_utc();
     let sql = format!("DELETE FROM sms_codes WHERE expires_at < {}", Driver::ph(1));
-    let result: crate::db::pool::DbQueryResult = sqlx::query(&sql).bind(now).execute(pool).await?;
+    let result: crate::db::pool::DbQueryResult = sqlx::query(crate::db::safe_sql(&sql))
+        .bind(now)
+        .execute(pool)
+        .await?;
     Ok(result.rows_affected())
 }
 

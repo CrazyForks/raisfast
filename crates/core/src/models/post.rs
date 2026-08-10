@@ -413,7 +413,7 @@ pub async fn find_published(
             Driver::ph(5),
             Driver::ph(6)
         );
-        let mut query = sqlx::query_as::<_, Post>(&sql)
+        let mut query = sqlx::query_as::<_, Post>(crate::db::safe_sql(&sql))
             .bind(PostStatus::Published)
             .bind("post")
             .bind(tag_id);
@@ -429,7 +429,7 @@ pub async fn find_published(
             Driver::ph(2),
             Driver::ph(3)
         );
-        let mut query = sqlx::query_as::<_, (i64,)>(&sql)
+        let mut query = sqlx::query_as::<_, (i64,)>(crate::db::safe_sql(&sql))
             .bind(PostStatus::Published)
             .bind("post")
             .bind(tag_id);
@@ -450,7 +450,8 @@ pub async fn find_published(
             Driver::ph(5),
             Driver::ph(6)
         );
-        let mut query = sqlx::query_as::<_, Post>(&sql).bind(PostStatus::Published);
+        let mut query =
+            sqlx::query_as::<_, Post>(crate::db::safe_sql(&sql)).bind(PostStatus::Published);
         if let Some(tid) = tenant_id {
             query = query.bind(tid);
         }
@@ -468,7 +469,8 @@ pub async fn find_published(
             Driver::ph(3),
             Driver::ph(4)
         );
-        let mut query = sqlx::query_as::<_, (i64,)>(&sql).bind(PostStatus::Published);
+        let mut query =
+            sqlx::query_as::<_, (i64,)>(crate::db::safe_sql(&sql)).bind(PostStatus::Published);
         if let Some(tid) = tenant_id {
             query = query.bind(tid);
         }
@@ -484,7 +486,7 @@ pub async fn find_published(
             Driver::ph(4),
             Driver::ph(5)
         );
-        let mut query = sqlx::query_as::<_, Post>(&sql)
+        let mut query = sqlx::query_as::<_, Post>(crate::db::safe_sql(&sql))
             .bind(PostStatus::Published)
             .bind(category_id);
         if let Some(tid) = tenant_id {
@@ -497,7 +499,7 @@ pub async fn find_published(
             Driver::ph(1),
             Driver::ph(2)
         );
-        let mut query = sqlx::query_as::<_, (i64,)>(&sql)
+        let mut query = sqlx::query_as::<_, (i64,)>(crate::db::safe_sql(&sql))
             .bind(PostStatus::Published)
             .bind(category_id);
         if let Some(tid) = tenant_id {
@@ -514,7 +516,8 @@ pub async fn find_published(
             Driver::ph(3),
             Driver::ph(4)
         );
-        let mut query = sqlx::query_as::<_, Post>(&sql).bind(PostStatus::Published);
+        let mut query =
+            sqlx::query_as::<_, Post>(crate::db::safe_sql(&sql)).bind(PostStatus::Published);
         if let Some(tid) = tenant_id {
             query = query.bind(tid);
         }
@@ -524,7 +527,8 @@ pub async fn find_published(
             "SELECT COUNT(*) FROM posts WHERE status = {}{filter}",
             Driver::ph(1)
         );
-        let mut query = sqlx::query_as::<_, (i64,)>(&sql).bind(PostStatus::Published);
+        let mut query =
+            sqlx::query_as::<_, (i64,)>(crate::db::safe_sql(&sql)).bind(PostStatus::Published);
         if let Some(tid) = tenant_id {
             query = query.bind(tid);
         }
@@ -579,7 +583,7 @@ pub async fn find_all_joined(
             "SELECT {select_cols} FROM posts p LEFT JOIN users u ON p.created_by = u.id LEFT JOIN categories c ON p.category_id = c.id WHERE {where_clause}{tf} ORDER BY p.is_pinned DESC, p.created_at DESC LIMIT {limit_ph} OFFSET {offset_ph}"
         );
 
-        let mut q = sqlx::query_as::<_, PostJoinedRow>(&sql);
+        let mut q = sqlx::query_as::<_, PostJoinedRow>(crate::db::safe_sql(&sql));
         if let Some(s) = status {
             q = q.bind(s);
         }
@@ -592,7 +596,7 @@ pub async fn find_all_joined(
         let items = q.bind(page_size).bind(offset).fetch_all(pool).await?;
 
         let count_sql = format!("SELECT COUNT(*) FROM posts p WHERE {where_clause}{tf}");
-        let mut cq = sqlx::query_scalar::<_, i64>(&count_sql);
+        let mut cq = sqlx::query_scalar::<_, i64>(crate::db::safe_sql(&count_sql));
         if let Some(s) = status {
             cq = cq.bind(s);
         }
@@ -667,7 +671,7 @@ pub async fn find_all_joined(
             None => String::new(),
         };
         let count_sql = format!("SELECT COUNT(*) FROM posts WHERE 1=1{}", count_filter);
-        let mut cq = sqlx::query_scalar::<_, i64>(&count_sql);
+        let mut cq = sqlx::query_scalar::<_, i64>(crate::db::safe_sql(&count_sql));
         if let Some(tid) = tenant_id {
             cq = cq.bind(tid);
         }
@@ -878,7 +882,7 @@ pub async fn find_published_joined(
             Driver::ph(5),
             Driver::ph(6)
         );
-        let mut query = sqlx::query_as::<_, PostJoinedRow>(&sql)
+        let mut query = sqlx::query_as::<_, PostJoinedRow>(crate::db::safe_sql(&sql))
             .bind(PostStatus::Published)
             .bind("post")
             .bind(tag_id);
@@ -893,7 +897,7 @@ pub async fn find_published_joined(
             Driver::ph(2),
             Driver::ph(3)
         );
-        let mut query = sqlx::query_as::<_, (i64,)>(&sql)
+        let mut query = sqlx::query_as::<_, (i64,)>(crate::db::safe_sql(&sql))
             .bind(PostStatus::Published)
             .bind("post")
             .bind(tag_id);
@@ -916,7 +920,8 @@ pub async fn find_published_joined(
             Driver::ph(5),
             Driver::ph(6)
         );
-        let mut query = sqlx::query_as::<_, PostJoinedRow>(&sql).bind(PostStatus::Published);
+        let mut query = sqlx::query_as::<_, PostJoinedRow>(crate::db::safe_sql(&sql))
+            .bind(PostStatus::Published);
         if let Some(tid) = tenant_id {
             query = query.bind(tid);
         }
@@ -935,7 +940,8 @@ pub async fn find_published_joined(
             Driver::ph(3),
             Driver::ph(4)
         );
-        let mut query = sqlx::query_as::<_, (i64,)>(&sql).bind(PostStatus::Published);
+        let mut query =
+            sqlx::query_as::<_, (i64,)>(crate::db::safe_sql(&sql)).bind(PostStatus::Published);
         if let Some(tid) = tenant_id {
             query = query.bind(tid);
         }
@@ -953,7 +959,7 @@ pub async fn find_published_joined(
             Driver::ph(4),
             Driver::ph(5)
         );
-        let mut query = sqlx::query_as::<_, PostJoinedRow>(&sql)
+        let mut query = sqlx::query_as::<_, PostJoinedRow>(crate::db::safe_sql(&sql))
             .bind(PostStatus::Published)
             .bind(category_id);
         if let Some(tid) = tenant_id {
@@ -967,7 +973,7 @@ pub async fn find_published_joined(
             Driver::ph(1),
             Driver::ph(2)
         );
-        let mut query = sqlx::query_as::<_, (i64,)>(&sql)
+        let mut query = sqlx::query_as::<_, (i64,)>(crate::db::safe_sql(&sql))
             .bind(PostStatus::Published)
             .bind(category_id);
         if let Some(tid) = tenant_id {
@@ -986,7 +992,8 @@ pub async fn find_published_joined(
             Driver::ph(3),
             Driver::ph(4)
         );
-        let mut query = sqlx::query_as::<_, PostJoinedRow>(&sql).bind(PostStatus::Published);
+        let mut query = sqlx::query_as::<_, PostJoinedRow>(crate::db::safe_sql(&sql))
+            .bind(PostStatus::Published);
         if let Some(tid) = tenant_id {
             query = query.bind(tid);
         }
@@ -997,7 +1004,8 @@ pub async fn find_published_joined(
             "SELECT COUNT(*) FROM posts WHERE status = {}{filter}",
             Driver::ph(1)
         );
-        let mut query = sqlx::query_as::<_, (i64,)>(&sql).bind(PostStatus::Published);
+        let mut query =
+            sqlx::query_as::<_, (i64,)>(crate::db::safe_sql(&sql)).bind(PostStatus::Published);
         if let Some(tid) = tenant_id {
             query = query.bind(tid);
         }
@@ -1022,11 +1030,11 @@ mod tests {
     async fn create_user(pool: &crate::db::Pool) -> (i64, String) {
         let uid = crate::utils::id::new_id();
         let username = format!("testuser_{}", crate::utils::id::new_id());
-        sqlx::query(&format!(
+        sqlx::query(crate::db::safe_sql(&format!(
             "INSERT INTO users (id, username, status, registered_via) VALUES ({}, {}, 'active', 'email')",
             crate::db::Driver::ph(1),
             crate::db::Driver::ph(2)
-        ))
+        )))
         .bind(uid)
         .bind(&username)
         .execute(pool)
@@ -1144,12 +1152,12 @@ mod tests {
         let cat_id = crate::utils::id::new_id();
         let cat_name = format!("Tech_{}", crate::utils::id::new_id());
         let cat_slug = format!("tech_{}", crate::utils::id::new_id());
-        sqlx::query(&format!(
+        sqlx::query(crate::db::safe_sql(&format!(
             "INSERT INTO categories (id, name, slug) VALUES ({}, {}, {})",
             crate::db::Driver::ph(1),
             crate::db::Driver::ph(2),
             crate::db::Driver::ph(3)
-        ))
+        )))
         .bind(cat_id)
         .bind(&cat_name)
         .bind(&cat_slug)

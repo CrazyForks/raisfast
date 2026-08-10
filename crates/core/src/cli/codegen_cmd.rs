@@ -66,7 +66,7 @@ pub fn run_model(tables: &[String], force: bool, dry_run: bool) -> anyhow::Resul
     )?;
 
     for table in &targets {
-        let ctx = tera::Context::from_serialize(table)?;
+        let ctx = tera::Context::from_serialize(&table)?;
         let code = tera.render("model.rs", &ctx)?;
 
         let file_path = models_dir.join(format!("{}.rs", table.name));

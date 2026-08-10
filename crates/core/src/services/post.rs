@@ -930,15 +930,15 @@ mod tests {
         let pid = crate::utils::id::new_id();
         let username = format!("user1_{}", crate::utils::id::new_id());
         let slug = format!("t_{}", crate::utils::id::new_id());
-        sqlx::query(&format!(
+        sqlx::query(crate::db::safe_sql(&format!(
             "INSERT INTO users (id, username, status, registered_via) VALUES ({uid}, '{username}', 'active', 'email')"
-        ))
+        )))
         .execute(&pool)
         .await
         .unwrap();
-        sqlx::query(&format!(
+        sqlx::query(crate::db::safe_sql(&format!(
             "INSERT INTO posts (id, title, slug, content, status, created_by, updated_by, tenant_id) VALUES ({pid}, 'T', '{slug}', 'c', 'draft', {uid}, {uid}, 't1')"
-        ))
+        )))
         .execute(&pool)
         .await
         .unwrap();
@@ -955,15 +955,15 @@ mod tests {
         let pid = crate::utils::id::new_id();
         let username = format!("user1_{}", crate::utils::id::new_id());
         let slug = format!("t_{}", crate::utils::id::new_id());
-        sqlx::query(&format!(
+        sqlx::query(crate::db::safe_sql(&format!(
             "INSERT INTO users (id, username, status, registered_via) VALUES ({uid}, '{username}', 'active', 'email')"
-        ))
+        )))
         .execute(&pool)
         .await
         .unwrap();
-        sqlx::query(&format!(
+        sqlx::query(crate::db::safe_sql(&format!(
             "INSERT INTO posts (id, title, slug, content, status, created_by, updated_by, tenant_id) VALUES ({pid}, 'T', '{slug}', 'c', 'draft', {uid}, {uid}, 't1')"
-        ))
+        )))
         .execute(&pool)
         .await
         .unwrap();

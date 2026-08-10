@@ -76,7 +76,7 @@ async fn nested_comment() {
         "UPDATE comments SET status = 'approved' WHERE id = {}",
         raisfast::db::Driver::ph(1)
     );
-    sqlx::query(&approve_sql)
+    sqlx::query(raisfast::db::safe_sql(&approve_sql))
         .bind(pid)
         .execute(&state.pool)
         .await

@@ -217,10 +217,10 @@ mod tests {
         let tenant = uniq_tenant();
         let ch1 = seed_channel_t(&pool, "stripe", &tenant).await;
         let _ch2 = seed_channel_t(&pool, "alipay", &tenant).await;
-        sqlx::query(&format!(
+        sqlx::query(crate::db::safe_sql(&format!(
             "UPDATE payment_channels SET is_active = FALSE WHERE id = {}",
             crate::db::Driver::ph(1)
-        ))
+        )))
         .bind(ch1.id)
         .execute(&pool)
         .await
@@ -249,10 +249,10 @@ mod tests {
         let pool = setup_pool().await;
         let tenant = uniq_tenant();
         let ch = seed_channel_t(&pool, "wxpay", &tenant).await;
-        sqlx::query(&format!(
+        sqlx::query(crate::db::safe_sql(&format!(
             "UPDATE payment_channels SET is_active = FALSE WHERE id = {}",
             crate::db::Driver::ph(1)
-        ))
+        )))
         .bind(ch.id)
         .execute(&pool)
         .await

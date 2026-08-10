@@ -1,17 +1,20 @@
 use crate::errors::app_error::{AppError, AppResult};
-use aes_gcm::aead::{Aead, AeadCore, KeyInit, OsRng};
+use aes_gcm::aead::{Aead, KeyInit};
 use aes_gcm::{Aes256Gcm, Nonce};
 use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
 
 pub fn aes256gcm_encrypt(plaintext: &str, key: &[u8; 32]) -> AppResult<String> {
     let cipher = Aes256Gcm::new_from_slice(key)
         .map_err(|e| AppError::Internal(anyhow::anyhow!("aes init: {e}")))?;
-    let nonce = Aes256Gcm::generate_nonce(&mut OsRng);
+    let mut nonce_bytes = [0u8; 12];
+    getrandom::fill(&mut nonce_bytes)
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("aes nonce: {e}")))?;
+    let nonce = Nonce::from(nonce_bytes);
     let ciphertext = cipher
         .encrypt(&nonce, plaintext.as_bytes())
         .map_err(|e| AppError::Internal(anyhow::anyhow!("aes256gcm encrypt: {e}")))?;
     let mut combined = Vec::with_capacity(12 + ciphertext.len());
-    combined.extend_from_slice(&nonce);
+    combined.extend_from_slice(&nonce_bytes);
     combined.extend_from_slice(&ciphertext);
     Ok(BASE64.encode(&combined))
 }
@@ -26,11 +29,14 @@ pub fn aes256gcm_decrypt(ciphertext_b64: &str, key: &[u8; 32]) -> AppResult<Stri
         )));
     }
     let (nonce_bytes, ciphertext) = combined.split_at(12);
-    let nonce = Nonce::from_slice(nonce_bytes);
+    let nonce_arr: [u8; 12] = nonce_bytes
+        .try_into()
+        .map_err(|_| AppError::Internal(anyhow::anyhow!("aes256gcm: invalid nonce length")))?;
+    let nonce = Nonce::from(nonce_arr);
     let cipher = Aes256Gcm::new_from_slice(key)
         .map_err(|e| AppError::Internal(anyhow::anyhow!("aes init: {e}")))?;
     let plaintext = cipher
-        .decrypt(nonce, ciphertext)
+        .decrypt(&nonce, ciphertext)
         .map_err(|e| AppError::Internal(anyhow::anyhow!("aes256gcm decrypt: {e}")))?;
     String::from_utf8(plaintext)
         .map_err(|e| AppError::Internal(anyhow::anyhow!("aes256gcm utf8: {e}")))

@@ -183,7 +183,7 @@ pub async fn ensure_safe_to_delete(
         "SELECT COUNT(*) FROM categories WHERE parent_id = {}{tf}",
         *id
     );
-    let mut q = sqlx::query_scalar::<_, i64>(&child_sql);
+    let mut q = sqlx::query_scalar::<_, i64>(crate::db::safe_sql(&child_sql));
     if let Some(tid) = tenant_id {
         q = q.bind(crate::db::tenant::resolve_tenant(Some(tid)));
     }
@@ -196,7 +196,7 @@ pub async fn ensure_safe_to_delete(
     }
 
     let post_sql = format!("SELECT COUNT(*) FROM posts WHERE category_id = {}{tf}", *id);
-    let mut q2 = sqlx::query_scalar::<_, i64>(&post_sql);
+    let mut q2 = sqlx::query_scalar::<_, i64>(crate::db::safe_sql(&post_sql));
     if let Some(tid) = tenant_id {
         q2 = q2.bind(crate::db::tenant::resolve_tenant(Some(tid)));
     }

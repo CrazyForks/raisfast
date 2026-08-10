@@ -141,7 +141,7 @@ mod tests {
             "SELECT COUNT(*) FROM email_verification_tokens WHERE user_id = {} AND verified_at IS NULL",
             crate::db::Driver::ph(1),
         );
-        let (count_before,): (i64,) = sqlx::query_as(&sql)
+        let (count_before,): (i64,) = sqlx::query_as(crate::db::safe_sql(&sql))
             .bind(user.id)
             .fetch_one(&pool)
             .await
@@ -150,7 +150,7 @@ mod tests {
         super::trigger_email_verification(&pool, &ae, user.id, &email, None)
             .await
             .unwrap();
-        let (count_after,): (i64,) = sqlx::query_as(&sql)
+        let (count_after,): (i64,) = sqlx::query_as(crate::db::safe_sql(&sql))
             .bind(user.id)
             .fetch_one(&pool)
             .await
@@ -171,7 +171,7 @@ mod tests {
             "SELECT token FROM email_verification_tokens WHERE user_id = {} AND verified_at IS NULL LIMIT 1",
             crate::db::Driver::ph(1),
         );
-        let (token_str,): (String,) = sqlx::query_as(&sql)
+        let (token_str,): (String,) = sqlx::query_as(crate::db::safe_sql(&sql))
             .bind(user.id)
             .fetch_one(&pool)
             .await
@@ -211,7 +211,7 @@ mod tests {
             "SELECT COUNT(*) FROM email_verification_tokens WHERE user_id = {} AND verified_at IS NULL",
             crate::db::Driver::ph(1),
         );
-        let (count,): (i64,) = sqlx::query_as(&sql)
+        let (count,): (i64,) = sqlx::query_as(crate::db::safe_sql(&sql))
             .bind(user.id)
             .fetch_one(&pool)
             .await
@@ -232,7 +232,7 @@ mod tests {
             "SELECT token FROM email_verification_tokens WHERE user_id = {} AND verified_at IS NULL LIMIT 1",
             crate::db::Driver::ph(1),
         );
-        let (token_str,): (String,) = sqlx::query_as(&sql)
+        let (token_str,): (String,) = sqlx::query_as(crate::db::safe_sql(&sql))
             .bind(user.id)
             .fetch_one(&pool)
             .await

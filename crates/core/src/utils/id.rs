@@ -35,7 +35,7 @@ pub fn new_snowflake_id() -> crate::types::snowflake_id::SnowflakeId {
 #[must_use]
 pub fn random_hex(byte_count: usize) -> String {
     let mut buf = vec![0u8; byte_count];
-    getrandom::getrandom(&mut buf).unwrap_or_else(|e| panic!("random_hex failed: {e}"));
+    getrandom::fill(&mut buf).unwrap_or_else(|e| panic!("random_hex failed: {e}"));
     hex::encode(buf)
 }
 

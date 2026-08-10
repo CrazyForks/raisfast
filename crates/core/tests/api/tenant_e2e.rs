@@ -48,7 +48,7 @@ async fn create_user_in_tenant(
         raisfast::db::Driver::ph(1),
         raisfast::db::Driver::ph(2)
     );
-    let int_id: i64 = sqlx::query_scalar(&sql)
+    let int_id: i64 = sqlx::query_scalar(raisfast::db::safe_sql(&sql))
         .bind(tenant_id)
         .bind(username)
         .fetch_one(pool)
@@ -66,7 +66,7 @@ async fn create_user_in_tenant(
         raisfast::db::Driver::ph(5),
         raisfast::db::Driver::ph(6)
     );
-    sqlx::query(&cred_sql)
+    sqlx::query(raisfast::db::safe_sql(&cred_sql))
         .bind(cred_id)
         .bind(int_id)
         .bind(email)
@@ -109,7 +109,7 @@ async fn create_published_post_in_tenant(
         raisfast::db::Driver::ph(5),
         raisfast::db::Driver::ph(6)
     );
-    sqlx::query(&sql)
+    sqlx::query(raisfast::db::safe_sql(&sql))
         .bind(tenant_id)
         .bind(title)
         .bind(slug)

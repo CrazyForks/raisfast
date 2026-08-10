@@ -102,8 +102,8 @@ fn detect_blob_mimetype(bytes: &[u8]) -> String {
 impl BindValue {
     fn bind<'q, DB: sqlx::Database>(
         self,
-        query: sqlx::query::Query<'q, DB, <DB as sqlx::Database>::Arguments<'q>>,
-    ) -> sqlx::query::Query<'q, DB, <DB as sqlx::Database>::Arguments<'q>>
+        query: sqlx::query::Query<'q, DB, <DB as sqlx::Database>::Arguments>,
+    ) -> sqlx::query::Query<'q, DB, <DB as sqlx::Database>::Arguments>
     where
         String: sqlx::Encode<'q, DB> + sqlx::Type<DB>,
         i64: sqlx::Encode<'q, DB> + sqlx::Type<DB>,
@@ -503,7 +503,7 @@ impl ContentRepository {
         } else {
             let count_sql = format!("SELECT COUNT(*) as cnt FROM {table}{where_sql}");
 
-            let mut count_q = sqlx::query_scalar::<_, i64>(&count_sql);
+            let mut count_q = sqlx::query_scalar::<_, i64>(crate::db::safe_sql(&count_sql));
             for p in &params {
                 count_q = count_q.bind(value_to_string(p));
             }
@@ -521,7 +521,7 @@ impl ContentRepository {
         );
 
         let rows = {
-            let mut data_q = sqlx::query(&data_sql);
+            let mut data_q = sqlx::query(crate::db::safe_sql(&data_sql));
             for p in &params {
                 data_q = data_q.bind(value_to_string(p));
             }
@@ -607,7 +607,7 @@ impl ContentRepository {
         let sql = format!("SELECT {select_cols} FROM {table}{where_sql}");
 
         let mut stream = {
-            let mut query = sqlx::query(&sql);
+            let mut query = sqlx::query(crate::db::safe_sql(&sql));
             for p in &params {
                 query = query.bind(value_to_string(p));
             }
@@ -663,7 +663,7 @@ impl ContentRepository {
             where_parts.join(" AND ")
         );
 
-        let mut q = sqlx::query(&sql).bind(id);
+        let mut q = sqlx::query(crate::db::safe_sql(&sql)).bind(id);
         if let Some(ref tid) = tid {
             q = q.bind(tid);
         }
@@ -721,7 +721,7 @@ impl ContentRepository {
             )
         };
 
-        let mut q = sqlx::query(&sql);
+        let mut q = sqlx::query(crate::db::safe_sql(&sql));
         if let Some(ref tid) = tid {
             q = q.bind(tid);
         }
@@ -798,7 +798,7 @@ impl ContentRepository {
             where_parts.join(" AND ")
         );
 
-        let mut q = sqlx::query(&sql).bind(slug);
+        let mut q = sqlx::query(crate::db::safe_sql(&sql)).bind(slug);
         if let Some(ref tid) = tid {
             q = q.bind(tid);
         }
@@ -1000,7 +1000,7 @@ impl ContentRepository {
             placeholders.join(", ")
         );
 
-        let mut query = sqlx::query(&sql);
+        let mut query = sqlx::query(crate::db::safe_sql(&sql));
         for v in values {
             query = v.bind(query);
         }
@@ -1035,7 +1035,7 @@ impl ContentRepository {
                     &format!("{source_col}, {target_col}"),
                     &format!("{}, {}", crate::db::Driver::ph(1), crate::db::Driver::ph(2)),
                 );
-                sqlx::query(&jsql)
+                sqlx::query(crate::db::safe_sql(&jsql))
                     .bind(source_int_id)
                     .bind(target_int_id)
                     .execute(&mut *tx)
@@ -1068,7 +1068,7 @@ impl ContentRepository {
                 crate::db::Driver::ph(2)
             );
             for target_int_id in int_ids {
-                sqlx::query(&usql)
+                sqlx::query(crate::db::safe_sql(&usql))
                     .bind(source_int_id)
                     .bind(target_int_id)
                     .execute(&mut *tx)
@@ -1087,7 +1087,7 @@ impl ContentRepository {
             ct.table,
             crate::db::Driver::ph(1)
         );
-        let row = sqlx::query(&sql)
+        let row = sqlx::query(crate::db::safe_sql(&sql))
             .bind(new_id)
             .fetch_optional(&self.pool)
             .await?;
@@ -1318,7 +1318,7 @@ impl ContentRepository {
                 where_parts.join(" AND ")
             );
 
-            let mut query = sqlx::query(&sql);
+            let mut query = sqlx::query(crate::db::safe_sql(&sql));
             for v in values.drain(..set_value_count) {
                 query = v.bind(query);
             }
@@ -1358,7 +1358,7 @@ impl ContentRepository {
                 "DELETE FROM {through_table} WHERE {source_col} = {}",
                 crate::db::Driver::ph(1)
             );
-            sqlx::query(&del_sql)
+            sqlx::query(crate::db::safe_sql(&del_sql))
                 .bind(source_int_id)
                 .execute(&mut *tx)
                 .await
@@ -1379,7 +1379,7 @@ impl ContentRepository {
                     &format!("{source_col}, {target_col}"),
                     &format!("{}, {}", crate::db::Driver::ph(1), crate::db::Driver::ph(2)),
                 );
-                sqlx::query(&jsql)
+                sqlx::query(crate::db::safe_sql(&jsql))
                     .bind(source_int_id)
                     .bind(target_int_id)
                     .execute(&mut *tx)
@@ -1403,7 +1403,7 @@ impl ContentRepository {
                 "UPDATE {target_table} SET {fk_col} = NULL WHERE {fk_col} = {}",
                 crate::db::Driver::ph(1)
             );
-            sqlx::query(&clear_sql)
+            sqlx::query(crate::db::safe_sql(&clear_sql))
                 .bind(source_int_id)
                 .execute(&mut *tx)
                 .await
@@ -1424,7 +1424,7 @@ impl ContentRepository {
                 crate::db::Driver::ph(2)
             );
             for target_int_id in int_ids {
-                sqlx::query(&usql)
+                sqlx::query(crate::db::safe_sql(&usql))
                     .bind(source_int_id)
                     .bind(target_int_id)
                     .execute(&mut *tx)
@@ -1526,7 +1526,7 @@ impl ContentRepository {
                     ct.table,
                     where_parts.join(" AND ")
                 );
-                let mut query = sqlx::query_scalar::<_, i64>(&id_sql);
+                let mut query = sqlx::query_scalar::<_, i64>(crate::db::safe_sql(&id_sql));
                 query = query.bind(id);
                 for v in &values {
                     query = query.bind(v);
@@ -1545,7 +1545,7 @@ impl ContentRepository {
                         "DELETE FROM {through} WHERE {source_col} = {}",
                         crate::db::Driver::ph(1)
                     );
-                    sqlx::query(&sql)
+                    sqlx::query(crate::db::safe_sql(&sql))
                         .bind(sid)
                         .execute(&mut *tx)
                         .await
@@ -1566,7 +1566,7 @@ impl ContentRepository {
                         "DELETE FROM {through} WHERE {target_col} = {}",
                         crate::db::Driver::ph(1)
                     );
-                    sqlx::query(&sql)
+                    sqlx::query(crate::db::safe_sql(&sql))
                         .bind(sid)
                         .execute(&mut *tx)
                         .await
@@ -1592,7 +1592,7 @@ impl ContentRepository {
                     crate::db::Driver::ph(idx),
                     where_parts.join(" AND ")
                 );
-                let mut query = sqlx::query(&sql);
+                let mut query = sqlx::query(crate::db::safe_sql(&sql));
                 query = query.bind(now);
                 query = query.bind(id);
                 for v in &values {
@@ -1607,7 +1607,7 @@ impl ContentRepository {
                     ct.table,
                     where_parts.join(" AND ")
                 );
-                let mut query = sqlx::query(&sql);
+                let mut query = sqlx::query(crate::db::safe_sql(&sql));
                 query = query.bind(id);
                 for v in &values {
                     query = query.bind(v);
@@ -1634,7 +1634,7 @@ impl ContentRepository {
                 crate::db::Driver::ph(idx),
                 where_parts.join(" AND ")
             );
-            let mut query = sqlx::query(&sql);
+            let mut query = sqlx::query(crate::db::safe_sql(&sql));
             query = query.bind(now);
             query = query.bind(id);
             for v in &values {
@@ -1650,7 +1650,7 @@ impl ContentRepository {
                 ct.table,
                 where_parts.join(" AND ")
             );
-            let mut query = sqlx::query(&sql);
+            let mut query = sqlx::query(crate::db::safe_sql(&sql));
             query = query.bind(id);
             for v in &values {
                 query = query.bind(v);
@@ -1711,7 +1711,7 @@ impl ContentRepository {
             where_parts.join(" AND ")
         );
 
-        let mut query = sqlx::query(&sql);
+        let mut query = sqlx::query(crate::db::safe_sql(&sql));
         query = query.bind(deleted_at);
         bind_optional!(query, deleted_by);
         query = query.bind(id);
@@ -1743,7 +1743,7 @@ impl ContentRepository {
         if existing_columns.is_empty() {
             let create_sql = super::migration::generate_create_table(ct, &protocol_columns);
 
-            sqlx::query(&create_sql)
+            sqlx::query(crate::db::safe_sql(&create_sql))
                 .execute(&self.pool)
                 .await
                 .map_err(|e| {
@@ -1806,12 +1806,15 @@ impl ContentRepository {
             } else {
                 for sql in &alter_stmts {
                     tracing::info!("syncing column: {}", sql);
-                    sqlx::query(sql).execute(&self.pool).await.map_err(|e| {
-                        AppError::Internal(
-                            anyhow::Error::from(e)
-                                .context(format!("ALTER TABLE {} failed", ct.table)),
-                        )
-                    })?;
+                    sqlx::query(crate::db::safe_sql(sql))
+                        .execute(&self.pool)
+                        .await
+                        .map_err(|e| {
+                            AppError::Internal(
+                                anyhow::Error::from(e)
+                                    .context(format!("ALTER TABLE {} failed", ct.table)),
+                            )
+                        })?;
                 }
                 tracing::info!(
                     "synced {} column(s) for table {}",
@@ -1822,7 +1825,7 @@ impl ContentRepository {
         }
 
         for junction_sql in super::migration::generate_junction_tables(ct) {
-            sqlx::query(&junction_sql)
+            sqlx::query(crate::db::safe_sql(&junction_sql))
                 .execute(&self.pool)
                 .await
                 .map_err(|e| {
@@ -1840,16 +1843,20 @@ impl ContentRepository {
                         "SELECT COUNT(*) FROM information_schema.statistics WHERE table_schema = DATABASE() AND table_name = '{table}' AND index_name = '{idx_name}'",
                         table = ct.table
                     );
-                    if let Ok(exists) = sqlx::query_scalar::<crate::db::pool::Db, i64>(&check)
-                        .fetch_one(&self.pool)
-                        .await
+                    if let Ok(exists) =
+                        sqlx::query_scalar::<crate::db::pool::Db, i64>(crate::db::safe_sql(&check))
+                            .fetch_one(&self.pool)
+                            .await
                         && exists > 0
                     {
                         continue;
                     }
                 }
             }
-            if let Err(e) = sqlx::query(&index_sql).execute(&self.pool).await {
+            if let Err(e) = sqlx::query(crate::db::safe_sql(&index_sql))
+                .execute(&self.pool)
+                .await
+            {
                 tracing::warn!("index creation skipped: {}", e);
             }
         }
@@ -1862,7 +1869,9 @@ impl ContentRepository {
     async fn fetch_columns(&self, table: &str) -> Result<Vec<String>, AppError> {
         let (sql, col_index): (String, usize) = fetch_columns_sql(table)?;
 
-        let rows = sqlx::query(&sql).fetch_all(&self.pool).await?;
+        let rows = sqlx::query(crate::db::safe_sql(&sql))
+            .fetch_all(&self.pool)
+            .await?;
 
         let mut columns = Vec::new();
         for row in &rows {

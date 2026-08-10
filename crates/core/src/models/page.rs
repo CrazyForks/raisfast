@@ -509,7 +509,7 @@ pub async fn update(
         sets.join(", ")
     );
 
-    let mut q = sqlx::query(&sql);
+    let mut q = sqlx::query(crate::db::safe_sql(&sql));
     if let Some(v) = cmd.updated_by {
         q = q.bind(v);
     }
@@ -623,7 +623,7 @@ pub async fn update_status(
     let sql = format!(
         "UPDATE pages SET status = {status_ph}{updated_by_clause}{published_at_clause}{updated_at_clause} WHERE id = {id_ph}{tf}"
     );
-    let mut q = sqlx::query(&sql).bind(status);
+    let mut q = sqlx::query(crate::db::safe_sql(&sql)).bind(status);
     if let Some(v) = updated_by {
         q = q.bind(v);
     }
@@ -691,11 +691,11 @@ mod tests {
     async fn create_user(pool: &crate::db::Pool) -> i64 {
         let id = crate::utils::id::new_id();
         let username = format!("testuser_{}", crate::utils::id::new_id());
-        sqlx::query(&format!(
+        sqlx::query(crate::db::safe_sql(&format!(
             "INSERT INTO users (id, username, status, registered_via) VALUES ({}, {}, 'active', 'email')",
             crate::db::Driver::ph(1),
             crate::db::Driver::ph(2)
-        ))
+        )))
         .bind(id)
         .bind(&username)
         .execute(pool)

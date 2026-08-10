@@ -6,7 +6,7 @@
 //! Code blocks (` ``` `) preserve language-identifier CSS classes for frontend JS highlighting libraries (e.g. highlight.js).
 
 use ammonia::clean;
-use comrak::{ComrakOptions, markdown_to_html};
+use comrak::{Options, markdown_to_html};
 
 /// Renders Markdown text to sanitized HTML.
 ///
@@ -14,8 +14,8 @@ use comrak::{ComrakOptions, markdown_to_html};
 /// 2. Uses ammonia to sanitize the HTML, removing dangerous tags and attributes.
 #[must_use]
 pub fn render_markdown(content: &str) -> String {
-    let mut options = ComrakOptions::default();
-    options.render.unsafe_ = true;
+    let mut options = Options::default();
+    options.render.r#unsafe = true;
     let html = markdown_to_html(content, &options);
     clean(&html)
 }

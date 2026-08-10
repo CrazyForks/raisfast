@@ -79,11 +79,12 @@ pub async fn fetch_pending(pool: &crate::db::Pool, limit: i64) -> AppResult<Vec<
         "SELECT * FROM wallet_outbox WHERE status IN ('pending', 'failed') AND attempts < max_attempts ORDER BY created_at ASC LIMIT {}",
         Driver::ph(1)
     );
-    let result: Vec<WalletOutbox> = sqlx::query_as::<crate::db::pool::Db, WalletOutbox>(&sql)
-        .bind(limit)
-        .fetch_all(pool)
-        .await
-        .map_err(|e: sqlx::Error| AppError::Internal(e.into()))?;
+    let result: Vec<WalletOutbox> =
+        sqlx::query_as::<crate::db::pool::Db, WalletOutbox>(crate::db::safe_sql(&sql))
+            .bind(limit)
+            .fetch_all(pool)
+            .await
+            .map_err(|e: sqlx::Error| AppError::Internal(e.into()))?;
     Ok(result)
 }
 
@@ -94,7 +95,10 @@ pub async fn mark_processing(pool: &crate::db::Pool, id: SnowflakeId) -> AppResu
         crate::db::Driver::now_fn(),
         Driver::ph(1)
     );
-    sqlx::query(&sql).bind(id).execute(pool).await?;
+    sqlx::query(crate::db::safe_sql(&sql))
+        .bind(id)
+        .execute(pool)
+        .await?;
     Ok(())
 }
 
@@ -122,6 +126,10 @@ pub async fn mark_failed(pool: &crate::db::Pool, id: SnowflakeId, error: &str) -
         crate::db::Driver::now_fn(),
         Driver::ph(2)
     );
-    sqlx::query(&sql).bind(error).bind(id).execute(pool).await?;
+    sqlx::query(crate::db::safe_sql(&sql))
+        .bind(error)
+        .bind(id)
+        .execute(pool)
+        .await?;
     Ok(())
 }

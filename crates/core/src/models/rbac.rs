@@ -57,7 +57,7 @@ pub async fn find_permissions_by_role_ids(
          FROM permissions WHERE role_id IN ({})",
         placeholders.join(", ")
     );
-    let mut q = sqlx::query_as::<_, Permission>(&sql);
+    let mut q = sqlx::query_as::<_, Permission>(crate::db::safe_sql(&sql));
     for rid in role_ids {
         q = q.bind(rid);
     }

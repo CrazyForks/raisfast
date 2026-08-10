@@ -37,11 +37,11 @@ impl JobQueue for DefaultJobQueue {
 
         // Dedup: skip enqueue if a pending job with the same dedup_key exists.
         if let Some(ref key) = new_job.dedup_key {
-            let exists: bool = sqlx::query_scalar(&format!(
+            let exists: bool = sqlx::query_scalar(crate::db::safe_sql(&format!(
                 "SELECT EXISTS(SELECT 1 FROM jobs WHERE dedup_key = {} AND status = {})",
                 Driver::ph(1),
                 Driver::ph(2)
-            ))
+            )))
             .bind(key)
             .bind(JobStatus::Pending.as_str())
             .fetch_one(&self.pool)
@@ -94,7 +94,7 @@ impl JobQueue for DefaultJobQueue {
                 Driver::ph(2),
                 Driver::ph(3)
             );
-            let ids: Vec<i64> = sqlx::query_scalar::<_, i64>(&select_sql)
+            let ids: Vec<i64> = sqlx::query_scalar::<_, i64>(crate::db::safe_sql(&select_sql))
                 .bind(JobStatus::Pending.as_str())
                 .bind(now)
                 .bind(limit_i64)
@@ -112,7 +112,7 @@ impl JobQueue for DefaultJobQueue {
                     Driver::ph(3)
                 );
                 let row: Option<crate::db::pool::DbRow> =
-                    sqlx::query::<crate::db::pool::Db>(&update_sql)
+                    sqlx::query::<crate::db::pool::Db>(crate::db::safe_sql(&update_sql))
                         .bind(JobStatus::Running.as_str())
                         .bind(now)
                         .bind(id)
@@ -175,14 +175,15 @@ impl JobQueue for DefaultJobQueue {
                 Driver::ph(5)
             );
 
-            let rows: Vec<crate::db::pool::DbRow> = sqlx::query::<crate::db::pool::Db>(&sql)
-                .bind(JobStatus::Running.as_str())
-                .bind(now)
-                .bind(JobStatus::Pending.as_str())
-                .bind(now)
-                .bind(limit_i64)
-                .fetch_all(&self.pool)
-                .await?;
+            let rows: Vec<crate::db::pool::DbRow> =
+                sqlx::query::<crate::db::pool::Db>(crate::db::safe_sql(&sql))
+                    .bind(JobStatus::Running.as_str())
+                    .bind(now)
+                    .bind(JobStatus::Pending.as_str())
+                    .bind(now)
+                    .bind(limit_i64)
+                    .fetch_all(&self.pool)
+                    .await?;
 
             let mut jobs = Vec::with_capacity(rows.len());
             for row in rows {
@@ -234,11 +235,12 @@ impl JobQueue for DefaultJobQueue {
                 Driver::ph(1),
                 Driver::ph(2)
             );
-            let rows: Vec<crate::db::pool::DbRow> = sqlx::query::<crate::db::pool::Db>(&select_sql)
-                .bind(now)
-                .bind(limit_i64)
-                .fetch_all(&mut *tx)
-                .await?;
+            let rows: Vec<crate::db::pool::DbRow> =
+                sqlx::query::<crate::db::pool::Db>(crate::db::safe_sql(&select_sql))
+                    .bind(now)
+                    .bind(limit_i64)
+                    .fetch_all(&mut *tx)
+                    .await?;
 
             if rows.is_empty() {
                 tx.commit().await?;
@@ -257,7 +259,8 @@ impl JobQueue for DefaultJobQueue {
                 placeholders.join(", ")
             );
 
-            let mut q = sqlx::query::<crate::db::pool::Db>(&update_sql).bind(now);
+            let mut q =
+                sqlx::query::<crate::db::pool::Db>(crate::db::safe_sql(&update_sql)).bind(now);
             for id in &ids {
                 q = q.bind(id);
             }
@@ -324,10 +327,11 @@ impl JobQueue for DefaultJobQueue {
                 "SELECT attempts, max_attempts FROM jobs WHERE {COL_ID} = {}",
                 Driver::ph(1)
             );
-            let row: Option<crate::db::pool::DbRow> = sqlx::query::<crate::db::pool::Db>(&sql)
-                .bind(id)
-                .fetch_optional(&mut *tx)
-                .await?;
+            let row: Option<crate::db::pool::DbRow> =
+                sqlx::query::<crate::db::pool::Db>(crate::db::safe_sql(&sql))
+                    .bind(id)
+                    .fetch_optional(&mut *tx)
+                    .await?;
 
             let Some(r) = row else {
                 return Err(AppError::not_found("job"));
@@ -380,37 +384,38 @@ impl JobQueue for DefaultJobQueue {
         let p3 = Driver::ph(3);
         let p4 = Driver::ph(4);
         let p5 = Driver::ph(5);
-        let row: crate::db::pool::DbRow = sqlx::query::<crate::db::pool::Db>(&format!(
-            "SELECT
+        let row: crate::db::pool::DbRow =
+            sqlx::query::<crate::db::pool::Db>(crate::db::safe_sql(&format!(
+                "SELECT
                 {p0} as pending,
                 {p1} as running,
                 {p2} as completed,
                 {p3} as failed,
                 {p4} as dead
              FROM jobs",
-            p0 = Driver::cast_int(&format!(
-                "COALESCE(SUM(CASE WHEN status = {p1} THEN 1 ELSE 0 END), 0)"
-            )),
-            p1 = Driver::cast_int(&format!(
-                "COALESCE(SUM(CASE WHEN status = {p2} THEN 1 ELSE 0 END), 0)"
-            )),
-            p2 = Driver::cast_int(&format!(
-                "COALESCE(SUM(CASE WHEN status = {p3} THEN 1 ELSE 0 END), 0)"
-            )),
-            p3 = Driver::cast_int(&format!(
-                "COALESCE(SUM(CASE WHEN status = {p4} THEN 1 ELSE 0 END), 0)"
-            )),
-            p4 = Driver::cast_int(&format!(
-                "COALESCE(SUM(CASE WHEN status = {p5} THEN 1 ELSE 0 END), 0)"
-            )),
-        ))
-        .bind(JobStatus::Pending.as_str())
-        .bind(JobStatus::Running.as_str())
-        .bind(JobStatus::Completed.as_str())
-        .bind(JobStatus::Failed.as_str())
-        .bind(JobStatus::Dead.as_str())
-        .fetch_one(&self.pool)
-        .await?;
+                p0 = Driver::cast_int(&format!(
+                    "COALESCE(SUM(CASE WHEN status = {p1} THEN 1 ELSE 0 END), 0)"
+                )),
+                p1 = Driver::cast_int(&format!(
+                    "COALESCE(SUM(CASE WHEN status = {p2} THEN 1 ELSE 0 END), 0)"
+                )),
+                p2 = Driver::cast_int(&format!(
+                    "COALESCE(SUM(CASE WHEN status = {p3} THEN 1 ELSE 0 END), 0)"
+                )),
+                p3 = Driver::cast_int(&format!(
+                    "COALESCE(SUM(CASE WHEN status = {p4} THEN 1 ELSE 0 END), 0)"
+                )),
+                p4 = Driver::cast_int(&format!(
+                    "COALESCE(SUM(CASE WHEN status = {p5} THEN 1 ELSE 0 END), 0)"
+                )),
+            )))
+            .bind(JobStatus::Pending.as_str())
+            .bind(JobStatus::Running.as_str())
+            .bind(JobStatus::Completed.as_str())
+            .bind(JobStatus::Failed.as_str())
+            .bind(JobStatus::Dead.as_str())
+            .fetch_one(&self.pool)
+            .await?;
 
         Ok(JobStats {
             pending: row.get("pending"),
@@ -430,20 +435,19 @@ impl JobQueue for DefaultJobQueue {
         let offset = (page - 1) * page_size;
 
         let (items, total): (Vec<JobRow>, i64) = if let Some(s) = status {
-            let rows: Vec<crate::db::pool::DbRow> = sqlx::query::<crate::db::pool::Db>(&format!(
+            let rows: Vec<crate::db::pool::DbRow> = sqlx::query::<crate::db::pool::Db>(crate::db::safe_sql(&format!(
                 "SELECT {COL_ID}, job_type, payload, status, attempts, max_attempts, run_after, error, created_at, updated_at
                  FROM jobs WHERE status = {} ORDER BY created_at DESC LIMIT {} OFFSET {}",
                 Driver::ph(1), Driver::ph(2), Driver::ph(3)
-            ))
+            )))
             .bind(s)
             .bind(page_size)
             .bind(offset)
             .fetch_all(&self.pool)
             .await?;
 
-            let total: i64 = sqlx::query_scalar::<crate::db::pool::Db, i64>(&format!(
-                "SELECT COUNT(*) FROM jobs WHERE status = {}",
-                Driver::ph(1)
+            let total: i64 = sqlx::query_scalar::<crate::db::pool::Db, i64>(crate::db::safe_sql(
+                &format!("SELECT COUNT(*) FROM jobs WHERE status = {}", Driver::ph(1)),
             ))
             .bind(s)
             .fetch_one(&self.pool)
@@ -471,11 +475,11 @@ impl JobQueue for DefaultJobQueue {
 
             (items, total)
         } else {
-            let rows: Vec<crate::db::pool::DbRow> = sqlx::query::<crate::db::pool::Db>(&format!(
+            let rows: Vec<crate::db::pool::DbRow> = sqlx::query::<crate::db::pool::Db>(crate::db::safe_sql(&format!(
                 "SELECT {COL_ID}, job_type, payload, status, attempts, max_attempts, run_after, error, created_at, updated_at
                  FROM jobs ORDER BY created_at DESC LIMIT {} OFFSET {}",
                 Driver::ph(1), Driver::ph(2)
-            ))
+            )))
             .bind(page_size)
             .bind(offset)
             .fetch_all(&self.pool)
@@ -557,11 +561,12 @@ impl JobQueue for DefaultJobQueue {
             Driver::ph(2),
             crate::db::Driver::ago_expr(7)
         );
-        let result: crate::db::pool::DbQueryResult = sqlx::query::<crate::db::pool::Db>(&sql)
-            .bind(JobStatus::Completed.as_str())
-            .bind(JobStatus::Dead.as_str())
-            .execute(&self.pool)
-            .await?;
+        let result: crate::db::pool::DbQueryResult =
+            sqlx::query::<crate::db::pool::Db>(crate::db::safe_sql(&sql))
+                .bind(JobStatus::Completed.as_str())
+                .bind(JobStatus::Dead.as_str())
+                .execute(&self.pool)
+                .await?;
 
         let count = result.rows_affected();
         if count > 0 {
@@ -587,7 +592,7 @@ impl JobQueue for DefaultJobQueue {
             cutoff_expr
         );
         let dead_result: crate::db::pool::DbQueryResult =
-            sqlx::query::<crate::db::pool::Db>(&dead_sql)
+            sqlx::query::<crate::db::pool::Db>(crate::db::safe_sql(&dead_sql))
                 .bind(JobStatus::Dead.as_str())
                 .bind("visibility timeout exceeded")
                 .bind(now)
@@ -607,7 +612,7 @@ impl JobQueue for DefaultJobQueue {
             cutoff_expr
         );
         let requeue_result: crate::db::pool::DbQueryResult =
-            sqlx::query::<crate::db::pool::Db>(&requeue_sql)
+            sqlx::query::<crate::db::pool::Db>(crate::db::safe_sql(&requeue_sql))
                 .bind(JobStatus::Pending.as_str())
                 .bind("visibility timeout exceeded")
                 .bind(now)

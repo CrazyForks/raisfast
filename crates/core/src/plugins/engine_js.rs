@@ -40,6 +40,7 @@ impl Resolver for PluginResolver {
         _ctx: &Ctx<'js>,
         _base: &str,
         name: &str,
+        _attributes: Option<rquickjs::loader::ImportAttributes<'js>>,
     ) -> rquickjs::Result<String> {
         Ok(name.to_string())
     }
@@ -60,7 +61,12 @@ impl PluginLoader {
 }
 
 impl rquickjs::loader::Loader for PluginLoader {
-    fn load<'js>(&mut self, ctx: &Ctx<'js>, name: &str) -> rquickjs::Result<Module<'js>> {
+    fn load<'js>(
+        &mut self,
+        ctx: &Ctx<'js>,
+        name: &str,
+        _attributes: Option<rquickjs::loader::ImportAttributes<'js>>,
+    ) -> rquickjs::Result<Module<'js>> {
         let source = match name {
             "sdk" => self.sdk_source.to_string(),
             n if n.starts_with("./") || n.starts_with("../") => {

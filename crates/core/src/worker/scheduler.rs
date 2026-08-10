@@ -425,11 +425,11 @@ pub async fn create_script_schedule(
 
 /// Find by ID
 pub async fn find_by_id(pool: &Pool, id: SnowflakeId) -> AppResult<Option<CronSchedule>> {
-    let row: Option<CronScheduleRow> = sqlx::query_as::<_, CronScheduleRow>(&format!(
+    let row: Option<CronScheduleRow> = sqlx::query_as::<_, CronScheduleRow>(crate::db::safe_sql(&format!(
         "SELECT id, label, job_type, payload, cron_expr, enabled, last_run_at, next_run_at, plugin_id, exec_kind, handler_id, params, script_lang, script_source, script_entry, use_shell, timeout_secs, created_at, updated_at
          FROM cron_schedules WHERE id = {}",
         Driver::ph(1)
-    ))
+    )))
     .bind(id)
     .fetch_optional(pool)
     .await?;
@@ -460,10 +460,10 @@ pub async fn toggle_schedule(pool: &Pool, id: SnowflakeId, enabled: bool) -> App
     // When enabling, recompute next_run_at from cron_expr so a long-disabled
     // schedule doesn't fire-storm on re-enable.
     let next_run_at: Option<Timestamp> = if enabled {
-        let row: Option<(String,)> = sqlx::query_as(&format!(
+        let row: Option<(String,)> = sqlx::query_as(crate::db::safe_sql(&format!(
             "SELECT cron_expr FROM cron_schedules WHERE id = {}",
             Driver::ph(1)
-        ))
+        )))
         .bind(id)
         .fetch_optional(pool)
         .await?;
@@ -618,12 +618,12 @@ impl CronScheduler {
     async fn tick(&self) -> AppResult<()> {
         let now = crate::utils::tz::now_utc();
 
-        let rows = sqlx::query_as::<_, CronScheduleRow>(&format!(
+        let rows = sqlx::query_as::<_, CronScheduleRow>(crate::db::safe_sql(&format!(
             "SELECT id, label, job_type, payload, cron_expr, enabled, last_run_at, next_run_at, plugin_id, exec_kind, handler_id, params, script_lang, script_source, script_entry, use_shell, timeout_secs, created_at, updated_at
              FROM cron_schedules WHERE enabled = {} AND next_run_at <= {}",
             Driver::ph(1),
             Driver::ph(2)
-        ))
+        )))
         .bind(true)
         .bind(now)
         .fetch_all(&self.pool)
@@ -652,22 +652,23 @@ impl CronScheduler {
                 now + chrono::Duration::days(365 * 100)
             });
 
-            let claim_result: crate::db::pool::DbQueryResult = sqlx::query(&format!(
-                "UPDATE cron_schedules SET next_run_at = {}, last_run_at = {}, updated_at = {} \
+            let claim_result: crate::db::pool::DbQueryResult =
+                sqlx::query(crate::db::safe_sql(&format!(
+                    "UPDATE cron_schedules SET next_run_at = {}, last_run_at = {}, updated_at = {} \
                  WHERE id = {} AND next_run_at = {}",
-                Driver::ph(1),
-                Driver::ph(2),
-                Driver::ph(3),
-                Driver::ph(4),
-                Driver::ph(5)
-            ))
-            .bind(next)
-            .bind(now)
-            .bind(now)
-            .bind(schedule.id)
-            .bind(schedule.next_run_at)
-            .execute(&self.pool)
-            .await?;
+                    Driver::ph(1),
+                    Driver::ph(2),
+                    Driver::ph(3),
+                    Driver::ph(4),
+                    Driver::ph(5)
+                )))
+                .bind(next)
+                .bind(now)
+                .bind(now)
+                .bind(schedule.id)
+                .bind(schedule.next_run_at)
+                .execute(&self.pool)
+                .await?;
 
             if claim_result.rows_affected() == 0 {
                 tracing::debug!(
@@ -820,10 +821,10 @@ pub async fn seed_defaults(
     let mut inserted = 0u64;
     for s in &schedules {
         // Natural key: (plugin_id IS NULL, job_type) — only seed built-in schedules.
-        let exists: bool = sqlx::query_scalar(&format!(
+        let exists: bool = sqlx::query_scalar(crate::db::safe_sql(&format!(
             "SELECT EXISTS(SELECT 1 FROM cron_schedules WHERE plugin_id IS NULL AND job_type = {})",
             Driver::ph(1)
-        ))
+        )))
         .bind(&s.job_type)
         .fetch_one(pool)
         .await?;
@@ -956,21 +957,21 @@ pub async fn list_execution_logs(
     limit: i64,
     offset: i64,
 ) -> AppResult<(Vec<CronExecutionLog>, i64)> {
-    let total: i64 = sqlx::query_scalar(&format!(
+    let total: i64 = sqlx::query_scalar(crate::db::safe_sql(&format!(
         "SELECT COUNT(*) FROM cron_execution_log WHERE schedule_id = {}",
         Driver::ph(1)
-    ))
+    )))
     .bind(schedule_id)
     .fetch_one(pool)
     .await?;
 
-    let rows: Vec<CronExecLogRow> = sqlx::query_as::<_, CronExecLogRow>(&format!(
+    let rows: Vec<CronExecLogRow> = sqlx::query_as::<_, CronExecLogRow>(crate::db::safe_sql(&format!(
         "SELECT el.id, el.schedule_id, el.job_type, el.label, el.status, el.duration_ms, el.error, el.started_at, el.finished_at
          FROM cron_execution_log el
          WHERE el.schedule_id = {}
          ORDER BY el.started_at DESC LIMIT {} OFFSET {}",
         Driver::ph(1), Driver::ph(2), Driver::ph(3)
-    ))
+    )))
     .bind(schedule_id)
     .bind(limit)
     .bind(offset)
@@ -994,12 +995,12 @@ pub async fn recent_execution_logs(
         .fetch_one(pool)
         .await?;
 
-    let rows: Vec<CronExecLogRow> = sqlx::query_as::<_, CronExecLogRow>(&format!(
+    let rows: Vec<CronExecLogRow> = sqlx::query_as::<_, CronExecLogRow>(crate::db::safe_sql(&format!(
         "SELECT id, schedule_id, job_type, label, status, duration_ms, error, started_at, finished_at
          FROM cron_execution_log
          ORDER BY started_at DESC, id DESC LIMIT {} OFFSET {}",
         Driver::ph(1), Driver::ph(2)
-    ))
+    )))
     .bind(limit)
     .bind(offset)
     .fetch_all(pool)
@@ -1015,10 +1016,10 @@ pub async fn recent_execution_logs(
 /// Clean up expired execution logs
 pub async fn cleanup_execution_logs(pool: &Pool, retention_days: i64) -> AppResult<u64> {
     let threshold = crate::utils::tz::now_utc() - chrono::Duration::days(retention_days);
-    let result: crate::db::pool::DbQueryResult = sqlx::query(&format!(
+    let result: crate::db::pool::DbQueryResult = sqlx::query(crate::db::safe_sql(&format!(
         "DELETE FROM cron_execution_log WHERE started_at < {}",
         Driver::ph(1)
-    ))
+    )))
     .bind(threshold)
     .execute(pool)
     .await?;
@@ -1043,10 +1044,10 @@ pub async fn sync_plugin_crons(
     entries: &[CronEntry],
 ) -> AppResult<()> {
     in_transaction!(pool, tx, {
-        let old = sqlx::query_as::<_, PluginCronRow>(&format!(
+        let old = sqlx::query_as::<_, PluginCronRow>(crate::db::safe_sql(&format!(
             "SELECT id, job_type FROM cron_schedules WHERE plugin_id = {}",
             Driver::ph(1)
-        ))
+        )))
         .bind(plugin_id)
         .fetch_all(&mut *tx)
         .await?;
@@ -1064,11 +1065,11 @@ pub async fn sync_plugin_crons(
         }
 
         for entry in entries {
-            let existing: Option<(i64,)> = sqlx::query_as(&format!(
+            let existing: Option<(i64,)> = sqlx::query_as(crate::db::safe_sql(&format!(
                 "SELECT id FROM cron_schedules WHERE plugin_id = {} AND job_type = {}",
                 Driver::ph(1),
                 Driver::ph(2)
-            ))
+            )))
             .bind(plugin_id)
             .bind(&entry.job_type)
             .fetch_optional(&mut *tx)
@@ -1244,7 +1245,7 @@ mod tests {
         let past = now - chrono::Duration::hours(1);
         let schedule_id = crate::utils::id::new_id();
 
-        sqlx::query(&format!(
+        sqlx::query(crate::db::safe_sql(&format!(
             "INSERT INTO cron_schedules (id, label, job_type, payload, cron_expr, enabled, next_run_at, plugin_id, created_at, updated_at)
              VALUES ({}, {}, {}, {}, {}, TRUE, {}, NULL, {}, {})",
             crate::db::Driver::ph(1),
@@ -1255,7 +1256,7 @@ mod tests {
             crate::db::Driver::ph(6),
             crate::db::Driver::ph(7),
             crate::db::Driver::ph(8)
-        ))
+        )))
         .bind(schedule_id)
         .bind("Test Sitemap")
         .bind("generate_sitemap")
@@ -1278,10 +1279,10 @@ mod tests {
         assert_eq!(jobs.len(), 1);
         assert_eq!(jobs[0].0, "generate_sitemap");
 
-        let row: (crate::utils::tz::Timestamp,) = sqlx::query_as(&format!(
+        let row: (crate::utils::tz::Timestamp,) = sqlx::query_as(crate::db::safe_sql(&format!(
             "SELECT next_run_at FROM cron_schedules WHERE id = {}",
             crate::db::Driver::ph(1)
-        ))
+        )))
         .bind(schedule_id)
         .fetch_one(&pool)
         .await
@@ -1298,7 +1299,7 @@ mod tests {
         let now = Utc::now();
         let future = now + chrono::Duration::hours(1);
 
-        sqlx::query(&format!(
+        sqlx::query(crate::db::safe_sql(&format!(
             "INSERT INTO cron_schedules (id, label, job_type, payload, cron_expr, enabled, next_run_at, plugin_id, created_at, updated_at)
              VALUES ({}, {}, {}, {}, {}, TRUE, {}, NULL, {}, {})",
             crate::db::Driver::ph(1),
@@ -1309,7 +1310,7 @@ mod tests {
             crate::db::Driver::ph(6),
             crate::db::Driver::ph(7),
             crate::db::Driver::ph(8)
-        ))
+        )))
         .bind(crate::utils::id::new_id())
         .bind("Future Job")
         .bind("generate_sitemap")
@@ -1342,7 +1343,7 @@ mod tests {
 
         let now = Utc::now();
         let past = now - chrono::Duration::hours(1);
-        sqlx::query(&format!(
+        sqlx::query(crate::db::safe_sql(&format!(
             "INSERT INTO cron_schedules (id, label, job_type, payload, cron_expr, enabled, next_run_at, plugin_id, created_at, updated_at)
              VALUES ({}, {}, {}, {}, {}, TRUE, {}, NULL, {}, {})",
             crate::db::Driver::ph(1),
@@ -1353,7 +1354,7 @@ mod tests {
             crate::db::Driver::ph(6),
             crate::db::Driver::ph(7),
             crate::db::Driver::ph(8)
-        ))
+        )))
         .bind(crate::utils::id::new_id())
         .bind("Sitemap")
         .bind("generate_sitemap")
@@ -1396,7 +1397,7 @@ mod tests {
 
         let now = Utc::now();
         let past = now - chrono::Duration::hours(1);
-        sqlx::query(&format!(
+        sqlx::query(crate::db::safe_sql(&format!(
             "INSERT INTO cron_schedules (id, label, job_type, payload, cron_expr, enabled, next_run_at, plugin_id, created_at, updated_at)
              VALUES ({}, {}, {}, {}, {}, TRUE, {}, NULL, {}, {})",
             crate::db::Driver::ph(1),
@@ -1407,7 +1408,7 @@ mod tests {
             crate::db::Driver::ph(6),
             crate::db::Driver::ph(7),
             crate::db::Driver::ph(8)
-        ))
+        )))
         .bind(crate::utils::id::new_id())
         .bind("Sitemap")
         .bind("generate_sitemap")
@@ -1610,14 +1611,14 @@ mod tests {
     async fn insert_test_schedule(pool: &Pool) -> i64 {
         let id = crate::utils::id::new_id();
         let now = Utc::now();
-        sqlx::query(&format!(
+        sqlx::query(crate::db::safe_sql(&format!(
             "INSERT INTO cron_schedules (id, label, job_type, payload, cron_expr, enabled, next_run_at, plugin_id, created_at, updated_at)
              VALUES ({}, 'Test', 'test_task', NULL, '0 */5 * * * *', TRUE, {}, NULL, {}, {})",
             crate::db::Driver::ph(1),
             crate::db::Driver::ph(2),
             crate::db::Driver::ph(3),
             crate::db::Driver::ph(4)
-        ))
+        )))
         .bind(id)
         .bind(&now)
         .bind(&now)
@@ -1755,7 +1756,7 @@ mod tests {
 
         let schedule_id = crate::utils::id::new_id();
 
-        sqlx::query(&format!(
+        sqlx::query(crate::db::safe_sql(&format!(
             "INSERT INTO cron_schedules (id, label, job_type, payload, cron_expr, enabled, next_run_at, plugin_id, created_at, updated_at)
              VALUES ({}, {}, {}, {}, {}, TRUE, {}, NULL, {}, {})",
             crate::db::Driver::ph(1),
@@ -1766,7 +1767,7 @@ mod tests {
             crate::db::Driver::ph(6),
             crate::db::Driver::ph(7),
             crate::db::Driver::ph(8)
-        ))
+        )))
         .bind(schedule_id)
         .bind("Log Test")
         .bind("generate_sitemap")

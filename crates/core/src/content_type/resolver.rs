@@ -127,7 +127,7 @@ async fn resolve_many_to_one_batch(
         placeholders.join(", ")
     );
 
-    let mut q = sqlx::query(&sql);
+    let mut q = sqlx::query(crate::db::safe_sql(&sql));
     for id in &deduped_ids {
         q = q.bind(id);
     }
@@ -219,7 +219,7 @@ async fn resolve_one_to_many_batch(
         placeholders.join(", ")
     );
 
-    let mut q = sqlx::query(&sql);
+    let mut q = sqlx::query(crate::db::safe_sql(&sql));
     for id in &deduped_ids {
         q = q.bind(id);
     }
@@ -311,7 +311,7 @@ async fn resolve_many_to_many_batch(
         placeholders.join(", ")
     );
 
-    let mut q = sqlx::query(&sql);
+    let mut q = sqlx::query(crate::db::safe_sql(&sql));
     for id in &deduped_ids {
         q = q.bind(id);
     }
@@ -373,7 +373,7 @@ async fn fetch_column_names(pool: &Pool, table: &str) -> Vec<String> {
             return vec![COL_ID.into()];
         }
     };
-    let cols: Vec<String> = sqlx::query(&sql)
+    let cols: Vec<String> = sqlx::query(crate::db::safe_sql(&sql))
         .fetch_all(pool)
         .await
         .map(|rows| {
@@ -463,26 +463,26 @@ through = "ct_resolve_posts_tags"
     async fn setup_test_db() -> crate::db::Pool {
         let pool = crate::test_pool!();
 
-        sqlx::query(&format!(
+        sqlx::query(crate::db::safe_sql(&format!(
             "CREATE TABLE IF NOT EXISTS ct_resolve_users (id {}, name TEXT, slug TEXT, title TEXT)",
             crate::db::Driver::auto_increment_pk()
-        ))
+        )))
         .execute(&pool)
         .await
         .unwrap();
 
-        sqlx::query(&format!(
+        sqlx::query(crate::db::safe_sql(&format!(
             "CREATE TABLE IF NOT EXISTS ct_resolve_tags (id {}, name TEXT, slug TEXT, title TEXT)",
             crate::db::Driver::auto_increment_pk()
-        ))
+        )))
         .execute(&pool)
         .await
         .unwrap();
 
-        sqlx::query(&format!(
+        sqlx::query(crate::db::safe_sql(&format!(
             "CREATE TABLE IF NOT EXISTS ct_resolve_posts (id {}, title TEXT, author_id INTEGER, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, created_by INTEGER, updated_by INTEGER)",
             crate::db::Driver::auto_increment_pk()
-        ))
+        )))
         .execute(&pool)
         .await
         .unwrap();
@@ -646,18 +646,18 @@ through = "ct_resolve_posts_tags"
             .execute(&pool)
             .await
             .unwrap();
-        sqlx::query(&format!(
+        sqlx::query(crate::db::safe_sql(&format!(
             "CREATE TABLE ct_resolve_comments (id {}, text TEXT, post_id BIGINT)",
             crate::db::Driver::auto_increment_pk()
-        ))
+        )))
         .execute(&pool)
         .await
         .unwrap();
 
-        sqlx::query(&format!(
+        sqlx::query(crate::db::safe_sql(&format!(
             "CREATE TABLE IF NOT EXISTS ct_resolve_posts (id {}, title TEXT, author_id INTEGER, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, created_by INTEGER, updated_by INTEGER)",
             crate::db::Driver::auto_increment_pk()
-        ))
+        )))
         .execute(&pool)
         .await
         .unwrap();
@@ -728,18 +728,18 @@ foreign_key = "post_id"
     async fn resolve_m2o_with_zero_fk_skipped() {
         let pool = crate::test_pool!();
 
-        sqlx::query(&format!(
+        sqlx::query(crate::db::safe_sql(&format!(
             "CREATE TABLE IF NOT EXISTS ct_resolve_users (id {}, name TEXT, slug TEXT, title TEXT)",
             crate::db::Driver::auto_increment_pk()
-        ))
+        )))
         .execute(&pool)
         .await
         .unwrap();
 
-        sqlx::query(&format!(
+        sqlx::query(crate::db::safe_sql(&format!(
             "CREATE TABLE IF NOT EXISTS ct_resolve_posts (id {}, title TEXT, author_id INTEGER, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, created_by INTEGER, updated_by INTEGER)",
             crate::db::Driver::auto_increment_pk()
-        ))
+        )))
         .execute(&pool)
         .await
         .unwrap();

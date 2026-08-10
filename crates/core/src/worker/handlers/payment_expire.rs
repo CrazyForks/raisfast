@@ -33,10 +33,11 @@ impl JobHandler for ExpirePaymentOrdersHandler {
             "SELECT * FROM payment_orders WHERE status = 'pending' AND created_at < {} LIMIT 500",
             Driver::ph(1)
         );
-        let orders: Vec<crate::models::payment_order::PaymentOrder> = sqlx::query_as(&sql)
-            .bind(&cutoff)
-            .fetch_all(&self.pool)
-            .await?;
+        let orders: Vec<crate::models::payment_order::PaymentOrder> =
+            sqlx::query_as(crate::db::safe_sql(&sql))
+                .bind(&cutoff)
+                .fetch_all(&self.pool)
+                .await?;
 
         let mut expired = 0u64;
         let mut skipped = 0u64;

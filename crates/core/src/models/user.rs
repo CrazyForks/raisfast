@@ -329,7 +329,7 @@ pub async fn tx_find_by_id(
         "SELECT * FROM users WHERE id = {}{filter}",
         crate::db::Driver::ph(1)
     );
-    let mut q = sqlx::query_as::<_, User>(&sql).bind(id);
+    let mut q = sqlx::query_as::<_, User>(crate::db::safe_sql(&sql)).bind(id);
     if let Some(tid) = tenant_id {
         q = q.bind(tid);
     }

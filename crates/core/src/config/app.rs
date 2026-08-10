@@ -1349,7 +1349,7 @@ impl AppConfig {
 
     fn generate_app_key() -> String {
         let mut bytes = [0u8; 32];
-        getrandom::getrandom(&mut bytes)
+        getrandom::fill(&mut bytes)
             .unwrap_or_else(|e| panic!("failed to generate random APP_KEY: {e}"));
         base64::engine::general_purpose::STANDARD.encode(bytes)
     }

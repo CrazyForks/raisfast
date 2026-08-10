@@ -135,11 +135,11 @@ mod tests {
         let username = format!("testuser_{}", crate::utils::id::new_id());
         let returning = crate::db::Driver::returning_col("id");
         if returning.is_empty() {
-            sqlx::query(&format!(
+            sqlx::query(crate::db::safe_sql(&format!(
                 "INSERT INTO users (id, username, status, registered_via) VALUES ({}, {}, 'active', 'email')",
                 crate::db::Driver::ph(1),
                 crate::db::Driver::ph(2),
-            ))
+            )))
             .bind(id)
             .bind(&username)
             .execute(pool)
@@ -147,11 +147,11 @@ mod tests {
             .unwrap();
             id
         } else {
-            let (user_id,): (i64,) = sqlx::query_as(&format!(
+            let (user_id,): (i64,) = sqlx::query_as(crate::db::safe_sql(&format!(
                 "INSERT INTO users (id, username, status, registered_via) VALUES ({}, {}, 'active', 'email') {returning}",
                 crate::db::Driver::ph(1),
                 crate::db::Driver::ph(2),
-            ))
+            )))
             .bind(id)
             .bind(&username)
             .fetch_one(pool)
@@ -184,7 +184,7 @@ mod tests {
             crate::db::Driver::ph(7),
         );
         if returning.is_empty() {
-            sqlx::query(&sql)
+            sqlx::query(crate::db::safe_sql(&sql))
                 .bind(id)
                 .bind(title)
                 .bind(&slug)
@@ -197,7 +197,7 @@ mod tests {
                 .unwrap();
             (id, id.to_string())
         } else {
-            let (int_id,): (i64,) = sqlx::query_as(&sql)
+            let (int_id,): (i64,) = sqlx::query_as(crate::db::safe_sql(&sql))
                 .bind(id)
                 .bind(title)
                 .bind(&slug)

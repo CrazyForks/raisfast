@@ -1301,7 +1301,7 @@ mod tests {
     fn test_config() -> AppConfig {
         let mut c = AppConfig::test_defaults();
         let mut bytes = [0u8; 32];
-        getrandom::getrandom(&mut bytes).unwrap();
+        getrandom::fill(&mut bytes).unwrap();
         c.app_key = Some(base64::engine::general_purpose::STANDARD.encode(bytes));
         c
     }
@@ -1322,11 +1322,11 @@ mod tests {
     async fn seed_user(pool: &crate::db::Pool) -> i64 {
         let id = crate::utils::id::new_id();
         let username = format!("testuser_{id}");
-        sqlx::query(&format!(
+        sqlx::query(crate::db::safe_sql(&format!(
             "INSERT INTO users (id, username, status, registered_via) VALUES ({}, {}, 'active', 'email')",
             crate::db::Driver::ph(1),
             crate::db::Driver::ph(2)
-        ))
+        )))
         .bind(id)
         .bind(&username)
         .execute(pool)
@@ -1338,11 +1338,11 @@ mod tests {
     async fn seed_admin(pool: &crate::db::Pool) -> i64 {
         let id = crate::utils::id::new_id();
         let username = format!("admin_{id}");
-        sqlx::query(&format!(
+        sqlx::query(crate::db::safe_sql(&format!(
             "INSERT INTO users (id, username, status, registered_via) VALUES ({}, {}, 'active', 'email')",
             crate::db::Driver::ph(1),
             crate::db::Driver::ph(2)
-        ))
+        )))
         .bind(id)
         .bind(&username)
         .execute(pool)
@@ -2253,11 +2253,11 @@ mod tests {
         let user_id = seed_user(&pool).await;
 
         let _ch = seed_channel_encrypted(&pool, "stripe", &config).await;
-        sqlx::query(&format!(
+        sqlx::query(crate::db::safe_sql(&format!(
             "UPDATE payment_channels SET settings = {} WHERE id = {}",
             crate::db::Driver::ph(1),
             crate::db::Driver::ph(2)
-        ))
+        )))
         .bind(serde_json::json!({"currencies": ["CNY"]}))
         .bind(*_ch.id)
         .execute(&pool)

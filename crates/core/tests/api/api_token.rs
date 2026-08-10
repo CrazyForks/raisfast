@@ -204,7 +204,7 @@ async fn delete_token_non_owner_forbidden() {
         raisfast::db::Driver::ph(5),
         raisfast::db::Driver::ph(6)
     );
-    sqlx::query(&cred_sql)
+    sqlx::query(raisfast::db::safe_sql(&cred_sql))
         .bind(cred_id)
         .bind(reader_int_id)
         .bind("reader-token@test.com")
@@ -258,7 +258,7 @@ async fn admin_can_delete_other_users_token() {
         raisfast::db::Driver::ph(5),
         raisfast::db::Driver::ph(6)
     );
-    sqlx::query(&cred_sql)
+    sqlx::query(raisfast::db::safe_sql(&cred_sql))
         .bind(cred_id)
         .bind(reader_int_id)
         .bind("reader-admin-del@test.com")
@@ -533,7 +533,7 @@ async fn each_user_sees_only_own_tokens() {
         raisfast::db::Driver::ph(5),
         raisfast::db::Driver::ph(6)
     );
-    sqlx::query(&cred_sql)
+    sqlx::query(raisfast::db::safe_sql(&cred_sql))
         .bind(cred_id)
         .bind(reader_int_id)
         .bind("isolation@test.com")

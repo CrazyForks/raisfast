@@ -36,7 +36,7 @@ pub async fn create(
     );
 
     let mut token_bytes = [0u8; 32];
-    getrandom::getrandom(&mut token_bytes).map_err(|e| {
+    getrandom::fill(&mut token_bytes).map_err(|e| {
         crate::errors::app_error::AppError::Internal(anyhow::anyhow!(
             "reset token generation failed: {e}"
         ))
@@ -101,7 +101,10 @@ pub async fn cleanup_expired(pool: &crate::db::Pool) -> AppResult<u64> {
         "DELETE FROM password_reset_tokens WHERE expires_at < {} AND used_at IS NULL",
         Driver::ph(1),
     );
-    let result = sqlx::query(&sql).bind(now).execute(pool).await?;
+    let result = sqlx::query(crate::db::safe_sql(&sql))
+        .bind(now)
+        .execute(pool)
+        .await?;
     Ok(result.rows_affected())
 }
 
@@ -174,11 +177,12 @@ mod tests {
             "SELECT used_at FROM password_reset_tokens WHERE id = {}",
             crate::db::Driver::ph(1),
         );
-        let (used_at,): (Option<crate::utils::tz::Timestamp>,) = sqlx::query_as(&sql)
-            .bind(row.id)
-            .fetch_one(&pool)
-            .await
-            .unwrap();
+        let (used_at,): (Option<crate::utils::tz::Timestamp>,) =
+            sqlx::query_as(crate::db::safe_sql(&sql))
+                .bind(row.id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
         assert!(used_at.is_some(), "used_at should be set after mark_used");
     }
 

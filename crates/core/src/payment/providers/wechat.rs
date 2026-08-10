@@ -155,8 +155,8 @@ fn parse_platform_cert_pub_key(pem: &str) -> AppResult<rsa::RsaPublicKey> {
     let cert = x509_cert::Certificate::from_pem(pem_str)
         .map_err(|e| AppError::Internal(anyhow::Error::from(e).context("wechat cert parse")))?;
     let pub_key_bytes = cert
-        .tbs_certificate
-        .subject_public_key_info
+        .tbs_certificate()
+        .subject_public_key_info()
         .subject_public_key
         .as_bytes()
         .ok_or_else(|| {
@@ -201,7 +201,7 @@ fn build_auth_header(mchid: &str, serial_no: &str, signature: &str) -> String {
 fn generate_nonce() -> String {
     use std::fmt::Write;
     let mut bytes = [0u8; 16];
-    let _ = getrandom::getrandom(&mut bytes);
+    let _ = getrandom::fill(&mut bytes);
     let mut s = String::with_capacity(32);
     for b in bytes {
         let _ = write!(s, "{b:02x}");
@@ -291,10 +291,13 @@ fn decrypt_callback_resource(
     let ciphertext = BASE64.decode(ciphertext_b64).map_err(|e| {
         AppError::Internal(anyhow::Error::from(e).context("wechat resource base64 decode"))
     })?;
-    let nonce = Nonce::from_slice(nonce.as_bytes());
+    let nonce_arr: [u8; 12] = nonce.as_bytes().try_into().map_err(|_| {
+        AppError::Internal(anyhow::anyhow!("wechat resource nonce: invalid length"))
+    })?;
+    let nonce = Nonce::from(nonce_arr);
     let plaintext = cipher
         .decrypt(
-            nonce,
+            &nonce,
             aes_gcm::aead::Payload {
                 msg: ciphertext.as_slice(),
                 aad: associated_data.as_bytes(),

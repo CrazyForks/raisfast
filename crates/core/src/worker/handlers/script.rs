@@ -63,13 +63,14 @@ impl JobHandler for ScriptJobHandler {
 
         // Fetch the latest script source from cron_schedules.
         use crate::db::{DbDriver, Driver};
-        let row: Option<(Option<String>, Option<String>, String)> = sqlx::query_as(&format!(
-            "SELECT script_lang, script_source, label FROM cron_schedules WHERE id = {}",
-            Driver::ph(1)
-        ))
-        .bind(schedule_id)
-        .fetch_optional(&self.pool)
-        .await?;
+        let row: Option<(Option<String>, Option<String>, String)> =
+            sqlx::query_as(crate::db::safe_sql(&format!(
+                "SELECT script_lang, script_source, label FROM cron_schedules WHERE id = {}",
+                Driver::ph(1)
+            )))
+            .bind(schedule_id)
+            .fetch_optional(&self.pool)
+            .await?;
 
         let Some((script_lang, script_source, label)) = row else {
             return Err(AppError::not_found("cron_schedule"));

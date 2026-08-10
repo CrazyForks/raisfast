@@ -73,7 +73,7 @@ fn translate_errors(errors: &ValidationErrors) -> AppResult<()> {
     let mut messages: Vec<String> = Vec::new();
 
     for (field, field_errors) in errors.field_errors() {
-        let field_name = translate_field(field);
+        let field_name = translate_field(field.as_ref());
         for error in field_errors {
             let msg = match error.code.as_ref() {
                 "required" | "length" => {

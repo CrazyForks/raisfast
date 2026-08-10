@@ -51,11 +51,10 @@ impl JobHandler for SystemJobHandler {
 
         // Fetch command + flags from cron_schedules
         use crate::db::{DbDriver, Driver};
-        let row: Option<(Option<String>, bool, Option<i32>, String)> = sqlx::query_as(
-            &format!(
+        let row: Option<(Option<String>, bool, Option<i32>, String)> = sqlx::query_as(crate::db::safe_sql(&format!(
                 "SELECT script_source, use_shell, timeout_secs, label FROM cron_schedules WHERE id = {}",
                 Driver::ph(1)
-            ),
+            )),
         )
         .bind(schedule_id)
         .fetch_optional(&self.pool)

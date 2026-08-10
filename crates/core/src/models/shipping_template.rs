@@ -230,10 +230,10 @@ mod tests {
         let t2 = super::insert(&pool, &seed_cmd("Inactive"), Some(&tenant))
             .await
             .unwrap();
-        sqlx::query(&format!(
+        sqlx::query(crate::db::safe_sql(&format!(
             "UPDATE shipping_templates SET status = 'inactive' WHERE id = {}",
             crate::db::Driver::ph(1)
-        ))
+        )))
         .bind(t2.id)
         .execute(&pool)
         .await

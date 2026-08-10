@@ -81,7 +81,7 @@ pub fn validate_password_strength(password: &str) -> AppResult<()> {
 /// Generates a 32-byte random salt via `getrandom` and returns a PHC-format hash string.
 pub fn hash_password(password: &str) -> AppResult<String> {
     let mut salt_bytes = [0u8; 32];
-    getrandom::getrandom(&mut salt_bytes).map_err(|e| {
+    getrandom::fill(&mut salt_bytes).map_err(|e| {
         AppError::Internal(anyhow::Error::from(e).context("salt generation failed"))
     })?;
     let salt = SaltString::encode_b64(&salt_bytes)
@@ -147,7 +147,7 @@ pub fn verify_token(token: &str, key: &jsonwebtoken::DecodingKey) -> AppResult<C
 /// Generate a 32-byte random refresh token, returned as a hex string.
 pub(crate) fn generate_refresh_token_string_internal() -> AppResult<String> {
     let mut bytes = [0u8; 32];
-    getrandom::getrandom(&mut bytes).map_err(|e| {
+    getrandom::fill(&mut bytes).map_err(|e| {
         AppError::Internal(anyhow::Error::from(e).context("refresh token generation failed"))
     })?;
     Ok(hex::encode(bytes))

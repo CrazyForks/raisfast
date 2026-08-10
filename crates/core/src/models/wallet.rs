@@ -164,7 +164,7 @@ pub async fn apply_wallet_delta(
             Driver::ph(3),
             Driver::ph(4)
         );
-        let result: crate::db::pool::DbQueryResult = sqlx::query(&sql)
+        let result: crate::db::pool::DbQueryResult = sqlx::query(crate::db::safe_sql(&sql))
             .bind(delta)
             .bind(crate::utils::tz::now_utc())
             .bind(wallet_id)
@@ -187,7 +187,7 @@ pub async fn apply_wallet_delta(
             Driver::ph(4),
             Driver::ph(5)
         );
-        let result: crate::db::pool::DbQueryResult = sqlx::query(&sql)
+        let result: crate::db::pool::DbQueryResult = sqlx::query(crate::db::safe_sql(&sql))
             .bind(abs)
             .bind(crate::utils::tz::now_utc())
             .bind(wallet_id)
@@ -225,7 +225,7 @@ mod tests {
             crate::utils::id::new_snowflake_id(),
             crate::utils::tz::now_utc(),
         );
-        sqlx::query(&format!(
+        sqlx::query(crate::db::safe_sql(&format!(
             "INSERT INTO wallets (id, tenant_id, user_id, currency, created_at, updated_at) VALUES ({}, {}, {}, {}, {}, {})",
             crate::db::Driver::ph(1),
             crate::db::Driver::ph(2),
@@ -233,7 +233,7 @@ mod tests {
             crate::db::Driver::ph(4),
             crate::db::Driver::ph(5),
             crate::db::Driver::ph(6)
-        ))
+        )))
         .bind(id)
         .bind(tenant)
         .bind(user_id)

@@ -11,19 +11,19 @@
 //!
 //! // SELECT — returns rewritten SQL + whether tenant_id needs to be bound
 //! let (sql, bind_tenant) = tp.prepare_select("posts", "SELECT * FROM posts WHERE id = ?").await;
-//! let mut q = sqlx::query_as::<_, Post>(&sql).bind(id);
+//! let mut q = sqlx::query_as::<_, Post>(crate::db::safe_sql(&sql)).bind(id);
 //! if bind_tenant { q = q.bind(tp.tenant_id()); }
 //! let post = q.fetch_optional(tp.pool()).await?;
 //!
 //! // INSERT — returns rewritten SQL (automatically appends tenant_id column)
 //! let (sql, bind_tenant) = tp.prepare_insert("posts", "title, slug", 2).await;
-//! let mut q = sqlx::query(&sql).bind(title).bind(slug);
+//! let mut q = sqlx::query(crate::db::safe_sql(&sql)).bind(title).bind(slug);
 //! if bind_tenant { q = q.bind(tp.tenant_id()); }
 //! q.execute(tp.pool()).await?;
 //!
 //! // UPDATE/DELETE — returns rewritten SQL + whether extra bind is needed
 //! let (sql, bind_tenant) = tp.prepare_modify("posts", "DELETE FROM posts WHERE id = ?").await;
-//! let mut q = sqlx::query(&sql).bind(id);
+//! let mut q = sqlx::query(crate::db::safe_sql(&sql)).bind(id);
 //! if bind_tenant { q = q.bind(tp.tenant_id()); }
 //! q.execute(tp.pool()).await?;
 //! ```
@@ -162,7 +162,7 @@ pub fn tenant_filter_aliased(alias: &str, tenant_id: Option<&str>) -> String {
 ///
 /// ```ignore
 /// let sql = insert_sql("tags", &["id", "name", "slug"], tenant_id);
-/// let mut q = sqlx::query(&sql).bind(&id).bind(name).bind(slug);
+/// let mut q = sqlx::query(crate::db::safe_sql(&sql)).bind(&id).bind(name).bind(slug);
 /// bind_tenant!(q, tenant_id);
 /// q.execute(pool).await?;
 /// ```
@@ -315,10 +315,10 @@ mod tests {
     #[tokio::test]
     async fn prepare_select_injects_when_has_column() {
         let pool = crate::test_pool!();
-        sqlx::query(&format!(
+        sqlx::query(crate::db::safe_sql(&format!(
             "CREATE TABLE IF NOT EXISTS tt_posts (id {}, title TEXT, tenant_id TEXT)",
             crate::db::Driver::auto_increment_pk()
-        ))
+        )))
         .execute(&pool)
         .await
         .unwrap();
@@ -335,10 +335,10 @@ mod tests {
     #[tokio::test]
     async fn prepare_select_skips_when_no_column() {
         let pool = crate::test_pool!();
-        sqlx::query(&format!(
+        sqlx::query(crate::db::safe_sql(&format!(
             "CREATE TABLE IF NOT EXISTS tt_logs (id {}, msg TEXT)",
             crate::db::Driver::auto_increment_pk()
-        ))
+        )))
         .execute(&pool)
         .await
         .unwrap();
@@ -355,10 +355,10 @@ mod tests {
     #[tokio::test]
     async fn prepare_insert_injects_column() {
         let pool = crate::test_pool!();
-        sqlx::query(&format!(
+        sqlx::query(crate::db::safe_sql(&format!(
             "CREATE TABLE IF NOT EXISTS tt_items (id {}, name TEXT, tenant_id TEXT)",
             crate::db::Driver::auto_increment_pk()
-        ))
+        )))
         .execute(&pool)
         .await
         .unwrap();
@@ -374,10 +374,10 @@ mod tests {
     #[tokio::test]
     async fn end_to_end_select_filters_by_tenant() {
         let pool = crate::test_pool!();
-        sqlx::query(&format!(
+        sqlx::query(crate::db::safe_sql(&format!(
             "CREATE TABLE IF NOT EXISTS tt_posts (id {}, title TEXT, tenant_id VARCHAR(64) NOT NULL DEFAULT 'default')",
             crate::db::Driver::auto_increment_pk()
-        ))
+        )))
         .execute(&pool)
         .await
         .unwrap();
@@ -411,7 +411,7 @@ mod tests {
                 ),
             )
             .await;
-        let mut q = sqlx::query_as::<_, Post>(&sql).bind(1i64);
+        let mut q = sqlx::query_as::<_, Post>(crate::db::safe_sql(&sql)).bind(1i64);
         if bind {
             q = q.bind(tp.tenant_id());
         }
@@ -427,7 +427,7 @@ mod tests {
                 ),
             )
             .await;
-        let mut q = sqlx::query_as::<_, Post>(&sql).bind(2i64);
+        let mut q = sqlx::query_as::<_, Post>(crate::db::safe_sql(&sql)).bind(2i64);
         if bind {
             q = q.bind(tp.tenant_id());
         }
@@ -437,10 +437,10 @@ mod tests {
     #[tokio::test]
     async fn end_to_end_insert_auto_tenant() {
         let pool = crate::test_pool!();
-        sqlx::query(&format!(
+        sqlx::query(crate::db::safe_sql(&format!(
             "CREATE TABLE IF NOT EXISTS tt_items (id {}, name TEXT, tenant_id VARCHAR(64) NOT NULL DEFAULT 'default')",
             crate::db::Driver::auto_increment_pk()
-        ))
+        )))
         .execute(&pool)
         .await
         .unwrap();
@@ -452,7 +452,9 @@ mod tests {
 
         let tp = TenantPool::new(pool.clone(), "t1");
         let (sql, bind) = tp.prepare_insert("tt_items", "id, name", 2).await;
-        let mut q = sqlx::query(&sql).bind(1i64).bind("Test");
+        let mut q = sqlx::query(crate::db::safe_sql(&sql))
+            .bind(1i64)
+            .bind("Test");
         if bind {
             q = q.bind(tp.tenant_id());
         }
@@ -468,10 +470,10 @@ mod tests {
     #[tokio::test]
     async fn end_to_end_delete_respects_tenant() {
         let pool = crate::test_pool!();
-        sqlx::query(&format!(
+        sqlx::query(crate::db::safe_sql(&format!(
             "CREATE TABLE IF NOT EXISTS tt_items (id {}, name TEXT, tenant_id VARCHAR(64) NOT NULL DEFAULT 'default')",
             crate::db::Driver::auto_increment_pk()
-        ))
+        )))
         .execute(&pool)
         .await
         .unwrap();
@@ -500,7 +502,7 @@ mod tests {
                 ),
             )
             .await;
-        let mut q = sqlx::query(&sql).bind(2i64);
+        let mut q = sqlx::query(crate::db::safe_sql(&sql)).bind(2i64);
         if bind {
             q = q.bind(tp.tenant_id());
         }
@@ -520,7 +522,7 @@ mod tests {
                 ),
             )
             .await;
-        let mut q = sqlx::query(&sql).bind(1i64);
+        let mut q = sqlx::query(crate::db::safe_sql(&sql)).bind(1i64);
         if bind {
             q = q.bind(tp.tenant_id());
         }

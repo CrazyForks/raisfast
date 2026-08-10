@@ -53,7 +53,7 @@ pub(crate) fn test_config() -> AppConfig {
         .into();
     cfg.base_url = "http://localhost:9000".into();
     let mut key_bytes = [0u8; 32];
-    getrandom::getrandom(&mut key_bytes).unwrap();
+    getrandom::fill(&mut key_bytes).unwrap();
     cfg.app_key = Some(base64::Engine::encode(
         &base64::engine::general_purpose::STANDARD,
         key_bytes,
@@ -711,7 +711,7 @@ pub(crate) async fn create_admin(pool: &raisfast::db::Pool) -> (i64, String) {
         raisfast::db::Driver::ph(5),
         raisfast::db::Driver::ph(6)
     );
-    sqlx::query(&cred_sql)
+    sqlx::query(raisfast::db::safe_sql(&cred_sql))
         .bind(cred_id)
         .bind(int_id)
         .bind("admin@test.com")
@@ -752,7 +752,7 @@ pub(crate) async fn create_author(pool: &raisfast::db::Pool) -> (i64, String) {
         raisfast::db::Driver::ph(5),
         raisfast::db::Driver::ph(6)
     );
-    sqlx::query(&cred_sql)
+    sqlx::query(raisfast::db::safe_sql(&cred_sql))
         .bind(cred_id)
         .bind(int_id)
         .bind("author@test.com")

@@ -245,7 +245,7 @@ fn expand_delete(input: TokenStream) -> TokenStream {
             #sql_code
             #tenant_sql
             let __sql = format!("DELETE FROM {} WHERE {}{}", #table_lit, __where_sql, __tenant_sql);
-            let mut __q = sqlx::query::<crate::db::pool::Db>(&__sql);
+            let mut __q = sqlx::query::<crate::db::pool::Db>(crate::db::safe_sql(&__sql));
             #(#bind_stmts)*
             #tenant_bind
             __q.execute(#pool).await
@@ -300,13 +300,9 @@ fn expand_insert(input: TokenStream) -> TokenStream {
                 .get(&table_str)
                 .and_then(|t| t.columns.iter().find(|c| c.name == *col))
                 .map(|c| c.ty);
-            if col_ty
-                .is_some_and(|ty| matches!(ty, crate::schema::SqlType::BigInt))
-            {
+            if col_ty.is_some_and(|ty| matches!(ty, crate::schema::SqlType::BigInt)) {
                 quote! { crate::db::bigint::DbBigint::to_bigint(#ident) }
-            } else if col_ty
-                .is_some_and(|ty| matches!(ty, crate::schema::SqlType::Json))
-            {
+            } else if col_ty.is_some_and(|ty| matches!(ty, crate::schema::SqlType::Json)) {
                 quote! { crate::db::json::DbJson::to_json(#ident) }
             } else {
                 quote! { #ident }
@@ -388,7 +384,7 @@ fn expand_scalar(input: TokenStream) -> TokenStream {
         let tid = &input.tid;
         let expanded = quote! {
             {
-                let mut _q = sqlx::query_scalar::<crate::db::pool::Db, #ty>(#sql)#(.bind(#vals))*;
+                let mut _q = sqlx::query_scalar::<crate::db::pool::Db, #ty>(crate::db::safe_sql(#sql))#(.bind(#vals))*;
                 if let Some(_tid) = #tid {
                     _q = _q.bind(_tid);
                 }
@@ -398,7 +394,7 @@ fn expand_scalar(input: TokenStream) -> TokenStream {
         TokenStream::from(expanded)
     } else {
         let expanded = quote! {
-            sqlx::query_scalar::<crate::db::pool::Db, #ty>(#sql)#(.bind(#vals))*.#method(#pool).await
+            sqlx::query_scalar::<crate::db::pool::Db, #ty>(crate::db::safe_sql(#sql))#(.bind(#vals))*.#method(#pool).await
         };
         TokenStream::from(expanded)
     }
@@ -450,7 +446,7 @@ fn expand_select(input: TokenStream) -> TokenStream {
             #sql_code
             #tenant_sql
             let __sql = format!("SELECT {} FROM {} WHERE {}{}", #sel_lit, #table_lit, __where_sql, __tenant_sql);
-            let mut __q = sqlx::query_as::<crate::db::pool::Db, _>(&__sql);
+            let mut __q = sqlx::query_as::<crate::db::pool::Db, _>(crate::db::safe_sql(&__sql));
             #(#bind_stmts)*
             #tenant_bind
             __q.fetch_optional(#pool).await
@@ -477,7 +473,7 @@ fn expand_query(input: TokenStream) -> TokenStream {
         let tid = &input.tid;
         let expanded = quote! {
             {
-                let mut _q = sqlx::query_as::<crate::db::pool::Db, #ty>(#sql)#(.bind(#vals))*;
+                let mut _q = sqlx::query_as::<crate::db::pool::Db, #ty>(crate::db::safe_sql(#sql))#(.bind(#vals))*;
                 if let Some(_tid) = #tid {
                     _q = _q.bind(_tid);
                 }
@@ -487,7 +483,7 @@ fn expand_query(input: TokenStream) -> TokenStream {
         TokenStream::from(expanded)
     } else {
         let expanded = quote! {
-            sqlx::query_as::<crate::db::pool::Db, #ty>(#sql)#(.bind(#vals))*.#method(#pool).await
+            sqlx::query_as::<crate::db::pool::Db, #ty>(crate::db::safe_sql(#sql))#(.bind(#vals))*.#method(#pool).await
         };
         TokenStream::from(expanded)
     }
@@ -568,7 +564,7 @@ fn expand_find(input: TokenStream, method: FindMethod) -> TokenStream {
             #sql_code
             #tenant_sql
             let __sql = format!("SELECT {} FROM {} WHERE {}{}{}", #cols_lit, #table_lit, __where_sql, __tenant_sql, #order_fragment);
-            let mut __q = sqlx::query_as::<crate::db::pool::Db, #ty>(&__sql);
+            let mut __q = sqlx::query_as::<crate::db::pool::Db, #ty>(crate::db::safe_sql(&__sql));
             #(#bind_stmts)*
             #tenant_bind
             __q.#method_call
@@ -612,7 +608,7 @@ fn expand_count(input: TokenStream) -> TokenStream {
             #sql_code
             #tenant_sql
             let __sql = format!("SELECT COUNT(*) FROM {} WHERE {}{}", #table_lit, __where_sql, __tenant_sql);
-            let mut __q = sqlx::query_scalar::<crate::db::pool::Db, i64>(&__sql);
+            let mut __q = sqlx::query_scalar::<crate::db::pool::Db, i64>(crate::db::safe_sql(&__sql));
             #(#bind_stmts)*
             #tenant_bind
             __q.fetch_one(#pool).await
@@ -657,7 +653,7 @@ pub fn crud_list(input: TokenStream) -> TokenStream {
                     Some(_tid) => format!("SELECT {} FROM {} WHERE 1=1 AND {} = {}{}", #cols_lit, #table_lit, #qi_tid_lit, #tid_ph_lit, #ob_lit),
                     None => format!("SELECT {} FROM {} WHERE 1=1{}", #cols_lit, #table_lit, #ob_lit),
                 };
-                let mut _q = sqlx::query_as::<crate::db::pool::Db, #ty>(&__sql);
+                let mut _q = sqlx::query_as::<crate::db::pool::Db, #ty>(crate::db::safe_sql(&__sql));
                 if let Some(_tid) = #tid {
                     _q = _q.bind(_tid);
                 }
@@ -671,7 +667,7 @@ pub fn crud_list(input: TokenStream) -> TokenStream {
         sql_str.push_str(&order_by_str);
         let sql = syn::LitStr::new(&sql_str, table.span());
         let expanded = quote! {
-            sqlx::query_as::<crate::db::pool::Db, #ty>(#sql).fetch_all(#pool).await
+            sqlx::query_as::<crate::db::pool::Db, #ty>(crate::db::safe_sql(#sql)).fetch_all(#pool).await
         };
         TokenStream::from(expanded)
     }
@@ -895,7 +891,7 @@ fn expand_update(input: TokenStream) -> TokenStream {
             #where_sql_code
             #tenant_sql
             let __sql = format!("UPDATE {} SET {} WHERE {}{}", #table_lit, #set_join, __where_sql, __tenant_sql);
-            let mut __q = sqlx::query::<crate::db::pool::Db>(&__sql);
+            let mut __q = sqlx::query::<crate::db::pool::Db>(crate::db::safe_sql(&__sql));
             #(__q = __q.bind(#bind_exprs);)*
             #opt_bind_code
             #(#where_bind_stmts)*
@@ -1089,7 +1085,7 @@ fn expand_query_paged_dsl(parsed: &QueryPagedInput) -> TokenStream {
             let mut __data_sql = format!("{}{}{}{}", #data_sql_lit, __tenant_sql, __where_sql, #order_str_lit);
             __data_sql.push_str(&format!(" LIMIT {} OFFSET {}", __limit_ph, __offset_ph));
             let mut __count_sql = format!("{}{}{}", #count_sql_lit, __tenant_sql, __where_sql);
-            let mut __dq = sqlx::query_as::<crate::db::pool::Db, #ty>(&__data_sql)#(.bind(#dsl_bind_idents))*;
+            let mut __dq = sqlx::query_as::<crate::db::pool::Db, #ty>(crate::db::safe_sql(&__data_sql))#(.bind(#dsl_bind_idents))*;
             #tenant_bind_dq
             #(
                 if let Some(ref __wv) = #where_bind_idents {
@@ -1098,7 +1094,7 @@ fn expand_query_paged_dsl(parsed: &QueryPagedInput) -> TokenStream {
             )*
             __dq = __dq.bind(__page_size).bind(__offset);
             let __data = __dq.fetch_all(#pool).await?;
-            let mut __cq = sqlx::query_scalar::<crate::db::pool::Db, i64>(&__count_sql)#(.bind(#dsl_bind_idents))*;
+            let mut __cq = sqlx::query_scalar::<crate::db::pool::Db, i64>(crate::db::safe_sql(&__count_sql))#(.bind(#dsl_bind_idents))*;
             #tenant_bind_cq
             #(
                 if let Some(ref __wv) = #where_bind_idents {
@@ -1147,7 +1143,7 @@ fn expand_exists(input: TokenStream) -> TokenStream {
             #sql_code
             #tenant_sql
             let __sql = format!("SELECT EXISTS(SELECT 1 FROM {} WHERE {}{}{}) as _e", #table_lit, __where_sql, __tenant_sql, "");
-            let mut __q = sqlx::query_scalar::<crate::db::pool::Db, bool>(&__sql);
+            let mut __q = sqlx::query_scalar::<crate::db::pool::Db, bool>(crate::db::safe_sql(&__sql));
             #(#bind_stmts)*
             #tenant_bind
             __q.fetch_one(#pool).await
@@ -1322,7 +1318,7 @@ fn expand_resolve_ids(input: TokenStream) -> TokenStream {
                     })
                     .collect();
                 let __sql = format!("SELECT {} FROM {} WHERE {} IN ({})", #qi_id_lit, __qi_table, #qi_id_lit, __phs.join(", "));
-                let mut __q = sqlx::query::<crate::db::pool::Db>(&__sql);
+                let mut __q = sqlx::query::<crate::db::pool::Db>(crate::db::safe_sql(&__sql));
                 for &__id in __ids {
                     __q = __q.bind(__id);
                 }
@@ -1387,7 +1383,7 @@ fn expand_resolve_id(input: TokenStream) -> TokenStream {
                     let mut __ph_idx: usize = 2;
                     #tenant_sql
                     let __sql = format!("SELECT {} FROM {} WHERE {} = {}{}", #qi_id_lit, __qi_table, #qi_id_lit, #ph1_lit, __tenant_sql);
-                    let mut __q = sqlx::query_scalar::<crate::db::pool::Db, i64>(&__sql).bind(__id);
+                    let mut __q = sqlx::query_scalar::<crate::db::pool::Db, i64>(crate::db::safe_sql(&__sql)).bind(__id);
                     #tenant_bind
                     __q.fetch_optional(__pool).await
                 }
@@ -1405,7 +1401,7 @@ fn expand_resolve_id(input: TokenStream) -> TokenStream {
                     let __id: i64 = #id;
                     let __pool: &crate::db::Pool = #pool;
                     let __sql = format!("SELECT {} FROM {} WHERE {} = {}", #qi_id_lit, __qi_table, #qi_id_lit, #ph1_lit);
-                    sqlx::query_scalar::<crate::db::pool::Db, i64>(&__sql)
+                    sqlx::query_scalar::<crate::db::pool::Db, i64>(crate::db::safe_sql(&__sql))
                         .bind(__id)
                         .fetch_optional(__pool)
                         .await
@@ -1859,8 +1855,8 @@ pub fn crud_join_paged(input: TokenStream) -> TokenStream {
             #limit_sql_code
             let __data_sql = format!("SELECT {} FROM {} {} WHERE {}{}{}{} LIMIT {} OFFSET {}", #sel_lit, #from_lit, #join_lit, __where_sql, __tenant_sql, #order_lit, "", __limit_ph, __offset_ph);
             let __count_sql = format!("SELECT COUNT(*) FROM {} WHERE {}{}", #from_for_count, __where_sql, __tenant_sql);
-            let mut __dq = sqlx::query_as::<crate::db::pool::Db, #ty>(&__data_sql);
-            let mut __cq = sqlx::query_scalar::<crate::db::pool::Db, i64>(&__count_sql);
+            let mut __dq = sqlx::query_as::<crate::db::pool::Db, #ty>(crate::db::safe_sql(&__data_sql));
+            let mut __cq = sqlx::query_scalar::<crate::db::pool::Db, i64>(crate::db::safe_sql(&__count_sql));
             #(#bind_stmts_dq)*
             #(#bind_stmts_cq)*
             #tenant_bind
@@ -2074,7 +2070,7 @@ fn expand_join(input: TokenStream) -> TokenStream {
             #tenant_sql
             let mut __sql = format!("SELECT {} FROM {} {} WHERE {}{}{}", #sel_lit, #from_lit, #join_lit, __where_sql, __tenant_sql, #order_lit);
             #limit_sql_code
-            let mut __q = sqlx::query_as::<crate::db::pool::Db, #ty>(&__sql);
+            let mut __q = sqlx::query_as::<crate::db::pool::Db, #ty>(crate::db::safe_sql(&__sql));
             #(#bind_stmts)*
             #tenant_bind
             #limit_bind

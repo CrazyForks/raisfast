@@ -116,8 +116,7 @@ impl OAuthProviderRegistry {
 /// Generate a random code_verifier (43 characters, satisfying the 43-128 requirement)
 pub fn generate_code_verifier() -> String {
     let mut bytes = [0u8; 32];
-    getrandom::getrandom(&mut bytes)
-        .unwrap_or_else(|e| panic!("code_verifier generation failed: {e}"));
+    getrandom::fill(&mut bytes).unwrap_or_else(|e| panic!("code_verifier generation failed: {e}"));
     URL_SAFE_NO_PAD.encode(bytes)
 }
 

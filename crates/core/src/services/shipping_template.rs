@@ -374,11 +374,11 @@ mod tests {
         .await
         .unwrap();
 
-        sqlx::query(&format!(
+        sqlx::query(crate::db::safe_sql(&format!(
             "UPDATE products SET shipping_template_id = {} WHERE id = {}",
             crate::db::Driver::ph(1),
             crate::db::Driver::ph(2)
-        ))
+        )))
         .bind(*tmpl.id)
         .bind(product.id)
         .execute(&pool)
@@ -457,11 +457,11 @@ mod tests {
         .await
         .unwrap();
 
-        sqlx::query(&format!(
+        sqlx::query(crate::db::safe_sql(&format!(
             "UPDATE products SET shipping_template_id = {} WHERE id = {}",
             crate::db::Driver::ph(1),
             crate::db::Driver::ph(2)
-        ))
+        )))
         .bind(*tmpl.id)
         .bind(product.id)
         .execute(&pool)
@@ -553,10 +553,10 @@ mod tests {
         .await
         .unwrap();
 
-        sqlx::query(&format!(
+        sqlx::query(crate::db::safe_sql(&format!(
             "UPDATE shipping_templates SET status = 'inactive' WHERE id = {}",
             crate::db::Driver::ph(1)
-        ))
+        )))
         .bind(tmpl.id)
         .execute(&pool)
         .await
@@ -602,11 +602,11 @@ mod tests {
         .await
         .unwrap();
 
-        sqlx::query(&format!(
+        sqlx::query(crate::db::safe_sql(&format!(
             "UPDATE products SET shipping_template_id = {} WHERE id = {}",
             crate::db::Driver::ph(1),
             crate::db::Driver::ph(2)
-        ))
+        )))
         .bind(*tmpl.id)
         .bind(product.id)
         .execute(&pool)

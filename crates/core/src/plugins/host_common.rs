@@ -351,9 +351,10 @@ impl HostContext {
                 for p in &params {
                     Self::add_param(&mut args, p);
                 }
-                let rows = sqlx::query_with::<crate::db::pool::Db, _>(&sql, args)
-                    .fetch_all(pool)
-                    .await?;
+                let rows =
+                    sqlx::query_with::<crate::db::pool::Db, _>(crate::db::safe_sql(&sql), args)
+                        .fetch_all(pool)
+                        .await?;
                 let json = crate::plugins::rows_to_json(&rows);
                 Ok::<_, sqlx::Error>(json)
             }) {
@@ -426,7 +427,7 @@ impl HostContext {
                 Self::add_param(&mut args, p);
             }
             let result: Result<DbQueryResult, sqlx::Error> = handle.block_on(async {
-                sqlx::query_with::<crate::db::pool::Db, _>(&sql, args)
+                sqlx::query_with::<crate::db::pool::Db, _>(crate::db::safe_sql(&sql), args)
                     .execute(pool)
                     .await
             });
@@ -643,7 +644,7 @@ impl HostContext {
         let handle = tokio::runtime::Handle::current();
         tokio::task::block_in_place(|| {
             let result: Result<DbQueryResult, sqlx::Error> = handle.block_on(async {
-                sqlx::query_with::<crate::db::pool::Db, _>(&sql, args)
+                sqlx::query_with::<crate::db::pool::Db, _>(crate::db::safe_sql(&sql), args)
                     .execute(pool)
                     .await
             });
@@ -685,7 +686,7 @@ impl HostContext {
         let handle = tokio::runtime::Handle::current();
         tokio::task::block_in_place(|| {
             match handle.block_on(async {
-                sqlx::query_with::<crate::db::pool::Db, _>(&sql, args)
+                sqlx::query_with::<crate::db::pool::Db, _>(crate::db::safe_sql(&sql), args)
                     .fetch_optional(pool)
                     .await
             }) {
@@ -724,7 +725,7 @@ impl HostContext {
         let handle = tokio::runtime::Handle::current();
         tokio::task::block_in_place(|| {
             let result: Result<Vec<DbRow>, sqlx::Error> = handle.block_on(async {
-                sqlx::query_with::<crate::db::pool::Db, _>(&sql, args)
+                sqlx::query_with::<crate::db::pool::Db, _>(crate::db::safe_sql(&sql), args)
                     .fetch_all(pool)
                     .await
             });
@@ -814,7 +815,7 @@ impl HostContext {
         let handle = tokio::runtime::Handle::current();
         tokio::task::block_in_place(|| {
             let result: Result<DbQueryResult, sqlx::Error> = handle.block_on(async {
-                sqlx::query_with::<crate::db::pool::Db, _>(&sql, args)
+                sqlx::query_with::<crate::db::pool::Db, _>(crate::db::safe_sql(&sql), args)
                     .execute(pool)
                     .await
             });
@@ -875,7 +876,7 @@ impl HostContext {
         let handle = tokio::runtime::Handle::current();
         tokio::task::block_in_place(|| {
             let result: Result<DbQueryResult, sqlx::Error> = handle.block_on(async {
-                sqlx::query_with::<crate::db::pool::Db, _>(&sql, args)
+                sqlx::query_with::<crate::db::pool::Db, _>(crate::db::safe_sql(&sql), args)
                     .execute(pool)
                     .await
             });
@@ -937,7 +938,9 @@ impl HostContext {
         let handle = tokio::runtime::Handle::current();
         tokio::task::block_in_place(|| {
             match handle.block_on(async {
-                let row: (i64,) = sqlx::query_as_with(&sql, args).fetch_one(pool).await?;
+                let row: (i64,) = sqlx::query_as_with(crate::db::safe_sql(&sql), args)
+                    .fetch_one(pool)
+                    .await?;
                 Ok::<_, sqlx::Error>(row.0)
             }) {
                 Ok(count) => format!(r#"{{"count":{count}}}"#),
@@ -1065,7 +1068,7 @@ impl HostContext {
         let handle = tokio::runtime::Handle::current();
         tokio::task::block_in_place(|| {
             let result: Result<DbQueryResult, sqlx::Error> = handle.block_on(async {
-                sqlx::query_with::<crate::db::pool::Db, _>(&sql, args)
+                sqlx::query_with::<crate::db::pool::Db, _>(crate::db::safe_sql(&sql), args)
                     .execute(pool)
                     .await
             });
@@ -1131,9 +1134,10 @@ impl HostContext {
         let handle = tokio::runtime::Handle::current();
         tokio::task::block_in_place(|| {
             match handle.block_on(async {
-                let row: DbRow = sqlx::query_with::<crate::db::pool::Db, _>(&sql, args)
-                    .fetch_one(pool)
-                    .await?;
+                let row: DbRow =
+                    sqlx::query_with::<crate::db::pool::Db, _>(crate::db::safe_sql(&sql), args)
+                        .fetch_one(pool)
+                        .await?;
                 Ok::<_, sqlx::Error>(row)
             }) {
                 Ok(row) => {
@@ -1282,7 +1286,7 @@ impl HostContext {
         let handle = tokio::runtime::Handle::current();
         tokio::task::block_in_place(|| {
             let result: Result<Vec<DbRow>, sqlx::Error> = handle.block_on(async {
-                sqlx::query_with::<crate::db::pool::Db, _>(&sql, args)
+                sqlx::query_with::<crate::db::pool::Db, _>(crate::db::safe_sql(&sql), args)
                     .fetch_all(pool)
                     .await
             });
@@ -1553,7 +1557,7 @@ fn build_and_exec(
         add_param_value(&mut args, p);
     }
     handle.block_on(async {
-        sqlx::query_with::<crate::db::pool::Db, _>(sql, args)
+        sqlx::query_with::<crate::db::pool::Db, _>(crate::db::safe_sql(sql), args)
             .execute(conn)
             .await
     })
@@ -2134,11 +2138,12 @@ mod tests {
         let commit = ctx.db_commit();
         assert!(commit.contains(r#""ok":true"#), "commit failed: {commit}");
 
-        let rows: Vec<(String,)> =
-            sqlx::query_as(&format!("SELECT name FROM tags WHERE slug = '{tx_slug}'"))
-                .fetch_all(&pool)
-                .await
-                .unwrap();
+        let rows: Vec<(String,)> = sqlx::query_as(crate::db::safe_sql(&format!(
+            "SELECT name FROM tags WHERE slug = '{tx_slug}'"
+        )))
+        .fetch_all(&pool)
+        .await
+        .unwrap();
         assert_eq!(rows.len(), 1, "row should be committed");
     }
 
@@ -2167,9 +2172,9 @@ mod tests {
         let rollback = ctx.db_rollback();
         assert!(rollback.contains(r#""ok":true"#));
 
-        let count: (i64,) = sqlx::query_as(&format!(
+        let count: (i64,) = sqlx::query_as(crate::db::safe_sql(&format!(
             "SELECT COUNT(*) FROM tags WHERE slug = '{rb_slug}'"
-        ))
+        )))
         .fetch_one(&pool)
         .await
         .unwrap();
@@ -2224,9 +2229,9 @@ mod tests {
 
         ctx.cleanup_tx();
 
-        let count: (i64,) = sqlx::query_as(&format!(
+        let count: (i64,) = sqlx::query_as(crate::db::safe_sql(&format!(
             "SELECT COUNT(*) FROM tags WHERE slug = '{cl_slug}'"
-        ))
+        )))
         .fetch_one(&pool)
         .await
         .unwrap();

@@ -168,7 +168,7 @@ pub async fn find_all_admin(
         let sql = format!(
             "SELECT * FROM products WHERE {where_clause}{tf} ORDER BY sort_order, created_at DESC LIMIT {limit_ph} OFFSET {offset_ph}"
         );
-        let mut q = sqlx::query_as::<_, Product>(&sql);
+        let mut q = sqlx::query_as::<_, Product>(crate::db::safe_sql(&sql));
         if let Some(s) = status {
             q = q.bind(s);
         }
@@ -184,7 +184,7 @@ pub async fn find_all_admin(
         let items = q.bind(page_size).bind(offset).fetch_all(pool).await?;
 
         let count_sql = format!("SELECT COUNT(*) FROM products WHERE {where_clause}{tf}");
-        let mut cq = sqlx::query_as::<_, (i64,)>(&count_sql);
+        let mut cq = sqlx::query_as::<_, (i64,)>(crate::db::safe_sql(&count_sql));
         if let Some(s) = status {
             cq = cq.bind(s);
         }
@@ -358,7 +358,7 @@ pub async fn tx_deduct_stock(
             crate::db::Driver::ph(3)
         )
     };
-    let mut q = sqlx::query(&sql)
+    let mut q = sqlx::query(crate::db::safe_sql(&sql))
         .bind(quantity)
         .bind(product_id)
         .bind(quantity);
@@ -402,7 +402,9 @@ pub async fn tx_replenish_stock(
             crate::db::Driver::ph(2)
         )
     };
-    let mut q = sqlx::query(&sql).bind(quantity).bind(product_id);
+    let mut q = sqlx::query(crate::db::safe_sql(&sql))
+        .bind(quantity)
+        .bind(product_id);
     if let Some(tid) = tenant_id {
         q = q.bind(tid);
     }
@@ -475,11 +477,11 @@ mod tests {
     }
 
     async fn set_status(pool: &crate::db::Pool, id: SnowflakeId, status: &str) {
-        sqlx::query(&format!(
+        sqlx::query(crate::db::safe_sql(&format!(
             "UPDATE products SET status = {} WHERE id = {}",
             crate::db::Driver::ph(1),
             crate::db::Driver::ph(2)
-        ))
+        )))
         .bind(status)
         .bind(id)
         .execute(pool)
@@ -488,10 +490,10 @@ mod tests {
     }
 
     async fn get_version(pool: &crate::db::Pool, id: SnowflakeId) -> i64 {
-        let (v,): (i64,) = sqlx::query_as(&format!(
+        let (v,): (i64,) = sqlx::query_as(crate::db::safe_sql(&format!(
             "SELECT version FROM products WHERE id = {}",
             crate::db::Driver::ph(1)
-        ))
+        )))
         .bind(id)
         .fetch_one(pool)
         .await
@@ -825,10 +827,10 @@ mod tests {
     }
 
     async fn get_stock(pool: &crate::db::Pool, id: SnowflakeId) -> i64 {
-        let (s,): (i64,) = sqlx::query_as(&format!(
+        let (s,): (i64,) = sqlx::query_as(crate::db::safe_sql(&format!(
             "SELECT stock FROM products WHERE id = {}",
             crate::db::Driver::ph(1)
-        ))
+        )))
         .bind(id)
         .fetch_one(pool)
         .await

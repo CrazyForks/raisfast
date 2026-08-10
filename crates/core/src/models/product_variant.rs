@@ -212,7 +212,7 @@ pub async fn tx_deduct_stock(
             crate::db::Driver::ph(3)
         )
     };
-    let mut q = sqlx::query(&sql)
+    let mut q = sqlx::query(crate::db::safe_sql(&sql))
         .bind(quantity)
         .bind(variant_id)
         .bind(quantity);
@@ -249,7 +249,9 @@ pub async fn tx_replenish_stock(
             crate::db::Driver::ph(2)
         )
     };
-    let mut q = sqlx::query(&sql).bind(quantity).bind(variant_id);
+    let mut q = sqlx::query(crate::db::safe_sql(&sql))
+        .bind(quantity)
+        .bind(variant_id);
     if let Some(tid) = tenant_id {
         q = q.bind(tid);
     }

@@ -40,7 +40,7 @@ impl JobHandler for SendWelcomeEmailHandler {
         let verify_url = String::new();
         let html = render_template(
             "welcome",
-            tera::Context::from_serialize(serde_json::json!({
+            tera::Context::from_serialize(&serde_json::json!({
                 "username": username,
                 "site_name": &self.config.base_url,
                 "verify_url": verify_url,
@@ -103,7 +103,7 @@ impl JobHandler for SendPasswordResetEmailHandler {
 
         let html = render_template(
             "password-reset",
-            tera::Context::from_serialize(serde_json::json!({
+            tera::Context::from_serialize(&serde_json::json!({
                 "reset_url": &reset_url,
             }))
             .unwrap_or_default(),

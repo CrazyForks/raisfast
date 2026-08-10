@@ -814,7 +814,7 @@ mod tests {
     async fn seed_user(pool: &crate::db::Pool) -> i64 {
         let id = crate::utils::id::new_id();
         let username = format!("testuser_{id}");
-        let _: crate::db::pool::DbQueryResult = sqlx::query(&format!("INSERT INTO users (id, username, status, registered_via) VALUES ({}, {}, 'active', 'email')", crate::db::Driver::ph(1), crate::db::Driver::ph(2)))
+        let _: crate::db::pool::DbQueryResult = sqlx::query(crate::db::safe_sql(&format!("INSERT INTO users (id, username, status, registered_via) VALUES ({}, {}, 'active', 'email')", crate::db::Driver::ph(1), crate::db::Driver::ph(2))))
             .bind(id)
             .bind(&username)
             .execute(pool)
@@ -876,10 +876,10 @@ mod tests {
         )
         .await
         .unwrap();
-        let _: crate::db::pool::DbQueryResult = sqlx::query(&format!(
+        let _: crate::db::pool::DbQueryResult = sqlx::query(crate::db::safe_sql(&format!(
             "UPDATE products SET status = 'active' WHERE id = {}",
             crate::db::Driver::ph(1)
-        ))
+        )))
         .bind(p.id)
         .execute(pool)
         .await
@@ -1560,10 +1560,10 @@ mod tests {
     }
 
     async fn get_product_stock(pool: &crate::db::Pool, id: SnowflakeId) -> i64 {
-        let (s,): (i64,) = sqlx::query_as(&format!(
+        let (s,): (i64,) = sqlx::query_as(crate::db::safe_sql(&format!(
             "SELECT stock FROM products WHERE id = {}",
             crate::db::Driver::ph(1)
-        ))
+        )))
         .bind(id)
         .fetch_one(pool)
         .await
@@ -1631,11 +1631,11 @@ mod tests {
         let uid = seed_user(&pool).await;
         let prod = seed_active_product(&pool, "Widget", 1000).await;
 
-        let _: crate::db::pool::DbQueryResult = sqlx::query(&format!(
+        let _: crate::db::pool::DbQueryResult = sqlx::query(crate::db::safe_sql(&format!(
             "UPDATE products SET stock = {} WHERE id = {}",
             crate::db::Driver::ph(1),
             crate::db::Driver::ph(2)
-        ))
+        )))
         .bind(2i64)
         .bind(prod.id)
         .execute(&pool)

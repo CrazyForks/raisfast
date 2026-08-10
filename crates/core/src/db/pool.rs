@@ -43,7 +43,7 @@ define_db_types!(sqlx::Sqlite {
     Transaction = sqlx::Transaction<'a, sqlx::Sqlite>,
     Row = sqlx::sqlite::SqliteRow,
     Connection = sqlx::sqlite::SqliteConnection,
-    Arguments = sqlx::sqlite::SqliteArguments<'q>,
+    Arguments = sqlx::sqlite::SqliteArguments,
     QueryResult = sqlx::sqlite::SqliteQueryResult,
     PoolConnection = sqlx::pool::PoolConnection<sqlx::Sqlite>,
 });

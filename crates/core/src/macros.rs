@@ -303,7 +303,6 @@ macro_rules! __define_enum_sqlx {
             db = sqlx::Sqlite,
             type_info = sqlx::sqlite::SqliteTypeInfo,
             value_ref = sqlx::sqlite::SqliteValueRef<'_>,
-            arg_buf = Vec<sqlx::sqlite::SqliteArgumentValue<'q>>,
         }
 
         #[cfg(feature = "db-postgres")]
@@ -312,7 +311,6 @@ macro_rules! __define_enum_sqlx {
             db = sqlx::Postgres,
             type_info = sqlx::postgres::PgTypeInfo,
             value_ref = sqlx::postgres::PgValueRef<'_>,
-            arg_buf = sqlx::postgres::PgArgumentBuffer,
         }
 
         #[cfg(feature = "db-mysql")]
@@ -321,7 +319,6 @@ macro_rules! __define_enum_sqlx {
             db = sqlx::MySql,
             type_info = sqlx::mysql::MySqlTypeInfo,
             value_ref = sqlx::mysql::MySqlValueRef<'_>,
-            arg_buf = Vec<u8>,
         }
     };
 }
@@ -333,7 +330,6 @@ macro_rules! __define_enum_sqlx_impl {
         db = $db:ty,
         type_info = $type_info:ty,
         value_ref = $value_ref:ty,
-        arg_buf = $arg_buf:ty,
     ) => {
         impl sqlx::Type<$db> for $name {
             fn type_info() -> $type_info {
@@ -355,7 +351,7 @@ macro_rules! __define_enum_sqlx_impl {
         impl<'q> sqlx::Encode<'q, $db> for $name {
             fn encode_by_ref(
                 &self,
-                buf: &mut $arg_buf,
+                buf: &mut <$db as sqlx::Database>::ArgumentBuffer,
             ) -> Result<sqlx::encode::IsNull, sqlx::error::BoxDynError> {
                 <String as sqlx::Encode<'q, $db>>::encode_by_ref(&self.to_string(), buf)
             }
@@ -370,7 +366,7 @@ macro_rules! __define_enum_sqlx_impl {
 /// # Examples
 ///
 /// ```ignore
-/// let mut q = sqlx::query(&sql);
+/// let mut q = sqlx::query(crate::db::safe_sql(&sql));
 /// bind_optional!(q, name);       // if name is Some, bind it
 /// bind_optional!(q, description); // same
 /// ```
@@ -395,7 +391,7 @@ macro_rules! bind_optional {
 /// # Examples
 ///
 /// ```ignore
-/// let mut q = sqlx::query_as::<_, Tag>(&sql).bind(id);
+/// let mut q = sqlx::query_as::<_, Tag>(crate::db::safe_sql(&sql)).bind(id);
 /// bind_tenant!(q, tenant_id);
 /// q.fetch_one(pool).await?
 /// ```
