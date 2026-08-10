@@ -45,6 +45,22 @@ pub struct AuditInfo {
     pub detail: Option<String>,
 }
 
+/// Panic information emitted on `system.panic` event.
+///
+/// Captured by the panic hook in [`crate::panic_hook`] and delivered to
+/// webhook subscribers of `"system.panic"`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SystemPanicPayload {
+    /// The panic message.
+    pub message: String,
+    /// `file:line:col` of the panic location.
+    pub location: String,
+    /// Full backtrace (if captured).
+    pub backtrace: String,
+    /// RFC 3339 timestamp of when the panic occurred.
+    pub timestamp: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, EventMeta)]
 #[non_exhaustive]
 #[serde(tag = "type", content = "data")]
@@ -195,6 +211,10 @@ pub enum Event {
         event_type: String,
         data: serde_json::Value,
     },
+
+    // ── System ──
+    #[event(event_name = "system.panic")]
+    SystemPanic(SystemPanicPayload),
 }
 
 impl Event {

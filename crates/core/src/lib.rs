@@ -37,6 +37,7 @@ pub mod middleware;
 pub mod models;
 pub mod notifier;
 pub mod oauth;
+pub mod panic_hook;
 pub mod payment;
 pub mod plugins;
 pub mod policy;
@@ -159,6 +160,7 @@ pub async fn build_app_state(
     let live_tables = crate::db::connection::fetch_table_names(&pool).await;
 
     let eventbus = EventBus::new(256);
+    crate::panic_hook::set_event_bus(eventbus.clone());
 
     let cache: Arc<dyn crate::cache::CacheStore> = Arc::new(crate::cache::MemoryCache::new());
 

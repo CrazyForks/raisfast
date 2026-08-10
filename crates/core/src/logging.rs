@@ -144,7 +144,9 @@ pub fn cleanup_old_logs(log_dir: &str, max_files: usize) {
         .filter_map(|e| {
             let entry = e.ok()?;
             let name = entry.file_name().to_string_lossy().into_owned();
-            if name.starts_with("raisfast_") && name.ends_with(".log") {
+            if (name.starts_with("raisfast_") || name.starts_with("panic_"))
+                && name.ends_with(".log")
+            {
                 Some(name)
             } else {
                 None

@@ -31,6 +31,10 @@ async fn main() -> anyhow::Result<()> {
     let config = AppConfig::init();
     cli::print_banner(&config);
 
+    // Install panic hook early: writes to panic_YYYY-MM-DD.log + emits
+    // system.panic event for webhook delivery.
+    raisfast::panic_hook::install(&config.log_dir);
+
     let cli = cli::Cli::parse();
 
     let _log_guard = logging::init(&config.log_dir);
