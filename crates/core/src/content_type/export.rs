@@ -264,7 +264,7 @@ impl ExportSink {
                                     AppError::Internal(anyhow::anyhow!("xlsx write: {e}"))
                                 })?;
                             } else {
-                                ws.write_string(row_idx, col, &n.to_string()).map_err(|e| {
+                                ws.write_string(row_idx, col, n.to_string()).map_err(|e| {
                                     AppError::Internal(anyhow::anyhow!("xlsx write: {e}"))
                                 })?;
                             }
@@ -280,7 +280,7 @@ impl ExportSink {
                             })?;
                         }
                         Some(_) => {
-                            ws.write_string(row_idx, col, &cell_string(map.get(name)))
+                            ws.write_string(row_idx, col, cell_string(map.get(name)))
                                 .map_err(|e| {
                                     AppError::Internal(anyhow::anyhow!("xlsx write: {e}"))
                                 })?;

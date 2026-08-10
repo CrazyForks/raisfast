@@ -590,7 +590,7 @@ mod tests {
             "INSERT INTO ct_trends (id, created_at) VALUES (1, {})",
             crate::db::Driver::ph(1)
         )))
-        .bind(&now)
+        .bind(now)
         .execute(&pool)
         .await
         .unwrap();

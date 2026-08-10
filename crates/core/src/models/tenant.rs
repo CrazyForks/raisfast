@@ -124,8 +124,7 @@ mod tests {
     use super::*;
 
     async fn setup_pool() -> crate::db::Pool {
-        let pool = crate::test_pool!();
-        pool
+        crate::test_pool!()
     }
 
     #[tokio::test]

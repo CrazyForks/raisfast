@@ -9,7 +9,7 @@ async fn setup_with_product() -> (axum::Router, AppState, String, String) {
         &mut app.clone(),
         post_json_auth(
             "/api/v1/admin/products",
-            json!({"title": "Variant Product", "price": 5000}),
+            json!({"title": uniq("Variant Product"), "price": 5000}),
             &tok,
         ),
     )
@@ -27,8 +27,8 @@ async fn admin_create_variant() {
             "/api/v1/admin/product-variants",
             json!({
                 "product_id": product_id,
-                "title": "Red / M",
-                "sku": "SKU-RED-M",
+                "title": uniq("Red / M"),
+                "sku": uniq("SKU-RED-M"),
                 "price": 6000,
                 "stock": 50,
             }),
@@ -37,8 +37,18 @@ async fn admin_create_variant() {
     )
     .await;
     assert!(status.is_success(), "create variant: {status} {body:?}");
-    assert_eq!(body["data"]["title"], "Red / M");
-    assert_eq!(body["data"]["sku"], "SKU-RED-M");
+    assert!(
+        body["data"]["title"]
+            .as_str()
+            .unwrap_or("")
+            .starts_with("Red / M")
+    );
+    assert!(
+        body["data"]["sku"]
+            .as_str()
+            .unwrap_or("")
+            .starts_with("SKU-RED-M")
+    );
     assert_eq!(body["data"]["price"], 6000);
     assert_eq!(body["data"]["stock"], 50);
 }
@@ -67,7 +77,7 @@ async fn admin_update_variant() {
             "/api/v1/admin/product-variants",
             json!({
                 "product_id": product_id,
-                "title": "Blue",
+                "title": uniq("Blue"),
                 "price": 5000,
             }),
             &tok,
@@ -80,13 +90,18 @@ async fn admin_update_variant() {
         &mut app,
         put_json_auth(
             &format!("/api/v1/admin/product-variants/{id}"),
-            json!({"title": "Green", "price": 7000}),
+            json!({"title": uniq("Green"), "price": 7000}),
             &tok,
         ),
     )
     .await;
     assert!(status.is_success(), "update variant: {status} {body:?}");
-    assert_eq!(body["data"]["title"], "Green");
+    assert!(
+        body["data"]["title"]
+            .as_str()
+            .unwrap_or("")
+            .starts_with("Green")
+    );
     assert_eq!(body["data"]["price"], 7000);
 }
 
@@ -99,7 +114,7 @@ async fn admin_delete_variant() {
             "/api/v1/admin/product-variants",
             json!({
                 "product_id": product_id,
-                "title": "Bye",
+                "title": uniq("Bye"),
                 "price": 1000,
             }),
             &tok,
@@ -123,7 +138,7 @@ async fn list_variants_by_product() {
         &mut app,
         post_json_auth(
             "/api/v1/admin/product-variants",
-            json!({"product_id": product_id, "title": "V1", "price": 100}),
+            json!({"product_id": product_id, "title": uniq("V1"), "price": 100}),
             &tok,
         ),
     )
@@ -132,7 +147,7 @@ async fn list_variants_by_product() {
         &mut app,
         post_json_auth(
             "/api/v1/admin/product-variants",
-            json!({"product_id": product_id, "title": "V2", "price": 200}),
+            json!({"product_id": product_id, "title": uniq("V2"), "price": 200}),
             &tok,
         ),
     )
@@ -156,7 +171,7 @@ async fn create_variant_nonexistent_product() {
             "/api/v1/admin/product-variants",
             json!({
                 "product_id": "nonexistent-id",
-                "title": "X",
+                "title": uniq("X"),
                 "price": 100,
             }),
             &tok,
@@ -181,7 +196,7 @@ async fn non_admin_cannot_create_variant() {
         &mut app,
         post_json_auth(
             "/api/v1/admin/product-variants",
-            json!({"product_id": product_id, "title": "X", "price": 100}),
+            json!({"product_id": product_id, "title": uniq("X"), "price": 100}),
             &access_token,
         ),
     )

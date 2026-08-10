@@ -9,22 +9,21 @@ async fn setup_with_product() -> (axum::Router, AppState, String, String) {
         &mut app.clone(),
         post_json_auth(
             "/api/v1/admin/products",
-            json!({"title": "Test Product", "price": 9900, "currency": "CNY", "stock": 100}),
+            json!({"title": uniq("Test Product"), "price": 9900, "currency": "CNY", "stock": 100}),
             &tok,
         ),
     )
     .await;
     let product_id = pbody["data"]["id"].as_str().unwrap().to_string();
-    let product_int_id: i64 = sqlx::query_scalar("SELECT id FROM products WHERE id = ?")
-        .bind(&product_id)
-        .fetch_one(&state.pool)
-        .await
-        .unwrap();
-    sqlx::query("UPDATE products SET status = 'active' WHERE id = ?")
-        .bind(product_int_id)
-        .execute(&state.pool)
-        .await
-        .unwrap();
+    let product_int_id: i64 = product_id.parse().unwrap_or(0);
+    sqlx::query(raisfast::db::safe_sql(&format!(
+        "UPDATE products SET status = 'active' WHERE id = {}",
+        raisfast::db::Driver::ph(1)
+    )))
+    .bind(product_int_id)
+    .execute(&state.pool)
+    .await
+    .unwrap();
 
     (app, state, tok, product_id)
 }
@@ -199,16 +198,15 @@ async fn admin_ship_order() {
     .await;
     let order_id = create_body["data"]["id"].as_str().unwrap();
 
-    let order_int_id: i64 = sqlx::query_scalar("SELECT id FROM orders WHERE id = ?")
-        .bind(order_id)
-        .fetch_one(&state.pool)
-        .await
-        .unwrap();
-    sqlx::query("UPDATE orders SET status = 'paid' WHERE id = ?")
-        .bind(order_int_id)
-        .execute(&state.pool)
-        .await
-        .unwrap();
+    let order_int_id: i64 = order_id.parse().unwrap_or(0);
+    sqlx::query(raisfast::db::safe_sql(&format!(
+        "UPDATE orders SET status = 'paid' WHERE id = {}",
+        raisfast::db::Driver::ph(1)
+    )))
+    .bind(order_int_id)
+    .execute(&state.pool)
+    .await
+    .unwrap();
 
     let (status, _) = send(
         &mut app,

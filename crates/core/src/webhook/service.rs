@@ -12,6 +12,7 @@ impl WebhookService {
         Self { pool }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn create(
         &self,
         tenant_id: Option<&str>,

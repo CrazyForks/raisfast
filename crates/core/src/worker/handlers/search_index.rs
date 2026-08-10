@@ -190,8 +190,8 @@ mod tests {
                 .bind(&slug)
                 .bind(format!("{title} content"))
                 .bind(author_id)
-                .bind(&now)
-                .bind(&now)
+                .bind(now)
+                .bind(now)
                 .execute(pool)
                 .await
                 .unwrap();
@@ -203,8 +203,8 @@ mod tests {
                 .bind(&slug)
                 .bind(format!("{title} content"))
                 .bind(author_id)
-                .bind(&now)
-                .bind(&now)
+                .bind(now)
+                .bind(now)
                 .fetch_one(pool)
                 .await
                 .unwrap();

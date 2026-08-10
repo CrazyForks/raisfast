@@ -662,7 +662,7 @@ mod tests {
         assert_eq!(params.get("charset").unwrap(), "utf-8");
         assert_eq!(params.get("sign_type").unwrap(), "RSA2");
         assert_eq!(params.get("version").unwrap(), "1.0");
-        assert!(params.get("timestamp").is_some());
+        assert!(params.contains_key("timestamp"));
         assert_eq!(params.get("biz_content").unwrap(), "{}");
     }
 

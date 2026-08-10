@@ -195,8 +195,8 @@ mod tests {
             .unwrap();
         assert_eq!(found.id, ch.id);
         assert_eq!(found.provider, "stripe");
-        assert_eq!(found.is_live, false);
-        assert_eq!(found.is_active, true);
+        assert!(!found.is_live);
+        assert!(found.is_active);
         assert_eq!(found.version, 1);
     }
 
@@ -295,8 +295,8 @@ mod tests {
             .unwrap();
         assert_eq!(found.provider, "paypal");
         assert_eq!(found.name, new_name);
-        assert_eq!(found.is_live, true);
-        assert_eq!(found.is_active, false);
+        assert!(found.is_live);
+        assert!(!found.is_active);
         assert_eq!(found.sort_order, 5);
         assert_eq!(found.version, ch.version + 1);
     }

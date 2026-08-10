@@ -9,22 +9,21 @@ async fn setup_with_product() -> (axum::Router, AppState, String, String) {
         &mut app.clone(),
         post_json_auth(
             "/api/v1/admin/products",
-            json!({"title": "Cart Product", "price": 5000, "currency": "CNY"}),
+            json!({"title": uniq("Cart Product"), "price": 5000, "currency": "CNY"}),
             &tok,
         ),
     )
     .await;
     let product_id = pbody["data"]["id"].as_str().unwrap().to_string();
-    let int_id: i64 = sqlx::query_scalar("SELECT id FROM products WHERE id = ?")
-        .bind(&product_id)
-        .fetch_one(&state.pool)
-        .await
-        .unwrap();
-    sqlx::query("UPDATE products SET status = 'active' WHERE id = ?")
-        .bind(int_id)
-        .execute(&state.pool)
-        .await
-        .unwrap();
+    let int_id: i64 = product_id.parse().unwrap_or(0);
+    sqlx::query(raisfast::db::safe_sql(&format!(
+        "UPDATE products SET status = 'active' WHERE id = {}",
+        raisfast::db::Driver::ph(1)
+    )))
+    .bind(int_id)
+    .execute(&state.pool)
+    .await
+    .unwrap();
 
     (app, state, tok, product_id)
 }

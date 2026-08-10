@@ -15,13 +15,18 @@ async fn create_and_get_tenant() {
         &mut app,
         post_json_auth(
             "/api/v1/admin/tenants",
-            json!({"name": "Acme Corp", "domain": "acme.example.com"}),
+            json!({"name": uniq("Acme Corp"), "domain": &format!("acme.example.com-{}", raisfast::utils::id::new_id())}),
             &tok,
         ),
     )
     .await;
     assert!(status.is_success(), "create tenant: {status} {body:?}");
-    assert_eq!(body["data"]["name"], "Acme Corp");
+    assert!(
+        body["data"]["name"]
+            .as_str()
+            .unwrap_or("")
+            .starts_with("Acme Corp")
+    );
     let id = body["data"]["id"].as_str().unwrap().to_string();
 
     let (status, body) = send(
@@ -30,7 +35,12 @@ async fn create_and_get_tenant() {
     )
     .await;
     assert!(status.is_success(), "get tenant: {status} {body:?}");
-    assert_eq!(body["data"]["name"], "Acme Corp");
+    assert!(
+        body["data"]["name"]
+            .as_str()
+            .unwrap_or("")
+            .starts_with("Acme Corp")
+    );
 }
 
 #[tokio::test]
@@ -40,7 +50,11 @@ async fn update_tenant() {
 
     let (_, create_body) = send(
         &mut app,
-        post_json_auth("/api/v1/admin/tenants", json!({"name": "Original"}), &tok),
+        post_json_auth(
+            "/api/v1/admin/tenants",
+            json!({"name": uniq("Original")}),
+            &tok,
+        ),
     )
     .await;
     let id = create_body["data"]["id"].as_str().unwrap();
@@ -49,13 +63,18 @@ async fn update_tenant() {
         &mut app,
         put_json_auth(
             &format!("/api/v1/admin/tenants/{id}"),
-            json!({"name": "Updated Corp", "domain": "updated.example.com"}),
+            json!({"name": uniq("Updated Corp"), "domain": &format!("updated.example.com-{}", raisfast::utils::id::new_id())}),
             &tok,
         ),
     )
     .await;
     assert!(status.is_success(), "update tenant: {status} {body:?}");
-    assert_eq!(body["data"]["name"], "Updated Corp");
+    assert!(
+        body["data"]["name"]
+            .as_str()
+            .unwrap_or("")
+            .starts_with("Updated Corp")
+    );
 }
 
 #[tokio::test]
@@ -65,7 +84,11 @@ async fn delete_tenant() {
 
     let (_, create_body) = send(
         &mut app,
-        post_json_auth("/api/v1/admin/tenants", json!({"name": "ToDelete"}), &tok),
+        post_json_auth(
+            "/api/v1/admin/tenants",
+            json!({"name": uniq("ToDelete")}),
+            &tok,
+        ),
     )
     .await;
     let id = create_body["data"]["id"].as_str().unwrap();
@@ -92,12 +115,20 @@ async fn list_tenants() {
 
     send(
         &mut app,
-        post_json_auth("/api/v1/admin/tenants", json!({"name": "Tenant A"}), &tok),
+        post_json_auth(
+            "/api/v1/admin/tenants",
+            json!({"name": uniq("Tenant A")}),
+            &tok,
+        ),
     )
     .await;
     send(
         &mut app,
-        post_json_auth("/api/v1/admin/tenants", json!({"name": "Tenant B"}), &tok),
+        post_json_auth(
+            "/api/v1/admin/tenants",
+            json!({"name": uniq("Tenant B")}),
+            &tok,
+        ),
     )
     .await;
 
@@ -128,7 +159,7 @@ async fn update_tenant_not_found() {
         &mut app,
         put_json_auth(
             &format!("/api/v1/admin/tenants/{fake_id}"),
-            json!({"name": "Ghost"}),
+            json!({"name": uniq("Ghost")}),
             &tok,
         ),
     )

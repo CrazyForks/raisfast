@@ -16,7 +16,7 @@ async fn guest_comment_success() {
         &mut app,
         post_json(
             &format!("/api/v1/posts/{slug}/comments"),
-            json!({"content": "Nice!", "nickname": "Guest1", "email": "g@test.com"}),
+            json!({"content": "Nice!", "nickname": "Guest1", "email": uniq_email("g")}),
         ),
     )
     .await;
@@ -44,7 +44,8 @@ async fn guest_comment_requires_nickname() {
 #[tokio::test]
 async fn authed_comment_success() {
     let (mut app, _, _, slug) = setup_with_post().await;
-    let (tok, _) = register_and_login(&mut app, "cmtr@test.com", "cmtr", "Password123").await;
+    let (tok, _) =
+        register_and_login(&mut app, &uniq_email("cmtr"), &uniq("cmtr"), "Password123").await;
     let (status, body): (StatusCode, Value) = send(
         &mut app,
         post_json_auth(
@@ -129,7 +130,13 @@ async fn list_comments() {
 #[tokio::test]
 async fn delete_own_comment() {
     let (mut app, _, _, slug) = setup_with_post().await;
-    let (tok, _) = register_and_login(&mut app, "delc@test.com", "delcuser", "Password123").await;
+    let (tok, _) = register_and_login(
+        &mut app,
+        &uniq_email("delc"),
+        &uniq("delcuser"),
+        "Password123",
+    )
+    .await;
     let (_, b): (StatusCode, Value) = send(
         &mut app,
         post_json_auth(
@@ -151,8 +158,10 @@ async fn delete_own_comment() {
 #[tokio::test]
 async fn delete_not_owner_forbidden() {
     let (mut app, _, _, slug) = setup_with_post().await;
-    let (t1, _) = register_and_login(&mut app, "own@test.com", "own", "Password123").await;
-    let (t2, _) = register_and_login(&mut app, "str@test.com", "str", "Password123").await;
+    let (t1, _) =
+        register_and_login(&mut app, &uniq_email("own"), &uniq("own"), "Password123").await;
+    let (t2, _) =
+        register_and_login(&mut app, &uniq_email("str"), &uniq("str"), "Password123").await;
     let (_, b): (StatusCode, Value) = send(
         &mut app,
         post_json_auth(
@@ -210,7 +219,8 @@ async fn update_status_admin() {
 #[tokio::test]
 async fn update_status_requires_admin() {
     let (mut app, _, _, _) = setup_with_post().await;
-    let (tok, _) = register_and_login(&mut app, "na@test.com", "nauser", "Password123").await;
+    let (tok, _) =
+        register_and_login(&mut app, &uniq_email("na"), &uniq("nauser"), "Password123").await;
     let fake = "9999999999999";
     let (status, _): (StatusCode, Value) = send(
         &mut app,

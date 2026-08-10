@@ -43,22 +43,26 @@ async fn create_user_in_tenant(
     tenant_id: &str,
 ) -> i64 {
     let hash = raisfast::services::auth::hash_password("TestPass123!").unwrap();
+    let uid = raisfast::utils::id::new_id();
     let sql = format!(
-        "INSERT INTO users (tenant_id, username, status, registered_via) VALUES ({}, {}, 'active', 'email') RETURNING id",
+        "INSERT INTO users (id, tenant_id, username, status, registered_via) VALUES ({}, {}, {}, 'active', 'email')",
         raisfast::db::Driver::ph(1),
-        raisfast::db::Driver::ph(2)
+        raisfast::db::Driver::ph(2),
+        raisfast::db::Driver::ph(3)
     );
-    let int_id: i64 = sqlx::query_scalar(raisfast::db::safe_sql(&sql))
+    sqlx::query(raisfast::db::safe_sql(&sql))
+        .bind(uid)
         .bind(tenant_id)
         .bind(username)
-        .fetch_one(pool)
+        .execute(pool)
         .await
         .unwrap();
-    let cred_data = serde_json::json!({"password_hash": hash}).to_string();
+    let int_id = uid;
+    let cred_data = serde_json::json!({"password_hash": hash});
     let cred_id = raisfast::utils::id::new_id();
     let cred_now = raisfast::utils::tz::now_utc();
     let cred_sql = format!(
-        "INSERT INTO user_credentials (id, user_id, auth_type, identifier, credential_data, verified, created_at, updated_at) VALUES ({}, {}, 'email', {}, {}, 1, {}, {})",
+        "INSERT INTO user_credentials (id, user_id, auth_type, identifier, credential_data, verified, created_at, updated_at) VALUES ({}, {}, 'email', {}, {}, true, {}, {})",
         raisfast::db::Driver::ph(1),
         raisfast::db::Driver::ph(2),
         raisfast::db::Driver::ph(3),

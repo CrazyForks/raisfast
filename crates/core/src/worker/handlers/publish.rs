@@ -77,8 +77,7 @@ mod tests {
     use crate::types::snowflake_id::SnowflakeId;
 
     async fn setup() -> Pool {
-        let pool = crate::test_pool!();
-        pool
+        crate::test_pool!()
     }
 
     async fn create_author(pool: &Pool) -> i64 {

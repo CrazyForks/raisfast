@@ -33,7 +33,7 @@ impl JobHandler for ExpireOrdersHandler {
             Driver::ph(1)
         );
         let orders: Vec<crate::models::order::Order> = sqlx::query_as(crate::db::safe_sql(&sql))
-            .bind(&cutoff)
+            .bind(cutoff)
             .fetch_all(&self.pool)
             .await?;
 
@@ -112,8 +112,7 @@ mod tests {
     use crate::db::DbDriver;
 
     async fn setup_pool() -> Pool {
-        let pool = crate::test_pool!();
-        pool
+        crate::test_pool!()
     }
 
     async fn seed_user(pool: &Pool) -> i64 {
@@ -237,7 +236,7 @@ mod tests {
                 crate::db::Driver::ph(1),
                 crate::db::Driver::ph(2)
             )))
-            .bind(&past)
+            .bind(past)
             .bind(order.id)
             .execute(pool)
             .await
@@ -427,7 +426,7 @@ mod tests {
             crate::db::Driver::ph(1),
             crate::db::Driver::ph(2)
         )))
-        .bind(&past)
+        .bind(past)
         .bind(order.id)
         .execute(&pool)
         .await

@@ -238,8 +238,8 @@ mod tests {
         .bind(tenant)
         .bind(user_id)
         .bind(currency)
-        .bind(&now)
-        .bind(&now)
+        .bind(now)
+        .bind(now)
         .execute(pool)
         .await
         .unwrap();

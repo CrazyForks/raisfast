@@ -39,21 +39,21 @@ accept = ["image/*"]
 [fields.author]
 type = "relation"
 label = "作者"
-relation_type = "manytoone"
+relation_type = "many_to_one"
 target = "users"
 foreign_key = "author_id"
 
 [fields.category]
 type = "relation"
 label = "分类"
-relation_type = "manytoone"
+relation_type = "many_to_one"
 target = "categories"
 foreign_key = "category_id"
 
 [fields.tags]
 type = "relation"
 label = "标签"
-relation_type = "manytomany"
+relation_type = "many_to_many"
 target = "tags"
 through = "articles_tags"
 

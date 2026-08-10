@@ -51,6 +51,7 @@ pub async fn initiate_oauth(
 }
 
 /// OAuth callback result
+#[allow(clippy::large_enum_variant)]
 pub enum OAuthCallbackResult {
     /// Login successful (auto-redirect to frontend)
     LoginSuccess(Box<LoginResponse>),

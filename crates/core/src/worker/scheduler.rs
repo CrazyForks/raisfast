@@ -491,6 +491,7 @@ pub async fn toggle_schedule(pool: &Pool, id: SnowflakeId, enabled: bool) -> App
 /// Update schedule fields
 ///
 /// Merges provided fields, recalculates `next_run_at`, persists and returns the updated schedule.
+#[allow(clippy::too_many_arguments)]
 pub async fn update_schedule(
     pool: &Pool,
     id: SnowflakeId,
@@ -1262,9 +1263,9 @@ mod tests {
         .bind("generate_sitemap")
         .bind(Option::<serde_json::Value>::None)
         .bind("0 0 */6 * * *")
-        .bind(&past)
-        .bind(&now)
-        .bind(&now)
+        .bind(past)
+        .bind(now)
+        .bind(now)
         .execute(&pool)
         .await
         .unwrap();
@@ -1316,9 +1317,9 @@ mod tests {
         .bind("generate_sitemap")
         .bind(Option::<serde_json::Value>::None)
         .bind("0 0 */6 * * *")
-        .bind(&future)
-        .bind(&now)
-        .bind(&now)
+        .bind(future)
+        .bind(now)
+        .bind(now)
         .execute(&pool)
         .await
         .unwrap();
@@ -1360,9 +1361,9 @@ mod tests {
         .bind("generate_sitemap")
         .bind(Option::<serde_json::Value>::None)
         .bind("0 0 */6 * * *")
-        .bind(&past)
-        .bind(&now)
-        .bind(&now)
+        .bind(past)
+        .bind(now)
+        .bind(now)
         .execute(&pool)
         .await
         .unwrap();
@@ -1414,9 +1415,9 @@ mod tests {
         .bind("generate_sitemap")
         .bind(Option::<serde_json::Value>::None)
         .bind("0 0 */6 * * *")
-        .bind(&past)
-        .bind(&now)
-        .bind(&now)
+        .bind(past)
+        .bind(now)
+        .bind(now)
         .execute(&pool)
         .await
         .unwrap();
@@ -1620,9 +1621,9 @@ mod tests {
             crate::db::Driver::ph(4)
         )))
         .bind(id)
-        .bind(&now)
-        .bind(&now)
-        .bind(&now)
+        .bind(now)
+        .bind(now)
+        .bind(now)
         .execute(pool)
         .await
         .unwrap();
@@ -1735,7 +1736,7 @@ mod tests {
             .await
             .unwrap();
 
-        let count = cleanup_execution_logs(&pool, 0).await.unwrap();
+        let count = cleanup_execution_logs(&pool, -1).await.unwrap();
         assert_eq!(count, 1);
 
         let (logs, _total) = list_execution_logs(&pool, SnowflakeId(s1), 10, 0)
@@ -1773,9 +1774,9 @@ mod tests {
         .bind("generate_sitemap")
         .bind(Option::<serde_json::Value>::None)
         .bind("0 0 */6 * * *")
-        .bind(&past)
-        .bind(&now)
-        .bind(&now)
+        .bind(past)
+        .bind(now)
+        .bind(now)
         .execute(&pool)
         .await
         .unwrap();

@@ -1828,6 +1828,11 @@ mod tests {
     fn host_context_ph_returns_placeholder() {
         let config = make_test_config();
         let ctx = HostContext::new("test", config, "p1".into(), Permissions::default(), None);
+        #[cfg(feature = "db-postgres")]
+        {
+            assert_eq!(ctx.db_ph(1), "$1");
+            assert_eq!(ctx.db_ph(5), "$5");
+        }
         #[cfg(not(feature = "db-postgres"))]
         {
             assert_eq!(ctx.db_ph(1), "?");

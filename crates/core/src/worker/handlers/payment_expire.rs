@@ -35,7 +35,7 @@ impl JobHandler for ExpirePaymentOrdersHandler {
         );
         let orders: Vec<crate::models::payment_order::PaymentOrder> =
             sqlx::query_as(crate::db::safe_sql(&sql))
-                .bind(&cutoff)
+                .bind(cutoff)
                 .fetch_all(&self.pool)
                 .await?;
 

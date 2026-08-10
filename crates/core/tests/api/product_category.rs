@@ -27,8 +27,18 @@ async fn admin_create_product_category() {
     )
     .await;
     assert!(status.is_success(), "create: {status} {body:?}");
-    assert_eq!(body["data"]["name"], "Electronics");
-    assert_eq!(body["data"]["slug"], "electronics");
+    assert!(
+        body["data"]["name"]
+            .as_str()
+            .unwrap_or("")
+            .starts_with("Electronics")
+    );
+    assert!(
+        body["data"]["slug"]
+            .as_str()
+            .unwrap_or("")
+            .starts_with("electronics")
+    );
     assert_eq!(body["data"]["description"], "All electronic items");
 }
 
@@ -54,7 +64,7 @@ async fn admin_update_product_category() {
         &mut app,
         post_json_auth(
             "/api/v1/admin/product-categories",
-            json!({"name": "Phones"}),
+            json!({"name": uniq("Phones")}),
             &tok,
         ),
     )
@@ -71,7 +81,12 @@ async fn admin_update_product_category() {
     )
     .await;
     assert!(status.is_success(), "update: {status} {body:?}");
-    assert_eq!(body["data"]["name"], "Smartphones");
+    assert!(
+        body["data"]["name"]
+            .as_str()
+            .unwrap_or("")
+            .starts_with("Smartphones")
+    );
     assert_eq!(body["data"]["sort_order"], 10);
 }
 
@@ -82,7 +97,7 @@ async fn admin_delete_product_category() {
         &mut app,
         post_json_auth(
             "/api/v1/admin/product-categories",
-            json!({"name": "Bye"}),
+            json!({"name": uniq("Bye")}),
             &tok,
         ),
     )
@@ -104,7 +119,7 @@ async fn admin_list_product_categories() {
         &mut app,
         post_json_auth(
             "/api/v1/admin/product-categories",
-            json!({"name": "A"}),
+            json!({"name": uniq("A")}),
             &tok,
         ),
     )
@@ -113,7 +128,7 @@ async fn admin_list_product_categories() {
         &mut app,
         post_json_auth(
             "/api/v1/admin/product-categories",
-            json!({"name": "B"}),
+            json!({"name": uniq("B")}),
             &tok,
         ),
     )
@@ -136,7 +151,7 @@ async fn public_list_product_categories() {
         &mut app,
         post_json_auth(
             "/api/v1/admin/product-categories",
-            json!({"name": "Public"}),
+            json!({"name": uniq("Public")}),
             &tok,
         ),
     )
@@ -159,7 +174,7 @@ async fn get_product_category_by_id() {
         &mut app,
         post_json_auth(
             "/api/v1/admin/product-categories",
-            json!({"name": "Found"}),
+            json!({"name": uniq("Found")}),
             &tok,
         ),
     )
@@ -172,7 +187,12 @@ async fn get_product_category_by_id() {
     )
     .await;
     assert!(status.is_success(), "get: {status} {body:?}");
-    assert_eq!(body["data"]["name"], "Found");
+    assert!(
+        body["data"]["name"]
+            .as_str()
+            .unwrap_or("")
+            .starts_with("Found")
+    );
 }
 
 #[tokio::test]
@@ -182,7 +202,7 @@ async fn create_with_parent_category() {
         &mut app,
         post_json_auth(
             "/api/v1/admin/product-categories",
-            json!({"name": "Parent"}),
+            json!({"name": uniq("Parent")}),
             &tok,
         ),
     )
@@ -193,13 +213,18 @@ async fn create_with_parent_category() {
         &mut app,
         post_json_auth(
             "/api/v1/admin/product-categories",
-            json!({"name": "Child", "parent_id": parent_id}),
+            json!({"name": uniq("Child"), "parent_id": parent_id}),
             &tok,
         ),
     )
     .await;
     assert!(status.is_success(), "create child: {status} {body:?}");
-    assert_eq!(body["data"]["name"], "Child");
+    assert!(
+        body["data"]["name"]
+            .as_str()
+            .unwrap_or("")
+            .starts_with("Child")
+    );
 }
 
 #[tokio::test]
@@ -209,26 +234,36 @@ async fn author_can_create_and_update() {
         &mut app,
         post_json_auth(
             "/api/v1/product-categories",
-            json!({"name": "AuthorCat"}),
+            json!({"name": uniq("AuthorCat")}),
             &tok,
         ),
     )
     .await;
     assert!(status.is_success(), "author create: {status} {body:?}");
-    assert_eq!(body["data"]["name"], "AuthorCat");
+    assert!(
+        body["data"]["name"]
+            .as_str()
+            .unwrap_or("")
+            .starts_with("AuthorCat")
+    );
 
     let id = body["data"]["id"].as_str().unwrap();
     let (status, body) = send(
         &mut app,
         put_json_auth(
             &format!("/api/v1/product-categories/{id}"),
-            json!({"name": "Updated"}),
+            json!({"name": uniq("Updated")}),
             &tok,
         ),
     )
     .await;
     assert!(status.is_success(), "author update: {status} {body:?}");
-    assert_eq!(body["data"]["name"], "Updated");
+    assert!(
+        body["data"]["name"]
+            .as_str()
+            .unwrap_or("")
+            .starts_with("Updated")
+    );
 }
 
 #[tokio::test]

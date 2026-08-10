@@ -3,11 +3,17 @@ use super::*;
 #[tokio::test]
 async fn get_me_success() {
     let (mut app, _) = test_app().await;
-    let (access, _) = register_and_login(&mut app, "me@test.com", "meuser", "Password123").await;
+    let (access, _) =
+        register_and_login(&mut app, &uniq_email("me"), &uniq("meuser"), "Password123").await;
     let (status, body): (StatusCode, Value) =
         send(&mut app, get_auth("/api/v1/users/me", &access)).await;
     assert!(status.is_success());
-    assert_eq!(body["data"]["username"], "meuser");
+    assert!(
+        body["data"]["username"]
+            .as_str()
+            .unwrap_or("")
+            .starts_with("meuser")
+    );
 }
 
 #[tokio::test]
@@ -20,25 +26,37 @@ async fn get_me_unauthorized() {
 #[tokio::test]
 async fn update_me_success() {
     let (mut app, _) = test_app().await;
-    let (access, _) = register_and_login(&mut app, "upd@test.com", "upduser", "Password123").await;
+    let (access, _) = register_and_login(
+        &mut app,
+        &uniq_email("upd"),
+        &uniq("upduser"),
+        "Password123",
+    )
+    .await;
     let (status, body): (StatusCode, Value) = send(
         &mut app,
         put_json_auth(
             "/api/v1/users/me",
-            json!({"username": "newname", "bio": "hello", "website": "https://example.com"}),
+            json!({"username": uniq("newname"), "bio": "hello", "website": "https://example.com"}),
             &access,
         ),
     )
     .await;
     assert!(status.is_success(), "{status} {body:?}");
-    assert_eq!(body["data"]["username"], "newname");
+    assert!(
+        body["data"]["username"]
+            .as_str()
+            .unwrap_or("")
+            .starts_with("newname")
+    );
     assert_eq!(body["data"]["bio"], "hello");
 }
 
 #[tokio::test]
 async fn change_password_success() {
     let (mut app, _) = test_app().await;
-    let (access, _) = register_and_login(&mut app, "cpw@test.com", "cpwuser", "OldPass123").await;
+    let email = uniq_email("cpw");
+    let (access, _) = register_and_login(&mut app, &email, &uniq("cpwuser"), "OldPass123").await;
     let (status, _): (StatusCode, Value) = send(
         &mut app,
         put_json_auth(
@@ -54,7 +72,7 @@ async fn change_password_success() {
         &mut app,
         post_json(
             "/api/v1/auth/login",
-            json!({"email": "cpw@test.com", "password": "NewPass456"}),
+            json!({"email": email, "password": "NewPass456"}),
         ),
     )
     .await;
@@ -64,7 +82,13 @@ async fn change_password_success() {
 #[tokio::test]
 async fn change_password_wrong_old() {
     let (mut app, _) = test_app().await;
-    let (access, _) = register_and_login(&mut app, "bpw@test.com", "bpwuser", "Password123").await;
+    let (access, _) = register_and_login(
+        &mut app,
+        &uniq_email("bpw"),
+        &uniq("bpwuser"),
+        "Password123",
+    )
+    .await;
     let (status, body): (StatusCode, Value) = send(
         &mut app,
         put_json_auth(
@@ -81,11 +105,16 @@ async fn change_password_wrong_old() {
 #[tokio::test]
 async fn get_user_by_id() {
     let (mut app, state) = test_app().await;
-    let (token, _) = register_and_login(&mut app, "pub@test.com", "pubuser", "Password123").await;
-    let user_id_i64: i64 = sqlx::query_scalar("SELECT id FROM users WHERE username = 'pubuser'")
-        .fetch_one(&state.pool)
-        .await
-        .unwrap();
+    let uname = uniq("pubuser");
+    let (token, _) = register_and_login(&mut app, &uniq_email("pub"), &uname, "Password123").await;
+    let user_id_i64: i64 = sqlx::query_scalar(raisfast::db::safe_sql(&format!(
+        "SELECT id FROM users WHERE username = {}",
+        raisfast::db::Driver::ph(1)
+    )))
+    .bind(&uname)
+    .fetch_one(&state.pool)
+    .await
+    .unwrap();
     let user_id = user_id_i64.to_string();
     let (status, body): (StatusCode, Value) = send(
         &mut app,
@@ -93,14 +122,24 @@ async fn get_user_by_id() {
     )
     .await;
     assert!(status.is_success());
-    assert_eq!(body["data"]["username"], "pubuser");
+    assert!(
+        body["data"]["username"]
+            .as_str()
+            .unwrap_or("")
+            .starts_with("pubuser")
+    );
 }
 
 #[tokio::test]
 async fn get_user_not_found() {
     let (mut app, _) = test_app().await;
-    let (token, _) =
-        register_and_login(&mut app, "notfound@test.com", "nfuser", "Password123").await;
+    let (token, _) = register_and_login(
+        &mut app,
+        &uniq_email("notfound"),
+        &uniq("nfuser"),
+        "Password123",
+    )
+    .await;
     let fake = "9999999999999";
     let (status, _): (StatusCode, Value) =
         send(&mut app, get_auth(&format!("/api/v1/users/{fake}"), &token)).await;
@@ -116,8 +155,13 @@ async fn list_users_admin_only() {
         admin_id.0,
         raisfast::models::user::UserRole::Admin,
     );
-    let (reader_tok, _) =
-        register_and_login(&mut app, "reader@test.com", "reader", "Password123").await;
+    let (reader_tok, _) = register_and_login(
+        &mut app,
+        &uniq_email("reader"),
+        &uniq("reader"),
+        "Password123",
+    )
+    .await;
 
     let (s, _): (StatusCode, Value) = send(&mut app, get_auth("/api/v1/users", &reader_tok)).await;
     assert_eq!(s, StatusCode::FORBIDDEN);
@@ -132,8 +176,13 @@ async fn list_users_admin_only() {
 #[tokio::test]
 async fn update_me_with_bio_and_website() {
     let (mut app, _) = test_app().await;
-    let (access, _) =
-        register_and_login(&mut app, "bioweb@test.com", "biowebuser", "Password123").await;
+    let (access, _) = register_and_login(
+        &mut app,
+        &uniq_email("bioweb"),
+        &uniq("biowebuser"),
+        "Password123",
+    )
+    .await;
     let (status, body): (StatusCode, Value) = send(
         &mut app,
         put_json_auth(
@@ -151,8 +200,13 @@ async fn update_me_with_bio_and_website() {
 #[tokio::test]
 async fn change_password_too_short() {
     let (mut app, _) = test_app().await;
-    let (access, _) =
-        register_and_login(&mut app, "short@test.com", "shortuser", "Password123").await;
+    let (access, _) = register_and_login(
+        &mut app,
+        &uniq_email("short"),
+        &uniq("shortuser"),
+        "Password123",
+    )
+    .await;
     let (status, body): (StatusCode, Value) = send(
         &mut app,
         put_json_auth(
@@ -174,11 +228,16 @@ async fn admin_can_update_role() {
         admin_id.0,
         raisfast::models::user::UserRole::Admin,
     );
-    let _ = register_and_login(&mut app, "roleuser@test.com", "roleuser", "Password123").await;
-    let reader_id_i64: i64 = sqlx::query_scalar("SELECT id FROM users WHERE username = 'roleuser'")
-        .fetch_one(&state.pool)
-        .await
-        .unwrap();
+    let uname = uniq("roleuser");
+    let _ = register_and_login(&mut app, &uniq_email("roleuser"), &uname, "Password123").await;
+    let reader_id_i64: i64 = sqlx::query_scalar(raisfast::db::safe_sql(&format!(
+        "SELECT id FROM users WHERE username = {}",
+        raisfast::db::Driver::ph(1)
+    )))
+    .bind(&uname)
+    .fetch_one(&state.pool)
+    .await
+    .unwrap();
     let reader_id = reader_id_i64.to_string();
     let (status, body): (StatusCode, Value) = send(
         &mut app,
@@ -202,13 +261,17 @@ async fn admin_can_update_role() {
 #[tokio::test]
 async fn get_user_by_id_returns_public_info() {
     let (mut app, state) = test_app().await;
+    let uname = uniq("pubinfouser");
     let (token, _) =
-        register_and_login(&mut app, "pubinfo@test.com", "pubinfouser", "Password123").await;
-    let user_id_i64: i64 =
-        sqlx::query_scalar("SELECT id FROM users WHERE username = 'pubinfouser'")
-            .fetch_one(&state.pool)
-            .await
-            .unwrap();
+        register_and_login(&mut app, &uniq_email("pubinfo"), &uname, "Password123").await;
+    let user_id_i64: i64 = sqlx::query_scalar(raisfast::db::safe_sql(&format!(
+        "SELECT id FROM users WHERE username = {}",
+        raisfast::db::Driver::ph(1)
+    )))
+    .bind(&uname)
+    .fetch_one(&state.pool)
+    .await
+    .unwrap();
     let user_id = user_id_i64.to_string();
     let (status, body): (StatusCode, Value) = send(
         &mut app,
@@ -217,7 +280,12 @@ async fn get_user_by_id_returns_public_info() {
     .await;
     assert!(status.is_success());
     assert_eq!(body["data"]["id"], user_id);
-    assert_eq!(body["data"]["username"], "pubinfouser");
+    assert!(
+        body["data"]["username"]
+            .as_str()
+            .unwrap_or("")
+            .starts_with("pubinfouser")
+    );
     assert!(body["data"]["created_at"].is_string());
     assert!(body["data"]["updated_at"].is_string());
 }

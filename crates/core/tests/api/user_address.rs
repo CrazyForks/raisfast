@@ -2,8 +2,13 @@ use super::*;
 
 async fn setup_user() -> (axum::Router, AppState, String) {
     let (mut app, state) = test_app().await;
-    let (access_token, _) =
-        register_and_login(&mut app, "addr_user@test.com", "addruser", "Password123!").await;
+    let (access_token, _) = register_and_login(
+        &mut app,
+        &uniq_email("addr_user"),
+        &uniq("addruser"),
+        "Password123!",
+    )
+    .await;
     (app, state, access_token)
 }
 
@@ -147,8 +152,13 @@ async fn cannot_operate_other_users_address() {
     .await;
     let id = create_body["data"]["id"].as_str().unwrap();
 
-    let (access_token2, _) =
-        register_and_login(&mut app, "addr_user2@test.com", "addruser2", "Password123!").await;
+    let (access_token2, _) = register_and_login(
+        &mut app,
+        &uniq_email("addr_user2"),
+        &uniq("addruser2"),
+        "Password123!",
+    )
+    .await;
 
     let (status, _) = send(
         &mut app,
