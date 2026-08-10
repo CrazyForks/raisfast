@@ -2,6 +2,76 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.0] - 2026-08-10
+
+- Major update, product posts payment and detail improve
+
+- Add tunnel, add device doe
+
+- Refactor api tokens auth
+
+- Update api tokens
+
+- Refactoring permission verfication logic
+
+- Refactor permissions, support multiple roles
+
+- Improve permissions function
+
+- Content types support grouping
+
+- Update content types use group
+
+- Refactoring project directory structure using workspace
+
+- Add mcp server
+
+- Improve mcp structure
+
+- Fix permission verification vulnerability
+
+- Content types add batch operation
+
+- Improve content types file type
+
+- Improve content tyeps medis and blob field
+
+- Enhance content types
+
+- Enhance content types
+
+- Resolve postgres compatibility issues
+
+- Improve mysql worker, add  visibility timeout sweeper
+
+- Improve event register
+
+- Clear aspects and simplify the architecture
+
+- Improve UserRole enum, improve rbac, update webhook
+
+- Improve cron handler
+
+- Refactoring cron system
+
+- Add system script cron
+
+- Resolve sql compbatibility
+
+- Resolve sql compatibility
+
+- Modify json fields
+
+- All dependencies use the latest stable version
+
+- Add panic log and webhook
+
+- Improve ci process
+
+- Resolve test error
+
+- Major Update
+
 ## [0.2.29] - 2026-06-02
 
 - Resolve fmt error
