@@ -232,7 +232,7 @@ async fn register_duplicate_username() {
         send(&mut app, post_json("/api/v1/auth/register", req_body)).await;
     assert!(s.is_success());
 
-    let (status, body): (StatusCode, Value) = send(
+    let (status, _body): (StatusCode, Value) = send(
         &mut app,
         post_json(
             "/api/v1/auth/register",
