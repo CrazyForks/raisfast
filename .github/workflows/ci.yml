@@ -134,7 +134,7 @@ jobs:
       - name: Run tests
         env:
           SQLX_OFFLINE: true
-          DATABASE_URL: ${{ matrix.db == 'sqlite' && 'sqlite::memory:' || matrix.db == 'postgres' && 'postgres://postgres:postgres@localhost:5432/raisfast' || 'mysql://root:root@127.0.0.1:3306/raisfast' }}
+          DATABASE_URL: ${{ matrix.db == 'sqlite' && 'sqlite::memory:' || matrix.db == 'postgres' && 'postgres://postgres:postgres@localhost:5432/raisfast_test' || 'mysql://root:root@127.0.0.1:3306/raisfast_test' }}
           RAISFAST_TEST_DB_URL: ${{ matrix.db == 'sqlite' && 'sqlite::memory:' || matrix.db == 'postgres' && 'postgres://postgres:postgres@localhost:5432/raisfast_test' || 'mysql://root:root@127.0.0.1:3306/raisfast_test' }}
         run: cargo test -p raisfast --no-default-features --features "${{ matrix.features }}" ${{ matrix.test_threads }}
 
