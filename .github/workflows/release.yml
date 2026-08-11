@@ -144,9 +144,14 @@ jobs:
       - name: Install dependencies
         run: |
           ${{ matrix.packages_install }}
-      - name: Setup sqlx offline cache
+      - name: Setup SQLite + generate sqlx cache
         shell: bash
-        run: ln -sf .sqlx-sqlite .sqlx
+        run: |
+          cargo install sqlx-cli --no-default-features --features sqlite --locked || true
+          mkdir -p /tmp/sqlx
+          sqlite3 /tmp/sqlx/raisfast.db < migrations/sqlite/schema.sqlite.sql
+          SQLX_OFFLINE=false DATABASE_URL="sqlite:/tmp/sqlx/raisfast.db" \
+            cargo sqlx prepare --workspace -- --no-default-features --features "db-sqlite plugin-js plugin-rhai search-tantivy payment-all tunnel mcp cron-system"
       - name: Build artifacts
         env:
           SQLX_OFFLINE: "true"

@@ -9,6 +9,7 @@ on:
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
+  FEATURES: "plugin-js plugin-rhai search-tantivy payment-all tunnel mcp cron-system"
 
 jobs:
   fmt:
@@ -37,42 +38,35 @@ jobs:
         with:
           key: clippy-${{ matrix.db }}
       - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y pkg-config libssl-dev
+        run: sudo apt-get update && sudo apt-get install -y pkg-config libssl-dev
 
-      - name: Setup PostgreSQL
-        if: matrix.db == 'postgres'
+      - name: Setup database + generate sqlx cache
+        shell: bash
         run: |
-          sudo apt-get install -y postgresql-client
-          sudo -u postgres createuser --superuser --login postgres 2>/dev/null || true
-          PGPASSWORD=postgres psql -h localhost -U postgres -c "CREATE DATABASE raisfast_prepare" 2>/dev/null || true
-          PGPASSWORD=postgres psql -h localhost -U postgres -d raisfast_prepare -f migrations/postgres/schema.postgres.sql
-
-      - name: Setup MySQL
-        if: matrix.db == 'mysql'
-        run: |
-          sudo systemctl start mysql
-          mysql -u root -proot -e "CREATE DATABASE IF NOT EXISTS raisfast_prepare"
-          mysql -u root -proot raisfast_prepare < migrations/mysql/schema.mysql.sql
-
-      - name: Setup SQLite
-        if: matrix.db == 'sqlite'
-        run: |
-          mkdir -p /tmp/sqlite_prepare
-          sqlite3 /tmp/sqlite_prepare/raisfast.db < migrations/sqlite/schema.sqlite.sql
-
-      - name: Prepare sqlx cache
-        env:
-          DATABASE_URL: ${{ matrix.db == 'sqlite' && 'sqlite:/tmp/sqlite_prepare/raisfast.db' || matrix.db == 'postgres' && 'postgres://postgres:postgres@localhost:5432/raisfast_prepare' || 'mysql://root:root@127.0.0.1:3306/raisfast_prepare' }}
-        run: |
-          SQLX_OFFLINE=false cargo sqlx prepare --workspace -- --tests --no-default-features --features "db-${{ matrix.db }} plugin-js plugin-rhai search-tantivy payment-all tunnel mcp cron-system"
+          DB="${{ matrix.db }}"
+          cargo install sqlx-cli --no-default-features --features "$DB" --locked
+          if [ "$DB" = "sqlite" ]; then
+            mkdir -p /tmp/sqlx
+            sqlite3 /tmp/sqlx/raisfast.db < migrations/sqlite/schema.sqlite.sql
+            export DATABASE_URL="sqlite:/tmp/sqlx/raisfast.db"
+          elif [ "$DB" = "postgres" ]; then
+            sudo apt-get install -y postgresql-client
+            sudo -u postgres createuser --superuser --login postgres 2>/dev/null || true
+            PGPASSWORD=postgres psql -h localhost -U postgres -c "CREATE DATABASE raisfast_prepare" 2>/dev/null || true
+            PGPASSWORD=postgres psql -h localhost -U postgres -d raisfast_prepare -f migrations/postgres/schema.postgres.sql
+            export DATABASE_URL="postgres://postgres:postgres@localhost:5432/raisfast_prepare"
+          else
+            sudo systemctl start mysql
+            mysql -u root -proot -e "CREATE DATABASE IF NOT EXISTS raisfast_prepare" 2>/dev/null || true
+            mysql -u root -proot raisfast_prepare < migrations/mysql/schema.mysql.sql
+            export DATABASE_URL="mysql://root:root@127.0.0.1:3306/raisfast_prepare"
+          fi
+          SQLX_OFFLINE=false cargo sqlx prepare --workspace -- --tests --no-default-features --features "db-$DB ${{ env.FEATURES }}"
 
       - name: Clippy
         env:
-          SQLX_OFFLINE: true
-          DATABASE_URL: ${{ matrix.db == 'sqlite' && 'sqlite:/tmp/sqlite_prepare/raisfast.db' || matrix.db == 'postgres' && 'postgres://postgres:postgres@localhost:5432/raisfast_prepare' || 'mysql://root:root@127.0.0.1:3306/raisfast_prepare' }}
-        run: cargo clippy -p raisfast --tests --no-default-features --features "db-${{ matrix.db }} plugin-js plugin-rhai search-tantivy payment-all tunnel mcp cron-system" -- -D warnings
+          SQLX_OFFLINE: "true"
+        run: cargo clippy -p raisfast --tests --no-default-features --features "db-${{ matrix.db }} ${{ env.FEATURES }}" -- -D warnings
 
   test:
     name: Test (${{ matrix.db }})
@@ -82,13 +76,10 @@ jobs:
       matrix:
         include:
           - db: sqlite
-            features: "db-sqlite plugin-js plugin-rhai search-tantivy payment-all tunnel mcp cron-system"
             test_threads: ""
           - db: postgres
-            features: "db-postgres plugin-js plugin-rhai search-tantivy payment-all tunnel mcp cron-system"
             test_threads: "-- --test-threads=1"
           - db: mysql
-            features: "db-mysql plugin-js plugin-rhai search-tantivy payment-all tunnel mcp cron-system"
             test_threads: "-- --test-threads=1"
 
     steps:
@@ -98,43 +89,41 @@ jobs:
         with:
           key: test-${{ matrix.db }}
       - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y pkg-config libssl-dev
+        run: sudo apt-get update && sudo apt-get install -y pkg-config libssl-dev
 
-      - name: Setup PostgreSQL
-        if: matrix.db == 'postgres'
+      - name: Setup databases + generate sqlx cache
+        shell: bash
         run: |
-          sudo apt-get install -y postgresql-client
-          sudo -u postgres createuser --superuser --login postgres 2>/dev/null || true
-          PGPASSWORD=postgres psql -h localhost -U postgres -c "CREATE DATABASE raisfast_test"
-          PGPASSWORD=postgres psql -h localhost -U postgres -d raisfast_test -f migrations/postgres/schema.postgres.sql
-          PGPASSWORD=postgres psql -h localhost -U postgres -c "CREATE DATABASE raisfast_prepare"
-          PGPASSWORD=postgres psql -h localhost -U postgres -d raisfast_prepare -f migrations/postgres/schema.postgres.sql
-
-      - name: Setup MySQL
-        if: matrix.db == 'mysql'
-        run: |
-          sudo systemctl start mysql
-          mysql -u root -proot -e "CREATE DATABASE IF NOT EXISTS raisfast_test"
-          mysql -u root -proot raisfast_test < migrations/mysql/schema.mysql.sql
-          mysql -u root -proot -e "CREATE DATABASE IF NOT EXISTS raisfast_prepare"
-          mysql -u root -proot raisfast_prepare < migrations/mysql/schema.mysql.sql
-
-      - name: Setup SQLite
-        if: matrix.db == 'sqlite'
-        run: sqlite3 /tmp/sqlite_prepare.db < migrations/sqlite/schema.sqlite.sql
-
-      - name: Prepare sqlx cache
-        env:
-          DATABASE_URL: ${{ matrix.db == 'sqlite' && 'sqlite:/tmp/sqlite_prepare.db' || matrix.db == 'postgres' && 'postgres://postgres:postgres@localhost:5432/raisfast_prepare' || 'mysql://root:root@127.0.0.1:3306/raisfast_prepare' }}
-        run: |
-          SQLX_OFFLINE=false cargo sqlx prepare --workspace -- --tests --no-default-features --features "db-${{ matrix.db }} plugin-js plugin-rhai search-tantivy payment-all tunnel mcp cron-system"
+          DB="${{ matrix.db }}"
+          cargo install sqlx-cli --no-default-features --features "$DB" --locked
+          if [ "$DB" = "sqlite" ]; then
+            mkdir -p /tmp/sqlx
+            sqlite3 /tmp/sqlx/raisfast.db < migrations/sqlite/schema.sqlite.sql
+            export DATABASE_URL="sqlite:/tmp/sqlx/raisfast.db"
+            export TEST_URL="sqlite::memory:"
+          elif [ "$DB" = "postgres" ]; then
+            sudo apt-get install -y postgresql-client
+            sudo -u postgres createuser --superuser --login postgres 2>/dev/null || true
+            PGPASSWORD=postgres psql -h localhost -U postgres -c "CREATE DATABASE raisfast_test" 2>/dev/null || true
+            PGPASSWORD=postgres psql -h localhost -U postgres -d raisfast_test -f migrations/postgres/schema.postgres.sql
+            PGPASSWORD=postgres psql -h localhost -U postgres -c "CREATE DATABASE raisfast_prepare" 2>/dev/null || true
+            PGPASSWORD=postgres psql -h localhost -U postgres -d raisfast_prepare -f migrations/postgres/schema.postgres.sql
+            export DATABASE_URL="postgres://postgres:postgres@localhost:5432/raisfast_prepare"
+            export TEST_URL="postgres://postgres:postgres@localhost:5432/raisfast_test"
+          else
+            sudo systemctl start mysql
+            mysql -u root -proot -e "CREATE DATABASE IF NOT EXISTS raisfast_test" 2>/dev/null || true
+            mysql -u root -proot raisfast_test < migrations/mysql/schema.mysql.sql
+            mysql -u root -proot -e "CREATE DATABASE IF NOT EXISTS raisfast_prepare" 2>/dev/null || true
+            mysql -u root -proot raisfast_prepare < migrations/mysql/schema.mysql.sql
+            export DATABASE_URL="mysql://root:root@127.0.0.1:3306/raisfast_prepare"
+            export TEST_URL="mysql://root:root@127.0.0.1:3306/raisfast_test"
+          fi
+          SQLX_OFFLINE=false cargo sqlx prepare --workspace -- --tests --no-default-features --features "db-$DB ${{ env.FEATURES }}"
 
       - name: Run tests
         env:
-          SQLX_OFFLINE: true
-          DATABASE_URL: ${{ matrix.db == 'sqlite' && 'sqlite::memory:' || matrix.db == 'postgres' && 'postgres://postgres:postgres@localhost:5432/raisfast_test' || 'mysql://root:root@127.0.0.1:3306/raisfast_test' }}
-          RAISFAST_TEST_DB_URL: ${{ matrix.db == 'sqlite' && 'sqlite::memory:' || matrix.db == 'postgres' && 'postgres://postgres:postgres@localhost:5432/raisfast_test' || 'mysql://root:root@127.0.0.1:3306/raisfast_test' }}
-        run: cargo test -p raisfast --no-default-features --features "${{ matrix.features }}" ${{ matrix.test_threads }}
-
+          SQLX_OFFLINE: "true"
+          DATABASE_URL: ${{ env.TEST_URL }}
+          RAISFAST_TEST_DB_URL: ${{ env.TEST_URL }}
+        run: cargo test -p raisfast --no-default-features --features "db-${{ matrix.db }} ${{ env.FEATURES }}" ${{ matrix.test_threads }}

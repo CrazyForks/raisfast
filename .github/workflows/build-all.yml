@@ -64,35 +64,18 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y pkg-config libssl-dev musl-tools
 
-      - name: Install sqlx-cli
-        run: cargo install sqlx-cli --no-default-features --features ${{ matrix.db == 'sqlite' && 'sqlite' || matrix.db == 'postgres' && 'postgres' || 'mysql' }} || true
-
-      - name: Setup database and generate sqlx cache
+      - name: Setup SQLite + generate sqlx cache
         shell: bash
-        env:
-          DB_FEATURES: "db-${{ matrix.db }} plugin-js plugin-rhai search-tantivy payment-all tunnel mcp cron-system"
         run: |
-          DB="${{ matrix.db }}"
-          if [ "$DB" = "sqlite" ]; then
-            mkdir -p /tmp/sqlx_prepare
-            sqlite3 /tmp/sqlx_prepare/raisfast.db < migrations/sqlite/schema.sqlite.sql
-            export DATABASE_URL="sqlite:/tmp/sqlx_prepare/raisfast.db"
-          elif [ "$DB" = "postgres" ]; then
-            sudo apt-get install -y postgresql-client
-            PGPASSWORD=postgres psql -h localhost -U postgres -c "CREATE DATABASE raisfast_prepare" 2>/dev/null || true
-            PGPASSWORD=postgres psql -h localhost -U postgres -d raisfast_prepare -f migrations/postgres/schema.postgres.sql
-            export DATABASE_URL="postgres://postgres:postgres@localhost:5432/raisfast_prepare"
-          else
-            sudo systemctl start mysql 2>/dev/null || true
-            mysql -u root -proot -e "CREATE DATABASE IF NOT EXISTS raisfast_prepare" 2>/dev/null || true
-            mysql -u root -proot raisfast_prepare < migrations/mysql/schema.mysql.sql
-            export DATABASE_URL="mysql://root:root@127.0.0.1:3306/raisfast_prepare"
-          fi
-          SQLX_OFFLINE=false cargo sqlx prepare --workspace -- --tests --no-default-features --features "$DB_FEATURES"
+          cargo install sqlx-cli --no-default-features --features sqlite --locked || true
+          mkdir -p /tmp/sqlx
+          sqlite3 /tmp/sqlx/raisfast.db < migrations/sqlite/schema.sqlite.sql
+          SQLX_OFFLINE=false DATABASE_URL="sqlite:/tmp/sqlx/raisfast.db" \
+            cargo sqlx prepare --workspace -- --no-default-features --features "${{ matrix.features }}"
 
       - name: Build
         env:
-          SQLX_OFFLINE: true
+          SQLX_OFFLINE: "true"
         run: cargo build --release --no-default-features --features "${{ matrix.features }}" --target ${{ matrix.target }}
 
       - name: Get version
