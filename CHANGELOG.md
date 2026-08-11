@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.5] - 2026-08-11
+
+- Improve github workflows
+
 ## [0.3.4] - 2026-08-11
 
 - Resolve actions error
