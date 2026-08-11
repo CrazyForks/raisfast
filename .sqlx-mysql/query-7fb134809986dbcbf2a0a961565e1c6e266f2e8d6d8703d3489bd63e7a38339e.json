@@ -1,0 +1,12 @@
+{
+  "db_name": "MySQL",
+  "query": "INSERT INTO `product_categories` (`id`, `name`, `slug`, `description`, `cover_image`, `meta_title`, `meta_description`, `og_title`, `og_description`, `og_image`, `parent_id`, `sort_order`, `created_by`, `updated_by`, `created_at`, `updated_at`, `tenant_id`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 17
+    },
+    "nullable": []
+  },
+  "hash": "7fb134809986dbcbf2a0a961565e1c6e266f2e8d6d8703d3489bd63e7a38339e"
+}

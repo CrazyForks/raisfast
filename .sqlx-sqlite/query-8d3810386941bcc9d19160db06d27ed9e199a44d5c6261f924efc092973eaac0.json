@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO workflow_step_logs (id, instance_id, step_id, step_name, status, input, started_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 7
+    },
+    "nullable": []
+  },
+  "hash": "8d3810386941bcc9d19160db06d27ed9e199a44d5c6261f924efc092973eaac0"
+}

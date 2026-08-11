@@ -1,0 +1,12 @@
+{
+  "db_name": "MySQL",
+  "query": "INSERT INTO `workflow_step_logs` (`id`, `instance_id`, `step_id`, `step_name`, `status`, `input`, `started_at`) VALUES (?, ?, ?, ?, ?, ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 7
+    },
+    "nullable": []
+  },
+  "hash": "81363143b3f061edbb43de27b35e4ea5fef8ab09ca089855c2e0ad15f96cfd2c"
+}

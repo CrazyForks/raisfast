@@ -257,15 +257,16 @@ pub fn register_host_functions(
     host.set("emitEvent", emit_event_fn)?;
 
     let hc = host_ctx.clone();
-    let new_id_fn = lua.create_function(move |lua, ()| -> mlua::Result<mlua::String> {
+    let new_id_fn = lua.create_function(move |lua, ()| -> mlua::Result<mlua::LuaString> {
         lua.create_string(hc.new_uuid())
     })?;
     host.set("newId", new_id_fn)?;
 
     let hc = host_ctx.clone();
-    let db_ph_fn = lua.create_function(move |lua, idx: usize| -> mlua::Result<mlua::String> {
-        lua.create_string(hc.db_ph(idx))
-    })?;
+    let db_ph_fn =
+        lua.create_function(move |lua, idx: usize| -> mlua::Result<mlua::LuaString> {
+            lua.create_string(hc.db_ph(idx))
+        })?;
     host.set("dbPh", db_ph_fn)?;
 
     let json_encode_fn =

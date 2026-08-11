@@ -144,7 +144,12 @@ jobs:
       - name: Install dependencies
         run: |
           ${{ matrix.packages_install }}
+      - name: Setup sqlx offline cache
+        shell: bash
+        run: ln -sf .sqlx-sqlite .sqlx
       - name: Build artifacts
+        env:
+          SQLX_OFFLINE: "true"
         run: |
           # Actually do builds and make zips and whatnot
           dist build ${{ needs.plan.outputs.tag-flag }} --print=linkage --output-format=json ${{ matrix.dist_args }} > dist-manifest.json

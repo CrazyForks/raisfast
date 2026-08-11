@@ -1,0 +1,12 @@
+{
+  "db_name": "MySQL",
+  "query": "INSERT INTO `cart_items` (`id`, `user_id`, `product_id`, `variant_id`, `quantity`, `attributes`, `created_at`, `updated_at`, `tenant_id`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 9
+    },
+    "nullable": []
+  },
+  "hash": "a7ec5794b6cd37c1318ecccc96fb1a3a58b9b9577a955d654cc198e5283f9e31"
+}
