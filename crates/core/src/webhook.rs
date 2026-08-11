@@ -10,4 +10,4 @@ pub mod service;
 pub use service::WebhookService;
 
 #[cfg(feature = "export-types")]
-export_types!(model::WebhookSubscription);
+export_types!(model::WebhookSubscription, model::WebhookDelivery);

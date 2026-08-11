@@ -26,7 +26,6 @@ pub struct OptionRow {
     pub id: SnowflakeId,
     pub tenant_id: Option<String>,
     pub option_key: String,
-    #[cfg_attr(feature = "export-types", ts(type = "unknown"))]
     pub value: serde_json::Value,
     #[serde(rename = "type")]
     #[sqlx(rename = "type")]
@@ -34,7 +33,6 @@ pub struct OptionRow {
     pub group_name: String,
     pub label: String,
     pub description: Option<String>,
-    #[cfg_attr(feature = "export-types", ts(type = "unknown"))]
     pub validation: Option<serde_json::Value>,
     pub is_public: bool,
     pub autoload: bool,

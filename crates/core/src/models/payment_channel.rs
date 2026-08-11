@@ -12,10 +12,8 @@ pub struct PaymentChannel {
     pub provider: String,
     pub name: String,
     pub is_live: bool,
-    #[cfg_attr(feature = "export-types", ts(type = "unknown"))]
     pub credentials: serde_json::Value,
     pub webhook_secret: Option<String>,
-    #[cfg_attr(feature = "export-types", ts(type = "unknown"))]
     pub settings: Option<serde_json::Value>,
     pub is_active: bool,
     pub sort_order: i64,

@@ -126,9 +126,7 @@ pub struct User {
     pub display_name: Option<String>,
     pub slug: Option<String>,
     pub locale: Option<String>,
-    #[cfg_attr(feature = "export-types", ts(type = "unknown"))]
     pub social_links: Option<serde_json::Value>,
-    #[cfg_attr(feature = "export-types", ts(type = "unknown"))]
     pub metadata: Option<serde_json::Value>,
     pub created_at: Timestamp,
     pub updated_at: Timestamp,

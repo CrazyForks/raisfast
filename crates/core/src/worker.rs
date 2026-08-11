@@ -269,7 +269,6 @@ pub struct JobStats {
 pub struct JobRow {
     pub id: String,
     pub job_type: String,
-    #[cfg_attr(feature = "export-types", ts(type = "unknown"))]
     pub payload: serde_json::Value,
     pub status: JobStatus,
     pub attempts: u32,

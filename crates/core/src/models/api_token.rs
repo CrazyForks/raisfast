@@ -24,7 +24,6 @@ pub struct ApiToken {
     pub description: String,
     pub token_hash: String,
     pub token_encrypted: String,
-    #[cfg_attr(feature = "export-types", ts(type = "unknown"))]
     pub scopes: serde_json::Value,
     pub last_used_at: Option<Timestamp>,
     pub expires_at: Option<Timestamp>,

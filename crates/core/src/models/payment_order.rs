@@ -59,7 +59,6 @@ pub struct PaymentOrder {
     pub client_country: Option<String>,
     pub client_user_agent: Option<String>,
     pub channel_selected_by: Option<String>,
-    #[cfg_attr(feature = "export-types", ts(type = "unknown"))]
     pub metadata: Option<serde_json::Value>,
     pub paid_at: Option<Timestamp>,
     pub cancelled_at: Option<Timestamp>,
