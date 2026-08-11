@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.7] - 2026-08-11
+
+- Update export types
+
+- Improve github workflows
+
 ## [0.3.6] - 2026-08-11
 
 - Update readme
