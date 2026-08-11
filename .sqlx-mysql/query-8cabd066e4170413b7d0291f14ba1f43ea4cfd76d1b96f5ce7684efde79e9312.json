@@ -1,0 +1,12 @@
+{
+  "db_name": "MySQL",
+  "query": "INSERT INTO `currencies` (`id`, `tenant_id`, `code`, `name`, `decimals`, `created_at`, `updated_at`) VALUES (?, ?, ?, ?, ?, ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 7
+    },
+    "nullable": []
+  },
+  "hash": "8cabd066e4170413b7d0291f14ba1f43ea4cfd76d1b96f5ce7684efde79e9312"
+}

@@ -1,0 +1,12 @@
+{
+  "db_name": "MySQL",
+  "query": "INSERT INTO `user_device_codes` (`id`, `user_id`, `code`, `access_token`, `refresh_token`, `expires_at`, `created_at`) VALUES (?, ?, ?, ?, ?, ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 7
+    },
+    "nullable": []
+  },
+  "hash": "62b0787c5618e2a0422918472beed1335dd9bd42f214f59e32be682e215585e8"
+}

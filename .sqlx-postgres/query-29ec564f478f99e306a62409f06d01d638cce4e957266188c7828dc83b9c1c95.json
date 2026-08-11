@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO cart_items (id, user_id, product_id, variant_id, quantity, attributes, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 8
+    },
+    "nullable": []
+  },
+  "hash": "29ec564f478f99e306a62409f06d01d638cce4e957266188c7828dc83b9c1c95"
+}

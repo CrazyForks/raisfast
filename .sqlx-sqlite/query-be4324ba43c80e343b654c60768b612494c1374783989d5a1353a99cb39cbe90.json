@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO payment_channels (id, provider, name, is_live, credentials, webhook_secret, settings, is_active, sort_order, created_at, updated_at, tenant_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 12
+    },
+    "nullable": []
+  },
+  "hash": "be4324ba43c80e343b654c60768b612494c1374783989d5a1353a99cb39cbe90"
+}

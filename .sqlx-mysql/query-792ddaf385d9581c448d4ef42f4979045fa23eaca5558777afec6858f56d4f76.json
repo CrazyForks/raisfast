@@ -1,0 +1,12 @@
+{
+  "db_name": "MySQL",
+  "query": "INSERT INTO `webhook_subscriptions` (`id`, `name`, `url`, `secret`, `events`, `enabled`, `description`, `created_at`, `updated_at`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 9
+    },
+    "nullable": []
+  },
+  "hash": "792ddaf385d9581c448d4ef42f4979045fa23eaca5558777afec6858f56d4f76"
+}

@@ -22,6 +22,89 @@ jobs:
           components: rustfmt
       - run: cargo fmt --all -- --check
 
+  # ── Verify committed sqlx cache is up-to-date ────────────────────
+  verify-cache-sqlite:
+    name: Verify cache (sqlite)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: sudo apt-get update && sudo apt-get install -y pkg-config libssl-dev
+      - name: Regenerate cache and check for diff
+        run: |
+          cargo install sqlx-cli --no-default-features --features sqlite --locked
+          mkdir -p /tmp/sqlx && sqlite3 /tmp/sqlx/raisfast.db < migrations/sqlite/schema.sqlite.sql
+          rm -f .sqlx
+          SQLX_OFFLINE=false DATABASE_URL="sqlite:/tmp/sqlx/raisfast.db" \
+            cargo sqlx prepare --workspace -- --no-default-features --features "db-sqlite ${{ env.FEATURES }}"
+          if ! diff -rq .sqlx-sqlite .sqlx; then
+            echo "::error::.sqlx-sqlite is stale! Run: RAISFAST_DB=sqlite just db-prepare"
+            exit 1
+          fi
+          echo "✅ .sqlx-sqlite is up-to-date"
+
+  verify-cache-postgres:
+    name: Verify cache (postgres)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: raisfast
+        ports: [5432:5432]
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: sudo apt-get update && sudo apt-get install -y pkg-config libssl-dev postgresql-client
+      - name: Regenerate cache and check for diff
+        run: |
+          cargo install sqlx-cli --no-default-features --features postgres --locked
+          PGPASSWORD=postgres psql -h localhost -U postgres -d raisfast -f migrations/postgres/schema.postgres.sql
+          rm -f .sqlx
+          SQLX_OFFLINE=false DATABASE_URL="postgres://postgres:postgres@localhost:5432/raisfast" \
+            cargo sqlx prepare --workspace -- --no-default-features --features "db-postgres ${{ env.FEATURES }}"
+          if ! diff -rq .sqlx-postgres .sqlx; then
+            echo "::error::.sqlx-postgres is stale! Run: RAISFAST_DB=postgres just db-prepare"
+            exit 1
+          fi
+          echo "✅ .sqlx-postgres is up-to-date"
+
+  verify-cache-mysql:
+    name: Verify cache (mysql)
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8
+        env:
+          MYSQL_ROOT_PASSWORD: root
+        ports: [3306:3306]
+        options: >-
+          --health-cmd "mysqladmin ping -h 127.0.0.1 -uroot -proot"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: sudo apt-get update && sudo apt-get install -y pkg-config libssl-dev
+      - name: Regenerate cache and check for diff
+        run: |
+          cargo install sqlx-cli --no-default-features --features mysql --locked
+          mysql -h 127.0.0.1 -u root -proot -e "CREATE DATABASE IF NOT EXISTS raisfast"
+          mysql -h 127.0.0.1 -u root -proot raisfast < migrations/mysql/schema.mysql.sql
+          rm -f .sqlx
+          SQLX_OFFLINE=false DATABASE_URL="mysql://root:root@127.0.0.1:3306/raisfast" \
+            cargo sqlx prepare --workspace -- --no-default-features --features "db-mysql ${{ env.FEATURES }}"
+          if ! diff -rq .sqlx-mysql .sqlx; then
+            echo "::error::.sqlx-mysql is stale! Run: RAISFAST_DB=mysql just db-prepare"
+            exit 1
+          fi
+          echo "✅ .sqlx-mysql is up-to-date"
+
+  # ── Clippy (uses committed cache, no DB needed) ──────────────────
   clippy:
     name: Clippy (${{ matrix.db }})
     runs-on: ubuntu-latest
@@ -37,93 +120,89 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: clippy-${{ matrix.db }}
-      - name: Install system dependencies
-        run: sudo apt-get update && sudo apt-get install -y pkg-config libssl-dev
-
-      - name: Setup database + generate sqlx cache
-        shell: bash
-        run: |
-          DB="${{ matrix.db }}"
-          cargo install sqlx-cli --no-default-features --features "$DB" --locked
-          if [ "$DB" = "sqlite" ]; then
-            mkdir -p /tmp/sqlx
-            sqlite3 /tmp/sqlx/raisfast.db < migrations/sqlite/schema.sqlite.sql
-            export DATABASE_URL="sqlite:/tmp/sqlx/raisfast.db"
-          elif [ "$DB" = "postgres" ]; then
-            sudo apt-get install -y postgresql-client
-            sudo -u postgres createuser --superuser --login postgres 2>/dev/null || true
-            PGPASSWORD=postgres psql -h localhost -U postgres -c "CREATE DATABASE raisfast_prepare" 2>/dev/null || true
-            PGPASSWORD=postgres psql -h localhost -U postgres -d raisfast_prepare -f migrations/postgres/schema.postgres.sql
-            export DATABASE_URL="postgres://postgres:postgres@localhost:5432/raisfast_prepare"
-          else
-            sudo systemctl start mysql
-            mysql -u root -proot -e "CREATE DATABASE IF NOT EXISTS raisfast_prepare" 2>/dev/null || true
-            mysql -u root -proot raisfast_prepare < migrations/mysql/schema.mysql.sql
-            export DATABASE_URL="mysql://root:root@127.0.0.1:3306/raisfast_prepare"
-          fi
-          SQLX_OFFLINE=false cargo sqlx prepare --workspace -- --tests --no-default-features --features "db-$DB ${{ env.FEATURES }}"
-
+      - run: sudo apt-get update && sudo apt-get install -y pkg-config libssl-dev
+      - run: ln -sf .sqlx-${{ matrix.db }} .sqlx
       - name: Clippy
         env:
           SQLX_OFFLINE: "true"
         run: cargo clippy -p raisfast --tests --no-default-features --features "db-${{ matrix.db }} ${{ env.FEATURES }}" -- -D warnings
 
-  test:
-    name: Test (${{ matrix.db }})
+  # ── Tests (uses committed cache) ─────────────────────────────────
+  test-sqlite:
+    name: Test (sqlite)
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - db: sqlite
-            test_threads: ""
-          - db: postgres
-            test_threads: "-- --test-threads=1"
-          - db: mysql
-            test_threads: "-- --test-threads=1"
-
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
-          key: test-${{ matrix.db }}
-      - name: Install system dependencies
-        run: sudo apt-get update && sudo apt-get install -y pkg-config libssl-dev
-
-      - name: Setup databases + generate sqlx cache
-        shell: bash
-        run: |
-          DB="${{ matrix.db }}"
-          cargo install sqlx-cli --no-default-features --features "$DB" --locked
-          if [ "$DB" = "sqlite" ]; then
-            mkdir -p /tmp/sqlx
-            sqlite3 /tmp/sqlx/raisfast.db < migrations/sqlite/schema.sqlite.sql
-            export DATABASE_URL="sqlite:/tmp/sqlx/raisfast.db"
-            export TEST_URL="sqlite::memory:"
-          elif [ "$DB" = "postgres" ]; then
-            sudo apt-get install -y postgresql-client
-            sudo -u postgres createuser --superuser --login postgres 2>/dev/null || true
-            PGPASSWORD=postgres psql -h localhost -U postgres -c "CREATE DATABASE raisfast_test" 2>/dev/null || true
-            PGPASSWORD=postgres psql -h localhost -U postgres -d raisfast_test -f migrations/postgres/schema.postgres.sql
-            PGPASSWORD=postgres psql -h localhost -U postgres -c "CREATE DATABASE raisfast_prepare" 2>/dev/null || true
-            PGPASSWORD=postgres psql -h localhost -U postgres -d raisfast_prepare -f migrations/postgres/schema.postgres.sql
-            export DATABASE_URL="postgres://postgres:postgres@localhost:5432/raisfast_prepare"
-            export TEST_URL="postgres://postgres:postgres@localhost:5432/raisfast_test"
-          else
-            sudo systemctl start mysql
-            mysql -u root -proot -e "CREATE DATABASE IF NOT EXISTS raisfast_test" 2>/dev/null || true
-            mysql -u root -proot raisfast_test < migrations/mysql/schema.mysql.sql
-            mysql -u root -proot -e "CREATE DATABASE IF NOT EXISTS raisfast_prepare" 2>/dev/null || true
-            mysql -u root -proot raisfast_prepare < migrations/mysql/schema.mysql.sql
-            export DATABASE_URL="mysql://root:root@127.0.0.1:3306/raisfast_prepare"
-            export TEST_URL="mysql://root:root@127.0.0.1:3306/raisfast_test"
-          fi
-          SQLX_OFFLINE=false cargo sqlx prepare --workspace -- --tests --no-default-features --features "db-$DB ${{ env.FEATURES }}"
-
-      - name: Run tests
+          key: test-sqlite
+      - run: sudo apt-get update && sudo apt-get install -y pkg-config libssl-dev
+      - run: ln -sf .sqlx-sqlite .sqlx
+      - name: Test
         env:
           SQLX_OFFLINE: "true"
-          DATABASE_URL: ${{ env.TEST_URL }}
-          RAISFAST_TEST_DB_URL: ${{ env.TEST_URL }}
-        run: cargo test -p raisfast --no-default-features --features "db-${{ matrix.db }} ${{ env.FEATURES }}" ${{ matrix.test_threads }}
+          DATABASE_URL: "sqlite::memory:"
+          RAISFAST_TEST_DB_URL: "sqlite::memory:"
+        run: cargo test -p raisfast --no-default-features --features "db-sqlite ${{ env.FEATURES }}"
+
+  test-postgres:
+    name: Test (postgres)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: raisfast_test
+        ports: [5432:5432]
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: test-postgres
+      - run: sudo apt-get update && sudo apt-get install -y pkg-config libssl-dev postgresql-client
+      - run: |
+          PGPASSWORD=postgres psql -h localhost -U postgres -d raisfast_test -f migrations/postgres/schema.postgres.sql
+          ln -sf .sqlx-postgres .sqlx
+      - name: Test
+        env:
+          SQLX_OFFLINE: "true"
+          DATABASE_URL: "postgres://postgres:postgres@localhost:5432/raisfast_test"
+          RAISFAST_TEST_DB_URL: "postgres://postgres:postgres@localhost:5432/raisfast_test"
+        run: cargo test -p raisfast --no-default-features --features "db-postgres ${{ env.FEATURES }}" -- --test-threads=1
+
+  test-mysql:
+    name: Test (mysql)
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8
+        env:
+          MYSQL_ROOT_PASSWORD: root
+        ports: [3306:3306]
+        options: >-
+          --health-cmd "mysqladmin ping -h 127.0.0.1 -uroot -proot"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: test-mysql
+      - run: sudo apt-get update && sudo apt-get install -y pkg-config libssl-dev
+      - run: |
+          mysql -h 127.0.0.1 -u root -proot -e "CREATE DATABASE IF NOT EXISTS raisfast_test"
+          mysql -h 127.0.0.1 -u root -proot raisfast_test < migrations/mysql/schema.mysql.sql
+          ln -sf .sqlx-mysql .sqlx
+      - name: Test
+        env:
+          SQLX_OFFLINE: "true"
+          DATABASE_URL: "mysql://root:root@127.0.0.1:3306/raisfast_test"
+          RAISFAST_TEST_DB_URL: "mysql://root:root@127.0.0.1:3306/raisfast_test"
+        run: cargo test -p raisfast --no-default-features --features "db-mysql ${{ env.FEATURES }}" -- --test-threads=1

@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO currencies (id, tenant_id, code, name, decimals, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 7
+    },
+    "nullable": []
+  },
+  "hash": "c78e8396f3ba8b01bf5acaee1e4fe5dbe67bda983ff018de9948ac6eae5719a7"
+}
