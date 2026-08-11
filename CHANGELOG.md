@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.6] - 2026-08-11
+
+- Update readme
+
+- Update readme
+
+- Add content-security-policy middleware
+
 ## [0.3.5] - 2026-08-11
 
 - Improve github workflows
