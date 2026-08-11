@@ -1,6 +1,8 @@
 #!/bin/bash
 set -euo pipefail
 
+ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+
 REMOTE="github"
 BRANCH="master"
 REMOTE_BRANCH="main"
@@ -13,6 +15,7 @@ usage() {
   echo ""
   echo "Commands:"
   echo "  ci                            Run format, clippy, test (same as CI)"
+  echo "  build-admin                   Build frontend/admin → refresh adminui/"
   echo "  commit <message>              Commit and push"
   echo "  release <version> [message]   Bump version, commit, tag, push"
   echo ""
@@ -22,6 +25,7 @@ usage() {
   echo "Examples:"
   echo "  $0 ci"
   echo "  $0 ci --db mysql"
+  echo "  $0 build-admin"
   echo "  $0 commit \"fix: some bug\""
   echo "  $0 release 0.3.0"
   echo "  $0 release 0.3.0 \"add new feature\""
@@ -112,12 +116,33 @@ cmd_commit() {
   echo "Pushed to $REMOTE:$REMOTE_BRANCH"
 }
 
+# Build the admin UI from source and refresh the embedded adminui/ directory.
+cmd_build_admin() {
+  local admin_dir="$ROOT_DIR/frontend/admin"
+  if [ ! -d "$admin_dir" ]; then
+    echo ">> frontend/admin not found, keeping existing adminui/ as-is"
+    return
+  fi
+
+  echo "=== Building Admin UI (frontend/admin → adminui/) ==="
+
+  if [ ! -d "$admin_dir/node_modules" ]; then
+    echo ">> installing admin dependencies..."
+    (cd "$admin_dir" && npm ci)
+  fi
+
+  (cd "$admin_dir" && npm run build)
+
+  echo ">> adminui/ refreshed by 'npm run build'"
+}
+
 cmd_release() {
   local ver="$1"
   local msg="${2:-release v$ver}"
   local tag="v$ver"
 
   cmd_ci
+  cmd_build_admin
 
   if git tag -l "$tag" | grep -q .; then
     echo "Tag $tag already exists!"
@@ -160,6 +185,9 @@ fi
 case "$1" in
   ci)
     cmd_ci
+    ;;
+  build-admin)
+    cmd_build_admin
     ;;
   commit)
     [ $# -lt 2 ] && usage

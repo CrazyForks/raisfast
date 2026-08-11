@@ -179,7 +179,7 @@ lettre = { version = "0.11", default-features = false, features = ["smtp-transpo
 tauri = { version = "2", features = ["devtools"], optional = true }
 
 aes-gcm = "0.11"
-async-stripe = { version = "0.41", features = ["runtime-tokio-hyper", "webhook-events"], optional = true }
+async-stripe = { version = "0.41", default-features = false, features = ["runtime-tokio-hyper-rustls-webpki", "webhook-events", "full"], optional = true }
 dashmap = "6"
 moka = { version = "0.12", features = ["sync"] }
 arc-swap = "1"
