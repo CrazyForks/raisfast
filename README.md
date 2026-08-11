@@ -5,7 +5,7 @@
 ---
 
 <p align="center">
-  <img src="./frontend/raisfast.com/public/icon.svg" alt="RaisFast" width="140" />
+  <img src="https://www.raisfast.com/icon.svg" alt="RaisFast" width="140" />
 </p>
 
 <h1 align="center">RaisFast — The fastest CMS, easiest to deploy</h1>
