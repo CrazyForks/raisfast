@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.2] - 2026-08-11
+
+- Resolve actions error
+
 ## [0.3.0] - 2026-08-10
 
 - Major update, product posts payment and detail improve
