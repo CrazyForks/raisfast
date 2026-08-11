@@ -1,0 +1,26 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO \"jobs\" (\"id\", \"job_type\", \"payload\", \"status\", \"max_attempts\", \"run_after\", \"cron_schedule_id\", \"cron_log_id\", \"priority\", \"timeout_secs\", \"dedup_key\", \"created_at\", \"updated_at\") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Varchar",
+        "Jsonb",
+        "Varchar",
+        "Int4",
+        "Timestamptz",
+        "Int8",
+        "Int8",
+        "Int2",
+        "Int4",
+        "Varchar",
+        "Timestamptz",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "4df2ccfc1e8501ca990e3352394ae093c6e4cd3ee6ed3e040431676260a82c03"
+}

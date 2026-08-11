@@ -1,0 +1,18 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO \"wallets\" (\"id\", \"user_id\", \"currency\", \"created_at\", \"updated_at\") VALUES ($1, $2, $3, $4, $5)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8",
+        "Varchar",
+        "Timestamptz",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "bf6df46e0c6e9c2502345324b72fdfd209d9986f3d8c9303e980f4b51415c1fb"
+}

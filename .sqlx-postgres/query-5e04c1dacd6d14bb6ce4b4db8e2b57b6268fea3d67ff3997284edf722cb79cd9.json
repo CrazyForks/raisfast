@@ -1,0 +1,21 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO \"user_credentials\" (\"id\", \"user_id\", \"auth_type\", \"identifier\", \"credential_data\", \"verified\", \"created_at\", \"updated_at\") VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8",
+        "Varchar",
+        "Varchar",
+        "Jsonb",
+        "Bool",
+        "Timestamptz",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "5e04c1dacd6d14bb6ce4b4db8e2b57b6268fea3d67ff3997284edf722cb79cd9"
+}

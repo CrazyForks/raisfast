@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO \"api_tokens\" (\"id\", \"user_id\", \"name\", \"description\", \"token_hash\", \"token_encrypted\", \"scopes\", \"expires_at\", \"created_at\") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8",
+        "Varchar",
+        "Text",
+        "Varchar",
+        "Text",
+        "Jsonb",
+        "Timestamptz",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "9fa723478812d068966aa792946407b5ec7d12df34607ba5b7d34b2d7a3dc789"
+}

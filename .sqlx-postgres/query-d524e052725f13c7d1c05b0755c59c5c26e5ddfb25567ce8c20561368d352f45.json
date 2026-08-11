@@ -1,0 +1,29 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO \"wallet_transactions\" (\"id\", \"tenant_id\", \"wallet_id\", \"user_id\", \"entry_type\", \"amount\", \"balance_after\", \"tx_type\", \"currency\", \"transaction_no\", \"related_tx_id\", \"reference_type\", \"reference_id\", \"counterparty_wallet_id\", \"metadata\", \"created_at\") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text",
+        "Int8",
+        "Int8",
+        "Varchar",
+        "Int8",
+        "Int8",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Int8",
+        "Varchar",
+        "Varchar",
+        "Int8",
+        "Text",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "d524e052725f13c7d1c05b0755c59c5c26e5ddfb25567ce8c20561368d352f45"
+}

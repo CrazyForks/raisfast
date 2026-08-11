@@ -1,0 +1,18 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO \"taggings\" (\"id\", \"tag_id\", \"taggable_type\", \"taggable_id\", \"tenant_id\") VALUES ($1, $2, $3, $4, $5)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8",
+        "Varchar",
+        "Int8",
+        "Varchar"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "754cb7175bab49fbde8ca9a8e8261ab53060283b8189c1226c03ed3f69067127"
+}

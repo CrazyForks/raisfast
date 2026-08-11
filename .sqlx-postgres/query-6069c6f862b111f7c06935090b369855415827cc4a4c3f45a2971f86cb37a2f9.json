@@ -1,0 +1,27 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO \"payment_refunds\" (\"id\", \"payment_order_id\", \"order_id\", \"user_id\", \"amount\", \"currency\", \"reason\", \"provider_refund_id\", \"status\", \"payment_tx_id\", \"metadata\", \"created_at\", \"updated_at\", \"tenant_id\") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8",
+        "Varchar",
+        "Int8",
+        "Int8",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Int8",
+        "Text",
+        "Timestamptz",
+        "Timestamptz",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "6069c6f862b111f7c06935090b369855415827cc4a4c3f45a2971f86cb37a2f9"
+}

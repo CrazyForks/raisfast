@@ -1,0 +1,31 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO \"pages\" (\"id\", \"title\", \"slug\", \"content\", \"blocks\", \"meta_title\", \"meta_description\", \"og_image\", \"template\", \"parent_id\", \"sort_order\", \"status\", \"created_by\", \"updated_by\", \"cover_image\", \"published_at\", \"created_at\", \"updated_at\") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text",
+        "Varchar",
+        "Text",
+        "Jsonb",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Int8",
+        "Int8",
+        "Varchar",
+        "Int8",
+        "Int8",
+        "Varchar",
+        "Timestamptz",
+        "Timestamptz",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "0ff6d171197fd0e441815cb5219c4c56ad832b6b11e34b8bc689d61e73f6f7a3"
+}

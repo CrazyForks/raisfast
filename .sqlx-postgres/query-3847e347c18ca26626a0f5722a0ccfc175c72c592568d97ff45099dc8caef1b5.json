@@ -1,0 +1,18 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO \"refresh_tokens\" (\"id\", \"user_id\", \"token\", \"expires_at\", \"created_at\") VALUES ($1, $2, $3, $4, $5)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8",
+        "Varchar",
+        "Timestamptz",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "3847e347c18ca26626a0f5722a0ccfc175c72c592568d97ff45099dc8caef1b5"
+}

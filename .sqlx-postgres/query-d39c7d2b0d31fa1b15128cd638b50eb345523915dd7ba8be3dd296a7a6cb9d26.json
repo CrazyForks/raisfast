@@ -1,0 +1,20 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO \"workflow_step_logs\" (\"id\", \"instance_id\", \"step_id\", \"step_name\", \"status\", \"input\", \"started_at\") VALUES ($1, $2, $3, $4, $5, $6, $7)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Jsonb",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "d39c7d2b0d31fa1b15128cd638b50eb345523915dd7ba8be3dd296a7a6cb9d26"
+}

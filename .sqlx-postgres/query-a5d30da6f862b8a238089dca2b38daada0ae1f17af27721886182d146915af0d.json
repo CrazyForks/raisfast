@@ -1,0 +1,19 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO \"roles\" (\"id\", \"name\", \"description\", \"is_system\", \"created_at\", \"updated_at\") VALUES ($1, $2, $3, $4, $5, $6)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Varchar",
+        "Text",
+        "Bool",
+        "Timestamptz",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "a5d30da6f862b8a238089dca2b38daada0ae1f17af27721886182d146915af0d"
+}

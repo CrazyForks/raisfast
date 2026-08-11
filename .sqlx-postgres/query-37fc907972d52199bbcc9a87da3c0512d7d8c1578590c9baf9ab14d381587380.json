@@ -1,0 +1,18 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO \"user_roles\" (\"id\", \"tenant_id\", \"user_id\", \"role_id\", \"created_at\") VALUES ($1, $2, $3, $4, $5)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text",
+        "Int8",
+        "Int8",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "37fc907972d52199bbcc9a87da3c0512d7d8c1578590c9baf9ab14d381587380"
+}

@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO \"media\" (\"id\", \"user_id\", \"filename\", \"filepath\", \"mimetype\", \"size\", \"width\", \"height\", \"created_at\") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Int8",
+        "Int4",
+        "Int4",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "513dd993ef84a3d442233957cb994245a25aa45b07ec808a7e520a6175b6ddd5"
+}

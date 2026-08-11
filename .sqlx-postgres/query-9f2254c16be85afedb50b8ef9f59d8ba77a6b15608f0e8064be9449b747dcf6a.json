@@ -1,0 +1,20 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO \"sms_codes\" (\"id\", \"phone\", \"code\", \"purpose\", \"expires_at\", \"ip_address\", \"created_at\") VALUES ($1, $2, $3, $4, $5, $6, $7)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Timestamptz",
+        "Varchar",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "9f2254c16be85afedb50b8ef9f59d8ba77a6b15608f0e8064be9449b747dcf6a"
+}

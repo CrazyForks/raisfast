@@ -1,0 +1,27 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO \"wallet_outbox\" (\"id\", \"user_id\", \"currency\", \"amount\", \"entry_type\", \"tx_type\", \"transaction_no\", \"reference_type\", \"reference_id\", \"metadata\", \"status\", \"created_at\", \"updated_at\", \"tenant_id\") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8",
+        "Text",
+        "Int8",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Timestamptz",
+        "Timestamptz",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "c6b78477153a876a8c8b9dac31a2c0592c8e1f27fb56c14ff10cb2b3df30df3a"
+}

@@ -1,0 +1,19 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO \"users\" (\"id\", \"username\", \"created_at\", \"updated_at\", \"status\", \"registered_via\") VALUES ($1, $2, $3, $4, $5, $6)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Varchar",
+        "Timestamptz",
+        "Timestamptz",
+        "Varchar",
+        "Varchar"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "8d21a8814e3efbc2be3a5a921476e1cb8aa14d48cc693ab86649d08a06a2cf42"
+}

@@ -1,0 +1,29 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO \"categories\" (\"id\", \"name\", \"slug\", \"description\", \"parent_id\", \"sort_order\", \"cover_image\", \"meta_title\", \"meta_description\", \"og_title\", \"og_description\", \"og_image\", \"created_by\", \"updated_by\", \"created_at\", \"updated_at\") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Varchar",
+        "Varchar",
+        "Text",
+        "Int8",
+        "Int8",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Int8",
+        "Int8",
+        "Timestamptz",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "1cc6ecb9871257c17af8fe3d8e5bf72aae75e65e18dfa2f5cb8521a1f9c7a8ad"
+}

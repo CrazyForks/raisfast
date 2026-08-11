@@ -1,0 +1,26 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO \"oauth_accounts\" (\"id\", \"user_id\", \"provider\", \"provider_user_id\", \"email\", \"display_name\", \"avatar_url\", \"access_token\", \"refresh_token\", \"token_expires_at\", \"profile\", \"created_at\", \"updated_at\") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Timestamptz",
+        "Text",
+        "Timestamptz",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "2f19cc0e7bfae616b0bac49ca6e569094ba31d1a20e0ffa895c99388792e13dc"
+}

@@ -1,0 +1,27 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO \"product_variants\" (\"id\", \"product_id\", \"sku\", \"title\", \"price\", \"original_price\", \"stock\", \"attributes\", \"image_url\", \"weight\", \"sort_order\", \"is_active\", \"created_at\", \"updated_at\") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8",
+        "Varchar",
+        "Text",
+        "Int8",
+        "Int8",
+        "Int8",
+        "Jsonb",
+        "Text",
+        "Int8",
+        "Int8",
+        "Bool",
+        "Timestamptz",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "88777e7e9be64c11cc62c78682a48173fcb057171dc5434895a8405509dbdcdd"
+}

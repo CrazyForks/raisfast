@@ -1,0 +1,47 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO \"products\" (\"id\", \"category_id\", \"title\", \"description\", \"cover_url\", \"product_type\", \"fulfillment_type\", \"delivery_hook\", \"weight\", \"price\", \"currency\", \"attributes\", \"sort_order\", \"slug\", \"content\", \"image_ids\", \"original_price\", \"specs\", \"unit\", \"min_purchase\", \"max_purchase\", \"virtual_sales\", \"meta_title\", \"meta_description\", \"og_title\", \"og_description\", \"og_image\", \"stock\", \"cost_price\", \"sale_price\", \"has_variants\", \"created_at\", \"updated_at\", \"tenant_id\") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8",
+        "Text",
+        "Text",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Int8",
+        "Int8",
+        "Varchar",
+        "Jsonb",
+        "Int8",
+        "Varchar",
+        "Text",
+        "Text",
+        "Int8",
+        "Jsonb",
+        "Varchar",
+        "Int8",
+        "Int8",
+        "Int8",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Int8",
+        "Int8",
+        "Int8",
+        "Bool",
+        "Timestamptz",
+        "Timestamptz",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "318c0033c26596b44bea380b4b4b1a9d3a94cd13e42faa5a4bbff1c58e7821c8"
+}

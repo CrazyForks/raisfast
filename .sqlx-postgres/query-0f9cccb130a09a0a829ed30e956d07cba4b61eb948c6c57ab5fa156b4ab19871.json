@@ -1,0 +1,33 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO \"orders\" (\"id\", \"user_id\", \"order_no\", \"subtotal\", \"discount_amount\", \"shipping_amount\", \"total_amount\", \"currency\", \"buyer_name\", \"buyer_phone\", \"buyer_email\", \"shipping_address\", \"remark\", \"tax_amount\", \"coupon_id\", \"shipping_address_id\", \"billing_address_id\", \"created_at\", \"updated_at\", \"tenant_id\") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8",
+        "Varchar",
+        "Int8",
+        "Int8",
+        "Int8",
+        "Int8",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Text",
+        "Text",
+        "Int8",
+        "Int8",
+        "Int8",
+        "Int8",
+        "Timestamptz",
+        "Timestamptz",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "0f9cccb130a09a0a829ed30e956d07cba4b61eb948c6c57ab5fa156b4ab19871"
+}

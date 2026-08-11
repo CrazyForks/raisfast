@@ -1,0 +1,19 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO \"cron_execution_log\" (\"id\", \"schedule_id\", \"job_type\", \"label\", \"status\", \"started_at\") VALUES ($1, $2, $3, $4, $5, $6)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "f7ae65d7ad8c68c7a2c7603afb374a7c82f2c22e0b431e91bcbca60683f239c1"
+}

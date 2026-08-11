@@ -1,0 +1,20 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO \"permissions\" (\"id\", \"role_id\", \"action\", \"subject\", \"fields\", \"conditions\", \"created_at\") VALUES ($1, $2, $3, $4, $5, $6, $7)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8",
+        "Varchar",
+        "Varchar",
+        "Jsonb",
+        "Jsonb",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "5dc74c9bce70d359770dc7ff859f9f4218f828921106a67d222f6987ed61c636"
+}

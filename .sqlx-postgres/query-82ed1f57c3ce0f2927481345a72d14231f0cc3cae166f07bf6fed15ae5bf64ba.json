@@ -1,0 +1,33 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO \"payment_orders\" (\"id\", \"user_id\", \"order_id\", \"title\", \"amount\", \"currency\", \"channel_id\", \"provider\", \"reference_type\", \"reference_id\", \"return_url\", \"idempotency_key\", \"client_ip\", \"client_language\", \"client_country\", \"client_user_agent\", \"channel_selected_by\", \"metadata\", \"created_at\", \"updated_at\") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8",
+        "Varchar",
+        "Text",
+        "Int8",
+        "Varchar",
+        "Int8",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Jsonb",
+        "Timestamptz",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "82ed1f57c3ce0f2927481345a72d14231f0cc3cae166f07bf6fed15ae5bf64ba"
+}

@@ -1,0 +1,24 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO \"shipping_templates\" (\"id\", \"name\", \"type\", \"first_unit\", \"first_price\", \"additional_unit\", \"additional_price\", \"free_shipping_amount\", \"regions\", \"created_at\", \"updated_at\") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text",
+        "Text",
+        "Int8",
+        "Int8",
+        "Int8",
+        "Int8",
+        "Int8",
+        "Jsonb",
+        "Timestamptz",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "499e6922e4cd9fc220248ff7746dd027d6d201b68a619fa2a58228e1cf241ce7"
+}

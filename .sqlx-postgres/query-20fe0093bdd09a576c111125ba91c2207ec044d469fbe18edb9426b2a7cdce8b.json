@@ -1,0 +1,18 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO \"password_reset_tokens\" (\"id\", \"user_id\", \"token\", \"expires_at\", \"created_at\") VALUES ($1, $2, $3, $4, $5)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8",
+        "Varchar",
+        "Timestamptz",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "20fe0093bdd09a576c111125ba91c2207ec044d469fbe18edb9426b2a7cdce8b"
+}
