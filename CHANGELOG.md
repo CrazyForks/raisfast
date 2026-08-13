@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.9] - 2026-08-13
+
+- Improve ci process
+
 ## [0.3.8] - 2026-08-13
 
 - Add content-types backup scripts, update user remvoe logic
