@@ -84,6 +84,33 @@ Native MCP (Model Context Protocol) server. AI clients like Claude Desktop can r
 
 ## Quick Start
 
+### One-line install
+
+```bash
+# SQLite (default — zero config)
+curl -fsSL https://raw.githubusercontent.com/RaisFast/raisfast/main/scripts/install.sh | sh
+
+# PostgreSQL
+curl -fsSL https://raw.githubusercontent.com/RaisFast/raisfast/main/scripts/install.sh | sh -s -- postgres
+
+# MySQL
+curl -fsSL https://raw.githubusercontent.com/RaisFast/raisfast/main/scripts/install.sh | sh -s -- mysql
+```
+
+This downloads the latest prebuilt binary to `~/.local/bin/raisfast`.
+
+```bash
+# Start the server
+raisfast
+
+# Server starts at http://localhost:9898
+# Admin UI at  /admin
+# Swagger at   /swagger-ui
+# Health at    /api/v1/healthz
+```
+
+### Build from source
+
 ```bash
 # Clone
 git clone https://github.com/RaisFast/raisfast.git

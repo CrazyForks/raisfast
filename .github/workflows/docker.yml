@@ -49,18 +49,20 @@ jobs:
           TAG="${{ steps.tag.outputs.tag }}"
           # release.yml (cargo-dist) uploads the SQLite binaries.
           # Poll until both amd64 and arm64 appear (up to 30 min).
+          # Docker TARGETARCH uses amd64/arm64, Rust uses x86_64/aarch64.
           for i in $(seq 1 60); do
             ok=true
-            for arch in x86_64 aarch64; do
-              if [ ! -f "dist/${arch}.done" ]; then
+            for rust_arch in x86_64 aarch64; do
+              docker_arch=$([ "$rust_arch" = "x86_64" ] && echo "amd64" || echo "arm64")
+              if [ ! -f "dist/${docker_arch}.done" ]; then
                 if gh release download "$TAG" \
-                  --pattern "raisfast-${arch}-unknown-linux-musl.tar.xz" \
+                  --pattern "raisfast-${rust_arch}-unknown-linux-musl.tar.xz" \
                   --dir dist 2>/dev/null; then
-                  mkdir -p "dist/${arch}"
-                  tar -xf "dist/raisfast-${arch}-unknown-linux-musl.tar.xz" -C "dist/${arch}/"
-                  cp "dist/${arch}/raisfast-${arch}-unknown-linux-musl/raisfast" "dist/binary-${arch}"
-                  touch "dist/${arch}.done"
-                  echo "Downloaded ${arch} binary on attempt $i"
+                  mkdir -p "dist/${rust_arch}"
+                  tar -xf "dist/raisfast-${rust_arch}-unknown-linux-musl.tar.xz" -C "dist/${rust_arch}/"
+                  cp "dist/${rust_arch}/raisfast-${rust_arch}-unknown-linux-musl/raisfast" "dist/binary-${docker_arch}"
+                  touch "dist/${docker_arch}.done"
+                  echo "Downloaded ${rust_arch} binary → dist/binary-${docker_arch}"
                 else
                   ok=false
                 fi

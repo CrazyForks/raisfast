@@ -27,10 +27,12 @@ jobs:
       matrix:
         include:
           - { target: x86_64-unknown-linux-musl, runner: ubuntu-22.04 }
-          - { target: aarch64-unknown-linux-musl, runner: ubuntu-22.04 }
+          - { target: aarch64-unknown-linux-musl, runner: ubuntu-22.04, container: messense/rust-musl-cross:aarch64-musl }
           - { target: x86_64-apple-darwin, runner: macos-13 }
           - { target: aarch64-apple-darwin, runner: macos-14 }
           - { target: x86_64-pc-windows-msvc, runner: windows-latest }
+
+    container: ${{ matrix.container || '' }}
 
     steps:
       - uses: actions/checkout@v4
@@ -44,7 +46,7 @@ jobs:
           key: build-mysql-${{ matrix.target }}
 
       - name: Install cross-compilation dependencies (Linux)
-        if: runner.os == 'Linux'
+        if: runner.os == 'Linux' && !matrix.container
         run: |
           sudo apt-get update
           sudo apt-get install -y pkg-config musl-tools
