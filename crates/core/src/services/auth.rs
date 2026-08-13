@@ -490,18 +490,14 @@ pub async fn logout(pool: &crate::db::Pool, auth: &AuthUser) -> AppResult<()> {
 ///
 /// When `DEMO_EMAIL` is set, any attempt to change the password of the user
 /// whose email credential matches it will be rejected with `Forbidden`.
-pub async fn ensure_not_demo_user(
-    pool: &crate::db::Pool,
-    user_id: SnowflakeId,
-) -> AppResult<()> {
+pub async fn ensure_not_demo_user(pool: &crate::db::Pool, user_id: SnowflakeId) -> AppResult<()> {
     let demo_email = match std::env::var("DEMO_EMAIL") {
         Ok(e) if !e.is_empty() => e,
         _ => return Ok(()),
     };
     let creds = crate::models::user_credential::find_by_user_id(pool, user_id).await?;
     if creds.iter().any(|c| {
-        c.auth_type == crate::models::user_credential::AuthType::Email
-            && c.identifier == demo_email
+        c.auth_type == crate::models::user_credential::AuthType::Email && c.identifier == demo_email
     }) {
         return Err(crate::errors::app_error::AppError::Forbidden);
     }
