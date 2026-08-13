@@ -13,11 +13,13 @@ RUN groupadd --gid 1000 app \
 WORKDIR /app
 
 COPY migrations/ migrations/
+COPY extensions/ extensions/
+COPY adminui/ adminui/
 COPY dist/binary-${TARGETARCH} /app/raisfast
 
 RUN chmod +x /app/raisfast \
-    && mkdir -p /app/data /app/logs /app/uploads /app/plugins-data \
-    && chown -R app:app /app/data /app/logs /app/uploads /app/plugins-data
+    && mkdir -p /app/storage/logs /app/storage/uploads /app/storage/db \
+    && chown -R app:app /app/storage
 
 USER app
 
