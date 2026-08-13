@@ -1,0 +1,127 @@
+name: Build PostgreSQL
+
+on:
+  push:
+    tags:
+      - '**[0-9]+.[0-9]+.[0-9]+*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag (e.g. v0.3.8)"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: Build (${{ matrix.target }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: x86_64-unknown-linux-musl, runner: ubuntu-22.04 }
+          - { target: aarch64-unknown-linux-musl, runner: ubuntu-22.04 }
+          - { target: x86_64-apple-darwin, runner: macos-13 }
+          - { target: aarch64-apple-darwin, runner: macos-14 }
+          - { target: x86_64-pc-windows-msvc, runner: windows-latest }
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: build-postgres-${{ matrix.target }}
+
+      - name: Install cross-compilation dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config musl-tools
+
+      - name: Link sqlx cache
+        shell: bash
+        run: ln -sf .sqlx-postgres .sqlx
+
+      - name: Build
+        env:
+          SQLX_OFFLINE: "true"
+          DATABASE_URL: "postgres://ci"
+          CARGO_PROFILE_RELEASE_LTO: "thin"
+          CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "16"
+        run: cargo build --release --no-default-features --features "db-postgres plugin-js plugin-rhai search-tantivy payment-all tunnel mcp cron-system" --target ${{ matrix.target }}
+
+      - name: Package (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          mkdir -p dist
+          BINARY="raisfast-postgres"
+          TARGET="${{ matrix.target }}"
+          cp "target/$TARGET/raisfast" "dist/$BINARY"
+          cd dist
+          tar -czf "$BINARY-$TARGET.tar.gz" "$BINARY"
+
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          mkdir -p dist
+          $target = "${{ matrix.target }}"
+          Copy-Item "target/$target/raisfast.exe" "dist/raisfast-postgres.exe"
+          Compress-Archive -Path "dist/raisfast-postgres.exe" -DestinationPath "dist/raisfast-postgres-$target.zip"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: raisfast-postgres-${{ matrix.target }}
+          path: |
+            dist/raisfast-postgres-*.tar.gz
+            dist/raisfast-postgres-*.zip
+
+  release:
+    name: Publish to GitHub Release
+    needs: build
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    if: startsWith(github.ref, 'refs/tags/')
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Upload to GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          # Release may already exist (created by cargo-dist release.yml)
+          gh release create "$TAG" --title "$TAG" --generate-notes artifacts/*.tar.gz artifacts/*.zip \
+            || gh release upload "$TAG" artifacts/*.tar.gz artifacts/*.zip --clobber
+
+      - name: Sign artifacts with cosign
+        uses: sigstore/cosign-installer@v3
+
+      - run: |
+          cd artifacts
+          for f in *.tar.gz *.zip; do
+            [ -f "$f" ] || continue
+            cosign sign-blob --yes --bundle "${f}.bundle" "$f"
+          done
+          gh release upload "${GITHUB_REF_NAME}" *.bundle || true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

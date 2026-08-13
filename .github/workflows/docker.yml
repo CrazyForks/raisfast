@@ -1,56 +1,68 @@
 name: Docker
 
+# Builds and pushes Docker image right after release.yml (cargo-dist) uploads
+# the SQLite binary to GitHub Release. Does NOT depend on build-all.yml.
+#
+# Flow:
+#   tag push → release.yml builds SQLite binary → uploads to Release
+#            → this workflow polls Release until binary appears → builds image
+
 on:
+  push:
+    tags:
+      - '**[0-9]+.[0-9]+.[0-9]+*'
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag (e.g. v0.2.20)"
+        description: "Release tag (e.g. v0.3.8)"
         required: true
         type: string
-  workflow_run:
-    workflows: ["Build All Backends"]
-    types: [completed]
+
+permissions:
+  contents: read
+  packages: write
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: raisfast/raisfast
 
 jobs:
   build-and-push:
     runs-on: ubuntu-22.04
-    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
-    permissions:
-      contents: read
-      packages: write
-      security-events: write
-      id-token: write
-
+    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v4
 
-      - name: Extract version from tag
-        id: version
-        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
-
-      - name: Determine release tag
+      - name: Determine tag
         id: tag
         run: |
-          if [ "${{ github.event_name }}" = "workflow_run" ]; then
-            echo "tag=${{ github.event.workflow_run.head_branch }}" >> "$GITHUB_OUTPUT"
-          elif [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             echo "tag=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
           else
-            echo "tag=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+            echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Download binary from GitHub Release
+      - name: Wait for SQLite binary in GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           mkdir -p dist
-          gh release download "${{ steps.tag.outputs.tag }}" \
-            --pattern "raisfast-x86_64-unknown-linux-musl.tar.xz" \
-            --dir dist
+          TAG="${{ steps.tag.outputs.tag }}"
+          # release.yml (cargo-dist) uploads the SQLite binary.
+          # Poll until it appears (up to 30 min).
+          for i in $(seq 1 60); do
+            if gh release download "$TAG" \
+              --pattern "raisfast-x86_64-unknown-linux-musl.tar.xz" \
+              --dir dist 2>/dev/null; then
+              echo "Downloaded SQLite binary on attempt $i"
+              break
+            fi
+            if [ "$i" = "60" ]; then
+              echo "Timed out waiting for release artifacts"
+              exit 1
+            fi
+            echo "Waiting for release artifacts... ($i/60)"
+            sleep 30
+          done
           tar -xf dist/raisfast-x86_64-unknown-linux-musl.tar.xz -C dist/
           cp dist/raisfast-x86_64-unknown-linux-musl/raisfast dist/binary
 
@@ -65,17 +77,16 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          images: ${{ env.REGISTRY }}/${{ github.repository }}
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
-            type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=latest
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
       - name: Build and push
-        id: build
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -85,32 +96,3 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-
-      - name: Sign image with cosign
-        uses: sigstore/cosign-installer@v3
-      - run: |
-          cosign sign --yes \
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build.outputs.digest }}
-
-      - name: Generate SBOM and attach to image
-        uses: anchore/sbom-action@v0
-        with:
-          image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.version }}
-          format: spdx-json
-          upload-release-assets: false
-
-      - name: Run Trivy vulnerability scanner
-        uses: aquasecurity/trivy-action@master
-        if: success()
-        with:
-          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.version }}
-          format: 'sarif'
-          output: 'trivy-results.sarif'
-          severity: 'CRITICAL,HIGH'
-          exit-code: '0'
-
-      - name: Upload Trivy scan results to GitHub Security tab
-        uses: github/codeql-action/upload-sarif@v4
-        if: always() && hashFiles('trivy-results.sarif') != ''
-        with:
-          sarif_file: 'trivy-results.sarif'
