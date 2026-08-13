@@ -58,6 +58,8 @@ pub async fn reset_password(
         return Err(AppError::BadRequest("invalid_or_expired_token".into()));
     }
 
+    crate::services::auth::ensure_not_demo_user(pool, reset_token.user_id).await?;
+
     crate::services::auth::validate_password_strength(new_password)?;
     let new_hash = crate::services::auth::hash_password(new_password)?;
 
@@ -98,6 +100,8 @@ pub async fn set_password(
     let user = crate::models::user::find_by_id(pool, user_id, tenant_id)
         .await?
         .ok_or_else(|| AppError::not_found("user"))?;
+
+    crate::services::auth::ensure_not_demo_user(pool, user_id).await?;
 
     let creds = crate::models::user_credential::find_by_user_id(pool, user.id).await?;
     let has_password = creds.iter().any(|c| {

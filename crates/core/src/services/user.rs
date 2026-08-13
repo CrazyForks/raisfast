@@ -152,6 +152,7 @@ impl UserService for UserServiceImpl {
         }
 
         if let Some(ref password) = req.password {
+            crate::services::auth::ensure_not_demo_user(&self.pool, uid).await?;
             crate::services::auth::validate_password_strength(password)?;
             let hash = crate::services::auth::hash_password(password)?;
             let cred_data = crate::models::user_credential::wrap_password_hash(&hash);

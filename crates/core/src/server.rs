@@ -1181,12 +1181,18 @@ async fn server_info_handler(State(state): State<AppState>) -> impl IntoResponse
     } else {
         "simple"
     };
+    let demo_email = std::env::var("DEMO_EMAIL").ok();
+    let demo_password = std::env::var("DEMO_PASSWORD").ok();
     axum::Json(json!({
         "code": 0,
         "data": {
             "name": crate::_brand(),
             "version": env!("CARGO_PKG_VERSION"),
             "api_style": api_style,
+            "demo": {
+                "email": demo_email,
+                "password": demo_password,
+            }
         }
     }))
 }

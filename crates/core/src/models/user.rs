@@ -278,7 +278,41 @@ pub async fn delete_by_id(
     id: SnowflakeId,
     tenant_id: Option<&str>,
 ) -> AppResult<()> {
-    raisfast_derive::crud_delete!(pool, "users", where: ("id", id), tenant: tenant_id)?;
+    in_transaction!(pool, tx, {
+        let ph = crate::db::Driver::ph;
+
+        // Clean up auth-related data so email/username can be reused.
+        for table in [
+            "user_credentials",
+            "user_roles",
+            "refresh_tokens",
+            "oauth_accounts",
+            "api_tokens",
+            "password_reset_tokens",
+            "email_verification_tokens",
+            "user_device_codes",
+        ] {
+            let sql = format!("DELETE FROM {table} WHERE user_id = {}", ph(1));
+            sqlx::query(crate::db::safe_sql(&sql))
+                .bind(id)
+                .execute(&mut *tx)
+                .await?;
+        }
+
+        if tenant_id.is_some() {
+            raisfast_derive::crud_delete!(
+                &mut *tx,
+                "users",
+                where: ("id", id),
+                tenant: tenant_id
+            )?;
+        } else {
+            raisfast_derive::crud_delete!(&mut *tx, "users", where: ("id", id))?;
+        }
+
+        Ok::<_, crate::errors::app_error::AppError>(())
+    })?;
+
     Ok(())
 }
 
