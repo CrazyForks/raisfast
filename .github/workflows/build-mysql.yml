@@ -68,7 +68,7 @@ jobs:
           mkdir -p dist
           BINARY="raisfast-mysql"
           TARGET="${{ matrix.target }}"
-          cp "target/$TARGET/raisfast" "dist/$BINARY"
+          cp "target/$TARGET/release/raisfast" "dist/$BINARY"
           cd dist
           tar -czf "$BINARY-$TARGET.tar.gz" "$BINARY"
 
@@ -78,7 +78,7 @@ jobs:
         run: |
           mkdir -p dist
           $target = "${{ matrix.target }}"
-          Copy-Item "target/$target/raisfast.exe" "dist/raisfast-mysql.exe"
+          Copy-Item "target/$target/release/raisfast.exe" "dist/raisfast-mysql.exe"
           Compress-Archive -Path "dist/raisfast-mysql.exe" -DestinationPath "dist/raisfast-mysql-$target.zip"
 
       - name: Upload artifact

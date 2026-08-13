@@ -41,21 +41,32 @@ jobs:
             echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Wait for SQLite binary in GitHub Release
+      - name: Wait for SQLite binaries in GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           mkdir -p dist
           TAG="${{ steps.tag.outputs.tag }}"
-          # release.yml (cargo-dist) uploads the SQLite binary.
-          # Poll until it appears (up to 30 min).
+          # release.yml (cargo-dist) uploads the SQLite binaries.
+          # Poll until both amd64 and arm64 appear (up to 30 min).
           for i in $(seq 1 60); do
-            if gh release download "$TAG" \
-              --pattern "raisfast-x86_64-unknown-linux-musl.tar.xz" \
-              --dir dist 2>/dev/null; then
-              echo "Downloaded SQLite binary on attempt $i"
-              break
-            fi
+            ok=true
+            for arch in x86_64 aarch64; do
+              if [ ! -f "dist/${arch}.done" ]; then
+                if gh release download "$TAG" \
+                  --pattern "raisfast-${arch}-unknown-linux-musl.tar.xz" \
+                  --dir dist 2>/dev/null; then
+                  mkdir -p "dist/${arch}"
+                  tar -xf "dist/raisfast-${arch}-unknown-linux-musl.tar.xz" -C "dist/${arch}/"
+                  cp "dist/${arch}/raisfast-${arch}-unknown-linux-musl/raisfast" "dist/binary-${arch}"
+                  touch "dist/${arch}.done"
+                  echo "Downloaded ${arch} binary on attempt $i"
+                else
+                  ok=false
+                fi
+              fi
+            done
+            $ok && break
             if [ "$i" = "60" ]; then
               echo "Timed out waiting for release artifacts"
               exit 1
@@ -63,8 +74,6 @@ jobs:
             echo "Waiting for release artifacts... ($i/60)"
             sleep 30
           done
-          tar -xf dist/raisfast-x86_64-unknown-linux-musl.tar.xz -C dist/
-          cp dist/raisfast-x86_64-unknown-linux-musl/raisfast dist/binary
 
       - name: Log in to GHCR
         uses: docker/login-action@v3
@@ -87,12 +96,26 @@ jobs:
         uses: docker/setup-buildx-action@v3
 
       - name: Build and push
+        id: build
         uses: docker/build-push-action@v6
         with:
           context: .
           file: Dockerfile.ci
+          platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Make package public
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # GHCR packages default to private on creation.
+          # This sets it to public so docker pull works without auth.
+          gh api --method PATCH \
+            "/orgs/${{ github.repository_owner }}/packages/container/${{ github.event.repository.name }}" \
+            -f visibility=public \
+            || echo "Could not change visibility (may need org admin)"

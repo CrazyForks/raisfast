@@ -1,6 +1,6 @@
 FROM debian:bookworm-slim
 
-ARG BINARY_PATH=dist/binary
+ARG TARGETARCH
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
@@ -13,7 +13,7 @@ RUN groupadd --gid 1000 app \
 WORKDIR /app
 
 COPY migrations/ migrations/
-COPY ${BINARY_PATH} /app/raisfast
+COPY dist/binary-${TARGETARCH} /app/raisfast
 
 RUN chmod +x /app/raisfast \
     && mkdir -p /app/data /app/logs /app/uploads /app/plugins-data \
