@@ -79,7 +79,7 @@ jobs:
             docker_arch=$([ "$rust_arch" = "x86_64" ] && echo "amd64" || echo "arm64")
             gh release download "$TAG" \
               --pattern "raisfast-${rust_arch}-unknown-linux-musl.tar.xz" \
-              --dir dist
+              --dir dist --clobber
             mkdir -p "dist/${rust_arch}"
             tar -xf "dist/raisfast-${rust_arch}-unknown-linux-musl.tar.xz" -C "dist/${rust_arch}/"
             cp "dist/${rust_arch}/raisfast-${rust_arch}-unknown-linux-musl/raisfast" "dist/binary-${docker_arch}"
@@ -98,6 +98,8 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.REGISTRY }}/${{ github.repository }}
+          # workflow_dispatch runs on a branch ref; semver tags need the tag ref
+          ref: refs/tags/${{ steps.tag.outputs.tag }}
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
