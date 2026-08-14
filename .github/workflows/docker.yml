@@ -28,7 +28,7 @@ env:
 jobs:
   build-and-push:
     runs-on: ubuntu-22.04
-    timeout-minutes: 30
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
 
@@ -48,9 +48,9 @@ jobs:
           mkdir -p dist
           TAG="${{ steps.tag.outputs.tag }}"
           # release.yml (cargo-dist) uploads the SQLite binaries.
-          # Poll until both amd64 and arm64 appear (up to 30 min).
+          # Poll until both amd64 and arm64 appear (up to 60 min).
           # Docker TARGETARCH uses amd64/arm64, Rust uses x86_64/aarch64.
-          for i in $(seq 1 60); do
+          for i in $(seq 1 120); do
             ok=true
             for rust_arch in x86_64 aarch64; do
               docker_arch=$([ "$rust_arch" = "x86_64" ] && echo "amd64" || echo "arm64")
@@ -69,11 +69,11 @@ jobs:
               fi
             done
             $ok && break
-            if [ "$i" = "60" ]; then
+            if [ "$i" = "120" ]; then
               echo "Timed out waiting for release artifacts"
               exit 1
             fi
-            echo "Waiting for release artifacts... ($i/60)"
+            echo "Waiting for release artifacts... ($i/120)"
             sleep 30
           done
 

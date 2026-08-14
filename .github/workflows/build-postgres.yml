@@ -83,7 +83,7 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          mkdir -p dist
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
           $target = "${{ matrix.target }}"
           Copy-Item "target/$target/release/raisfast.exe" "dist/raisfast-postgres.exe"
           Compress-Archive -Path "dist/raisfast-postgres.exe" -DestinationPath "dist/raisfast-postgres-$target.zip"
