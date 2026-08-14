@@ -72,9 +72,6 @@ jobs:
       - name: Download SQLite binaries from GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      - name: Download SQLite binaries from GitHub Release
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           mkdir -p dist
           TAG="${{ steps.tag.outputs.tag }}"
