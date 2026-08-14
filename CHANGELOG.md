@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.16] - 2026-08-14
+
+- Improve ci process
+
 ## [0.3.15] - 2026-08-14
 
 - Improve ci process
