@@ -36,10 +36,15 @@ jobs:
         id: tag
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "tag=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
+            TAG="${{ inputs.tag }}"
           else
-            echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+            TAG="${GITHUB_REF_NAME}"
           fi
+          VERSION="${TAG#v}"
+          MAJOR_MINOR="$(echo "$VERSION" | cut -d. -f1-2)"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "major_minor=$MAJOR_MINOR" >> "$GITHUB_OUTPUT"
 
       - name: Wait for Release workflow to complete
         env:
@@ -98,11 +103,12 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.REGISTRY }}/${{ github.repository }}
-          # workflow_dispatch runs on a branch ref; semver tags need the tag ref
-          ref: refs/tags/${{ steps.tag.outputs.tag }}
+          # Raw tags from the resolved release tag — works for both tag pushes
+          # (GITHUB_REF_NAME) and workflow_dispatch (inputs.tag), since semver
+          # tags can't be inferred from a branch ref on dispatch runs.
           tags: |
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=${{ steps.tag.outputs.version }}
+            type=raw,value=${{ steps.tag.outputs.major_minor }}
             type=raw,value=latest
 
       - name: Set up Docker Buildx
