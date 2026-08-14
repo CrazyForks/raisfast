@@ -1,6 +1,6 @@
 [package]
 name = "raisfast"
-version = "0.3.14"
+version = "0.3.15"
 edition = "2024"
 default-run = "raisfast"
 build = "build.rs"
