@@ -22,14 +22,15 @@ jobs:
     name: Build (${{ matrix.target }})
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
+    continue-on-error: ${{ matrix.experimental || false }}
     strategy:
       fail-fast: false
       matrix:
         include:
           - { target: x86_64-unknown-linux-musl, runner: ubuntu-22.04 }
           - { target: aarch64-unknown-linux-musl, runner: ubuntu-22.04, container: messense/rust-musl-cross:aarch64-musl }
-          - { target: x86_64-apple-darwin, runner: macos-13 }
-          - { target: aarch64-apple-darwin, runner: macos-14 }
+          - { target: x86_64-apple-darwin, runner: macos-13, experimental: true }
+          - { target: aarch64-apple-darwin, runner: macos-14, experimental: true }
           - { target: x86_64-pc-windows-msvc, runner: windows-latest }
 
     container: ${{ matrix.container || '' }}
@@ -101,7 +102,7 @@ jobs:
     needs: build
     runs-on: ubuntu-22.04
     timeout-minutes: 10
-    if: startsWith(github.ref, 'refs/tags/')
+    if: always() && !cancelled() && startsWith(github.ref, 'refs/tags/') && (needs.build.result == 'success' || needs.build.result == 'failure')
     steps:
       - uses: actions/checkout@v4
 

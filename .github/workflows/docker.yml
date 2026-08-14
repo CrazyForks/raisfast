@@ -41,40 +41,52 @@ jobs:
             echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Wait for SQLite binaries in GitHub Release
+      - name: Wait for Release workflow to complete
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Wait for release.yml (cargo-dist) to finish uploading SQLite binaries.
+          echo "Waiting for Release workflow..."
+          for i in $(seq 1 120); do
+            STATUS=$(gh run list --repo ${{ github.repository }} \
+              --workflow release.yml \
+              --branch "${{ steps.tag.outputs.tag }}" \
+              --json status,conclusion --jq '.[0]')
+            echo "  Attempt $i: $STATUS"
+            CONCLUSION=$(echo "$STATUS" | jq -r '.conclusion // empty')
+            if [ "$CONCLUSION" = "success" ]; then
+              echo "Release workflow completed successfully"
+              break
+            fi
+            if [ "$CONCLUSION" = "failure" ] || [ "$CONCLUSION" = "cancelled" ]; then
+              echo "Release workflow failed — aborting"
+              exit 1
+            fi
+            if [ "$i" = "120" ]; then
+              echo "Timed out waiting for Release workflow"
+              exit 1
+            fi
+            sleep 30
+          done
+
+      - name: Download SQLite binaries from GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Download SQLite binaries from GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           mkdir -p dist
           TAG="${{ steps.tag.outputs.tag }}"
-          # release.yml (cargo-dist) uploads the SQLite binaries.
-          # Poll until both amd64 and arm64 appear (up to 60 min).
-          # Docker TARGETARCH uses amd64/arm64, Rust uses x86_64/aarch64.
-          for i in $(seq 1 120); do
-            ok=true
-            for rust_arch in x86_64 aarch64; do
-              docker_arch=$([ "$rust_arch" = "x86_64" ] && echo "amd64" || echo "arm64")
-              if [ ! -f "dist/${docker_arch}.done" ]; then
-                if gh release download "$TAG" \
-                  --pattern "raisfast-${rust_arch}-unknown-linux-musl.tar.xz" \
-                  --dir dist 2>/dev/null; then
-                  mkdir -p "dist/${rust_arch}"
-                  tar -xf "dist/raisfast-${rust_arch}-unknown-linux-musl.tar.xz" -C "dist/${rust_arch}/"
-                  cp "dist/${rust_arch}/raisfast-${rust_arch}-unknown-linux-musl/raisfast" "dist/binary-${docker_arch}"
-                  touch "dist/${docker_arch}.done"
-                  echo "Downloaded ${rust_arch} binary → dist/binary-${docker_arch}"
-                else
-                  ok=false
-                fi
-              fi
-            done
-            $ok && break
-            if [ "$i" = "120" ]; then
-              echo "Timed out waiting for release artifacts"
-              exit 1
-            fi
-            echo "Waiting for release artifacts... ($i/120)"
-            sleep 30
+          for rust_arch in x86_64 aarch64; do
+            docker_arch=$([ "$rust_arch" = "x86_64" ] && echo "amd64" || echo "arm64")
+            gh release download "$TAG" \
+              --pattern "raisfast-${rust_arch}-unknown-linux-musl.tar.xz" \
+              --dir dist
+            mkdir -p "dist/${rust_arch}"
+            tar -xf "dist/raisfast-${rust_arch}-unknown-linux-musl.tar.xz" -C "dist/${rust_arch}/"
+            cp "dist/${rust_arch}/raisfast-${rust_arch}-unknown-linux-musl/raisfast" "dist/binary-${docker_arch}"
+            echo "Downloaded ${rust_arch} → dist/binary-${docker_arch}"
           done
 
       - name: Log in to GHCR
