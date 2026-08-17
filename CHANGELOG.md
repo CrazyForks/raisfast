@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.17] - 2026-08-17
+
+- Fix docker workflow: clobber release downloads and pin metadata ref for dispatch runs
+
+- Use raw tags from resolved release tag for dispatch runs
+
+- Improve app new command, update readme
+
 ## [0.3.16] - 2026-08-14
 
 - Improve ci process
