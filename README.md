@@ -42,7 +42,7 @@
 
 <p align="center">
   <a href="https://demo.raisfast.com/admin" target="_blank">
-    <img src="images/admin-dashboard.png" alt="RaisFast Admin UI — click to open the live demo" width="880" />
+    <img src="images/admin-dashboard.png" alt="RaisFast Admin UI — click to open the live demo" />
   </a>
   <br />
   <em>Admin UI — <a href="https://demo.raisfast.com/admin" target="_blank">click the screenshot or here for the live demo</a></em>
