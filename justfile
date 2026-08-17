@@ -16,7 +16,7 @@ set dotenv-load
 #
 # Switch backend:  RAISFAST_DB=mysql just test-all
 
-db        := env_var_or_default("RAISFAST_DB", "postgres")
+db        := env_var_or_default("RAISFAST_DB", "sqlite")
 
 # Derive connection strings from `db` if not explicitly set.
 default_db_url := if db == "sqlite" { "sqlite:storage/db/raisfast.db?mode=rwc" } \

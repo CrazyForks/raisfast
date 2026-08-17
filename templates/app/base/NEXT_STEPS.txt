@@ -1,0 +1,4 @@
+next steps:
+  cd {{ name }}
+  cp .env.example .env
+  raisfast  # start the server — schema is created automatically on first run

@@ -312,7 +312,7 @@ async fn check_core_tables(pool: &raisfast::db::Pool) -> Vec<String> {
         "media",
         "comments",
         "options",
-        "rbac_roles",
+        "roles",
     ];
 
     let mut missing = Vec::new();

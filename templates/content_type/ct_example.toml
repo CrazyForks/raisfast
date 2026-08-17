@@ -1,27 +1,114 @@
-[content_type]
-name = "Example"
-singular = "example"
-plural = "examples"
-table = "examples"
-description = "示例内容类型"
-timestamps = true
-soft_delete = false
+# Content Type definition example (TOML)
+#
+# Place files like this in `extensions/content_types/`.
+# Reloaded on server start (and on change when plugin hot reload is on).
+#
+# Top-level sections:
+#   [content_type]   — identity + protocols (`implements`)
+#   [fields.<name>]  — one table per field
+#   [[indexes]]      — optional array of index definitions
+#   [api.<endpoint>] — per-endpoint access control (list/get/create/update/delete)
 
-[fields.name]
+[content_type]
+name = "Content Type Example"
+singular = "content_type_example"
+plural = "content_type_examples"
+table = "content_type_examples"
+description = "Content type definition example"
+color = "blue"
+slug_field = "title"
+search_fields = ["title", "summary"]
+
+# Protocols inject columns/behavior. Simple form is a string; config form is a
+# table with `name` + extra keys (flattened string map).
+# Available: ownable, timestampable, soft_deletable, versionable, statusable,
+#            sortable, nestable, expirable, lockable, metaable, tenantable
+implements = [
+    "ownable",
+    "timestampable",
+    "soft_deletable",
+    { name = "statusable", values = "draft,published,archived" },
+]
+
+# ── Fields ─────────────────────────────────────────────────────────
+# type: text | richtext | integer | bigint | decimal | float | boolean |
+#       date | datetime | time | email | password | enum | uid | json |
+#       media | mediaset | blob | relation
+# common attrs: required, unique, default, private, immutable, label,
+#               description, max_length, min, max
+
+[fields.title]
 type = "text"
 required = true
 max_length = 200
-label = "名称"
+label = "Title"
 
-[fields.status]
-type = "enum"
-enum_values = ["active", "inactive"]
-default = "active"
-label = "状态"
+[fields.slug]
+type = "uid"
+unique = true
+label = "URL identifier"
 
-[api]
-list = "public"
-get = "public"
-create = "admin"
-update = "admin"
-delete = "admin"
+[fields.summary]
+type = "text"
+max_length = 500
+label = "Summary"
+
+[fields.body]
+type = "richtext"
+required = true
+label = "Body"
+
+[fields.cover_image]
+type = "media"
+accept = ["image/*"]
+label = "Cover image"
+
+[fields.priority]
+type = "integer"
+default = 0
+min = 0
+private = true
+label = "Sort weight"
+
+[fields.is_pinned]
+type = "boolean"
+default = false
+label = "Pinned"
+
+# ── Indexes ────────────────────────────────────────────────────────
+
+[[indexes]]
+fields = ["slug"]
+unique = true
+
+[[indexes]]
+fields = ["status", "created_at"]
+
+# ── API access control ─────────────────────────────────────────────
+# access: none | public | authed | owner | admin
+#   defaults when a section is omitted: list/get/create = "authed",
+#   update = "owner", delete = "admin"
+# filter:      rule expression applied to every request passing access check
+# filter_auth: extra rule ORed in for authenticated users
+# cache:       server-side response caching (list/get only)
+# fields:      response whitelist (empty = all non-private fields)
+
+[api.list]
+access = "public"
+filter = 'status = "published"'
+cache = true
+fields = ["title", "slug", "summary", "cover_image", "created_at"]
+
+[api.get]
+access = "public"
+filter = 'status = "published"'
+cache = true
+
+[api.create]
+access = "authed"
+
+[api.update]
+access = "owner"
+
+[api.delete]
+access = "admin"

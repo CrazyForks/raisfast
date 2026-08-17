@@ -130,9 +130,14 @@ pub enum AppAction {
     New {
         /// Project name (used as directory name)
         name: String,
-        /// Template: blank, blog, ecommerce
+        /// Template: 'blank' (built-in), or a layer inside the remote
+        /// archive (requires --url)
         #[arg(short, long, default_value = "blank")]
         template: String,
+        /// Remote template tar.gz URL (e.g. GitHub codeload archive);
+        /// falls back to the built-in base skeleton on failure
+        #[arg(short, long)]
+        url: Option<String>,
     },
 }
 
@@ -414,13 +419,44 @@ pub fn print_banner(config: &AppConfig) {
     println!();
 }
 
-pub async fn run(cli: Cli, config: &AppConfig) -> anyhow::Result<()> {
-    match cli.command {
-        Some(Commands::App {
-            action: AppAction::New { name, template },
-        }) => {
-            app_cmd::create_new(&name, &template)?;
+pub async fn run(cli: Cli) -> anyhow::Result<()> {
+    // Config-free commands are dispatched before config init so they work
+    // without DATABASE_URL (required on non-SQLite builds).
+    if let Some(Commands::App { action }) = &cli.command {
+        return match action {
+            AppAction::New {
+                name,
+                template,
+                url,
+            } => app_cmd::create_new(name, template, url.as_deref()).await,
+        };
+    }
+
+    let config = AppConfig::init();
+    let config = &config;
+    print_banner(config);
+
+    // Install panic hook early: writes to panic_YYYY-MM-DD.log + emits
+    // system.panic event for webhook delivery.
+    raisfast::panic_hook::install(&config.log_dir);
+
+    let _log_guard = crate::logging::init(&config.log_dir);
+
+    crate::logging::cleanup_old_logs(&config.log_dir, config.log_max_files);
+
+    let log_dir = config.log_dir.clone();
+    let max_files = config.log_max_files;
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(3600));
+        loop {
+            interval.tick().await;
+            crate::logging::cleanup_old_logs(&log_dir, max_files);
         }
+    });
+
+    match cli.command {
+        // Dispatched before config init above.
+        Some(Commands::App { .. }) => unreachable!("app commands handled before config init"),
 
         None
         | Some(Commands::Server {

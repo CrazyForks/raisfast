@@ -1471,6 +1471,31 @@ mod tests {
     use tempfile::NamedTempFile;
 
     #[test]
+    fn parse_shipped_ct_example_template() {
+        let example = include_str!(concat!(
+            env!("RAISFAST_ROOT"),
+            "/templates/content_type/ct_example.toml"
+        ));
+        let ct =
+            ContentTypeSchema::parse_from_str(example).expect("shipped ct_example.toml must parse");
+        assert_eq!(ct.name, "Content Type Example");
+        assert_eq!(ct.singular, "content_type_example");
+        assert_eq!(ct.plural, "content_type_examples");
+        assert_eq!(ct.table, "content_type_examples");
+        assert_eq!(ct.slug_field.as_deref(), Some("title"));
+        assert!(ct.implements_protocol("ownable"));
+        assert!(ct.implements_protocol("statusable"));
+        assert!(ct.fields.iter().any(|f| f.name == "slug" && f.unique));
+        assert!(
+            !ct.fields
+                .iter()
+                .any(|f| f.field_type == FieldType::Relation)
+        );
+        assert_eq!(ct.api.list.access, ApiAccess::Public);
+        assert_eq!(ct.api.delete.access, ApiAccess::Admin);
+    }
+
+    #[test]
     fn parse_minimal_content_type() {
         let toml = r#"
 [content_type]

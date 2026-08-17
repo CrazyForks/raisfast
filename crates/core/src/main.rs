@@ -11,13 +11,11 @@
 //! - `db migrate`      Run database migrations
 //! - `db rollback`    Rollback last batch of migrations
 //! - `db backup`      Backup the database
+//! - `app new`        Scaffold a new project (no config required)
 
 #![deny(unsafe_code)]
 
 rust_i18n::i18n!("locales", fallback = "en");
-
-use clap::Parser;
-use raisfast::config::app::AppConfig;
 
 mod cli;
 mod logging;
@@ -26,32 +24,13 @@ pub(crate) mod db {
     pub use raisfast::db::*;
 }
 
+use clap::Parser;
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let config = AppConfig::init();
-    cli::print_banner(&config);
-
-    // Install panic hook early: writes to panic_YYYY-MM-DD.log + emits
-    // system.panic event for webhook delivery.
-    raisfast::panic_hook::install(&config.log_dir);
-
+    // Parse CLI before config init: `--help`/`--version` and config-free
+    // commands (`app new`) must work without DATABASE_URL set
+    // (required on non-SQLite builds).
     let cli = cli::Cli::parse();
-
-    let _log_guard = logging::init(&config.log_dir);
-
-    logging::cleanup_old_logs(&config.log_dir, config.log_max_files);
-
-    let log_dir = config.log_dir.clone();
-    let max_files = config.log_max_files;
-    tokio::spawn(async move {
-        let mut interval = tokio::time::interval(std::time::Duration::from_secs(3600));
-        loop {
-            interval.tick().await;
-            logging::cleanup_old_logs(&log_dir, max_files);
-        }
-    });
-
-    cli::run(cli, &config).await?;
-
-    Ok(())
+    cli::run(cli).await
 }

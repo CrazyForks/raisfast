@@ -40,6 +40,16 @@
 
 ---
 
+<p align="center">
+  <a href="https://demo.raisfast.com/admin" target="_blank">
+    <img src="docs/images/admin-dashboard.png" alt="RaisFast Admin UI — click to open the live demo" width="880" />
+  </a>
+  <br />
+  <em>Admin UI — <a href="https://demo.raisfast.com/admin" target="_blank">click the screenshot or here for the live demo</a></em>
+</p>
+
+---
+
 ## Why raisfast?
 
 **Single binary, full capability**

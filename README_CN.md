@@ -40,6 +40,16 @@
 
 ---
 
+<p align="center">
+  <a href="https://demo.raisfast.com/admin" target="_blank">
+    <img src="docs/images/admin-dashboard.png" alt="RaisFast 管理后台 — 点击打开在线演示" width="880" />
+  </a>
+  <br />
+  <em>管理后台 — <a href="https://demo.raisfast.com/admin" target="_blank">点击截图或此处进入在线演示</a></em>
+</p>
+
+---
+
 ## 为什么选 raisfast？
 
 **单文件，全能力**
