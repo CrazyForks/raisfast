@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 
 REMOTE="github"
-BRANCH="master"
+BRANCH="main"
 REMOTE_BRANCH="main"
 
 CI_DB="sqlite"
