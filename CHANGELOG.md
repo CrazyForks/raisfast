@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.18] - 2026-08-18
+
+- Update readme
+
+- Update readme
+
+- Update readme
+
+- Update readme
+
+- Update readme
+
+- Update readme
+
+- Update user permission
+
 ## [0.3.17] - 2026-08-17
 
 - Fix docker workflow: clobber release downloads and pin metadata ref for dispatch runs
