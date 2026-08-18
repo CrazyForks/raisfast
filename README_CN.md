@@ -33,16 +33,12 @@
 </p>
 
 <p align="center">
-  <a href="https://demo.raisfast.com/admin"><img src="https://img.shields.io/badge/在线演示-Admin_后台-2ea44f?style=flat-square&logo=vercel&logoColor=white" alt="在线演示" /></a>
-
-  <a href="https://qm.qq.com/cgi-bin/qm/qr?k=&group_code=287107140"><img src="https://img.shields.io/badge/QQ_群-287107140-EB1923?style=flat-square&logo=tencentqq&logoColor=white" alt="QQ 群" /></a>
-
-  <a href="https://github.com/RaisFast/raisfast/discussions"><img src="https://img.shields.io/badge/讨论区-GitHub-8957e5?style=flat-square&logo=github&logoColor=white" alt="讨论区" /></a>
-  
+  <a href="https://demo.raisfast.com/admin"><img src="https://img.shields.io/badge/在线演示-Admin_后台-2ea44f?style=for-the-badge&logo=vercel&logoColor=white" alt="在线演示" /></a>
+  <a href="https://github.com/RaisFast/raisfast/discussions"><img src="https://img.shields.io/badge/讨论区-GitHub-8957e5?style=for-the-badge&logo=github&logoColor=white" alt="讨论区" /></a>
   <!-- Discord：把 DISCORD_INVITE 替换为永久邀请链接后取消注释
-  <a href="DISCORD_INVITE"><img src="https://img.shields.io/badge/Discord-加入-5865F2?style=flat-square&logo=discord&logoColor=white" alt="Discord" /></a>
+  <a href="DISCORD_INVITE"><img src="https://img.shields.io/badge/Discord-加入-5865F2?style=for-the-badge&logo=discord&logoColor=white" alt="Discord" /></a>
   -->
-  
+  <a href="https://qm.qq.com/cgi-bin/qm/qr?k=&group_code=287107140"><img src="https://img.shields.io/badge/QQ_群-287107140-EB1923?style=for-the-badge&logo=tencentqq&logoColor=white" alt="QQ 群" /></a>
 </p>
 
 ---
