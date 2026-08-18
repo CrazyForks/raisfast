@@ -26,7 +26,7 @@ ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 SDK_DIR="$ROOT_DIR/frontend/sdk"
 
 REMOTE="github"
-BRANCH="master"
+BRANCH="main"
 REMOTE_BRANCH="main"
 
 usage() {
