@@ -25,6 +25,7 @@ pub struct UpdateCartItemRequest {
 #[derive(Debug, Serialize, ToSchema)]
 pub struct CartItemResponse {
     pub id: String,
+    pub product_id: String,
     #[cfg_attr(feature = "export-types", ts(type = "number"))]
     pub quantity: i64,
     pub attributes: Option<String>,

@@ -190,9 +190,9 @@ impl CartService for CartServiceImpl {
                 crate::models::product::find_by_id(&self.pool, item.product_id, auth.tenant_id())
                     .await?;
 
-            let (title, price, cover_url) = match product {
-                Some(ref p) => (p.title.clone(), p.price, p.cover_url.clone()),
-                None => ("(deleted)".to_string(), 0, None),
+            let (title, price, cover_url, slug) = match product {
+                Some(ref p) => (p.title.clone(), p.price, p.cover_url.clone(), p.slug.clone()),
+                None => ("(deleted)".to_string(), 0, None, None),
             };
 
             let line_total = price.checked_mul(item.quantity).unwrap_or(0);
@@ -200,6 +200,9 @@ impl CartService for CartServiceImpl {
 
             response_items.push(CartItemResponse {
                 id: item.id.to_string(),
+                product_id: slug
+                    .filter(|s| !s.is_empty())
+                    .unwrap_or_else(|| item.product_id.to_string()),
                 quantity: item.quantity,
                 attributes: item.attributes.clone(),
                 title,
