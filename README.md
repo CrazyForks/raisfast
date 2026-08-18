@@ -27,10 +27,20 @@
 <p align="center">
   <a href="https://github.com/RaisFast/raisfast/stargazers"><img src="https://img.shields.io/github/stars/RaisFast/raisfast?style=social" alt="GitHub Stars" /></a>
   <a href="https://github.com/RaisFast/raisfast/releases"><img src="https://img.shields.io/github/v/release/RaisFast/raisfast?color=blue" alt="Latest Release" /></a>
-  <a href="https://github.com/RaisFast/raisfast/actions/workflows/ci.yml"><img src="https://github.com/RaisFast/raisfast/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
   <a href="https://github.com/RaisFast/raisfast"><img src="https://img.shields.io/badge/Rust-edition%202024-orange" alt="Rust Edition 2024" /></a>
   <a href="./LICENSE"><img src="https://img.shields.io/github/license/RaisFast/raisfast?color=success" alt="License" /></a>
   <a href="https://github.com/RaisFast/raisfast"><img src="https://img.shields.io/badge/platform-macOS%20%C2%B7%20Linux%20%C2%B7%20Windows-blue" alt="Platforms" /></a>
+</p>
+
+<p align="center">
+  <a href="https://demo.raisfast.com/admin"><img src="https://img.shields.io/badge/Live_Demo-Admin_UI-2ea44f?style=flat-square&logo=vercel&logoColor=white" alt="Live Demo" /></a>
+
+  <a href="https://github.com/RaisFast/raisfast/discussions"><img src="https://img.shields.io/badge/Discussions-GitHub-8957e5?style=flat-square&logo=github&logoColor=white" alt="Discussions" /></a>
+  
+  <!-- Discord: replace DISCORD_INVITE with your permanent invite link, then uncomment
+  <a href="DISCORD_INVITE"><img src="https://img.shields.io/badge/Discord-Join-5865F2?style=flat-square&logo=discord&logoColor=white" alt="Discord" /></a>
+  -->
+  <a href="https://qm.qq.com/cgi-bin/qm/qr?k=&group_code=287107140"><img src="https://img.shields.io/badge/QQ_Group-287107140-EB1923?style=flat-square&logo=tencentqq&logoColor=white" alt="QQ Group" /></a>
 </p>
 
 ---
