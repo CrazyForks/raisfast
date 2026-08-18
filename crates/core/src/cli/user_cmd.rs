@@ -142,27 +142,18 @@ pub async fn passwd(config: &AppConfig, username: &str, password: &str) -> anyho
         .ok_or_else(|| anyhow::anyhow!("user not found: {username}"))?;
 
     let creds = user_credential::find_by_user_id(&pool, user.id).await?;
-    let email_cred = creds
+    let cred = creds
         .iter()
-        .find(|c| c.auth_type == user_credential::AuthType::Email);
+        .find(|c| c.auth_type == user_credential::AuthType::Email)
+        .ok_or_else(|| {
+            anyhow::anyhow!("user has no email credential: {username} (bind an email first)")
+        })?;
 
     let password_hash = raisfast::services::auth::hash_password(password)
         .map_err(|e| anyhow::anyhow!("password hashing failed: {e}"))?;
     let cred_data = user_credential::wrap_password_hash(&password_hash);
 
-    if let Some(cred) = email_cred {
-        user_credential::update_credential_data(&pool, cred.id, &cred_data).await?;
-    } else {
-        user_credential::create(
-            &pool,
-            user.id,
-            user_credential::AuthType::Email,
-            username,
-            &cred_data,
-            true,
-        )
-        .await?;
-    }
+    user_credential::update_credential_data(&pool, cred.id, &cred_data).await?;
 
     println!("password updated for user: {username}");
     Ok(())

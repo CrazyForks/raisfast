@@ -486,10 +486,11 @@ pub async fn logout(pool: &crate::db::Pool, auth: &AuthUser) -> AppResult<()> {
     crate::models::refresh_token::delete_by_user(pool, user.id).await
 }
 
-/// Reject password changes for the demo account.
+/// Reject sensitive mutations for the demo account.
 ///
-/// When `DEMO_EMAIL` is set, any attempt to change the password of the user
-/// whose email credential matches it will be rejected with `Forbidden`.
+/// When `DEMO_EMAIL` is set, the user whose email credential matches it is
+/// treated as the shared demo account: password changes, username changes
+/// and user creation performed by it are rejected with `Forbidden`.
 pub async fn ensure_not_demo_user(pool: &crate::db::Pool, user_id: SnowflakeId) -> AppResult<()> {
     let demo_email = match std::env::var("DEMO_EMAIL") {
         Ok(e) if !e.is_empty() => e,

@@ -110,6 +110,8 @@ pub async fn list_roles(
     Query(mut params): Query<PaginationParams>,
 ) -> AppResult<ApiResponse<crate::errors::response::PaginatedData<Role>>> {
     auth.ensure_admin()?;
+    crate::services::auth::ensure_not_demo_user(&state.pool, auth.ensure_snowflake_user_id()?)
+        .await?;
     params.sanitize();
     let all = state.rbac.list_roles().await?;
     Ok(params.paginate_in_memory(all))
@@ -126,6 +128,8 @@ pub async fn create_role(
     Json(req): Json<CreateRoleRequest>,
 ) -> AppResult<ApiResponse<Role>> {
     auth.ensure_admin()?;
+    crate::services::auth::ensure_not_demo_user(&state.pool, auth.ensure_snowflake_user_id()?)
+        .await?;
     let role = state.rbac.create_role(&req).await?;
     Ok(ApiResponse::success(role))
 }
@@ -143,6 +147,8 @@ pub async fn update_role(
     Json(req): Json<UpdateRoleRequest>,
 ) -> AppResult<ApiResponse<Role>> {
     auth.ensure_admin()?;
+    crate::services::auth::ensure_not_demo_user(&state.pool, auth.ensure_snowflake_user_id()?)
+        .await?;
     let id = crate::types::snowflake_id::parse_id(&id)?;
     let role = state.rbac.update_role(id, &req).await?;
     Ok(ApiResponse::success(role))
@@ -160,6 +166,8 @@ pub async fn delete_role(
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<serde_json::Value>> {
     auth.ensure_admin()?;
+    crate::services::auth::ensure_not_demo_user(&state.pool, auth.ensure_snowflake_user_id()?)
+        .await?;
     let id = crate::types::snowflake_id::parse_id(&id)?;
     state.rbac.delete_role(id).await?;
     Ok(ApiResponse::success(serde_json::json!({"deleted": true})))
@@ -177,6 +185,8 @@ pub async fn get_permissions(
     Path(role_id): Path<String>,
 ) -> AppResult<ApiResponse<Vec<PermissionView>>> {
     auth.ensure_admin()?;
+    crate::services::auth::ensure_not_demo_user(&state.pool, auth.ensure_snowflake_user_id()?)
+        .await?;
     let perms = state.rbac.get_permissions(&role_id).await?;
     Ok(ApiResponse::success(perms))
 }
@@ -194,6 +204,8 @@ pub async fn set_permissions(
     Json(req): Json<SetPermissionsRequest>,
 ) -> AppResult<ApiResponse<Vec<PermissionView>>> {
     auth.ensure_admin()?;
+    crate::services::auth::ensure_not_demo_user(&state.pool, auth.ensure_snowflake_user_id()?)
+        .await?;
     let perms = state
         .rbac
         .set_permissions(&role_id, &req.permissions)
@@ -212,6 +224,8 @@ pub async fn admin_batch(
     Json(req): Json<BatchRequest>,
 ) -> AppResult<ApiResponse<BatchResponse>> {
     auth.ensure_admin()?;
+    crate::services::auth::ensure_not_demo_user(&state.pool, auth.ensure_snowflake_user_id()?)
+        .await?;
     crate::errors::validation::validate(&req)?;
     let mut affected = 0usize;
     if req.action == "delete" {

@@ -239,6 +239,7 @@ pub async fn update_role(
     Path(id): Path<String>,
     Json(req): Json<UpdateRoleRequest>,
 ) -> AppResult<ApiResponse<UserResponse>> {
+    auth::ensure_not_demo_user(&state.pool, auth.ensure_snowflake_user_id()?).await?;
     let u = state
         .user_service
         .update_role(&id, req.roles, auth.tenant_id())
@@ -256,6 +257,8 @@ pub async fn admin_create_user(
     Json(req): Json<AdminCreateUserRequest>,
 ) -> AppResult<ApiResponse<UserResponse>> {
     validation::validate(&req)?;
+    let uid = auth.ensure_snowflake_user_id()?;
+    auth::ensure_not_demo_user(&state.pool, uid).await?;
     let user = crate::services::auth::admin_create_user(
         &state.emitter,
         req,
@@ -321,6 +324,7 @@ pub async fn admin_batch_users(
     Json(req): Json<BatchRequestWithRole>,
 ) -> AppResult<ApiResponse<crate::dto::BatchResponse>> {
     validation::validate(&req)?;
+    auth::ensure_not_demo_user(&state.pool, auth.ensure_snowflake_user_id()?).await?;
     let mut affected = 0usize;
     for uid in &req.ids {
         match req.action.as_str() {

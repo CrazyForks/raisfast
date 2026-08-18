@@ -21,15 +21,27 @@ pub async fn get_me(pool: &crate::db::Pool, auth: &AuthUser) -> AppResult<UserRe
 }
 
 /// Update the current user's profile (username, bio, website, avatar).
+///
+/// Demo users cannot rename their account: if `username` changes the current
+/// value, the update is rejected with `Forbidden`.
 pub async fn update_me(
     pool: &crate::db::Pool,
     auth: &AuthUser,
     req: UpdateUserRequest,
 ) -> AppResult<UserResponse> {
+    let uid = auth.ensure_snowflake_user_id()?;
+    if let Some(ref username) = req.username {
+        let current = crate::models::user::find_by_id(pool, uid, auth.tenant_id())
+            .await?
+            .ok_or_else(|| AppError::not_found("user"))?;
+        if username != &current.username {
+            crate::services::auth::ensure_not_demo_user(pool, uid).await?;
+        }
+    }
     let user = crate::models::user::update_profile(
         pool,
         &UpdateProfileCmd {
-            id: auth.ensure_snowflake_user_id()?,
+            id: uid,
             username: req.username,
             bio: req.bio,
             website: req.website,
@@ -136,6 +148,12 @@ impl UserService for UserServiceImpl {
             .await?
             .ok_or_else(|| AppError::not_found("user"))?;
 
+        if let Some(ref username) = req.username
+            && username != &user.username
+        {
+            crate::services::auth::ensure_not_demo_user(&self.pool, uid).await?;
+        }
+
         let cmd = UpdateProfileCmd {
             id: user.id,
             username: req.username.clone(),
@@ -197,11 +215,12 @@ mod tests {
         crate::test_pool!()
     }
 
-    async fn insert_user(pool: &crate::db::Pool, username: &str) -> crate::models::user::User {
+    async fn insert_user(pool: &crate::db::Pool, prefix: &str) -> crate::models::user::User {
+        let username = format!("{prefix}_{}", crate::utils::id::new_id());
         crate::models::user::create(
             pool,
             &crate::commands::CreateUserCmd {
-                username: username.to_string(),
+                username,
                 registered_via: crate::models::user::RegisteredVia::Email,
             },
             None,
@@ -216,7 +235,7 @@ mod tests {
         let user = insert_user(&pool, "meuser").await;
         let a = AuthUser::from_parts(Some(*user.id), crate::models::user::UserRole::Admin, None);
         let resp = super::get_me(&pool, &a).await.unwrap();
-        assert_eq!(resp.username, "meuser");
+        assert_eq!(resp.username, user.username);
     }
 
     #[tokio::test]
@@ -259,7 +278,7 @@ mod tests {
         let pool = setup_pool().await;
         let user = insert_user(&pool, "pubuser").await;
         let resp = super::get_public_user(&pool, user.id, None).await.unwrap();
-        assert_eq!(resp.username, "pubuser");
+        assert_eq!(resp.username, user.username);
     }
 
     #[tokio::test]
