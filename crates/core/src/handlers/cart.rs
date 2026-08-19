@@ -87,7 +87,7 @@ fn to_order_response(
     items: Vec<crate::models::order_item::OrderItem>,
 ) -> OrderResponse {
     OrderResponse {
-        id: o.id.to_string(),
+        id: o.id,
         order_no: o.order_no,
         subtotal: o.subtotal,
         discount_amount: o.discount_amount,

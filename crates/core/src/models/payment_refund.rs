@@ -1,3 +1,4 @@
+use crate::types::price::Price;
 use serde::{Deserialize, Serialize};
 
 use crate::db::tenant::tenant_filter_ph;
@@ -13,7 +14,7 @@ pub struct PaymentRefund {
     pub payment_order_id: SnowflakeId,
     pub order_id: Option<String>,
     pub user_id: SnowflakeId,
-    pub amount: i64,
+    pub amount: Price,
     pub currency: String,
     pub reason: Option<String>,
     pub provider_refund_id: Option<String>,
@@ -267,7 +268,7 @@ mod tests {
                 user_id: SnowflakeId(user_id),
                 order_id: Some(format!("order-ref-{}", crate::utils::id::new_id())),
                 title: "Test Payment".into(),
-                amount: 1000,
+                amount: Price(1000),
                 currency: "USD".into(),
                 channel_id: SnowflakeId(channel_id),
                 provider: "stripe".into(),
@@ -299,7 +300,7 @@ mod tests {
         pool: &crate::db::Pool,
         payment_order_id: i64,
         user_id: i64,
-        amount: i64,
+        amount: Price,
         status: &str,
     ) -> PaymentRefund {
         let provider_refund_id = format!("re_{}", uuid::Uuid::now_v7());
@@ -329,14 +330,14 @@ mod tests {
         let uid = seed_user(&pool).await;
         let ch_id = seed_channel(&pool).await;
         let po_id = seed_payment_order(&pool, uid, ch_id).await;
-        let refund = seed_refund(&pool, po_id, uid, 500, "pending").await;
+        let refund = seed_refund(&pool, po_id, uid, Price(500), "pending").await;
         let found = super::find_by_id(&pool, refund.id, None)
             .await
             .unwrap()
             .unwrap();
         assert_eq!(found.id, refund.id);
         assert_eq!(found.payment_order_id, SnowflakeId(po_id));
-        assert_eq!(found.amount, 500);
+        assert_eq!(found.amount.0, 500);
         assert_eq!(found.status, "pending");
         assert_eq!(found.reason.unwrap(), "user_request");
     }
@@ -358,8 +359,8 @@ mod tests {
         let uid = seed_user(&pool).await;
         let ch_id = seed_channel(&pool).await;
         let po_id = seed_payment_order(&pool, uid, ch_id).await;
-        seed_refund(&pool, po_id, uid, 300, "pending").await;
-        seed_refund(&pool, po_id, uid, 200, "succeeded").await;
+        seed_refund(&pool, po_id, uid, Price(300), "pending").await;
+        seed_refund(&pool, po_id, uid, Price(200), "succeeded").await;
         let refunds = super::find_by_payment_order_id(&pool, SnowflakeId(po_id), None)
             .await
             .unwrap();
@@ -372,7 +373,7 @@ mod tests {
         let uid = seed_user(&pool).await;
         let ch_id = seed_channel(&pool).await;
         let po_id = seed_payment_order(&pool, uid, ch_id).await;
-        let refund = seed_refund(&pool, po_id, uid, 500, "pending").await;
+        let refund = seed_refund(&pool, po_id, uid, Price(500), "pending").await;
         let order_id = refund.order_id.clone().unwrap();
         let refunds = super::find_by_order_id(&pool, &order_id, None)
             .await
@@ -387,7 +388,7 @@ mod tests {
         let uid = seed_user(&pool).await;
         let ch_id = seed_channel(&pool).await;
         let po_id = seed_payment_order(&pool, uid, ch_id).await;
-        let refund = seed_refund(&pool, po_id, uid, 500, "pending").await;
+        let refund = seed_refund(&pool, po_id, uid, Price(500), "pending").await;
         super::update_status(&pool, refund.id, "succeeded", None)
             .await
             .unwrap();
@@ -404,9 +405,9 @@ mod tests {
         let uid = seed_user(&pool).await;
         let ch_id = seed_channel(&pool).await;
         let po_id = seed_payment_order(&pool, uid, ch_id).await;
-        seed_refund(&pool, po_id, uid, 300, "succeeded").await;
-        seed_refund(&pool, po_id, uid, 200, "pending").await;
-        seed_refund(&pool, po_id, uid, 100, "failed").await;
+        seed_refund(&pool, po_id, uid, Price(300), "succeeded").await;
+        seed_refund(&pool, po_id, uid, Price(200), "pending").await;
+        seed_refund(&pool, po_id, uid, Price(100), "failed").await;
         let total = super::sum_refunded_by_order(&pool, SnowflakeId(po_id), None)
             .await
             .unwrap();
@@ -428,7 +429,7 @@ mod tests {
         let uid = seed_user(&pool).await;
         let ch_id = seed_channel(&pool).await;
         let po_id = seed_payment_order(&pool, uid, ch_id).await;
-        let refund = seed_refund(&pool, po_id, uid, 500, "pending").await;
+        let refund = seed_refund(&pool, po_id, uid, Price(500), "pending").await;
         assert_eq!(refund.tenant_id, Some("default".to_string()));
         assert!(refund.payment_tx_id.is_none());
         assert!(refund.metadata.is_none());

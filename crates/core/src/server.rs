@@ -178,6 +178,10 @@ async fn build_app(
             .merge(crate::handlers::product::routes(&mut registry, config))
             .merge(crate::handlers::order::routes(&mut registry, config))
             .merge(crate::handlers::cart::routes(&mut registry, config))
+            .merge(crate::handlers::product_favorite::routes(
+                &mut registry,
+                config,
+            ))
             .merge(crate::handlers::product_variant::routes(
                 &mut registry,
                 config,

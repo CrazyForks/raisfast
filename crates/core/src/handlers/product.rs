@@ -137,8 +137,7 @@ pub async fn get_product(
         .await?
         .ok_or_else(|| crate::errors::app_error::AppError::not_found("product"))?;
     let mut resp = ProductResponse::from(p);
-    let id = crate::types::snowflake_id::parse_id(&resp.id)?;
-    resp.tags = crate::models::tagging::get_tags_for(&state.pool, "product", id).await?;
+    resp.tags = crate::models::tagging::get_tags_for(&state.pool, "product", resp.id).await?;
     Ok(ApiResponse::success(resp))
 }
 
@@ -160,7 +159,7 @@ pub async fn admin_list(
             params.page_size,
             query.status.as_deref(),
             query.keyword.as_deref(),
-            query.category_id.as_deref(),
+            query.category_id,
         )
         .await?;
     let resp: Vec<ProductResponse> = items.into_iter().map(Into::into).collect();

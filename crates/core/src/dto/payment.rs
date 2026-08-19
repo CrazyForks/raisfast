@@ -1,3 +1,5 @@
+use crate::types::price::Price;
+use crate::types::snowflake_id::SnowflakeId;
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "export-types")]
 use ts_rs::TS;
@@ -17,8 +19,7 @@ fn validate_url(url: &str) -> Result<(), validator::ValidationError> {
 #[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Deserialize, Validate, ToSchema)]
 pub struct CreatePaymentOrderRequest {
-    #[validate(length(min = 1))]
-    pub order_id: String,
+    pub order_id: SnowflakeId,
     pub channel_id: Option<String>,
     pub method: Option<String>,
     pub country: Option<String>,
@@ -34,8 +35,7 @@ pub struct CreatePaymentOrderRequest {
 #[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Deserialize, Validate, ToSchema)]
 pub struct CreateRefundRequest {
-    #[validate(range(min = 1))]
-    pub amount: i64,
+    pub amount: Price,
     pub reason: Option<String>,
 }
 
@@ -70,11 +70,12 @@ pub struct UpdatePaymentChannelRequest {
 #[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Serialize, ToSchema)]
 pub struct PaymentOrderResponse {
-    pub id: String,
+    pub id: SnowflakeId,
+    /// Business order number (not an id).
     pub order_id: Option<String>,
     pub title: String,
     #[cfg_attr(feature = "export-types", ts(type = "number"))]
-    pub amount: i64,
+    pub amount: Price,
     pub currency: String,
     pub provider: String,
     pub provider_order_id: Option<String>,
@@ -104,7 +105,7 @@ pub struct PaymentOrderResponse {
 #[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Serialize, ToSchema)]
 pub struct PaymentChannelResponse {
-    pub id: String,
+    pub id: SnowflakeId,
     pub provider: String,
     pub name: String,
     pub is_live: bool,
@@ -124,7 +125,7 @@ pub struct PaymentChannelResponse {
 impl From<crate::models::payment_channel::PaymentChannel> for PaymentChannelResponse {
     fn from(ch: crate::models::payment_channel::PaymentChannel) -> Self {
         Self {
-            id: ch.id.to_string(),
+            id: ch.id,
             provider: ch.provider,
             name: ch.name,
             is_live: ch.is_live,
@@ -147,11 +148,12 @@ fn mask_credentials(_creds: &str) -> String {
 #[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Serialize, ToSchema)]
 pub struct PaymentTransactionResponse {
-    pub id: String,
+    pub id: SnowflakeId,
+    /// Business order number (not an id).
     pub order_id: Option<String>,
     pub tx_type: String,
     #[cfg_attr(feature = "export-types", ts(type = "number"))]
-    pub amount: i64,
+    pub amount: Price,
     pub currency: String,
     pub provider_tx_id: String,
     pub status: String,
@@ -161,7 +163,7 @@ pub struct PaymentTransactionResponse {
 impl From<crate::models::payment_transaction::PaymentTransaction> for PaymentTransactionResponse {
     fn from(tx: crate::models::payment_transaction::PaymentTransaction) -> Self {
         Self {
-            id: tx.id.to_string(),
+            id: tx.id,
             order_id: tx.order_id,
             tx_type: tx.tx_type,
             amount: tx.amount,
@@ -176,10 +178,11 @@ impl From<crate::models::payment_transaction::PaymentTransaction> for PaymentTra
 #[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Serialize, ToSchema)]
 pub struct PaymentRefundResponse {
-    pub id: String,
+    pub id: SnowflakeId,
+    /// Business order number (not an id).
     pub order_id: Option<String>,
     #[cfg_attr(feature = "export-types", ts(type = "number"))]
-    pub amount: i64,
+    pub amount: Price,
     pub currency: String,
     pub reason: Option<String>,
     pub provider_refund_id: Option<String>,
@@ -191,7 +194,7 @@ pub struct PaymentRefundResponse {
 impl From<crate::models::payment_refund::PaymentRefund> for PaymentRefundResponse {
     fn from(r: crate::models::payment_refund::PaymentRefund) -> Self {
         Self {
-            id: r.id.to_string(),
+            id: r.id,
             order_id: r.order_id,
             amount: r.amount,
             currency: r.currency,
@@ -224,7 +227,7 @@ pub struct AvailableChannelsResponse {
 #[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct AvailableChannelsQuery {
-    pub order_id: String,
+    pub order_id: SnowflakeId,
     pub country: Option<String>,
     pub language: Option<String>,
 }

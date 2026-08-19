@@ -313,6 +313,7 @@ mod tests {
     use super::*;
     use crate::commands::CreateProductCommentCmd;
     use crate::db::DbDriver;
+    use crate::types::price::Price;
 
     async fn setup_pool() -> crate::db::Pool {
         crate::test_pool!()
@@ -342,7 +343,7 @@ mod tests {
                 fulfillment_type: "digital".to_string(),
                 delivery_hook: None,
                 weight: None,
-                price: 1000,
+                price: Price(1000),
                 currency: "CNY".to_string(),
                 attributes: None,
                 sort_order: 0,
@@ -384,17 +385,17 @@ mod tests {
             &crate::commands::CreateOrderCmd {
                 user_id: SnowflakeId(user_id),
                 order_no,
-                subtotal: 1000,
-                discount_amount: 0,
-                shipping_amount: 0,
-                total_amount: 1000,
+                subtotal: Price(1000),
+                discount_amount: Price(0),
+                shipping_amount: Price(0),
+                total_amount: Price(1000),
                 currency: "CNY".into(),
                 buyer_name: None,
                 buyer_phone: None,
                 buyer_email: None,
                 shipping_address: None,
                 remark: None,
-                tax_amount: 0,
+                tax_amount: Price(0),
                 coupon_id: None,
                 shipping_address_id: None,
                 billing_address_id: None,

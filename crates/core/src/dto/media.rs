@@ -1,3 +1,4 @@
+use crate::types::snowflake_id::SnowflakeId;
 use serde::Serialize;
 #[cfg(feature = "export-types")]
 use ts_rs::TS;
@@ -10,7 +11,7 @@ use crate::utils::tz::Timestamp;
 #[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Serialize, ToSchema)]
 pub struct MediaResponse {
-    pub id: String,
+    pub id: SnowflakeId,
     pub filename: String,
     pub url: String,
     pub mimetype: String,
@@ -31,7 +32,7 @@ pub struct MediaResponse {
 #[must_use]
 pub fn media_to_response(media: &Media, base_url: &str) -> MediaResponse {
     MediaResponse {
-        id: media.id.to_string(),
+        id: media.id,
         filename: media.filename.clone(),
         url: format!("{}/uploads/{}", base_url, media.filepath),
         mimetype: media.mimetype.clone(),
@@ -51,7 +52,7 @@ pub fn media_to_response(media: &Media, base_url: &str) -> MediaResponse {
 #[must_use]
 pub fn media_to_response_with_url(media: &Media, url: &str) -> MediaResponse {
     MediaResponse {
-        id: media.id.to_string(),
+        id: media.id,
         filename: media.filename.clone(),
         url: url.to_string(),
         mimetype: media.mimetype.clone(),

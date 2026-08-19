@@ -351,7 +351,7 @@ impl PaymentProvider for WechatPayProvider {
             time_expire: Some(expire.to_rfc3339()),
             notify_url: extract_notify_url(channel),
             amount: NativeAmount {
-                total: order.amount,
+                total: order.amount.0,
                 currency: order.currency.to_uppercase(),
             },
         };

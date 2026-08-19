@@ -80,7 +80,7 @@ impl PaymentProvider for StripeProvider {
             AppError::BadRequest(format!("unsupported stripe currency: {currency_str}"))
         })?;
 
-        let mut params = stripe::CreatePaymentIntent::new(order.amount, currency);
+        let mut params = stripe::CreatePaymentIntent::new(order.amount.0, currency);
         let mut meta = HashMap::new();
         meta.insert("payment_order_id".to_string(), order.id.to_string());
         params.metadata = Some(stripe::Metadata::from(meta));

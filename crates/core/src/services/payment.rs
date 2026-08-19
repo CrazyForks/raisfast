@@ -41,7 +41,7 @@ pub trait PaymentService: Send + Sync {
     async fn list_available_channels(
         &self,
         auth: &AuthUser,
-        order_id: &str,
+        order_id: SnowflakeId,
         country: Option<&str>,
         language: Option<&str>,
     ) -> AppResult<AvailableChannelsResponse>;
@@ -189,7 +189,7 @@ impl PaymentService for PaymentServiceImpl {
     async fn list_available_channels(
         &self,
         auth: &AuthUser,
-        order_id: &str,
+        order_id: SnowflakeId,
         country: Option<&str>,
         language: Option<&str>,
     ) -> AppResult<AvailableChannelsResponse> {
@@ -559,14 +559,13 @@ pub async fn list_channels(
 pub async fn list_available_channels(
     pool: &crate::db::Pool,
     auth: &AuthUser,
-    order_id: &str,
+    order_id: SnowflakeId,
     country: Option<&str>,
     language: Option<&str>,
 ) -> AppResult<AvailableChannelsResponse> {
     auth.ensure_snowflake_user_id()?;
 
-    let order_id_parsed = crate::types::snowflake_id::parse_id(order_id)?;
-    let order = crate::models::order::find_by_id(pool, order_id_parsed, auth.tenant_id())
+    let order = crate::models::order::find_by_id(pool, order_id, auth.tenant_id())
         .await?
         .ok_or_else(|| AppError::not_found("order"))?;
 
@@ -613,8 +612,7 @@ pub async fn create_payment_order(
 ) -> AppResult<(PaymentOrder, Option<ProviderResponse>)> {
     auth.ensure_snowflake_user_id()?;
 
-    let order_id_parsed = crate::types::snowflake_id::parse_id(&req.order_id)?;
-    let order = crate::models::order::find_by_id(pool, order_id_parsed, auth.tenant_id())
+    let order = crate::models::order::find_by_id(pool, req.order_id, auth.tenant_id())
         .await?
         .ok_or_else(|| AppError::not_found("order"))?;
 
@@ -622,7 +620,7 @@ pub async fn create_payment_order(
         return Err(AppError::ForbiddenOwnership);
     }
 
-    if order.total_amount <= 0 {
+    if order.total_amount.0 <= 0 {
         return Err(AppError::BadRequest("order_amount_invalid".into()));
     }
 
@@ -938,10 +936,10 @@ pub async fn handle_callback(
         return Err(AppError::BadRequest("order_not_pending".into()));
     }
 
-    if callback.amount > 0 && callback.amount != payment_order.amount {
+    if callback.amount > 0 && callback.amount != payment_order.amount.0 {
         tracing::warn!(
             "callback amount mismatch: expected={}, got={} (provider may add tax as MoR)",
-            payment_order.amount,
+            payment_order.amount.0,
             callback.amount
         );
     }
@@ -1089,9 +1087,9 @@ pub async fn refund_payment_order(
         )
         .await?;
         if already_refunded_in_tx
-            .checked_add(req.amount)
+            .checked_add(req.amount.0)
             .ok_or_else(|| AppError::BadRequest("refund_amount_overflow".into()))?
-            > payment_order.amount
+            > payment_order.amount.0
         {
             return Err(AppError::BadRequest("refund_exceeds_payment".into()));
         }
@@ -1112,7 +1110,7 @@ pub async fn refund_payment_order(
                 .refund(
                     &channel,
                     provider_order_id,
-                    req.amount,
+                    req.amount.0,
                     req.reason.as_deref(),
                 )
                 .await?;
@@ -1165,7 +1163,7 @@ pub async fn refund_payment_order(
             auth.tenant_id(),
         )
         .await?;
-        let is_full_refund = already_refunded_in_tx >= payment_order.amount;
+        let is_full_refund = already_refunded_in_tx >= payment_order.amount.0;
         let new_status = if is_full_refund {
             PaymentStatus::Refunded
         } else {
@@ -1223,7 +1221,7 @@ pub async fn refund_payment_order(
         None
     );
 
-    if req.amount > 100_000 {
+    if req.amount.0 > 100_000 {
         audit_log!(
             audit,
             auth.tenant_id().unwrap_or(""),
@@ -1290,6 +1288,7 @@ mod tests {
     use crate::config::app::AppConfig;
     use crate::db::DbDriver;
     use crate::models::payment_order::PaymentStatus;
+    use crate::types::price::Price;
 
     async fn setup_pool() -> crate::db::Pool {
         let pool = crate::test_pool!();
@@ -1401,7 +1400,7 @@ mod tests {
     async fn seed_order(
         pool: &crate::db::Pool,
         user_id: i64,
-        amount: i64,
+        amount: Price,
         currency: &str,
     ) -> crate::models::order::Order {
         let order_no = format!("ORD-{}", uuid::Uuid::now_v7().to_string().replace('-', ""));
@@ -1411,8 +1410,8 @@ mod tests {
                 user_id: SnowflakeId(user_id),
                 order_no,
                 subtotal: amount,
-                discount_amount: 0,
-                shipping_amount: 0,
+                discount_amount: Price(0),
+                shipping_amount: Price(0),
                 total_amount: amount,
                 currency: currency.into(),
                 buyer_name: None,
@@ -1420,7 +1419,7 @@ mod tests {
                 buyer_email: None,
                 shipping_address: None,
                 remark: None,
-                tax_amount: 0,
+                tax_amount: Price(0),
                 coupon_id: None,
                 shipping_address_id: None,
                 billing_address_id: None,
@@ -1435,7 +1434,7 @@ mod tests {
         pool: &crate::db::Pool,
         user_id: i64,
         channel_id: i64,
-        amount: i64,
+        amount: Price,
         currency: &str,
     ) -> PaymentOrder {
         let idem_key = format!("idem_{}", uuid::Uuid::now_v7());
@@ -1505,7 +1504,7 @@ mod tests {
     async fn seed_order_t(
         pool: &crate::db::Pool,
         user_id: i64,
-        amount: i64,
+        amount: Price,
         currency: &str,
         tenant: &str,
     ) -> crate::models::order::Order {
@@ -1516,8 +1515,8 @@ mod tests {
                 user_id: SnowflakeId(user_id),
                 order_no,
                 subtotal: amount,
-                discount_amount: 0,
-                shipping_amount: 0,
+                discount_amount: Price(0),
+                shipping_amount: Price(0),
                 total_amount: amount,
                 currency: currency.into(),
                 buyer_name: None,
@@ -1525,7 +1524,7 @@ mod tests {
                 buyer_email: None,
                 shipping_address: None,
                 remark: None,
-                tax_amount: 0,
+                tax_amount: Price(0),
                 coupon_id: None,
                 shipping_address_id: None,
                 billing_address_id: None,
@@ -1545,11 +1544,11 @@ mod tests {
         let _admin_id = seed_admin(&pool).await;
 
         let channel = seed_channel(&pool, "stripe").await;
-        let order = seed_order(&pool, owner_id, 1000, "CNY").await;
+        let order = seed_order(&pool, owner_id, Price(1000), "CNY").await;
 
         let other_auth = user_auth(other_id);
         let req = CreatePaymentOrderRequest {
-            order_id: order.id.to_string(),
+            order_id: order.id,
             channel_id: Some(channel.id.to_string()),
             method: None,
             country: None,
@@ -1586,11 +1585,11 @@ mod tests {
         let owner_id = seed_user(&pool).await;
 
         let channel = seed_channel_encrypted(&pool, "stripe", &config).await;
-        let order = seed_order(&pool, owner_id, 1000, "CNY").await;
+        let order = seed_order(&pool, owner_id, Price(1000), "CNY").await;
 
         let owner_auth = user_auth(owner_id);
         let req = CreatePaymentOrderRequest {
-            order_id: order.id.to_string(),
+            order_id: order.id,
             channel_id: Some(channel.id.to_string()),
             method: None,
             country: None,
@@ -1614,7 +1613,7 @@ mod tests {
         assert!(result.is_ok());
         let (payment_order, _) = result.unwrap();
         assert_eq!(payment_order.user_id, SnowflakeId(owner_id));
-        assert_eq!(payment_order.amount, 1000);
+        assert_eq!(payment_order.amount.0, 1000);
     }
 
     #[tokio::test]
@@ -1624,11 +1623,11 @@ mod tests {
         let owner_id = seed_user(&pool).await;
 
         let channel = seed_channel(&pool, "creem").await;
-        let order = seed_order(&pool, owner_id, 0, "CNY").await;
+        let order = seed_order(&pool, owner_id, Price(0), "CNY").await;
 
         let owner_auth = user_auth(owner_id);
         let req = CreatePaymentOrderRequest {
-            order_id: order.id.to_string(),
+            order_id: order.id,
             channel_id: Some(channel.id.to_string()),
             method: None,
             country: None,
@@ -1663,7 +1662,7 @@ mod tests {
         let other_id = seed_user(&pool).await;
 
         let channel = seed_channel(&pool, "stripe").await;
-        let po = seed_payment_order(&pool, owner_id, *channel.id, 500, "CNY").await;
+        let po = seed_payment_order(&pool, owner_id, *channel.id, Price(500), "CNY").await;
 
         let other_auth = user_auth(other_id);
         let result =
@@ -1682,14 +1681,14 @@ mod tests {
         let owner_id = seed_user(&pool).await;
 
         let channel = seed_channel(&pool, "stripe").await;
-        let po = seed_payment_order(&pool, owner_id, *channel.id, 500, "CNY").await;
+        let po = seed_payment_order(&pool, owner_id, *channel.id, Price(500), "CNY").await;
 
         let owner_auth = user_auth(owner_id);
         let result =
             super::get_payment_order(&pool, &owner_auth, SnowflakeId(owner_id), po.id).await;
 
         assert!(result.is_ok());
-        assert_eq!(result.unwrap().amount, 500);
+        assert_eq!(result.unwrap().amount.0, 500);
     }
 
     #[tokio::test]
@@ -1699,7 +1698,7 @@ mod tests {
         let admin_id = seed_admin(&pool).await;
 
         let channel = seed_channel(&pool, "stripe").await;
-        let po = seed_payment_order(&pool, owner_id, *channel.id, 500, "CNY").await;
+        let po = seed_payment_order(&pool, owner_id, *channel.id, Price(500), "CNY").await;
 
         let admin_auth_user =
             AuthUser::from_parts(Some(admin_id), crate::models::user::UserRole::Admin, None);
@@ -1717,7 +1716,7 @@ mod tests {
         let other_id = seed_user(&pool).await;
 
         let channel = seed_channel(&pool, "stripe").await;
-        let po = seed_payment_order(&pool, owner_id, *channel.id, 500, "CNY").await;
+        let po = seed_payment_order(&pool, owner_id, *channel.id, Price(500), "CNY").await;
 
         let audit = AuditService::new(pool.clone());
 
@@ -1746,7 +1745,7 @@ mod tests {
         let owner_id = seed_user(&pool).await;
 
         let channel = seed_channel(&pool, "stripe").await;
-        let po = seed_payment_order(&pool, owner_id, *channel.id, 500, "CNY").await;
+        let po = seed_payment_order(&pool, owner_id, *channel.id, Price(500), "CNY").await;
 
         let audit = AuditService::new(pool.clone());
 
@@ -1776,7 +1775,7 @@ mod tests {
         let owner_id = seed_user(&pool).await;
 
         let channel = seed_channel(&pool, "stripe").await;
-        let po = seed_payment_order(&pool, owner_id, *channel.id, 500, "CNY").await;
+        let po = seed_payment_order(&pool, owner_id, *channel.id, Price(500), "CNY").await;
 
         let mut tx = pool.begin().await.unwrap();
         let rows = crate::models::payment_order::tx_update_status_cas(
@@ -1818,7 +1817,7 @@ mod tests {
         let admin_id = seed_admin(&pool).await;
 
         let channel = seed_channel(&pool, "stripe").await;
-        let po = seed_payment_order(&pool, admin_id, *channel.id, 1000, "CNY").await;
+        let po = seed_payment_order(&pool, admin_id, *channel.id, Price(1000), "CNY").await;
 
         let audit = AuditService::new(pool.clone());
 
@@ -1831,7 +1830,7 @@ mod tests {
             &config,
             po.id,
             CreateRefundRequest {
-                amount: 500,
+                amount: Price(500),
                 reason: Some("test".into()),
             },
         )
@@ -1852,7 +1851,7 @@ mod tests {
         let admin_id = seed_admin(&pool).await;
 
         let channel = seed_channel(&pool, "creem").await;
-        let po = seed_payment_order(&pool, user_id, *channel.id, 1000, "CNY").await;
+        let po = seed_payment_order(&pool, user_id, *channel.id, Price(1000), "CNY").await;
 
         let mut tx = pool.begin().await.unwrap();
         let rows = crate::models::payment_order::tx_update_status_cas(
@@ -1873,7 +1872,7 @@ mod tests {
             &pool,
             &wallet_auth,
             "CNY",
-            1000,
+            Price(1000),
             WalletTxType::Recharge,
             &format!("PAY-{}", po.id),
             Some(WalletReferenceType::Payment),
@@ -1894,7 +1893,7 @@ mod tests {
             &config,
             po.id,
             CreateRefundRequest {
-                amount: 2000,
+                amount: Price(2000),
                 reason: None,
             },
         )
@@ -1915,7 +1914,7 @@ mod tests {
         let admin_id = seed_admin(&pool).await;
 
         let channel = seed_channel(&pool, "creem").await;
-        let po = seed_payment_order(&pool, user_id, *channel.id, 1000, "CNY").await;
+        let po = seed_payment_order(&pool, user_id, *channel.id, Price(1000), "CNY").await;
 
         let mut tx = pool.begin().await.unwrap();
         let rows = crate::models::payment_order::tx_update_status_cas(
@@ -1936,7 +1935,7 @@ mod tests {
             &pool,
             &wallet_auth,
             "CNY",
-            1000,
+            Price(1000),
             WalletTxType::Recharge,
             &format!("PAY-{}", po.id),
             Some(WalletReferenceType::Payment),
@@ -1958,13 +1957,13 @@ mod tests {
             &config,
             po.id,
             CreateRefundRequest {
-                amount: 400,
+                amount: Price(400),
                 reason: Some("partial".into()),
             },
         )
         .await
         .unwrap();
-        assert_eq!(refund1.amount, 400);
+        assert_eq!(refund1.amount.0, 400);
 
         let updated = crate::models::payment_order::find_by_id(&pool, po.id, None)
             .await
@@ -1979,13 +1978,13 @@ mod tests {
             &config,
             po.id,
             CreateRefundRequest {
-                amount: 600,
+                amount: Price(600),
                 reason: None,
             },
         )
         .await
         .unwrap();
-        assert_eq!(refund2.amount, 600);
+        assert_eq!(refund2.amount.0, 600);
 
         let updated = crate::models::payment_order::find_by_id(&pool, po.id, None)
             .await
@@ -2005,7 +2004,7 @@ mod tests {
         let channel_b = seed_channel_encrypted(&pool, "stripe", &config).await;
         let user_id = seed_user(&pool).await;
 
-        let mut po = seed_payment_order(&pool, user_id, channel_a.id.0, 500, "CNY").await;
+        let mut po = seed_payment_order(&pool, user_id, channel_a.id.0, Price(500), "CNY").await;
         po.provider_order_id = Some("prov_123".to_string());
         crate::models::payment_order::update_provider_order_id(
             &pool, po.id, "prov_123", None, None,
@@ -2041,7 +2040,7 @@ mod tests {
         let user_id = seed_user(&pool).await;
 
         let channel = seed_channel_encrypted(&pool, "stripe", &config).await;
-        let po = seed_payment_order(&pool, user_id, *channel.id, 500, "CNY").await;
+        let po = seed_payment_order(&pool, user_id, *channel.id, Price(500), "CNY").await;
 
         let mut tx = pool.begin().await.unwrap();
         let rows = crate::models::payment_order::tx_update_status_cas(
@@ -2076,7 +2075,7 @@ mod tests {
         let pool = setup_pool().await;
         let user_id = seed_user(&pool).await;
         let channel = seed_channel(&pool, "stripe").await;
-        let po = seed_payment_order(&pool, user_id, *channel.id, 1000, "CNY").await;
+        let po = seed_payment_order(&pool, user_id, *channel.id, Price(1000), "CNY").await;
 
         let result: Result<(), crate::errors::app_error::AppError> = async {
             crate::in_transaction!(pool, tx, {
@@ -2115,7 +2114,7 @@ mod tests {
         let user_id = seed_user(&pool).await;
 
         let channel = seed_channel(&pool, "creem").await;
-        let order = seed_order(&pool, user_id, 1000, "CNY").await;
+        let order = seed_order(&pool, user_id, Price(1000), "CNY").await;
 
         let idem_key = format!("{}_{}", order.id, channel.id);
 
@@ -2125,7 +2124,7 @@ mod tests {
                 user_id: SnowflakeId(user_id),
                 order_id: Some(order.id.to_string()),
                 title: "Test".into(),
-                amount: 1000,
+                amount: Price(1000),
                 currency: "CNY".into(),
                 channel_id: channel.id,
                 provider: "creem".into(),
@@ -2194,18 +2193,12 @@ mod tests {
         .await
         .unwrap();
 
-        let order = seed_order_t(&pool, user_id, 1000, "CNY", &tenant).await;
+        let order = seed_order_t(&pool, user_id, Price(1000), "CNY", &tenant).await;
         let auth = user_auth_t(user_id, &tenant);
 
-        let result = super::list_available_channels(
-            &pool,
-            &auth,
-            &order.id.to_string(),
-            Some("CN"),
-            Some("zh"),
-        )
-        .await
-        .unwrap();
+        let result = super::list_available_channels(&pool, &auth, order.id, Some("CN"), Some("zh"))
+            .await
+            .unwrap();
 
         assert_eq!(result.channels.len(), 2);
         assert_eq!(result.recommended_channel_id, Some(ch_cny.id.to_string()));
@@ -2228,13 +2221,12 @@ mod tests {
         )
         .await;
 
-        let order = seed_order_t(&pool, user_id, 1000, "JPY", &tenant).await;
+        let order = seed_order_t(&pool, user_id, Price(1000), "JPY", &tenant).await;
         let auth = user_auth_t(user_id, &tenant);
 
-        let result =
-            super::list_available_channels(&pool, &auth, &order.id.to_string(), None, None)
-                .await
-                .unwrap();
+        let result = super::list_available_channels(&pool, &auth, order.id, None, None)
+            .await
+            .unwrap();
 
         assert!(result.channels.is_empty());
         assert!(result.recommended_channel_id.is_none());
@@ -2247,8 +2239,14 @@ mod tests {
 
         let auth = user_auth(user_id);
 
-        let result =
-            super::list_available_channels(&pool, &auth, "nonexistent_order", None, None).await;
+        let result = super::list_available_channels(
+            &pool,
+            &auth,
+            crate::types::snowflake_id::SnowflakeId::new(999999),
+            None,
+            None,
+        )
+        .await;
 
         assert!(result.is_err());
     }
@@ -2273,11 +2271,11 @@ mod tests {
         .await
         .unwrap();
 
-        let order = seed_order(&pool, user_id, 1000, "CNY").await;
+        let order = seed_order(&pool, user_id, Price(1000), "CNY").await;
 
         let auth = user_auth(user_id);
         let req = CreatePaymentOrderRequest {
-            order_id: order.id.to_string(),
+            order_id: order.id,
             channel_id: None,
             method: None,
             country: None,
@@ -2318,11 +2316,11 @@ mod tests {
         let tenant = uniq_tenant();
         let user_id = seed_user(&pool).await;
 
-        let order = seed_order_t(&pool, user_id, 1000, "JPY", &tenant).await;
+        let order = seed_order_t(&pool, user_id, Price(1000), "JPY", &tenant).await;
 
         let auth = user_auth_t(user_id, &tenant);
         let req = CreatePaymentOrderRequest {
-            order_id: order.id.to_string(),
+            order_id: order.id,
             channel_id: None,
             method: None,
             country: None,
@@ -2359,11 +2357,11 @@ mod tests {
         let user_id = seed_user(&pool).await;
 
         let ch = seed_channel_encrypted(&pool, "stripe", &config).await;
-        let order = seed_order(&pool, user_id, 1000, "CNY").await;
+        let order = seed_order(&pool, user_id, Price(1000), "CNY").await;
 
         let auth = user_auth(user_id);
         let req = CreatePaymentOrderRequest {
-            order_id: order.id.to_string(),
+            order_id: order.id,
             channel_id: Some(ch.id.to_string()),
             method: None,
             country: Some("CN".into()),

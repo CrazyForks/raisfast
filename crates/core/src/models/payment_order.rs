@@ -1,3 +1,4 @@
+use crate::types::price::Price;
 use serde::{Deserialize, Serialize};
 
 use crate::db::{DbDriver, Driver};
@@ -41,7 +42,7 @@ pub struct PaymentOrder {
     pub user_id: SnowflakeId,
     pub order_id: Option<String>,
     pub title: String,
-    pub amount: i64,
+    pub amount: Price,
     pub currency: String,
     pub channel_id: SnowflakeId,
     pub provider: String,
@@ -280,7 +281,7 @@ mod tests {
         pool: &crate::db::Pool,
         user_id: i64,
         channel_id: i64,
-        amount: i64,
+        amount: Price,
     ) -> PaymentOrder {
         seed_payment_order_t(pool, user_id, channel_id, amount, None).await
     }
@@ -293,7 +294,7 @@ mod tests {
         pool: &crate::db::Pool,
         user_id: i64,
         channel_id: i64,
-        amount: i64,
+        amount: Price,
         tenant: Option<&str>,
     ) -> PaymentOrder {
         let idem_key = format!("idem_{}", uuid::Uuid::now_v7());
@@ -329,14 +330,14 @@ mod tests {
         let pool = setup_pool().await;
         let uid = seed_user(&pool).await;
         let ch_id = seed_channel(&pool).await;
-        let order = seed_payment_order(&pool, uid, ch_id, 1000).await;
+        let order = seed_payment_order(&pool, uid, ch_id, Price(1000)).await;
         let found = super::find_by_id(&pool, order.id, None)
             .await
             .unwrap()
             .unwrap();
         assert_eq!(found.id, order.id);
         assert_eq!(found.user_id, SnowflakeId(uid));
-        assert_eq!(found.amount, 1000);
+        assert_eq!(found.amount.0, 1000);
         assert_eq!(found.currency, "USD");
         assert_eq!(found.status, PaymentStatus::Pending);
         assert_eq!(found.channel_id, SnowflakeId(ch_id));
@@ -347,7 +348,7 @@ mod tests {
         let pool = setup_pool().await;
         let uid = seed_user(&pool).await;
         let ch_id = seed_channel(&pool).await;
-        let order = seed_payment_order(&pool, uid, ch_id, 500).await;
+        let order = seed_payment_order(&pool, uid, ch_id, Price(500)).await;
         let found = super::find_by_idempotency_key(&pool, &order.idempotency_key, None)
             .await
             .unwrap()
@@ -360,7 +361,7 @@ mod tests {
         let pool = setup_pool().await;
         let uid = seed_user(&pool).await;
         let ch_id = seed_channel(&pool).await;
-        let order = seed_payment_order(&pool, uid, ch_id, 500).await;
+        let order = seed_payment_order(&pool, uid, ch_id, Price(500)).await;
         let provider_order_id = format!("pi_test123_{}", crate::utils::id::new_id());
         super::update_provider_order_id(&pool, order.id, &provider_order_id, None, None)
             .await
@@ -388,7 +389,7 @@ mod tests {
         let pool = setup_pool().await;
         let uid = seed_user(&pool).await;
         let ch_id = seed_channel(&pool).await;
-        let order = seed_payment_order(&pool, uid, ch_id, 1000).await;
+        let order = seed_payment_order(&pool, uid, ch_id, Price(1000)).await;
         assert_eq!(order.status, PaymentStatus::Pending);
         assert_eq!(order.version, 1);
         assert!(order.paid_at.is_none());
@@ -401,7 +402,7 @@ mod tests {
         let pool = setup_pool().await;
         let uid = seed_user(&pool).await;
         let ch_id = seed_channel(&pool).await;
-        let order = seed_payment_order(&pool, uid, ch_id, 1000).await;
+        let order = seed_payment_order(&pool, uid, ch_id, Price(1000)).await;
         let mut tx = pool.begin().await.unwrap();
         let rows = super::tx_update_status_cas(
             &mut tx,
@@ -428,7 +429,7 @@ mod tests {
         let pool = setup_pool().await;
         let uid = seed_user(&pool).await;
         let ch_id = seed_channel(&pool).await;
-        let order = seed_payment_order(&pool, uid, ch_id, 1000).await;
+        let order = seed_payment_order(&pool, uid, ch_id, Price(1000)).await;
         let mut tx = pool.begin().await.unwrap();
         let rows = super::tx_update_status_cas(
             &mut tx,
@@ -454,7 +455,7 @@ mod tests {
         let pool = setup_pool().await;
         let uid = seed_user(&pool).await;
         let ch_id = seed_channel(&pool).await;
-        let order = seed_payment_order(&pool, uid, ch_id, 1000).await;
+        let order = seed_payment_order(&pool, uid, ch_id, Price(1000)).await;
         let pi = format!("pi_abc123_{}", crate::utils::id::new_id());
         super::update_provider_order_id(
             &pool,
@@ -482,7 +483,7 @@ mod tests {
         let uid = seed_user(&pool).await;
         let ch_id = seed_channel(&pool).await;
         for _ in 0..3 {
-            seed_payment_order(&pool, uid, ch_id, 100).await;
+            seed_payment_order(&pool, uid, ch_id, Price(100)).await;
         }
         let (items, total) = super::find_by_user_paginated(&pool, SnowflakeId(uid), None, 1, 10)
             .await
@@ -499,7 +500,7 @@ mod tests {
         let ch_id = seed_channel(&pool).await;
         let tenant = uniq_tenant();
         for _ in 0..4 {
-            seed_payment_order_t(&pool, uid, ch_id, 100, Some(&tenant)).await;
+            seed_payment_order_t(&pool, uid, ch_id, Price(100), Some(&tenant)).await;
         }
         let (items, total) = super::find_all_admin_paginated(&pool, Some(&tenant), 1, 10, None)
             .await
@@ -515,7 +516,7 @@ mod tests {
         let ch_id = seed_channel(&pool).await;
         let tenant = uniq_tenant();
         for _ in 0..3 {
-            let order = seed_payment_order_t(&pool, uid, ch_id, 100, Some(&tenant)).await;
+            let order = seed_payment_order_t(&pool, uid, ch_id, Price(100), Some(&tenant)).await;
             let mut tx = pool.begin().await.unwrap();
             let rows = super::tx_update_status_cas(
                 &mut tx,
@@ -529,7 +530,7 @@ mod tests {
             assert_eq!(rows, 1);
             tx.commit().await.unwrap();
         }
-        seed_payment_order_t(&pool, uid, ch_id, 100, Some(&tenant)).await;
+        seed_payment_order_t(&pool, uid, ch_id, Price(100), Some(&tenant)).await;
         let (items, total) =
             super::find_all_admin_paginated(&pool, Some(&tenant), 1, 10, Some("paid"))
                 .await
@@ -555,7 +556,7 @@ mod tests {
         let pool = setup_pool().await;
         let uid = seed_user(&pool).await;
         let ch_id = seed_channel(&pool).await;
-        let order = seed_payment_order(&pool, uid, ch_id, 2000).await;
+        let order = seed_payment_order(&pool, uid, ch_id, Price(2000)).await;
         assert_eq!(order.status, PaymentStatus::Pending);
 
         super::update_provider_order_id(

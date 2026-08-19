@@ -36,6 +36,10 @@ pub async fn update_me(
             .ok_or_else(|| AppError::not_found("user"))?;
         if username != &current.username {
             crate::services::auth::ensure_not_demo_user(pool, uid).await?;
+            if crate::services::auth::is_reserved_username(pool, username, auth.tenant_id()).await?
+            {
+                return Err(AppError::BadRequest("username_reserved".into()));
+            }
         }
     }
     let user = crate::models::user::update_profile(
@@ -148,6 +152,7 @@ impl UserService for UserServiceImpl {
             .await?
             .ok_or_else(|| AppError::not_found("user"))?;
 
+        // No reserved-username check: admins may rename users freely.
         if let Some(ref username) = req.username
             && username != &user.username
         {

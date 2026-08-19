@@ -160,13 +160,12 @@ pub fn routes(
 
 async fn resolve_page_parent_id(
     pool: &crate::db::Pool,
-    parent_id: Option<String>,
+    parent_id: Option<crate::types::snowflake_id::SnowflakeId>,
 ) -> AppResult<Option<i64>> {
-    let Some(raw_id) = parent_id else {
+    let Some(pid) = parent_id else {
         return Ok(None);
     };
-    let parsed_id = crate::types::snowflake_id::parse_id(&raw_id)?;
-    raisfast_derive::crud_resolve_id!(pool, "pages", *parsed_id).map_err(Into::into)
+    raisfast_derive::crud_resolve_id!(pool, "pages", *pid).map_err(Into::into)
 }
 
 // ── Public API ──
@@ -375,7 +374,7 @@ pub async fn reorder(
     State(state): State<crate::AppState>,
     Json(req): Json<ReorderRequest>,
 ) -> AppResult<ApiResponse<()>> {
-    let items: Vec<(String, i64)> = req
+    let items: Vec<(SnowflakeId, i64)> = req
         .items
         .into_iter()
         .map(|i| (i.id, i.sort_order))

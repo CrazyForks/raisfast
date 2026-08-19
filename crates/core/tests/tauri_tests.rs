@@ -74,11 +74,11 @@ async fn create_test_user(pool: &raisfast::db::Pool, label: &str) -> (i64, Strin
         "SELECT id FROM users WHERE id = {}",
         raisfast::db::Driver::ph(1)
     )))
-    .bind(user.id.parse::<i64>().unwrap())
+    .bind(*user.id)
     .fetch_one(pool)
     .await
     .unwrap();
-    (row.0, user.id)
+    (row.0, user.id.to_string())
 }
 
 fn parse_todo_ct() -> ContentTypeSchema {
@@ -259,7 +259,7 @@ async fn tauri_auth_get_me_service() {
         .unwrap();
 
     let auth = raisfast::middleware::auth::AuthUser::from_parts(
-        Some(user.id.parse().unwrap()),
+        Some(*user.id),
         raisfast::models::user::UserRole::Author,
         None,
     );

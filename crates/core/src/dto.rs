@@ -154,6 +154,55 @@ fn validate_password(pwd: &str) -> Result<(), validator::ValidationError> {
     }
 }
 
+/// Usernames must be 4-128 chars, start/end with an alphanumeric,
+/// and contain only ASCII letters, digits, dots, underscores or hyphens.
+/// Reserved-name checks live in the service layer (merged from a
+/// built-in safety list + the `reserved_usernames` site option).
+pub fn validate_username(name: &str) -> Result<(), validator::ValidationError> {
+    fn fail(code: &'static str, msg: &'static str) -> validator::ValidationError {
+        let mut err = validator::ValidationError::new(code);
+        err.message = Some(msg.into());
+        err
+    }
+    let len = name.chars().count();
+    if !(4..=128).contains(&len) {
+        return Err(fail(
+            "username_length",
+            "username must be 4-128 characters long",
+        ));
+    }
+    if name.trim() != name {
+        return Err(fail(
+            "username_whitespace",
+            "username must not start or end with whitespace",
+        ));
+    }
+    if !name
+        .chars()
+        .next()
+        .is_some_and(|c| c.is_ascii_alphanumeric())
+        || !name
+            .chars()
+            .last()
+            .is_some_and(|c| c.is_ascii_alphanumeric())
+    {
+        return Err(fail(
+            "username_boundary",
+            "username must start and end with a letter or digit",
+        ));
+    }
+    if !name
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
+    {
+        return Err(fail(
+            "username_charset",
+            "username may only contain letters, digits, dots, underscores and hyphens",
+        ));
+    }
+    Ok(())
+}
+
 #[allow(dead_code)]
 fn validate_post_status(status: &str) -> Result<(), validator::ValidationError> {
     match status {
@@ -178,6 +227,7 @@ fn validate_comment_status(status: &str) -> Result<(), validator::ValidationErro
     }
 }
 
+#[allow(dead_code)]
 fn validate_optional_id(id: &str) -> Result<(), validator::ValidationError> {
     if !is_valid_id_str(id) {
         let mut err = validator::ValidationError::new("invalid_id");
@@ -187,6 +237,7 @@ fn validate_optional_id(id: &str) -> Result<(), validator::ValidationError> {
     Ok(())
 }
 
+#[allow(dead_code)]
 fn validate_id_vec(ids: &[String]) -> Result<(), validator::ValidationError> {
     for id in ids {
         if !is_valid_id_str(id) {

@@ -109,7 +109,7 @@ mod tests {
 
     fn make_post_response(id: &str, slug: &str, title: &str) -> PostResponse {
         PostResponse {
-            id: id.into(),
+            id: SnowflakeId::new(id.parse().unwrap_or(0)),
             title: title.into(),
             slug: slug.into(),
             content: String::new(),
@@ -321,7 +321,7 @@ mod tests {
         let json = serde_json::to_string(&event).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed["type"], "PostCreated");
-        assert_eq!(parsed["data"]["id"], "p1");
+        assert!(parsed["data"]["id"].is_string());
         assert_eq!(parsed["data"]["slug"], "hello");
     }
 

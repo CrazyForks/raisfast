@@ -40,7 +40,7 @@ pub trait ProductService: Send + Sync {
         page_size: i64,
         status: Option<&str>,
         keyword: Option<&str>,
-        category_id: Option<&str>,
+        category_id: Option<SnowflakeId>,
     ) -> AppResult<(Vec<Product>, i64)>;
     async fn batch(&self, auth: &AuthUser, action: &str, ids: &[String]) -> AppResult<usize>;
 }
@@ -67,7 +67,7 @@ impl ProductService for ProductServiceImpl {
         crate::models::currencies::ensure_active(&self.pool, currency, auth.tenant_id()).await?;
         let generated_slug = slug::generate_slug(&req.title);
         let slug = req.slug.as_deref().or(Some(generated_slug.as_str()));
-        let category_id = resolve_category_id(&self.pool, auth, req.category_id.as_deref()).await?;
+        let category_id = resolve_category_id(&self.pool, auth, req.category_id).await?;
         let tag_ids = parse_tag_ids(&self.pool, req.tag_ids.as_deref(), auth.tenant_id()).await?;
         let p = crate::models::product::insert(
             &self.pool,
@@ -151,11 +151,8 @@ impl ProductService for ProductServiceImpl {
         let sale_price = req.sale_price.or(existing.sale_price);
         let has_variants = req.has_variants.unwrap_or(existing.has_variants);
 
-        let category_id = match req.category_id.as_deref() {
-            Some(raw) if !raw.is_empty() => {
-                resolve_category_id(&self.pool, auth, Some(raw)).await?
-            }
-            Some(_) => None,
+        let category_id = match req.category_id {
+            Some(cid) => resolve_category_id(&self.pool, auth, Some(cid)).await?,
             None => existing.category_id.map(|c| *c),
         };
 
@@ -274,7 +271,7 @@ impl ProductService for ProductServiceImpl {
         page_size: i64,
         status: Option<&str>,
         keyword: Option<&str>,
-        category_id: Option<&str>,
+        category_id: Option<SnowflakeId>,
     ) -> AppResult<(Vec<Product>, i64)> {
         crate::models::product::find_all_admin(
             &self.pool,
@@ -283,7 +280,7 @@ impl ProductService for ProductServiceImpl {
             page_size,
             status,
             keyword,
-            category_id,
+            category_id.as_ref().copied(),
         )
         .await
     }
@@ -386,11 +383,10 @@ impl ProductService for ProductServiceImpl {
 async fn resolve_category_id(
     pool: &crate::db::Pool,
     auth: &AuthUser,
-    raw_id: Option<&str>,
+    raw_id: Option<SnowflakeId>,
 ) -> AppResult<Option<i64>> {
     match raw_id {
-        Some(raw) if !raw.is_empty() => {
-            let cid = crate::types::snowflake_id::parse_id(raw)?;
+        Some(cid) => {
             let cat =
                 crate::models::product_category::find_by_id(pool, cid, auth.tenant_id()).await?;
             Ok(Some(*cat.id))
@@ -424,6 +420,7 @@ async fn parse_tag_ids(
 mod tests {
     use super::*;
     use crate::db::DbDriver;
+    use crate::types::price::Price;
 
     async fn setup_pool() -> crate::db::Pool {
         crate::test_pool!()
@@ -463,7 +460,7 @@ mod tests {
                     fulfillment_type: None,
                     delivery_hook: None,
                     weight: None,
-                    price: 1000,
+                    price: Price(1000),
                     currency: None,
                     attributes: None,
                     sort_order: None,
@@ -491,7 +488,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(p.title, "Widget");
-        assert_eq!(p.price, 1000);
+        assert_eq!(p.price.0, 1000);
         assert_eq!(p.status, crate::models::product::ProductStatus::Draft);
     }
 
@@ -512,7 +509,7 @@ mod tests {
                     fulfillment_type: Some("digital".into()),
                     delivery_hook: None,
                     weight: None,
-                    price: 500,
+                    price: Price(500),
                     currency: Some("USD".into()),
                     attributes: None,
                     sort_order: Some(10),
@@ -568,7 +565,7 @@ mod tests {
                     fulfillment_type: None,
                     delivery_hook: None,
                     weight: None,
-                    price: 100,
+                    price: Price(100),
                     currency: None,
                     attributes: None,
                     sort_order: None,
@@ -624,7 +621,7 @@ mod tests {
                     fulfillment_type: None,
                     delivery_hook: None,
                     weight: None,
-                    price: 100,
+                    price: Price(100),
                     currency: None,
                     attributes: None,
                     sort_order: None,
@@ -695,7 +692,7 @@ mod tests {
             .unwrap();
         assert_eq!(updated.title, "New");
         assert_eq!(updated.description.unwrap(), "old desc");
-        assert_eq!(updated.price, 100);
+        assert_eq!(updated.price.0, 100);
         assert_eq!(
             updated.status,
             crate::models::product::ProductStatus::Active
@@ -720,7 +717,7 @@ mod tests {
                     fulfillment_type: None,
                     delivery_hook: None,
                     weight: None,
-                    price: 100,
+                    price: Price(100),
                     currency: None,
                     attributes: None,
                     sort_order: None,
@@ -859,7 +856,7 @@ mod tests {
                     fulfillment_type: None,
                     delivery_hook: None,
                     weight: None,
-                    price: 100,
+                    price: Price(100),
                     currency: None,
                     attributes: None,
                     sort_order: None,
@@ -918,7 +915,7 @@ mod tests {
                         fulfillment_type: None,
                         delivery_hook: None,
                         weight: None,
-                        price: 100,
+                        price: Price(100),
                         currency: None,
                         attributes: None,
                         sort_order: None,
@@ -978,7 +975,7 @@ mod tests {
                     fulfillment_type: None,
                     delivery_hook: None,
                     weight: None,
-                    price: 100,
+                    price: Price(100),
                     currency: None,
                     attributes: None,
                     sort_order: None,
@@ -1024,7 +1021,7 @@ mod tests {
                 fulfillment_type: None,
                 delivery_hook: None,
                 weight: None,
-                price: 100,
+                price: Price(100),
                 currency: None,
                 attributes: None,
                 sort_order: None,

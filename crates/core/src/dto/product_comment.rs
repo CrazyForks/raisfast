@@ -1,19 +1,17 @@
+use crate::types::snowflake_id::SnowflakeId;
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "export-types")]
 use ts_rs::TS;
 use utoipa::ToSchema;
 use validator::Validate;
 
-use super::validate_optional_id;
 use crate::models::product_comment::ProductCommentStatus;
 
 #[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Clone, Serialize, Deserialize, Validate, ToSchema)]
 pub struct CreateProductCommentRequest {
-    #[validate(custom(function = "validate_optional_id"))]
-    pub product_id: String,
-    #[validate(custom(function = "validate_optional_id"))]
-    pub order_id: String,
+    pub product_id: SnowflakeId,
+    pub order_id: SnowflakeId,
     #[validate(range(min = 1, max = 5))]
     pub rating: i64,
     #[validate(length(max = 200))]
@@ -58,10 +56,10 @@ pub struct AdminProductCommentListQuery {
 #[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Serialize, ToSchema)]
 pub struct ProductCommentResponse {
-    pub id: String,
-    pub product_id: String,
-    pub order_id: String,
-    pub user_id: String,
+    pub id: SnowflakeId,
+    pub product_id: SnowflakeId,
+    pub order_id: SnowflakeId,
+    pub user_id: SnowflakeId,
     pub rating: i64,
     pub title: Option<String>,
     pub content: String,
@@ -76,10 +74,10 @@ pub struct ProductCommentResponse {
 impl From<crate::models::product_comment::ProductComment> for ProductCommentResponse {
     fn from(c: crate::models::product_comment::ProductComment) -> Self {
         Self {
-            id: c.id.to_string(),
-            product_id: c.product_id.to_string(),
-            order_id: c.order_id.to_string(),
-            user_id: c.user_id.to_string(),
+            id: c.id,
+            product_id: c.product_id,
+            order_id: c.order_id,
+            user_id: c.user_id,
             rating: c.rating,
             title: c.title,
             content: c.content,
@@ -100,8 +98,8 @@ mod tests {
     #[test]
     fn create_comment_valid() {
         let req = CreateProductCommentRequest {
-            product_id: "123".into(),
-            order_id: "456".into(),
+            product_id: SnowflakeId::new(123),
+            order_id: SnowflakeId::new(456),
             rating: 5,
             title: Some("Great".into()),
             content: "Really good".into(),
@@ -113,8 +111,8 @@ mod tests {
     #[test]
     fn create_comment_rating_too_low() {
         let req = CreateProductCommentRequest {
-            product_id: "123".into(),
-            order_id: "456".into(),
+            product_id: SnowflakeId::new(123),
+            order_id: SnowflakeId::new(456),
             rating: 0,
             title: None,
             content: "ok".into(),
@@ -126,8 +124,8 @@ mod tests {
     #[test]
     fn create_comment_rating_too_high() {
         let req = CreateProductCommentRequest {
-            product_id: "123".into(),
-            order_id: "456".into(),
+            product_id: SnowflakeId::new(123),
+            order_id: SnowflakeId::new(456),
             rating: 6,
             title: None,
             content: "ok".into(),
@@ -139,8 +137,8 @@ mod tests {
     #[test]
     fn create_comment_empty_content() {
         let req = CreateProductCommentRequest {
-            product_id: "123".into(),
-            order_id: "456".into(),
+            product_id: SnowflakeId::new(123),
+            order_id: SnowflakeId::new(456),
             rating: 3,
             title: None,
             content: "".into(),

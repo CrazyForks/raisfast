@@ -46,15 +46,10 @@ pub struct CategoryServiceImpl {
 impl CategoryService for CategoryServiceImpl {
     async fn create(&self, auth: &AuthUser, req: CreateCategoryRequest) -> AppResult<Category> {
         let slug = slug::generate_slug(&req.name);
-        let parent_id = if let Some(ref raw_id) = req.parent_id {
-            if raw_id.parse::<i64>().is_ok() {
-                raw_id.parse::<i64>().ok()
-            } else {
-                let pid = crate::types::snowflake_id::parse_id(raw_id)?;
-                let parent =
-                    crate::models::category::find_by_id(&self.pool, pid, auth.tenant_id()).await?;
-                Some(*parent.id)
-            }
+        let parent_id = if let Some(pid) = req.parent_id {
+            let parent =
+                crate::models::category::find_by_id(&self.pool, pid, auth.tenant_id()).await?;
+            Some(*parent.id)
         } else {
             None
         };
@@ -99,15 +94,10 @@ impl CategoryService for CategoryServiceImpl {
             existing.slug
         };
 
-        let parent_id = if let Some(ref raw_id) = req.parent_id {
-            if raw_id.parse::<i64>().is_ok() {
-                raw_id.parse::<i64>().ok()
-            } else {
-                let pid = crate::types::snowflake_id::parse_id(raw_id)?;
-                let parent =
-                    crate::models::category::find_by_id(&self.pool, pid, auth.tenant_id()).await?;
-                Some(*parent.id)
-            }
+        let parent_id = if let Some(pid) = req.parent_id {
+            let parent =
+                crate::models::category::find_by_id(&self.pool, pid, auth.tenant_id()).await?;
+            Some(*parent.id)
         } else {
             None
         };

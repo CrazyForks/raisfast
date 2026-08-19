@@ -197,14 +197,7 @@ pub async fn create(
 
     let comment = state
         .comment_service
-        .create(
-            &slug,
-            &auth,
-            &req.content,
-            req.parent_id.as_deref(),
-            None,
-            None,
-        )
+        .create(&slug, &auth, &req.content, req.parent_id, None, None)
         .await?;
 
     Ok(ApiResponse::success(comment))
@@ -235,7 +228,7 @@ pub async fn create_guest(
             &slug,
             &auth,
             &req.content,
-            req.parent_id.as_deref(),
+            req.parent_id,
             Some(nickname),
             req.email.as_deref(),
         )

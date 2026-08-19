@@ -1,9 +1,10 @@
+use crate::types::price::Price;
 use crate::types::snowflake_id::SnowflakeId;
 pub struct CreatePaymentOrderCmd {
     pub user_id: SnowflakeId,
     pub order_id: Option<String>,
     pub title: String,
-    pub amount: i64,
+    pub amount: Price,
     pub currency: String,
     pub channel_id: SnowflakeId,
     pub provider: String,
@@ -35,7 +36,7 @@ pub struct CreatePaymentTransactionCmd {
     pub order_id: Option<String>,
     pub user_id: SnowflakeId,
     pub tx_type: String,
-    pub amount: i64,
+    pub amount: Price,
     pub currency: String,
     pub provider_tx_id: String,
     pub status: String,
@@ -46,7 +47,7 @@ pub struct CreatePaymentRefundCmd {
     pub payment_order_id: SnowflakeId,
     pub order_id: Option<String>,
     pub user_id: SnowflakeId,
-    pub amount: i64,
+    pub amount: Price,
     pub currency: String,
     pub reason: Option<String>,
     pub provider_refund_id: Option<String>,

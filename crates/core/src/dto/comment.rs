@@ -1,3 +1,4 @@
+use crate::types::snowflake_id::SnowflakeId;
 use serde::Deserialize;
 #[cfg(feature = "export-types")]
 use ts_rs::TS;
@@ -11,8 +12,7 @@ use crate::models::comment::CommentStatus;
 pub struct CreateCommentRequest {
     #[validate(length(min = 1, max = 5000))]
     pub content: String,
-    #[validate(custom(function = "super::validate_optional_id"))]
-    pub parent_id: Option<String>,
+    pub parent_id: Option<SnowflakeId>,
     #[validate(length(min = 1, max = 50))]
     pub nickname: Option<String>,
     #[validate(email)]

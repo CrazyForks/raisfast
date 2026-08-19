@@ -261,8 +261,8 @@ impl Event {
             Event::PostCreated(data) => Some(AuditInfo {
                 action: "create".into(),
                 subject: "post".into(),
-                subject_id: data.id.clone(),
-                actor_id: data.created_by.as_deref().and_then(|s| s.parse().ok()),
+                subject_id: data.id.to_string(),
+                actor_id: data.created_by.map(|c| *c),
                 detail: Some(format!("title={}", data.title)),
             }),
             Event::PostUpdated(data) => Some(AuditInfo {
@@ -342,7 +342,7 @@ mod tests {
 
     fn make_post_response(id: &str, slug: &str, title: &str) -> PostResponse {
         PostResponse {
-            id: id.into(),
+            id: crate::types::snowflake_id::SnowflakeId::new(id.parse().unwrap_or(0)),
             slug: slug.into(),
             title: title.into(),
             content: String::new(),

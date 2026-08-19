@@ -1,3 +1,4 @@
+use crate::types::price::Price;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -41,7 +42,7 @@ pub trait ShippingTemplateService: Send + Sync {
         template: &ShippingTemplate,
         value: i64,
         region: Option<&str>,
-    ) -> i64;
+    ) -> Price;
     async fn calculate_shipping(
         &self,
         product_weights: &[(SnowflakeId, i64, i64)],
@@ -74,10 +75,10 @@ impl ShippingTemplateService for ShippingTemplateServiceImpl {
                 name: req.name,
                 template_type: req.template_type.unwrap_or_else(|| "weight".to_string()),
                 first_unit: req.first_unit.unwrap_or(1),
-                first_price: req.first_price.unwrap_or(0),
+                first_price: req.first_price.unwrap_or(Price(0)),
                 additional_unit: req.additional_unit.unwrap_or(1),
-                additional_price: req.additional_price.unwrap_or(0),
-                free_shipping_amount: req.free_shipping_amount.unwrap_or(0),
+                additional_price: req.additional_price.unwrap_or(Price(0)),
+                free_shipping_amount: req.free_shipping_amount,
                 regions: req.regions.unwrap_or_else(|| "[]".to_string()),
             },
             auth.tenant_id(),
@@ -154,7 +155,7 @@ impl ShippingTemplateService for ShippingTemplateServiceImpl {
         template: &ShippingTemplate,
         value: i64,
         _region: Option<&str>,
-    ) -> i64 {
+    ) -> Price {
         if template.template_type == ShippingTemplateType::Flat {
             return template.first_price;
         }
@@ -166,7 +167,7 @@ impl ShippingTemplateService for ShippingTemplateServiceImpl {
         let remaining = value - template.first_unit;
         let additional_blocks =
             (remaining + template.additional_unit - 1) / template.additional_unit;
-        template.first_price + additional_blocks * template.additional_price
+        Price(template.first_price.0 + additional_blocks * template.additional_price.0)
     }
 
     async fn calculate_shipping(
@@ -205,11 +206,14 @@ impl ShippingTemplateService for ShippingTemplateServiceImpl {
             }
         }
 
-        let mut total_shipping: i64 = 0;
+        let mut total_shipping = Price(0);
         let mut details = Vec::new();
 
         for (tmpl, total_value) in template_map.values() {
-            if tmpl.free_shipping_amount > 0 && *total_value >= tmpl.free_shipping_amount {
+            if let Some(free_over) = tmpl.free_shipping_amount
+                && free_over.0 > 0
+                && *total_value >= free_over.0
+            {
                 continue;
             }
             let amount = self.calculate_for_template(tmpl, *total_value, region);
@@ -236,10 +240,10 @@ mod tests {
     fn make_template(
         template_type: ShippingTemplateType,
         first_unit: i64,
-        first_price: i64,
+        first_price: Price,
         additional_unit: i64,
-        additional_price: i64,
-        free_shipping_amount: i64,
+        additional_price: Price,
+        free_shipping_amount: Option<Price>,
     ) -> ShippingTemplate {
         ShippingTemplate {
             id: SnowflakeId(1),
@@ -270,46 +274,81 @@ mod tests {
     async fn calculate_weight_within_first_unit() {
         let pool = setup_pool().await;
         let svc = make_service(pool);
-        let tmpl = make_template(ShippingTemplateType::Weight, 1000, 500, 500, 200, 0);
-        assert_eq!(svc.calculate_for_template(&tmpl, 800, None), 500);
-        assert_eq!(svc.calculate_for_template(&tmpl, 1000, None), 500);
+        let tmpl = make_template(
+            ShippingTemplateType::Weight,
+            1000,
+            Price(500),
+            500,
+            Price(200),
+            if 0 > 0 { Some(Price(0)) } else { None },
+        );
+        assert_eq!(svc.calculate_for_template(&tmpl, 800, None).0, 500);
+        assert_eq!(svc.calculate_for_template(&tmpl, 1000, None).0, 500);
     }
 
     #[tokio::test]
     async fn calculate_weight_one_additional_block() {
         let pool = setup_pool().await;
         let svc = make_service(pool);
-        let tmpl = make_template(ShippingTemplateType::Weight, 1000, 500, 500, 200, 0);
-        assert_eq!(svc.calculate_for_template(&tmpl, 1001, None), 700);
-        assert_eq!(svc.calculate_for_template(&tmpl, 1500, None), 700);
+        let tmpl = make_template(
+            ShippingTemplateType::Weight,
+            1000,
+            Price(500),
+            500,
+            Price(200),
+            if 0 > 0 { Some(Price(0)) } else { None },
+        );
+        assert_eq!(svc.calculate_for_template(&tmpl, 1001, None).0, 700);
+        assert_eq!(svc.calculate_for_template(&tmpl, 1500, None).0, 700);
     }
 
     #[tokio::test]
     async fn calculate_weight_multiple_additional_blocks() {
         let pool = setup_pool().await;
         let svc = make_service(pool);
-        let tmpl = make_template(ShippingTemplateType::Weight, 1000, 500, 500, 200, 0);
-        assert_eq!(svc.calculate_for_template(&tmpl, 1501, None), 900);
-        assert_eq!(svc.calculate_for_template(&tmpl, 2500, None), 1100);
+        let tmpl = make_template(
+            ShippingTemplateType::Weight,
+            1000,
+            Price(500),
+            500,
+            Price(200),
+            if 0 > 0 { Some(Price(0)) } else { None },
+        );
+        assert_eq!(svc.calculate_for_template(&tmpl, 1501, None).0, 900);
+        assert_eq!(svc.calculate_for_template(&tmpl, 2500, None).0, 1100);
     }
 
     #[tokio::test]
     async fn calculate_flat_always_first_price() {
         let pool = setup_pool().await;
         let svc = make_service(pool);
-        let tmpl = make_template(ShippingTemplateType::Flat, 0, 800, 0, 0, 0);
-        assert_eq!(svc.calculate_for_template(&tmpl, 0, None), 800);
-        assert_eq!(svc.calculate_for_template(&tmpl, 10000, None), 800);
+        let tmpl = make_template(
+            ShippingTemplateType::Flat,
+            0,
+            Price(800),
+            0,
+            Price(0),
+            if 0 > 0 { Some(Price(0)) } else { None },
+        );
+        assert_eq!(svc.calculate_for_template(&tmpl, 0, None).0, 800);
+        assert_eq!(svc.calculate_for_template(&tmpl, 10000, None).0, 800);
     }
 
     #[tokio::test]
     async fn calculate_quantity_type() {
         let pool = setup_pool().await;
         let svc = make_service(pool);
-        let tmpl = make_template(ShippingTemplateType::Quantity, 1, 500, 1, 200, 0);
-        assert_eq!(svc.calculate_for_template(&tmpl, 1, None), 500);
-        assert_eq!(svc.calculate_for_template(&tmpl, 2, None), 700);
-        assert_eq!(svc.calculate_for_template(&tmpl, 5, None), 1300);
+        let tmpl = make_template(
+            ShippingTemplateType::Quantity,
+            1,
+            Price(500),
+            1,
+            Price(200),
+            if 0 > 0 { Some(Price(0)) } else { None },
+        );
+        assert_eq!(svc.calculate_for_template(&tmpl, 1, None).0, 500);
+        assert_eq!(svc.calculate_for_template(&tmpl, 2, None).0, 700);
+        assert_eq!(svc.calculate_for_template(&tmpl, 5, None).0, 1300);
     }
 
     #[tokio::test]
@@ -323,10 +362,10 @@ mod tests {
                 name: "Weight Shipping".to_string(),
                 template_type: "weight".to_string(),
                 first_unit: 1000,
-                first_price: 500,
+                first_price: Price(500),
                 additional_unit: 500,
-                additional_price: 200,
-                free_shipping_amount: 0,
+                additional_price: Price(200),
+                free_shipping_amount: Some(Price(0)),
                 regions: "[]".to_string(),
             },
             None,
@@ -345,7 +384,7 @@ mod tests {
                 fulfillment_type: "physical".to_string(),
                 delivery_hook: None,
                 weight: Some(1200),
-                price: 5000,
+                price: Price(5000),
                 currency: "CNY".to_string(),
                 attributes: None,
                 sort_order: 0,
@@ -390,7 +429,7 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(result.shipping_amount > 0);
+        assert!(result.shipping_amount.0 > 0);
         assert_eq!(result.details.len(), 1);
         assert_eq!(result.details[0].template_id, tmpl.id.to_string());
     }
@@ -406,10 +445,10 @@ mod tests {
                 name: "Free Over 10k".to_string(),
                 template_type: "weight".to_string(),
                 first_unit: 1000,
-                first_price: 500,
+                first_price: Price(500),
                 additional_unit: 500,
-                additional_price: 200,
-                free_shipping_amount: 2000,
+                additional_price: Price(200),
+                free_shipping_amount: Some(Price(2000)),
                 regions: "[]".to_string(),
             },
             None,
@@ -428,7 +467,7 @@ mod tests {
                 fulfillment_type: "physical".to_string(),
                 delivery_hook: None,
                 weight: Some(2500),
-                price: 5000,
+                price: Price(5000),
                 currency: "CNY".to_string(),
                 attributes: None,
                 sort_order: 0,
@@ -473,7 +512,7 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(result.shipping_amount, 0);
+        assert_eq!(result.shipping_amount.0, 0);
         assert!(result.details.is_empty());
     }
 
@@ -493,7 +532,7 @@ mod tests {
                 fulfillment_type: "digital".to_string(),
                 delivery_hook: None,
                 weight: None,
-                price: 100,
+                price: Price(100),
                 currency: "CNY".to_string(),
                 attributes: None,
                 sort_order: 0,
@@ -527,7 +566,7 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(result.shipping_amount, 0);
+        assert_eq!(result.shipping_amount.0, 0);
         assert!(result.details.is_empty());
     }
 
@@ -542,10 +581,10 @@ mod tests {
                 name: "Inactive".to_string(),
                 template_type: "flat".to_string(),
                 first_unit: 1,
-                first_price: 500,
+                first_price: Price(500),
                 additional_unit: 1,
-                additional_price: 0,
-                free_shipping_amount: 0,
+                additional_price: Price(0),
+                free_shipping_amount: Some(Price(0)),
                 regions: "[]".to_string(),
             },
             None,
@@ -573,7 +612,7 @@ mod tests {
                 fulfillment_type: "physical".to_string(),
                 delivery_hook: None,
                 weight: Some(500),
-                price: 1000,
+                price: Price(1000),
                 currency: "CNY".to_string(),
                 attributes: None,
                 sort_order: 0,
@@ -618,7 +657,7 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(result.shipping_amount, 0);
+        assert_eq!(result.shipping_amount.0, 0);
         assert!(result.details.is_empty());
     }
 }

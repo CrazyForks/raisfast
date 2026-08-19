@@ -48,7 +48,7 @@ impl JobEnqueuer {
     fn create_jobs(&self, event: &Event) -> Vec<NewJob> {
         match event {
             Event::PostCreated(data) => {
-                let post_id: i64 = data.id.parse().unwrap_or(0);
+                let post_id: i64 = *data.id;
                 vec![NewJob::from(Job::RebuildSearchIndex {
                     post_ids: vec![post_id],
                 })]
@@ -118,7 +118,7 @@ mod tests {
 
     fn make_post_response(id: &str, slug: &str, title: &str) -> PostResponse {
         PostResponse {
-            id: id.into(),
+            id: crate::types::snowflake_id::SnowflakeId::new(id.parse().unwrap_or(0)),
             title: title.into(),
             slug: slug.into(),
             content: String::new(),

@@ -1,3 +1,4 @@
+use crate::types::snowflake_id::SnowflakeId;
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "export-types")]
 use ts_rs::TS;
@@ -55,7 +56,7 @@ pub struct UpdateUserAddressRequest {
 #[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Serialize, ToSchema)]
 pub struct UserAddressResponse {
-    pub id: String,
+    pub id: SnowflakeId,
     pub label: String,
     pub recipient_name: String,
     pub phone: String,
@@ -75,7 +76,7 @@ pub struct UserAddressResponse {
 impl From<crate::models::user_address::UserAddress> for UserAddressResponse {
     fn from(a: crate::models::user_address::UserAddress) -> Self {
         Self {
-            id: a.id.to_string(),
+            id: a.id,
             label: a.label,
             recipient_name: a.recipient_name,
             phone: a.phone,

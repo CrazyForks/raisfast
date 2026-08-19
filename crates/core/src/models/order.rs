@@ -1,3 +1,4 @@
+use crate::types::price::Price;
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "export-types")]
 use ts_rs::TS;
@@ -28,10 +29,10 @@ pub struct Order {
     pub tenant_id: Option<String>,
     pub user_id: SnowflakeId,
     pub order_no: String,
-    pub subtotal: i64,
-    pub discount_amount: i64,
-    pub shipping_amount: i64,
-    pub total_amount: i64,
+    pub subtotal: Price,
+    pub discount_amount: Price,
+    pub shipping_amount: Price,
+    pub total_amount: Price,
     pub currency: String,
     pub status: OrderStatus,
     pub buyer_name: Option<String>,
@@ -492,6 +493,7 @@ pub async fn get_stats_query(
 mod tests {
     use super::*;
     use crate::db::DbDriver;
+    use crate::types::price::Price;
     use crate::types::snowflake_id::SnowflakeId;
 
     async fn setup_pool() -> crate::db::Pool {
@@ -521,17 +523,17 @@ mod tests {
             &crate::commands::CreateOrderCmd {
                 user_id: SnowflakeId(user_id),
                 order_no,
-                subtotal: 1000,
-                discount_amount: 0,
-                shipping_amount: 0,
-                total_amount: 1000,
+                subtotal: Price(1000),
+                discount_amount: Price(0),
+                shipping_amount: Price(0),
+                total_amount: Price(1000),
                 currency: "CNY".into(),
                 buyer_name: None,
                 buyer_phone: None,
                 buyer_email: None,
                 shipping_address: None,
                 remark: None,
-                tax_amount: 0,
+                tax_amount: Price(0),
                 coupon_id: None,
                 shipping_address_id: None,
                 billing_address_id: None,
@@ -583,7 +585,7 @@ mod tests {
         let found = super::find_by_id(&pool, o.id, None).await.unwrap().unwrap();
         assert_eq!(found.id, o.id);
         assert_eq!(found.user_id, SnowflakeId(uid));
-        assert_eq!(found.total_amount, 1000);
+        assert_eq!(found.total_amount.0, 1000);
         assert_eq!(found.status, OrderStatus::Pending);
     }
 
@@ -616,9 +618,9 @@ mod tests {
         let uid = seed_user(&pool).await;
         let o = seed_order(&pool, uid).await;
         assert_eq!(o.status, OrderStatus::Pending);
-        assert_eq!(o.subtotal, 1000);
-        assert_eq!(o.discount_amount, 0);
-        assert_eq!(o.shipping_amount, 0);
+        assert_eq!(o.subtotal.0, 1000);
+        assert_eq!(o.discount_amount.0, 0);
+        assert_eq!(o.shipping_amount.0, 0);
         assert_eq!(o.currency, "CNY");
         assert!(o.paid_at.is_none());
         assert_eq!(o.tenant_id, Some("default".to_string()));
@@ -637,17 +639,17 @@ mod tests {
             &crate::commands::CreateOrderCmd {
                 user_id: SnowflakeId(uid),
                 order_no,
-                subtotal: 500,
-                discount_amount: 0,
-                shipping_amount: 0,
-                total_amount: 500,
+                subtotal: Price(500),
+                discount_amount: Price(0),
+                shipping_amount: Price(0),
+                total_amount: Price(500),
                 currency: "USD".into(),
                 buyer_name: Some("John".into()),
                 buyer_phone: Some("1234567890".into()),
                 buyer_email: Some("john@test.com".into()),
                 shipping_address: Some("123 Main St".into()),
                 remark: Some("please be careful".into()),
-                tax_amount: 0,
+                tax_amount: Price(0),
                 coupon_id: None,
                 shipping_address_id: None,
                 billing_address_id: None,

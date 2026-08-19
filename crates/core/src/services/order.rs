@@ -1,3 +1,4 @@
+use crate::types::price::Price;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -149,20 +150,19 @@ impl OrderService for OrderServiceImpl {
             return Err(AppError::BadRequest("too_many_items".into()));
         }
 
-        let mut order_items_data: Vec<(i64, i64, crate::models::product::Product)> = Vec::new();
+        let mut order_items_data: Vec<(i64, Price, crate::models::product::Product)> = Vec::new();
         let mut variant_map: std::collections::HashMap<
             i64,
             crate::models::product_variant::ProductVariant,
         > = std::collections::HashMap::new();
-        let mut subtotal: i64 = 0;
+        let mut subtotal = Price(0);
 
         for item in &req.items {
             if item.quantity > MAX_QUANTITY {
                 return Err(AppError::BadRequest("quantity_exceeds_limit".into()));
             }
-            let product_id = crate::types::snowflake_id::parse_id(&item.product_id)?;
             let product =
-                crate::models::product::find_by_id(&self.pool, product_id, auth.tenant_id())
+                crate::models::product::find_by_id(&self.pool, item.product_id, auth.tenant_id())
                     .await?
                     .ok_or_else(|| AppError::not_found("product"))?;
 
@@ -170,8 +170,7 @@ impl OrderService for OrderServiceImpl {
                 return Err(AppError::BadRequest("product_not_active".into()));
             }
 
-            if let Some(ref vid_str) = item.variant_id {
-                let vid = crate::types::snowflake_id::parse_id(vid_str)?;
+            if let Some(vid) = item.variant_id {
                 let variant =
                     crate::models::product_variant::find_by_id(&self.pool, vid, auth.tenant_id())
                         .await?
@@ -187,10 +186,10 @@ impl OrderService for OrderServiceImpl {
 
             let line_total = product
                 .price
-                .checked_mul(item.quantity)
+                .checked_mul_qty(item.quantity)
                 .ok_or_else(|| AppError::BadRequest("line_total_overflow".into()))?;
             subtotal = subtotal
-                .checked_add(line_total)
+                .checked_add_price(line_total)
                 .ok_or_else(|| AppError::BadRequest("subtotal_overflow".into()))?;
             order_items_data.push((item.quantity, line_total, product));
         }
@@ -207,11 +206,7 @@ impl OrderService for OrderServiceImpl {
         crate::models::currencies::ensure_active(&self.pool, currency, auth.tenant_id()).await?;
 
         let (discount_amount, coupon_id) = if let Some(ref coupon_svc) = self.coupon_service {
-            let c_id = req
-                .coupon_id
-                .as_deref()
-                .map(crate::types::snowflake_id::parse_id)
-                .transpose()?;
+            let c_id = req.coupon_id;
             let c_code = req.coupon_code.as_deref();
             match (c_id, c_code) {
                 (Some(_), _) | (_, Some(_)) => {
@@ -221,22 +216,14 @@ impl OrderService for OrderServiceImpl {
                     let discount = coupon_svc.calculate_discount(&coupon, subtotal);
                     (discount, Some(*coupon.id))
                 }
-                _ => (0, None),
+                _ => (Price(0), None),
             }
         } else {
-            (0, None)
+            (Price(0), None)
         };
 
-        let shipping_address_id = req
-            .shipping_address_id
-            .as_deref()
-            .map(crate::types::snowflake_id::parse_id)
-            .transpose()?;
-        let billing_address_id = req
-            .billing_address_id
-            .as_deref()
-            .map(crate::types::snowflake_id::parse_id)
-            .transpose()?;
+        let shipping_address_id = req.shipping_address_id;
+        let billing_address_id = req.billing_address_id;
 
         let shipping_addr = if let Some(addr_id) = shipping_address_id {
             let addr =
@@ -262,10 +249,10 @@ impl OrderService for OrderServiceImpl {
                 .await
             {
                 Ok(result) => result.shipping_amount,
-                Err(_) => 0,
+                Err(_) => Price(0),
             }
         } else {
-            0
+            Price(0)
         };
 
         let total_amount = subtotal - discount_amount + shipping_amount;
@@ -304,7 +291,7 @@ impl OrderService for OrderServiceImpl {
                     buyer_email: req.buyer_email.clone(),
                     shipping_address: shipping_address_text,
                     remark: req.remark.clone(),
-                    tax_amount: 0,
+                    tax_amount: Price(0),
                     coupon_id,
                     shipping_address_id: shipping_address_id.map(|id| *id),
                     billing_address_id: billing_address_id.map(|id| *id),
@@ -324,10 +311,9 @@ impl OrderService for OrderServiceImpl {
 
             let mut items = Vec::new();
             for (idx, (quantity, _line_total, product)) in order_items_data.iter().enumerate() {
-                let variant_opt = req.items[idx].variant_id.as_deref().and_then(|vid| {
-                    let id = crate::types::snowflake_id::parse_id(vid).ok()?;
-                    variant_map.get(&(*id))
-                });
+                let variant_opt = req.items[idx]
+                    .variant_id
+                    .and_then(|vid| variant_map.get(&(*vid)));
 
                 let (variant_id, sku, unit_price, attributes) = match variant_opt {
                     Some(v) => (
@@ -345,7 +331,7 @@ impl OrderService for OrderServiceImpl {
                 };
 
                 let actual_line_total = unit_price
-                    .checked_mul(*quantity)
+                    .checked_mul_qty(*quantity)
                     .ok_or_else(|| AppError::BadRequest("line_total_overflow".into()))?;
 
                 items.push(crate::commands::CreateOrderItemCmd {
@@ -358,7 +344,7 @@ impl OrderService for OrderServiceImpl {
                     unit_price,
                     quantity: *quantity,
                     subtotal: actual_line_total,
-                    tax_amount: 0,
+                    tax_amount: Price(0),
                     cover_url: product.cover_url.clone(),
                     attributes,
                 });
@@ -366,12 +352,8 @@ impl OrderService for OrderServiceImpl {
             crate::models::order_item::tx_insert_batch(&mut tx, items, auth.tenant_id()).await?;
 
             for (idx, (quantity, _, product)) in order_items_data.iter().enumerate() {
-                match req.items[idx]
-                    .variant_id
-                    .as_deref()
-                    .map(crate::types::snowflake_id::parse_id)
-                {
-                    Some(Ok(vid)) => {
+                match req.items[idx].variant_id {
+                    Some(vid) => {
                         crate::models::product_variant::tx_deduct_stock(
                             &mut tx,
                             vid,
@@ -826,7 +808,7 @@ mod tests {
     async fn seed_active_product(
         pool: &crate::db::Pool,
         title: &str,
-        price: i64,
+        price: Price,
     ) -> crate::models::product::Product {
         seed_active_product_t(pool, title, price, None).await
     }
@@ -834,7 +816,7 @@ mod tests {
     async fn seed_active_product_t(
         pool: &crate::db::Pool,
         title: &str,
-        price: i64,
+        price: Price,
         tenant: Option<&str>,
     ) -> crate::models::product::Product {
         let p = crate::models::product::insert(
@@ -893,7 +875,9 @@ mod tests {
     fn make_create_req(prod_id: &str, quantity: i64) -> CreateOrderRequest {
         CreateOrderRequest {
             items: vec![CreateOrderItemRequest {
-                product_id: prod_id.to_string(),
+                product_id: crate::types::snowflake_id::SnowflakeId::new(
+                    prod_id.parse().unwrap_or(0),
+                ),
                 quantity,
                 variant_id: None,
             }],
@@ -916,7 +900,7 @@ mod tests {
         auth: &AuthUser,
     ) -> (i64, Order) {
         let uid = seed_user(pool).await;
-        let prod = seed_active_product(pool, "Widget", 1000).await;
+        let prod = seed_active_product(pool, "Widget", Price(1000)).await;
         let (order, _) = svc
             .create(
                 auth,
@@ -934,7 +918,7 @@ mod tests {
         let svc = make_service(pool.clone()).await;
         let a = auth(None);
         let uid = seed_user(&pool).await;
-        let prod = seed_active_product(&pool, "Widget", 1000).await;
+        let prod = seed_active_product(&pool, "Widget", Price(1000)).await;
 
         let (order, items) = svc
             .create(
@@ -946,16 +930,16 @@ mod tests {
             .unwrap();
 
         assert_eq!(order.user_id, SnowflakeId(uid));
-        assert_eq!(order.subtotal, 2000);
-        assert_eq!(order.total_amount, 2000);
+        assert_eq!(order.subtotal.0, 2000);
+        assert_eq!(order.total_amount.0, 2000);
         assert_eq!(order.status, OrderStatus::Pending);
         assert!(order.order_no.starts_with("ORD-"));
 
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].title, "Widget");
-        assert_eq!(items[0].unit_price, 1000);
+        assert_eq!(items[0].unit_price.0, 1000);
         assert_eq!(items[0].quantity, 2);
-        assert_eq!(items[0].subtotal, 2000);
+        assert_eq!(items[0].subtotal.0, 2000);
     }
 
     #[tokio::test]
@@ -964,8 +948,8 @@ mod tests {
         let svc = make_service(pool.clone()).await;
         let a = auth(None);
         let uid = seed_user(&pool).await;
-        let p1 = seed_active_product(&pool, "Item1", 100).await;
-        let p2 = seed_active_product(&pool, "Item2", 200).await;
+        let p1 = seed_active_product(&pool, "Item1", Price(100)).await;
+        let p2 = seed_active_product(&pool, "Item2", Price(200)).await;
 
         let (order, items) = svc
             .create(
@@ -974,12 +958,12 @@ mod tests {
                 CreateOrderRequest {
                     items: vec![
                         CreateOrderItemRequest {
-                            product_id: p1.id.to_string(),
+                            product_id: p1.id,
                             quantity: 3,
                             variant_id: None,
                         },
                         CreateOrderItemRequest {
-                            product_id: p2.id.to_string(),
+                            product_id: p2.id,
                             quantity: 1,
                             variant_id: None,
                         },
@@ -999,8 +983,8 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(order.subtotal, 500);
-        assert_eq!(order.total_amount, 500);
+        assert_eq!(order.subtotal.0, 500);
+        assert_eq!(order.total_amount.0, 500);
         assert_eq!(order.currency, "USD");
         assert_eq!(order.buyer_name.unwrap(), "John");
         assert_eq!(items.len(), 2);
@@ -1049,7 +1033,7 @@ mod tests {
                 SnowflakeId(uid),
                 CreateOrderRequest {
                     items: vec![CreateOrderItemRequest {
-                        product_id: "99999999".into(),
+                        product_id: crate::types::snowflake_id::SnowflakeId::new(99999999),
                         quantity: 1,
                         variant_id: None,
                     }],
@@ -1088,7 +1072,7 @@ mod tests {
                 fulfillment_type: "digital".to_string(),
                 delivery_hook: None,
                 weight: None,
-                price: 100,
+                price: Price(100),
                 currency: "CNY".to_string(),
                 attributes: None,
                 sort_order: 0,
@@ -1414,7 +1398,7 @@ mod tests {
         let svc = make_service(pool.clone()).await;
         let a = auth(None);
         let uid = seed_user(&pool).await;
-        let prod = seed_active_product(&pool, "Widget", 1000).await;
+        let prod = seed_active_product(&pool, "Widget", Price(1000)).await;
 
         for _ in 0..3 {
             svc.create(
@@ -1439,7 +1423,7 @@ mod tests {
         let _ = crate::models::currencies::create(&pool, &tenant, "USD", "US Dollar", 2).await;
         let a = auth(Some(&tenant));
         let uid = seed_user(&pool).await;
-        let prod = seed_active_product_t(&pool, "Widget", 1000, Some(&tenant)).await;
+        let prod = seed_active_product_t(&pool, "Widget", Price(1000), Some(&tenant)).await;
 
         svc.create(
             &a,
@@ -1479,7 +1463,7 @@ mod tests {
         let _ = crate::models::currencies::create(&pool, &tenant, "USD", "US Dollar", 2).await;
         let a = auth(Some(&tenant));
         let uid = seed_user(&pool).await;
-        let prod = seed_active_product_t(&pool, "Widget", 1000, Some(&tenant)).await;
+        let prod = seed_active_product_t(&pool, "Widget", Price(1000), Some(&tenant)).await;
 
         let (o1, _) = svc
             .create(
@@ -1577,7 +1561,7 @@ mod tests {
         let svc = make_service(pool.clone()).await;
         let a = auth(None);
         let uid = seed_user(&pool).await;
-        let prod = seed_active_product(&pool, "Widget", 1000).await;
+        let prod = seed_active_product(&pool, "Widget", Price(1000)).await;
 
         assert_eq!(get_product_stock(&pool, prod.id).await, 100);
 
@@ -1598,7 +1582,7 @@ mod tests {
         let svc = make_service(pool.clone()).await;
         let a = auth(None);
         let uid = seed_user(&pool).await;
-        let prod = seed_active_product(&pool, "Widget", 1000).await;
+        let prod = seed_active_product(&pool, "Widget", Price(1000)).await;
 
         svc.create(
             &a,
@@ -1629,7 +1613,7 @@ mod tests {
         let svc = make_service(pool.clone()).await;
         let a = auth(None);
         let uid = seed_user(&pool).await;
-        let prod = seed_active_product(&pool, "Widget", 1000).await;
+        let prod = seed_active_product(&pool, "Widget", Price(1000)).await;
 
         let _: crate::db::pool::DbQueryResult = sqlx::query(crate::db::safe_sql(&format!(
             "UPDATE products SET stock = {} WHERE id = {}",
@@ -1687,7 +1671,7 @@ mod tests {
         let svc = make_service(pool.clone()).await;
         let a = auth(None);
         let uid = seed_user(&pool).await;
-        let prod = seed_active_product(&pool, "Widget", 1000).await;
+        let prod = seed_active_product(&pool, "Widget", Price(1000)).await;
         let addr = seed_address(&pool, uid).await;
 
         let (order, _) = svc
@@ -1696,7 +1680,7 @@ mod tests {
                 SnowflakeId(uid),
                 CreateOrderRequest {
                     items: vec![CreateOrderItemRequest {
-                        product_id: prod.id.to_string(),
+                        product_id: prod.id,
                         quantity: 1,
                         variant_id: None,
                     }],
@@ -1705,7 +1689,7 @@ mod tests {
                     buyer_phone: None,
                     buyer_email: None,
                     shipping_address: None,
-                    shipping_address_id: Some(addr.id.to_string()),
+                    shipping_address_id: Some(addr.id),
                     billing_address_id: None,
                     remark: None,
                     coupon_id: None,
@@ -1732,7 +1716,7 @@ mod tests {
         let a = auth(None);
         let uid1 = seed_user(&pool).await;
         let uid2 = seed_user(&pool).await;
-        let prod = seed_active_product(&pool, "Widget", 1000).await;
+        let prod = seed_active_product(&pool, "Widget", Price(1000)).await;
         let addr = seed_address(&pool, uid1).await;
 
         let err = svc
@@ -1741,7 +1725,7 @@ mod tests {
                 SnowflakeId(uid2),
                 CreateOrderRequest {
                     items: vec![CreateOrderItemRequest {
-                        product_id: prod.id.to_string(),
+                        product_id: prod.id,
                         quantity: 1,
                         variant_id: None,
                     }],
@@ -1750,7 +1734,7 @@ mod tests {
                     buyer_phone: None,
                     buyer_email: None,
                     shipping_address: None,
-                    shipping_address_id: Some(addr.id.to_string()),
+                    shipping_address_id: Some(addr.id),
                     billing_address_id: None,
                     remark: None,
                     coupon_id: None,
@@ -1775,7 +1759,7 @@ mod tests {
         let svc = make_service(pool.clone()).await;
         let a = auth(None);
         let uid = seed_user(&pool).await;
-        let prod = seed_active_product(&pool, "Widget", 1000).await;
+        let prod = seed_active_product(&pool, "Widget", Price(1000)).await;
 
         let err = svc
             .create(
@@ -1783,7 +1767,7 @@ mod tests {
                 SnowflakeId(uid),
                 CreateOrderRequest {
                     items: vec![CreateOrderItemRequest {
-                        product_id: prod.id.to_string(),
+                        product_id: prod.id,
                         quantity: 1,
                         variant_id: None,
                     }],
@@ -1792,7 +1776,7 @@ mod tests {
                     buyer_phone: None,
                     buyer_email: None,
                     shipping_address: None,
-                    shipping_address_id: Some(SnowflakeId(99999).to_string()),
+                    shipping_address_id: Some(SnowflakeId(99999)),
                     billing_address_id: None,
                     remark: None,
                     coupon_id: None,
@@ -1811,7 +1795,7 @@ mod tests {
         let svc = make_service(pool.clone()).await;
         let a = auth(None);
         let uid = seed_user(&pool).await;
-        let prod = seed_active_product(&pool, "Widget", 1000).await;
+        let prod = seed_active_product(&pool, "Widget", Price(1000)).await;
 
         let (order, _) = svc
             .create(
@@ -1819,7 +1803,7 @@ mod tests {
                 SnowflakeId(uid),
                 CreateOrderRequest {
                     items: vec![CreateOrderItemRequest {
-                        product_id: prod.id.to_string(),
+                        product_id: prod.id,
                         quantity: 1,
                         variant_id: None,
                     }],

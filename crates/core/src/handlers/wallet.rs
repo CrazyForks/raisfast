@@ -278,7 +278,7 @@ pub async fn admin_credit(
     Json(req): Json<dto::AdminWalletOperationRequest>,
 ) -> Result<ApiResponse<dto::WalletTransactionResponse>, AppError> {
     validation::validate(&req)?;
-    let user_id = parse_id(&req.user_id)?;
+    let user_id = req.user_id;
     let target_auth = AuthUser::from_parts(
         Some(user_id.0),
         crate::models::user::UserRole::Reader,
@@ -314,7 +314,7 @@ pub async fn admin_debit(
     Json(req): Json<dto::AdminWalletOperationRequest>,
 ) -> Result<ApiResponse<dto::WalletTransactionResponse>, AppError> {
     validation::validate(&req)?;
-    let user_id = parse_id(&req.user_id)?;
+    let user_id = req.user_id;
     let target_auth = AuthUser::from_parts(
         Some(user_id.0),
         crate::models::user::UserRole::Reader,

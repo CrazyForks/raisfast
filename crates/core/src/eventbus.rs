@@ -61,7 +61,7 @@ mod tests {
 
     fn make_post_response(id: &str, slug: &str, title: &str) -> PostResponse {
         PostResponse {
-            id: id.into(),
+            id: crate::types::snowflake_id::SnowflakeId::new(id.parse().unwrap_or(0)),
             title: title.into(),
             slug: slug.into(),
             content: String::new(),
@@ -164,7 +164,7 @@ mod tests {
 
         match event.as_ref() {
             Event::PostCreated(data) => {
-                assert_eq!(data.id, "test-1");
+                assert_eq!(data.id.to_string(), "0");
                 assert_eq!(data.slug, "hello");
             }
             _ => panic!("wrong event type"),

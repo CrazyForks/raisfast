@@ -124,11 +124,11 @@ impl PostService for PostServiceImpl {
                 .ok()
                 .flatten();
 
-        let category_id = if let Some(ref raw_id) = req.category_id {
-            let parsed = crate::types::snowflake_id::parse_id(raw_id)?;
-            raisfast_derive::crud_resolve_id!(&self.pool, "categories", *parsed, tenant: auth.tenant_id())?
-        } else {
-            None
+        let category_id = match req.category_id {
+            Some(cid) => {
+                raisfast_derive::crud_resolve_id!(&self.pool, "categories", *cid, tenant: auth.tenant_id())?
+            }
+            None => None,
         };
         let category_name = if let Some(cat_id) = category_id {
             crate::models::post::get_category_name(
@@ -447,11 +447,11 @@ impl PostServiceImpl {
             .clone()
             .unwrap_or_else(|| excerpt::extract_excerpt(content, 200));
 
-        let category_id = if let Some(ref raw_id) = req.category_id {
-            let parsed = crate::types::snowflake_id::parse_id(raw_id)?;
-            raisfast_derive::crud_resolve_id!(&self.pool, "categories", *parsed, tenant: auth.tenant_id())?
-        } else {
-            None
+        let category_id = match req.category_id {
+            Some(cid) => {
+                raisfast_derive::crud_resolve_id!(&self.pool, "categories", *cid, tenant: auth.tenant_id())?
+            }
+            None => None,
         };
         let tag_ids = match req.tag_ids {
             Some(ref ids) => {
@@ -502,7 +502,7 @@ async fn joined_row_to_response(
     let status = r.status;
     let comment_status = r.comment_status;
     Ok(PostResponse {
-        id: r.id.to_string(),
+        id: r.id,
         title: r.title,
         slug: r.slug,
         content: r.content,
@@ -546,7 +546,7 @@ async fn build_response_from_post(
     let status = post.status;
     let comment_status = post.comment_status;
     Ok(PostResponse {
-        id: post.id.to_string(),
+        id: post.id,
         title: post.title.clone(),
         slug: post.slug.clone(),
         content: post.content.clone(),
@@ -705,7 +705,7 @@ async fn list_posts_inner(
         let status = r.status;
         let comment_status = r.comment_status;
         responses.push(PostResponse {
-            id: r.id.to_string(),
+            id: r.id,
             title: r.title,
             slug: r.slug,
             content: r.content,
@@ -771,7 +771,7 @@ async fn list_all_posts_inner(
         let status = r.status;
         let comment_status = r.comment_status;
         responses.push(PostResponse {
-            id: r.id.to_string(),
+            id: r.id,
             title: r.title,
             slug: r.slug,
             content: r.content,

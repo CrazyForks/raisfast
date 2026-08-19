@@ -51,7 +51,7 @@ impl ProductCategoryService for ProductCategoryServiceImpl {
         req: CreateProductCategoryRequest,
     ) -> AppResult<ProductCategory> {
         let slug = slug::generate_slug(&req.name);
-        let parent_id = resolve_parent_id(&self.pool, auth, req.parent_id.as_deref()).await?;
+        let parent_id = resolve_parent_id(&self.pool, auth, req.parent_id).await?;
         let cmd = CreateProductCategoryCmd {
             name: req.name,
             slug,
@@ -90,7 +90,7 @@ impl ProductCategoryService for ProductCategoryServiceImpl {
             .as_ref()
             .map(|n| slug::generate_slug(n))
             .unwrap_or(existing.slug);
-        let parent_id = resolve_parent_id(&self.pool, auth, req.parent_id.as_deref()).await?;
+        let parent_id = resolve_parent_id(&self.pool, auth, req.parent_id).await?;
         let cmd = UpdateProductCategoryCmd {
             id: existing.id,
             name: req.name,
@@ -158,11 +158,10 @@ impl ProductCategoryService for ProductCategoryServiceImpl {
 async fn resolve_parent_id(
     pool: &crate::db::Pool,
     auth: &AuthUser,
-    raw_id: Option<&str>,
+    raw_id: Option<SnowflakeId>,
 ) -> AppResult<Option<i64>> {
     match raw_id {
-        Some(raw) if !raw.is_empty() => {
-            let pid = crate::types::snowflake_id::parse_id(raw)?;
+        Some(pid) => {
             let parent =
                 crate::models::product_category::find_by_id(pool, pid, auth.tenant_id()).await?;
             Ok(Some(*parent.id))
@@ -451,7 +450,7 @@ mod tests {
                 CreateProductCategoryRequest {
                     name: format!("Child_{}", crate::utils::id::new_id()),
                     description: None,
-                    parent_id: Some(parent.id.to_string()),
+                    parent_id: Some(parent.id),
                     sort_order: None,
                     cover_image: None,
                     meta_title: None,
@@ -477,7 +476,7 @@ mod tests {
                 CreateProductCategoryRequest {
                     name: format!("Orphan_{}", crate::utils::id::new_id()),
                     description: None,
-                    parent_id: Some("99999".to_string()),
+                    parent_id: Some(crate::types::snowflake_id::SnowflakeId::new(99999)),
                     sort_order: None,
                     cover_image: None,
                     meta_title: None,

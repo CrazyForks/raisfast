@@ -1,3 +1,4 @@
+use crate::types::price::Price;
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "export-types")]
 use ts_rs::TS;
@@ -17,10 +18,10 @@ pub struct OrderItem {
     pub title: String,
     pub description: Option<String>,
     pub sku: Option<String>,
-    pub unit_price: i64,
+    pub unit_price: Price,
     pub quantity: i64,
-    pub subtotal: i64,
-    pub tax_amount: i64,
+    pub subtotal: Price,
+    pub tax_amount: Price,
     pub cover_url: Option<String>,
     #[cfg_attr(feature = "export-types", ts(type = "unknown"))]
     pub attributes: Option<serde_json::Value>,
@@ -129,6 +130,7 @@ pub async fn tx_insert_batch(
 #[cfg(test)]
 mod tests {
     use crate::db::DbDriver;
+    use crate::types::price::Price;
     use crate::types::snowflake_id::SnowflakeId;
 
     async fn setup_pool() -> crate::db::Pool {
@@ -154,17 +156,17 @@ mod tests {
             &crate::commands::CreateOrderCmd {
                 user_id: SnowflakeId(user_id),
                 order_no,
-                subtotal: 1000,
-                discount_amount: 0,
-                shipping_amount: 0,
-                total_amount: 1000,
+                subtotal: Price(1000),
+                discount_amount: Price(0),
+                shipping_amount: Price(0),
+                total_amount: Price(1000),
                 currency: "CNY".into(),
                 buyer_name: None,
                 buyer_phone: None,
                 buyer_email: None,
                 shipping_address: None,
                 remark: None,
-                tax_amount: 0,
+                tax_amount: Price(0),
                 coupon_id: None,
                 shipping_address_id: None,
                 billing_address_id: None,
@@ -192,7 +194,7 @@ mod tests {
                 fulfillment_type: "digital".to_string(),
                 delivery_hook: None,
                 weight: None,
-                price: 1000,
+                price: Price(1000),
                 currency: "CNY".to_string(),
                 attributes: None,
                 sort_order: 0,
@@ -243,10 +245,10 @@ mod tests {
                 title: "Widget".into(),
                 description: Some("A nice widget".into()),
                 sku: None,
-                unit_price: 1000,
+                unit_price: Price(1000),
                 quantity: 2,
-                subtotal: 2000,
-                tax_amount: 0,
+                subtotal: Price(2000),
+                tax_amount: Price(0),
                 cover_url: Some("https://img.test/widget.jpg".into()),
                 attributes: Some(r#"{"color":"red"}"#.to_string()),
             },
@@ -261,9 +263,9 @@ mod tests {
             Some(crate::types::snowflake_id::SnowflakeId(pid))
         );
         assert_eq!(item.title, "Widget");
-        assert_eq!(item.unit_price, 1000);
+        assert_eq!(item.unit_price.0, 1000);
         assert_eq!(item.quantity, 2);
-        assert_eq!(item.subtotal, 2000);
+        assert_eq!(item.subtotal.0, 2000);
         assert_eq!(item.description.unwrap(), "A nice widget");
         assert_eq!(item.cover_url.unwrap(), "https://img.test/widget.jpg");
         assert_eq!(item.attributes.unwrap(), serde_json::json!({"color":"red"}));
@@ -285,10 +287,10 @@ mod tests {
                     title: format!("Item{i}"),
                     description: None,
                     sku: None,
-                    unit_price: 100 * (i + 1),
+                    unit_price: Price(100 * (i + 1)),
                     quantity: i + 1,
-                    subtotal: 100 * (i + 1) * (i + 1),
-                    tax_amount: 0,
+                    subtotal: Price(100 * (i + 1) * (i + 1)),
+                    tax_amount: Price(0),
                     cover_url: None,
                     attributes: None,
                 },
@@ -332,10 +334,10 @@ mod tests {
                 title: "Item1".into(),
                 description: None,
                 sku: None,
-                unit_price: 100,
+                unit_price: Price(100),
                 quantity: 1,
-                subtotal: 100,
-                tax_amount: 0,
+                subtotal: Price(100),
+                tax_amount: Price(0),
                 cover_url: None,
                 attributes: None,
             },
@@ -352,10 +354,10 @@ mod tests {
                 title: "Item2".into(),
                 description: None,
                 sku: None,
-                unit_price: 200,
+                unit_price: Price(200),
                 quantity: 1,
-                subtotal: 200,
-                tax_amount: 0,
+                subtotal: Price(200),
+                tax_amount: Price(0),
                 cover_url: None,
                 attributes: None,
             },
@@ -390,10 +392,10 @@ mod tests {
                 title: "Batch1".into(),
                 description: None,
                 sku: None,
-                unit_price: 100,
+                unit_price: Price(100),
                 quantity: 2,
-                subtotal: 200,
-                tax_amount: 0,
+                subtotal: Price(200),
+                tax_amount: Price(0),
                 cover_url: None,
                 attributes: None,
             },
@@ -404,10 +406,10 @@ mod tests {
                 title: "Batch2".into(),
                 description: None,
                 sku: None,
-                unit_price: 300,
+                unit_price: Price(300),
                 quantity: 1,
-                subtotal: 300,
-                tax_amount: 0,
+                subtotal: Price(300),
+                tax_amount: Price(0),
                 cover_url: None,
                 attributes: None,
             },

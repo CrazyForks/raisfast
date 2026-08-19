@@ -76,15 +76,25 @@ fi
 
 echo "=== Step 1/6: pre-flight checks ==="
 
-# Working tree must be clean (allow untracked dist/ from prior builds)
-if [ -n "$(cd "$ROOT_DIR" && git status --porcelain --untracked-files=no)" ]; then
-  echo "error: working tree is not clean. Commit or stash first."
-  cd "$ROOT_DIR" && git status --short
+# frontend/sdk lives in its own nested git repo (frontend monorepo) —
+# operate on that repo, not the main raisfast repo.
+SDK_GIT_DIR="$(git -C "$SDK_DIR" rev-parse --show-toplevel 2>/dev/null || true)"
+if [ -z "$SDK_GIT_DIR" ]; then
+  echo "error: $SDK_DIR is not inside a git repo"
+  exit 1
+fi
+echo "  git:    sdk repo root at $SDK_GIT_DIR"
+
+# SDK working tree must be clean (only package.json / package-lock.json /
+# src / dist matter; other dirs like admin/ are tracked separately)
+if [ -n "$(git -C "$SDK_GIT_DIR" status --porcelain --untracked-files=no -- sdk)" ]; then
+  echo "error: sdk working tree is not clean. Commit or stash first."
+  git -C "$SDK_GIT_DIR" status --short -- sdk
   exit 1
 fi
 
 # Must be on the publishing branch
-CURRENT_BRANCH=$(cd "$ROOT_DIR" && git rev-parse --abbrev-ref HEAD)
+CURRENT_BRANCH=$(git -C "$SDK_GIT_DIR" rev-parse --abbrev-ref HEAD)
 if [ "$CURRENT_BRANCH" != "$BRANCH" ]; then
   echo "warn: on branch '$CURRENT_BRANCH', expected '$BRANCH'"
 fi
@@ -104,7 +114,7 @@ if npm view "@raisfast/sdk@$VERSION" version &>/dev/null; then
 fi
 echo "  npm:    $VERSION is available"
 
-echo "  git:    clean, on '$CURRENT_BRANCH'"
+echo "  git:    sdk clean, on '$CURRENT_BRANCH'"
 
 # ── 2. Install deps if needed ─────────────────────────────────────
 
@@ -144,12 +154,12 @@ fi
 echo "=== Commit + tag + push ==="
 TAG="sdk-v$VERSION"
 
-cd "$ROOT_DIR"
-git add frontend/sdk/package.json frontend/sdk/package-lock.json
-git commit -m "release(sdk): v$VERSION"
-git tag "$TAG"
-git push "$REMOTE" "$BRANCH:$REMOTE_BRANCH"
-git push "$REMOTE" "$TAG"
+SDK_REL_PATH="$(cd "$SDK_DIR" && git rev-parse --show-prefix)"
+git -C "$SDK_GIT_DIR" add "${SDK_REL_PATH}package.json" "${SDK_REL_PATH}package-lock.json"
+git -C "$SDK_GIT_DIR" commit -m "release(sdk): v$VERSION"
+git -C "$SDK_GIT_DIR" tag "$TAG"
+git -C "$SDK_GIT_DIR" push "$REMOTE" "$BRANCH:$REMOTE_BRANCH"
+git -C "$SDK_GIT_DIR" push "$REMOTE" "$TAG"
 
 echo ""
 echo ">> Published @raisfast/sdk@$VERSION and pushed tag $TAG"

@@ -1,5 +1,6 @@
 //! Product-related commands
 
+use crate::types::price::Price;
 use crate::types::snowflake_id::SnowflakeId;
 pub struct CreateProductCmd {
     pub category_id: Option<i64>,
@@ -10,14 +11,14 @@ pub struct CreateProductCmd {
     pub fulfillment_type: String,
     pub delivery_hook: Option<String>,
     pub weight: Option<i64>,
-    pub price: i64,
+    pub price: Price,
     pub currency: String,
     pub attributes: Option<String>,
     pub sort_order: i64,
     pub slug: Option<String>,
     pub content: Option<String>,
     pub image_ids: Option<String>,
-    pub original_price: Option<i64>,
+    pub original_price: Option<Price>,
     pub specs: Option<String>,
     pub unit: String,
     pub min_purchase: i64,
@@ -29,8 +30,8 @@ pub struct CreateProductCmd {
     pub og_description: Option<String>,
     pub og_image: Option<String>,
     pub stock: i64,
-    pub cost_price: Option<i64>,
-    pub sale_price: Option<i64>,
+    pub cost_price: Option<Price>,
+    pub sale_price: Option<Price>,
     pub has_variants: bool,
     pub tag_ids: Option<Vec<i64>>,
 }
@@ -45,7 +46,7 @@ pub struct UpdateProductCmd {
     pub fulfillment_type: String,
     pub delivery_hook: Option<String>,
     pub weight: Option<i64>,
-    pub price: i64,
+    pub price: Price,
     pub currency: String,
     pub status: String,
     pub attributes: Option<String>,
@@ -53,7 +54,7 @@ pub struct UpdateProductCmd {
     pub slug: Option<String>,
     pub content: Option<String>,
     pub image_ids: Option<String>,
-    pub original_price: Option<i64>,
+    pub original_price: Option<Price>,
     pub specs: Option<String>,
     pub unit: String,
     pub min_purchase: i64,
@@ -67,8 +68,8 @@ pub struct UpdateProductCmd {
     pub og_image: Option<String>,
     pub published_at: Option<crate::utils::tz::Timestamp>,
     pub stock: i64,
-    pub cost_price: Option<i64>,
-    pub sale_price: Option<i64>,
+    pub cost_price: Option<Price>,
+    pub sale_price: Option<Price>,
     pub has_variants: bool,
     pub version: i64,
     pub tag_ids: Option<Vec<i64>>,

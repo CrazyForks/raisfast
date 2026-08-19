@@ -1,3 +1,5 @@
+use crate::types::price::Price;
+use crate::types::snowflake_id::SnowflakeId;
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "export-types")]
 use ts_rs::TS;
@@ -22,20 +24,20 @@ pub struct CreateOrderRequest {
     pub buyer_phone: Option<String>,
     pub buyer_email: Option<String>,
     pub shipping_address: Option<String>,
-    pub shipping_address_id: Option<String>,
-    pub billing_address_id: Option<String>,
+    pub shipping_address_id: Option<SnowflakeId>,
+    pub billing_address_id: Option<SnowflakeId>,
     pub remark: Option<String>,
-    pub coupon_id: Option<String>,
+    pub coupon_id: Option<SnowflakeId>,
     pub coupon_code: Option<String>,
 }
 
 #[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Serialize, Deserialize, Clone, Validate, ToSchema)]
 pub struct CreateOrderItemRequest {
-    pub product_id: String,
+    pub product_id: SnowflakeId,
     #[validate(range(min = 1))]
     pub quantity: i64,
-    pub variant_id: Option<String>,
+    pub variant_id: Option<SnowflakeId>,
 }
 
 #[cfg_attr(feature = "export-types", derive(TS))]
@@ -52,15 +54,15 @@ pub struct ShipOrderRequest {
 #[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Serialize, ToSchema)]
 pub struct OrderItemResponse {
-    pub id: String,
+    pub id: SnowflakeId,
     pub title: String,
     pub description: Option<String>,
     #[cfg_attr(feature = "export-types", ts(type = "number"))]
-    pub unit_price: i64,
+    pub unit_price: Price,
     #[cfg_attr(feature = "export-types", ts(type = "number"))]
     pub quantity: i64,
     #[cfg_attr(feature = "export-types", ts(type = "number"))]
-    pub subtotal: i64,
+    pub subtotal: Price,
     pub cover_url: Option<String>,
     #[cfg_attr(feature = "export-types", ts(type = "unknown"))]
     pub attributes: Option<serde_json::Value>,
@@ -70,7 +72,7 @@ pub struct OrderItemResponse {
 impl From<crate::models::order_item::OrderItem> for OrderItemResponse {
     fn from(i: crate::models::order_item::OrderItem) -> Self {
         Self {
-            id: i.id.to_string(),
+            id: i.id,
             title: i.title,
             description: i.description,
             unit_price: i.unit_price,
@@ -86,16 +88,16 @@ impl From<crate::models::order_item::OrderItem> for OrderItemResponse {
 #[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Serialize, ToSchema)]
 pub struct OrderResponse {
-    pub id: String,
+    pub id: SnowflakeId,
     pub order_no: String,
     #[cfg_attr(feature = "export-types", ts(type = "number"))]
-    pub subtotal: i64,
+    pub subtotal: Price,
     #[cfg_attr(feature = "export-types", ts(type = "number"))]
-    pub discount_amount: i64,
+    pub discount_amount: Price,
     #[cfg_attr(feature = "export-types", ts(type = "number"))]
-    pub shipping_amount: i64,
+    pub shipping_amount: Price,
     #[cfg_attr(feature = "export-types", ts(type = "number"))]
-    pub total_amount: i64,
+    pub total_amount: Price,
     pub currency: String,
     pub status: String,
     pub buyer_name: Option<String>,

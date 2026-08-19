@@ -154,8 +154,7 @@ pub async fn calculate_shipping(
 ) -> AppResult<ApiResponse<CalculateShippingResponse>> {
     let mut product_weights = Vec::new();
     for item in &req.items {
-        let product_id = crate::types::snowflake_id::parse_id(&item.product_id)?;
-        product_weights.push((product_id, 0, item.quantity));
+        product_weights.push((item.product_id, 0, item.quantity));
     }
     let result = state
         .shipping_template_service

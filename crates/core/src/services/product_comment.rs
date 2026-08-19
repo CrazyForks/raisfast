@@ -76,12 +76,12 @@ impl ProductCommentService for ProductCommentServiceImpl {
     ) -> AppResult<ProductComment> {
         let user_id = auth.ensure_snowflake_user_id()?;
 
-        let product_id = crate::types::snowflake_id::parse_id(&req.product_id)?;
+        let product_id = req.product_id;
         crate::models::product::find_by_id(&self.pool, product_id, auth.tenant_id())
             .await?
             .ok_or_else(|| AppError::not_found("product"))?;
 
-        let order_id = crate::types::snowflake_id::parse_id(&req.order_id)?;
+        let order_id = req.order_id;
         let order = crate::models::order::find_by_id(&self.pool, order_id, auth.tenant_id())
             .await?
             .ok_or_else(|| AppError::not_found("order"))?;
@@ -284,6 +284,7 @@ mod tests {
     use super::*;
     use crate::db::DbDriver;
     use crate::dto::product_comment::CreateProductCommentRequest;
+    use crate::types::price::Price;
 
     async fn setup_pool() -> crate::db::Pool {
         crate::test_pool!()
@@ -339,7 +340,7 @@ mod tests {
                 fulfillment_type: "digital".to_string(),
                 delivery_hook: None,
                 weight: None,
-                price: 1000,
+                price: Price(1000),
                 currency: "CNY".to_string(),
                 attributes: None,
                 sort_order: 0,
@@ -381,17 +382,17 @@ mod tests {
             &crate::commands::CreateOrderCmd {
                 user_id: SnowflakeId(user_id),
                 order_no,
-                subtotal: 1000,
-                discount_amount: 0,
-                shipping_amount: 0,
-                total_amount: 1000,
+                subtotal: Price(1000),
+                discount_amount: Price(0),
+                shipping_amount: Price(0),
+                total_amount: Price(1000),
                 currency: "CNY".into(),
                 buyer_name: None,
                 buyer_phone: None,
                 buyer_email: None,
                 shipping_address: None,
                 remark: None,
-                tax_amount: 0,
+                tax_amount: Price(0),
                 coupon_id: None,
                 shipping_address_id: None,
                 billing_address_id: None,
@@ -410,10 +411,10 @@ mod tests {
                 title: "Test".to_string(),
                 description: None,
                 sku: None,
-                unit_price: 1000,
+                unit_price: Price(1000),
                 quantity: 1,
-                subtotal: 1000,
-                tax_amount: 0,
+                subtotal: Price(1000),
+                tax_amount: Price(0),
                 cover_url: None,
                 attributes: None,
             }],
@@ -454,8 +455,8 @@ mod tests {
             .create(
                 &a,
                 CreateProductCommentRequest {
-                    product_id: pid.to_string(),
-                    order_id: oid.to_string(),
+                    product_id: pid,
+                    order_id: oid,
                     rating: 5,
                     title: Some("Great!".into()),
                     content: "Love it".into(),
@@ -484,17 +485,17 @@ mod tests {
             &crate::commands::CreateOrderCmd {
                 user_id: SnowflakeId(uid),
                 order_no,
-                subtotal: 1000,
-                discount_amount: 0,
-                shipping_amount: 0,
-                total_amount: 1000,
+                subtotal: Price(1000),
+                discount_amount: Price(0),
+                shipping_amount: Price(0),
+                total_amount: Price(1000),
                 currency: "CNY".into(),
                 buyer_name: None,
                 buyer_phone: None,
                 buyer_email: None,
                 shipping_address: None,
                 remark: None,
-                tax_amount: 0,
+                tax_amount: Price(0),
                 coupon_id: None,
                 shipping_address_id: None,
                 billing_address_id: None,
@@ -509,8 +510,8 @@ mod tests {
             .create(
                 &a,
                 CreateProductCommentRequest {
-                    product_id: pid.to_string(),
-                    order_id: order.id.to_string(),
+                    product_id: pid,
+                    order_id: order.id,
                     rating: 5,
                     title: None,
                     content: "Test".into(),
@@ -536,8 +537,8 @@ mod tests {
             .create(
                 &a,
                 CreateProductCommentRequest {
-                    product_id: pid.to_string(),
-                    order_id: oid.to_string(),
+                    product_id: pid,
+                    order_id: oid,
                     rating: 4,
                     title: None,
                     content: "Test".into(),
@@ -567,8 +568,8 @@ mod tests {
         svc.create(
             &a,
             CreateProductCommentRequest {
-                product_id: pid.to_string(),
-                order_id: oid.to_string(),
+                product_id: pid,
+                order_id: oid,
                 rating: 5,
                 title: None,
                 content: "First".into(),
@@ -582,8 +583,8 @@ mod tests {
             .create(
                 &a,
                 CreateProductCommentRequest {
-                    product_id: pid.to_string(),
-                    order_id: oid.to_string(),
+                    product_id: pid,
+                    order_id: oid,
                     rating: 4,
                     title: None,
                     content: "Second".into(),
@@ -608,8 +609,8 @@ mod tests {
             .create(
                 &a,
                 CreateProductCommentRequest {
-                    product_id: pid.to_string(),
-                    order_id: oid.to_string(),
+                    product_id: pid,
+                    order_id: oid,
                     rating: 3,
                     title: None,
                     content: "OK".into(),
@@ -650,8 +651,8 @@ mod tests {
             .create(
                 &a,
                 CreateProductCommentRequest {
-                    product_id: pid.to_string(),
-                    order_id: oid.to_string(),
+                    product_id: pid,
+                    order_id: oid,
                     rating: 4,
                     title: None,
                     content: "Nice".into(),
@@ -683,8 +684,8 @@ mod tests {
             .create(
                 &a,
                 CreateProductCommentRequest {
-                    product_id: pid.to_string(),
-                    order_id: oid.to_string(),
+                    product_id: pid,
+                    order_id: oid,
                     rating: 4,
                     title: None,
                     content: "Nice".into(),
@@ -719,8 +720,8 @@ mod tests {
             .create(
                 &a,
                 CreateProductCommentRequest {
-                    product_id: pid.to_string(),
-                    order_id: oid.to_string(),
+                    product_id: pid,
+                    order_id: oid,
                     rating: 4,
                     title: None,
                     content: "Nice".into(),
@@ -755,8 +756,8 @@ mod tests {
             svc.create(
                 &a,
                 CreateProductCommentRequest {
-                    product_id: pid.to_string(),
-                    order_id: oid.to_string(),
+                    product_id: pid,
+                    order_id: oid,
                     rating,
                     title: None,
                     content: format!("Rating {rating}"),

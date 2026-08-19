@@ -1,3 +1,4 @@
+use crate::types::price::Price;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -21,7 +22,7 @@ pub trait WalletService: Send + Sync {
         &self,
         auth: &AuthUser,
         currency: &str,
-        amount: i64,
+        amount: Price,
         tx_type: WalletTxType,
         transaction_no: &str,
         reference_type: Option<WalletReferenceType>,
@@ -34,7 +35,7 @@ pub trait WalletService: Send + Sync {
         &self,
         auth: &AuthUser,
         currency: &str,
-        amount: i64,
+        amount: Price,
         tx_type: WalletTxType,
         transaction_no: &str,
         reference_type: Option<WalletReferenceType>,
@@ -49,7 +50,7 @@ pub trait WalletService: Send + Sync {
         from_user_id: SnowflakeId,
         to_user_id: SnowflakeId,
         currency: &str,
-        amount: i64,
+        amount: Price,
         transaction_no: &str,
         reference_type: Option<WalletReferenceType>,
         reference_id: Option<&str>,
@@ -214,21 +215,22 @@ async fn reverse_single_tx(
         .ok_or_else(|| AppError::not_found("wallet"))?;
 
     let delta = match original.entry_type {
-        WalletEntryType::Credit => -original.amount,
+        WalletEntryType::Credit => Price(-original.amount.0),
         WalletEntryType::Debit => original.amount,
     };
 
-    if delta > 0 {
+    if delta.0 > 0 {
         w.balance
-            .checked_add(delta)
+            .0
+            .checked_add(delta.0)
             .ok_or_else(|| AppError::BadRequest("balance_overflow".into()))?;
-    } else if w.balance < -delta {
+    } else if w.balance.0 < -delta.0 {
         return Err(AppError::BadRequest(
             "insufficient_balance_for_reversal".into(),
         ));
     }
 
-    apply_wallet_delta(tx, w.id, w.version, delta, w.balance).await?;
+    apply_wallet_delta(tx, w.id, w.version, delta.0, w.balance.0).await?;
 
     let updated = tx_find_wallet_by_id(tx, w.id)
         .await?
@@ -264,7 +266,7 @@ pub async fn credit_wallet(
     pool: &crate::db::Pool,
     auth: &AuthUser,
     currency: &str,
-    amount: i64,
+    amount: Price,
     tx_type: WalletTxType,
     transaction_no: &str,
     reference_type: Option<WalletReferenceType>,
@@ -272,7 +274,7 @@ pub async fn credit_wallet(
     metadata: Option<&str>,
 ) -> AppResult<WalletTransaction> {
     let user_id = auth.ensure_snowflake_user_id()?;
-    if amount <= 0 {
+    if amount.0 <= 0 {
         return Err(AppError::BadRequest("amount_must_be_positive".into()));
     }
 
@@ -294,7 +296,7 @@ pub async fn credit_wallet(
             return Err(AppError::BadRequest("wallet_frozen".into()));
         }
 
-        apply_wallet_delta(&mut tx, w.id, w.version, amount, w.balance).await?;
+        apply_wallet_delta(&mut tx, w.id, w.version, amount.0, w.balance.0).await?;
 
         let updated = tx_find_wallet_by_id(&mut tx, w.id)
             .await?
@@ -326,7 +328,7 @@ pub async fn debit_wallet(
     pool: &crate::db::Pool,
     auth: &AuthUser,
     currency: &str,
-    amount: i64,
+    amount: Price,
     tx_type: WalletTxType,
     transaction_no: &str,
     reference_type: Option<WalletReferenceType>,
@@ -334,7 +336,7 @@ pub async fn debit_wallet(
     metadata: Option<&str>,
 ) -> AppResult<WalletTransaction> {
     let user_id = auth.ensure_snowflake_user_id()?;
-    if amount <= 0 {
+    if amount.0 <= 0 {
         return Err(AppError::BadRequest("amount_must_be_positive".into()));
     }
 
@@ -356,7 +358,7 @@ pub async fn debit_wallet(
             return Err(AppError::BadRequest("wallet_frozen".into()));
         }
 
-        apply_wallet_delta(&mut tx, w.id, w.version, -amount, w.balance).await?;
+        apply_wallet_delta(&mut tx, w.id, w.version, -amount.0, w.balance.0).await?;
 
         let updated = tx_find_wallet_by_id(&mut tx, w.id)
             .await?
@@ -390,13 +392,13 @@ pub async fn transfer(
     from_user_id: SnowflakeId,
     to_user_id: SnowflakeId,
     currency: &str,
-    amount: i64,
+    amount: Price,
     transaction_no: &str,
     reference_type: Option<WalletReferenceType>,
     reference_id: Option<&str>,
     metadata: Option<&str>,
 ) -> AppResult<(WalletTransaction, WalletTransaction)> {
-    if amount <= 0 {
+    if amount.0 <= 0 {
         return Err(AppError::BadRequest("amount_must_be_positive".into()));
     }
 
@@ -443,16 +445,16 @@ pub async fn transfer(
             &mut tx,
             from_wallet.id,
             from_wallet.version,
-            -amount,
-            from_wallet.balance,
+            -amount.0,
+            from_wallet.balance.0,
         )
         .await?;
         apply_wallet_delta(
             &mut tx,
             to_wallet.id,
             to_wallet.version,
-            amount,
-            to_wallet.balance,
+            amount.0,
+            to_wallet.balance.0,
         )
         .await?;
 
@@ -577,8 +579,8 @@ async fn insert_tx(
     wallet_id: SnowflakeId,
     user_id: SnowflakeId,
     entry_type: WalletEntryType,
-    amount: i64,
-    balance_after: i64,
+    amount: Price,
+    balance_after: Price,
     tx_type: WalletTxType,
     currency: &str,
     transaction_no: &str,
@@ -588,7 +590,7 @@ async fn insert_tx(
     counterparty_wallet_id: Option<SnowflakeId>,
     metadata: Option<String>,
 ) -> AppResult<WalletTransaction> {
-    debug_assert!(balance_after >= 0, "balance_after must be non-negative");
+    debug_assert!(balance_after.0 >= 0, "balance_after must be non-negative");
     let row = wallet_transaction::tx_insert(
         tx,
         tenant_id,
@@ -659,7 +661,7 @@ impl WalletService for WalletServiceImpl {
         &self,
         auth: &AuthUser,
         currency: &str,
-        amount: i64,
+        amount: Price,
         tx_type: WalletTxType,
         transaction_no: &str,
         reference_type: Option<WalletReferenceType>,
@@ -686,7 +688,7 @@ impl WalletService for WalletServiceImpl {
         &self,
         auth: &AuthUser,
         currency: &str,
-        amount: i64,
+        amount: Price,
         tx_type: WalletTxType,
         transaction_no: &str,
         reference_type: Option<WalletReferenceType>,
@@ -715,7 +717,7 @@ impl WalletService for WalletServiceImpl {
         from_user_id: SnowflakeId,
         to_user_id: SnowflakeId,
         currency: &str,
-        amount: i64,
+        amount: Price,
         transaction_no: &str,
         reference_type: Option<WalletReferenceType>,
         reference_id: Option<&str>,
@@ -916,7 +918,7 @@ mod tests {
             &ctx,
             &AuthUser::new_test(user.id.0, UserRole::Reader, "default"),
             "CNY",
-            500,
+            Price(500),
             T::Recharge,
             &tx_no,
             Some(R::Admin),
@@ -927,15 +929,15 @@ mod tests {
         .unwrap();
 
         assert_eq!(tx.entry_type, E::Credit);
-        assert_eq!(tx.amount, 500);
-        assert_eq!(tx.balance_after, 500);
+        assert_eq!(tx.amount.0, 500);
+        assert_eq!(tx.balance_after.0, 500);
         assert_eq!(tx.tx_type, T::Recharge);
 
         let w = wallet::find_by_user_and_currency(&ctx, user.id, "CNY")
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(w.balance, 500);
+        assert_eq!(w.balance.0, 500);
     }
 
     #[tokio::test]
@@ -955,7 +957,7 @@ mod tests {
             &ctx,
             &AuthUser::new_test(user.id.0, UserRole::Reader, "default"),
             "CNY",
-            500,
+            Price(500),
             T::Recharge,
             &tx_no,
             None,
@@ -969,7 +971,7 @@ mod tests {
             &ctx,
             &AuthUser::new_test(user.id.0, UserRole::Reader, "default"),
             "CNY",
-            500,
+            Price(500),
             T::Recharge,
             &tx_no,
             None,
@@ -984,7 +986,7 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(w.balance, 500);
+        assert_eq!(w.balance.0, 500);
     }
 
     #[tokio::test]
@@ -996,7 +998,7 @@ mod tests {
             &ctx,
             &AuthUser::new_test(user.id.0, UserRole::Reader, "default"),
             "CNY",
-            0,
+            Price(0),
             T::Recharge,
             &new_tx_no(),
             None,
@@ -1021,7 +1023,7 @@ mod tests {
             &ctx,
             &AuthUser::new_test(user.id.0, UserRole::Reader, "default"),
             "CNY",
-            -100,
+            Price(-100),
             T::Recharge,
             &new_tx_no(),
             None,
@@ -1046,7 +1048,7 @@ mod tests {
             &ctx,
             &AuthUser::new_test(user.id.0, UserRole::Reader, "default"),
             "CNY",
-            300,
+            Price(300),
             T::Recharge,
             &new_tx_no(),
             None,
@@ -1059,7 +1061,7 @@ mod tests {
             &ctx,
             &AuthUser::new_test(user.id.0, UserRole::Reader, "default"),
             "CNY",
-            700,
+            Price(700),
             T::Recharge,
             &new_tx_no(),
             None,
@@ -1073,7 +1075,7 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(w.balance, 1000);
+        assert_eq!(w.balance.0, 1000);
     }
 
     // ── debit_wallet ──
@@ -1087,7 +1089,7 @@ mod tests {
             &ctx,
             &AuthUser::new_test(user.id.0, UserRole::Reader, "default"),
             "CNY",
-            1000,
+            Price(1000),
             T::Recharge,
             &new_tx_no(),
             None,
@@ -1101,7 +1103,7 @@ mod tests {
             &ctx,
             &AuthUser::new_test(user.id.0, UserRole::Reader, "default"),
             "CNY",
-            400,
+            Price(400),
             T::Payment,
             &new_tx_no(),
             Some(R::Order),
@@ -1112,14 +1114,14 @@ mod tests {
         .unwrap();
 
         assert_eq!(tx.entry_type, E::Debit);
-        assert_eq!(tx.amount, 400);
-        assert_eq!(tx.balance_after, 600);
+        assert_eq!(tx.amount.0, 400);
+        assert_eq!(tx.balance_after.0, 600);
 
         let w = wallet::find_by_user_and_currency(&ctx, user.id, "CNY")
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(w.balance, 600);
+        assert_eq!(w.balance.0, 600);
     }
 
     #[tokio::test]
@@ -1131,7 +1133,7 @@ mod tests {
             &ctx,
             &AuthUser::new_test(user.id.0, UserRole::Reader, "default"),
             "CNY",
-            100,
+            Price(100),
             T::Recharge,
             &new_tx_no(),
             None,
@@ -1145,7 +1147,7 @@ mod tests {
             &ctx,
             &AuthUser::new_test(user.id.0, UserRole::Reader, "default"),
             "CNY",
-            200,
+            Price(200),
             T::Payment,
             &new_tx_no(),
             None,
@@ -1166,7 +1168,7 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(w.balance, 100);
+        assert_eq!(w.balance.0, 100);
     }
 
     #[tokio::test]
@@ -1178,7 +1180,7 @@ mod tests {
             &ctx,
             &AuthUser::new_test(user.id.0, UserRole::Reader, "default"),
             "CNY",
-            500,
+            Price(500),
             T::Recharge,
             &new_tx_no(),
             None,
@@ -1192,7 +1194,7 @@ mod tests {
             &ctx,
             &AuthUser::new_test(user.id.0, UserRole::Reader, "default"),
             "CNY",
-            500,
+            Price(500),
             T::Payment,
             &new_tx_no(),
             None,
@@ -1201,7 +1203,7 @@ mod tests {
         )
         .await
         .unwrap();
-        assert_eq!(tx.balance_after, 0);
+        assert_eq!(tx.balance_after.0, 0);
     }
 
     #[tokio::test]
@@ -1214,7 +1216,7 @@ mod tests {
             &ctx,
             &AuthUser::new_test(user.id.0, UserRole::Reader, "default"),
             "CNY",
-            1000,
+            Price(1000),
             T::Recharge,
             &new_tx_no(),
             None,
@@ -1228,7 +1230,7 @@ mod tests {
             &ctx,
             &AuthUser::new_test(user.id.0, UserRole::Reader, "default"),
             "CNY",
-            300,
+            Price(300),
             T::Payment,
             &tx_no,
             None,
@@ -1241,7 +1243,7 @@ mod tests {
             &ctx,
             &AuthUser::new_test(user.id.0, UserRole::Reader, "default"),
             "CNY",
-            300,
+            Price(300),
             T::Payment,
             &tx_no,
             None,
@@ -1256,7 +1258,7 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(w.balance, 700);
+        assert_eq!(w.balance.0, 700);
     }
 
     #[tokio::test]
@@ -1268,7 +1270,7 @@ mod tests {
             &ctx,
             &AuthUser::new_test(user.id.0, UserRole::Reader, "default"),
             "CNY",
-            0,
+            Price(0),
             T::Payment,
             &new_tx_no(),
             None,
@@ -1293,7 +1295,7 @@ mod tests {
             &ctx,
             &AuthUser::new_test(user.id.0, UserRole::Reader, "default"),
             "CNY",
-            100,
+            Price(100),
             T::Payment,
             &new_tx_no(),
             None,
@@ -1323,7 +1325,7 @@ mod tests {
             &ctx,
             &AuthUser::new_test(from_user.id.0, UserRole::Reader, "default"),
             "CNY",
-            1000,
+            Price(1000),
             T::Recharge,
             &new_tx_no(),
             None,
@@ -1340,7 +1342,7 @@ mod tests {
             from_user.id,
             to_user.id,
             "CNY",
-            300,
+            Price(300),
             &tx_no,
             None,
             None,
@@ -1351,24 +1353,24 @@ mod tests {
 
         assert_eq!(out_tx.entry_type, E::Debit);
         assert_eq!(out_tx.tx_type, T::TransferOut);
-        assert_eq!(out_tx.amount, 300);
-        assert_eq!(out_tx.balance_after, 700);
+        assert_eq!(out_tx.amount.0, 300);
+        assert_eq!(out_tx.balance_after.0, 700);
 
         assert_eq!(in_tx.entry_type, E::Credit);
         assert_eq!(in_tx.tx_type, T::TransferIn);
-        assert_eq!(in_tx.amount, 300);
-        assert_eq!(in_tx.balance_after, 300);
+        assert_eq!(in_tx.amount.0, 300);
+        assert_eq!(in_tx.balance_after.0, 300);
 
         let from_w = wallet::find_by_user_and_currency(&ctx, from_user.id, "CNY")
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(from_w.balance, 700);
+        assert_eq!(from_w.balance.0, 700);
         let to_w = wallet::find_by_user_and_currency(&ctx, to_user.id, "CNY")
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(to_w.balance, 300);
+        assert_eq!(to_w.balance.0, 300);
     }
 
     #[tokio::test]
@@ -1381,7 +1383,7 @@ mod tests {
             &ctx,
             &AuthUser::new_test(from_user.id.0, UserRole::Reader, "default"),
             "CNY",
-            100,
+            Price(100),
             T::Recharge,
             &new_tx_no(),
             None,
@@ -1397,7 +1399,7 @@ mod tests {
             from_user.id,
             to_user.id,
             "CNY",
-            200,
+            Price(200),
             &new_tx_no(),
             None,
             None,
@@ -1423,7 +1425,7 @@ mod tests {
             &ctx,
             &AuthUser::new_test(user.id.0, UserRole::Reader, "default"),
             "CNY",
-            1000,
+            Price(1000),
             T::Recharge,
             &new_tx_no(),
             None,
@@ -1439,7 +1441,7 @@ mod tests {
             user.id,
             user.id,
             "CNY",
-            100,
+            Price(100),
             &new_tx_no(),
             None,
             None,
@@ -1464,7 +1466,7 @@ mod tests {
             &ctx,
             &AuthUser::new_test(from_user.id.0, UserRole::Reader, "default"),
             "CNY",
-            1000,
+            Price(1000),
             T::Recharge,
             &new_tx_no(),
             None,
@@ -1481,7 +1483,7 @@ mod tests {
             from_user.id,
             to_user.id,
             "CNY",
-            300,
+            Price(300),
             &tx_no,
             None,
             None,
@@ -1495,7 +1497,7 @@ mod tests {
             from_user.id,
             to_user.id,
             "CNY",
-            300,
+            Price(300),
             &tx_no,
             None,
             None,
@@ -1511,7 +1513,7 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(from_w.balance, 700);
+        assert_eq!(from_w.balance.0, 700);
     }
 
     #[tokio::test]
@@ -1526,7 +1528,7 @@ mod tests {
             from_user.id,
             to_user.id,
             "CNY",
-            0,
+            Price(0),
             &new_tx_no(),
             None,
             None,
@@ -1552,7 +1554,7 @@ mod tests {
             &ctx,
             &AuthUser::new_test(user.id.0, UserRole::Reader, "default"),
             "CNY",
-            500,
+            Price(500),
             T::Recharge,
             &new_tx_no(),
             None,
@@ -1567,15 +1569,15 @@ mod tests {
             .unwrap();
 
         assert_eq!(rev_tx.entry_type, E::Debit);
-        assert_eq!(rev_tx.amount, 500);
-        assert_eq!(rev_tx.balance_after, 0);
+        assert_eq!(rev_tx.amount.0, 500);
+        assert_eq!(rev_tx.balance_after.0, 0);
         assert_eq!(rev_tx.related_tx_id, Some(original.id));
 
         let w = wallet::find_by_user_and_currency(&ctx, user.id, "CNY")
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(w.balance, 0);
+        assert_eq!(w.balance.0, 0);
     }
 
     #[tokio::test]
@@ -1587,7 +1589,7 @@ mod tests {
             &ctx,
             &AuthUser::new_test(user.id.0, UserRole::Reader, "default"),
             "CNY",
-            1000,
+            Price(1000),
             T::Recharge,
             &new_tx_no(),
             None,
@@ -1601,7 +1603,7 @@ mod tests {
             &ctx,
             &AuthUser::new_test(user.id.0, UserRole::Reader, "default"),
             "CNY",
-            300,
+            Price(300),
             T::Payment,
             &new_tx_no(),
             None,
@@ -1616,14 +1618,14 @@ mod tests {
             .unwrap();
 
         assert_eq!(rev_tx.entry_type, E::Credit);
-        assert_eq!(rev_tx.amount, 300);
-        assert_eq!(rev_tx.balance_after, 1000);
+        assert_eq!(rev_tx.amount.0, 300);
+        assert_eq!(rev_tx.balance_after.0, 1000);
 
         let w = wallet::find_by_user_and_currency(&ctx, user.id, "CNY")
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(w.balance, 1000);
+        assert_eq!(w.balance.0, 1000);
     }
 
     #[tokio::test]
@@ -1635,7 +1637,7 @@ mod tests {
             &ctx,
             &AuthUser::new_test(user.id.0, UserRole::Reader, "default"),
             "CNY",
-            500,
+            Price(500),
             T::Recharge,
             &new_tx_no(),
             None,
@@ -1664,7 +1666,7 @@ mod tests {
             &ctx,
             &AuthUser::new_test(user.id.0, UserRole::Reader, "default"),
             "CNY",
-            500,
+            Price(500),
             T::Recharge,
             &new_tx_no(),
             None,
@@ -1696,7 +1698,7 @@ mod tests {
             &ctx,
             &AuthUser::new_test(user.id.0, UserRole::Reader, "default"),
             "CNY",
-            500,
+            Price(500),
             T::Recharge,
             &new_tx_no(),
             None,
@@ -1728,7 +1730,7 @@ mod tests {
             &ctx,
             &AuthUser::new_test(user.id.0, UserRole::Reader, "default"),
             "CNY",
-            1000,
+            Price(1000),
             T::Recharge,
             &new_tx_no(),
             None,
@@ -1741,7 +1743,7 @@ mod tests {
             &ctx,
             &AuthUser::new_test(user.id.0, UserRole::Reader, "default"),
             "CNY",
-            500,
+            Price(500),
             T::Recharge,
             &new_tx_no(),
             None,
@@ -1754,7 +1756,7 @@ mod tests {
             &ctx,
             &AuthUser::new_test(user.id.0, UserRole::Reader, "default"),
             "CNY",
-            1400,
+            Price(1400),
             T::Payment,
             &new_tx_no(),
             None,
@@ -1800,7 +1802,7 @@ mod tests {
             &ctx,
             &AuthUser::new_test(from_user.id.0, UserRole::Reader, "default"),
             "CNY",
-            1000,
+            Price(1000),
             T::Recharge,
             &new_tx_no(),
             None,
@@ -1817,7 +1819,7 @@ mod tests {
             from_user.id,
             to_user.id,
             "CNY",
-            300,
+            Price(300),
             &tx_no,
             None,
             None,
@@ -1830,7 +1832,7 @@ mod tests {
         let rev = reverse_transaction(&ctx, out_tx.id, &rev_no).await.unwrap();
 
         assert_eq!(rev.entry_type, E::Credit);
-        assert_eq!(rev.amount, 300);
+        assert_eq!(rev.amount.0, 300);
         assert_eq!(rev.tx_type, T::Refund);
         assert_eq!(rev.related_tx_id, Some(out_tx.id));
 
@@ -1838,13 +1840,13 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(from_w.balance, 1000);
+        assert_eq!(from_w.balance.0, 1000);
 
         let to_w = wallet::find_by_user_and_currency(&ctx, to_user.id, "CNY")
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(to_w.balance, 0);
+        assert_eq!(to_w.balance.0, 0);
     }
 
     #[tokio::test]
@@ -1857,7 +1859,7 @@ mod tests {
             &ctx,
             &AuthUser::new_test(from_user.id.0, UserRole::Reader, "default"),
             "CNY",
-            1000,
+            Price(1000),
             T::Recharge,
             &new_tx_no(),
             None,
@@ -1874,7 +1876,7 @@ mod tests {
             from_user.id,
             to_user.id,
             "CNY",
-            300,
+            Price(300),
             &tx_no,
             None,
             None,
@@ -1892,13 +1894,13 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(from_w.balance, 1000);
+        assert_eq!(from_w.balance.0, 1000);
 
         let to_w = wallet::find_by_user_and_currency(&ctx, to_user.id, "CNY")
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(to_w.balance, 0);
+        assert_eq!(to_w.balance.0, 0);
     }
 
     #[tokio::test]
@@ -1911,7 +1913,7 @@ mod tests {
             &ctx,
             &AuthUser::new_test(from_user.id.0, UserRole::Reader, "default"),
             "CNY",
-            1000,
+            Price(1000),
             T::Recharge,
             &new_tx_no(),
             None,
@@ -1928,7 +1930,7 @@ mod tests {
             from_user.id,
             to_user.id,
             "CNY",
-            500,
+            Price(500),
             &tx_no,
             None,
             None,
@@ -1942,7 +1944,7 @@ mod tests {
             &ctx,
             &AuthUser::new_test(to_user.id.0, UserRole::Reader, "default"),
             "CNY",
-            500,
+            Price(500),
             T::Payment,
             &new_tx_no(),
             None,
@@ -1972,7 +1974,7 @@ mod tests {
             &ctx,
             &AuthUser::new_test(from_user.id.0, UserRole::Reader, "default"),
             "CNY",
-            1000,
+            Price(1000),
             T::Recharge,
             &new_tx_no(),
             None,
@@ -1989,7 +1991,7 @@ mod tests {
             from_user.id,
             to_user.id,
             "CNY",
-            300,
+            Price(300),
             &tx_no,
             None,
             None,

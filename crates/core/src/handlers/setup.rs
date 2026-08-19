@@ -249,7 +249,7 @@ pub async fn setup_init(
     )
     .await?;
 
-    let uid = parse_user_id(&user.id)?;
+    let uid = user.id;
 
     crate::models::user_role::assign_role_by_name(
         &state.pool,
@@ -448,6 +448,7 @@ fn persist_env_var(key: &str, value: &str) {
     }
 }
 
+#[cfg(test)]
 fn parse_user_id(id: &str) -> AppResult<crate::types::snowflake_id::SnowflakeId> {
     id.parse::<i64>()
         .map(crate::types::snowflake_id::SnowflakeId)

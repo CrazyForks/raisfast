@@ -1,3 +1,4 @@
+use crate::types::price::Price;
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "export-types")]
 use ts_rs::TS;
@@ -29,8 +30,8 @@ pub struct Coupon {
     pub code: String,
     pub title: String,
     pub coupon_type: CouponType,
-    pub value: i64,
-    pub min_order: i64,
+    pub value: Price,
+    pub min_order: Price,
     pub max_uses: i64,
     pub used_count: i64,
     pub max_uses_per_user: i64,
@@ -244,13 +245,13 @@ mod tests {
         crate::test_pool!()
     }
 
-    fn seed_cmd(code: &str, value: i64) -> crate::commands::CreateCouponCmd {
+    fn seed_cmd(code: &str, value: Price) -> crate::commands::CreateCouponCmd {
         crate::commands::CreateCouponCmd {
             code: code.to_string(),
             title: format!("Coupon {code}"),
             coupon_type: "percent".to_string(),
             value,
-            min_order: 0,
+            min_order: Price(0),
             max_uses: 0,
             max_uses_per_user: 1,
             starts_at: None,
@@ -262,12 +263,12 @@ mod tests {
     async fn insert_and_find_by_id() {
         let pool = setup_pool().await;
         let code = format!("SAVE10_{}", crate::utils::id::new_id());
-        let c = super::insert(&pool, &seed_cmd(&code, 10), None)
+        let c = super::insert(&pool, &seed_cmd(&code, Price(10)), None)
             .await
             .unwrap();
         let found = super::find_by_id(&pool, c.id, None).await.unwrap().unwrap();
         assert_eq!(found.code, code);
-        assert_eq!(found.value, 10);
+        assert_eq!(found.value.0, 10);
         assert_eq!(found.coupon_type, CouponType::Percent);
         assert_eq!(found.status, CouponStatus::Active);
     }
@@ -287,14 +288,14 @@ mod tests {
     async fn find_by_code() {
         let pool = setup_pool().await;
         let code = format!("CODE20_{}", crate::utils::id::new_id());
-        super::insert(&pool, &seed_cmd(&code, 20), None)
+        super::insert(&pool, &seed_cmd(&code, Price(20)), None)
             .await
             .unwrap();
         let found = super::find_by_code(&pool, &code, None)
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(found.value, 20);
+        assert_eq!(found.value.0, 20);
     }
 
     #[tokio::test]
@@ -317,7 +318,7 @@ mod tests {
                 &pool,
                 &seed_cmd(
                     &format!("C{i}_{}", crate::utils::id::new_id()),
-                    i as i64 * 10,
+                    Price(i as i64 * 10),
                 ),
                 Some(&tenant),
             )
@@ -336,12 +337,12 @@ mod tests {
         let pool = setup_pool().await;
         let tenant = format!("t_{}", crate::utils::id::new_id());
         let a1_code = format!("A1_{}", crate::utils::id::new_id());
-        super::insert(&pool, &seed_cmd(&a1_code, 10), Some(&tenant))
+        super::insert(&pool, &seed_cmd(&a1_code, Price(10)), Some(&tenant))
             .await
             .unwrap();
         let c2 = super::insert(
             &pool,
-            &seed_cmd(&format!("A2_{}", crate::utils::id::new_id()), 20),
+            &seed_cmd(&format!("A2_{}", crate::utils::id::new_id()), Price(20)),
             Some(&tenant),
         )
         .await
@@ -367,7 +368,7 @@ mod tests {
         let pool = setup_pool().await;
         let c = super::insert(
             &pool,
-            &seed_cmd(&format!("UPD_{}", crate::utils::id::new_id()), 10),
+            &seed_cmd(&format!("UPD_{}", crate::utils::id::new_id()), Price(10)),
             None,
         )
         .await
@@ -377,7 +378,7 @@ mod tests {
             &crate::commands::UpdateCouponCmd {
                 id: c.id,
                 title: Some("Updated Title".into()),
-                value: Some(20),
+                value: Some(Price(20)),
                 min_order: None,
                 max_uses: None,
                 max_uses_per_user: None,
@@ -392,7 +393,7 @@ mod tests {
         assert!(ok);
         let found = super::find_by_id(&pool, c.id, None).await.unwrap().unwrap();
         assert_eq!(found.title, "Updated Title");
-        assert_eq!(found.value, 20);
+        assert_eq!(found.value.0, 20);
     }
 
     #[tokio::test]
@@ -400,7 +401,7 @@ mod tests {
         let pool = setup_pool().await;
         let c = super::insert(
             &pool,
-            &seed_cmd(&format!("STAT_{}", crate::utils::id::new_id()), 10),
+            &seed_cmd(&format!("STAT_{}", crate::utils::id::new_id()), Price(10)),
             None,
         )
         .await
@@ -431,7 +432,7 @@ mod tests {
         let pool = setup_pool().await;
         let c = super::insert(
             &pool,
-            &seed_cmd(&format!("USE_{}", crate::utils::id::new_id()), 10),
+            &seed_cmd(&format!("USE_{}", crate::utils::id::new_id()), Price(10)),
             None,
         )
         .await
@@ -447,7 +448,7 @@ mod tests {
         let pool = setup_pool().await;
         let c = super::insert(
             &pool,
-            &seed_cmd(&format!("DEL_{}", crate::utils::id::new_id()), 10),
+            &seed_cmd(&format!("DEL_{}", crate::utils::id::new_id()), Price(10)),
             None,
         )
         .await
@@ -478,7 +479,7 @@ mod tests {
         let pool = setup_pool().await;
         let c = super::insert(
             &pool,
-            &seed_cmd(&format!("CU_{}", crate::utils::id::new_id()), 10),
+            &seed_cmd(&format!("CU_{}", crate::utils::id::new_id()), Price(10)),
             None,
         )
         .await

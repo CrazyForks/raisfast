@@ -1,3 +1,4 @@
+use crate::types::price::Price;
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "export-types")]
 use ts_rs::TS;
@@ -49,7 +50,7 @@ pub struct Product {
     pub delivery_hook: Option<String>,
     pub weight: Option<i64>,
     pub shipping_template_id: Option<SnowflakeId>,
-    pub price: i64,
+    pub price: Price,
     pub currency: String,
     pub status: ProductStatus,
     #[cfg_attr(feature = "export-types", ts(type = "unknown"))]
@@ -59,7 +60,7 @@ pub struct Product {
     pub content: Option<String>,
     #[cfg_attr(feature = "export-types", ts(type = "unknown"))]
     pub image_ids: Option<String>,
-    pub original_price: Option<i64>,
+    pub original_price: Option<Price>,
     #[cfg_attr(feature = "export-types", ts(type = "unknown"))]
     pub specs: Option<serde_json::Value>,
     pub unit: String,
@@ -74,8 +75,8 @@ pub struct Product {
     pub og_image: Option<String>,
     pub published_at: Option<Timestamp>,
     pub stock: i64,
-    pub cost_price: Option<i64>,
-    pub sale_price: Option<i64>,
+    pub cost_price: Option<Price>,
+    pub sale_price: Option<Price>,
     pub has_variants: bool,
     pub version: i64,
     pub created_at: Timestamp,
@@ -129,7 +130,7 @@ pub async fn find_all_admin(
     page_size: i64,
     status: Option<&str>,
     keyword: Option<&str>,
-    category_id: Option<&str>,
+    category_id: Option<SnowflakeId>,
 ) -> AppResult<(Vec<Product>, i64)> {
     let has_kw = keyword.is_some_and(|k| !k.is_empty());
     if has_kw || category_id.is_some() {
@@ -176,7 +177,7 @@ pub async fn find_all_admin(
             q = q.bind(p).bind(p);
         }
         if let Some(c) = category_id {
-            q = q.bind(c);
+            q = q.bind(*c);
         }
         if let Some(tid) = tenant_id {
             q = q.bind(tid);
@@ -442,7 +443,7 @@ mod tests {
                 fulfillment_type: "digital".to_string(),
                 delivery_hook: None,
                 weight: None,
-                price: 1000,
+                price: Price(1000),
                 currency: "CNY".to_string(),
                 attributes: None,
                 sort_order: 0,
@@ -508,7 +509,7 @@ mod tests {
         let found = super::find_by_id(&pool, p.id, None).await.unwrap().unwrap();
         assert_eq!(found.id, p.id);
         assert_eq!(found.title, "Widget");
-        assert_eq!(found.price, 1000);
+        assert_eq!(found.price.0, 1000);
         assert_eq!(found.currency, "CNY");
         assert_eq!(found.version, 1);
     }
@@ -538,7 +539,7 @@ mod tests {
                 fulfillment_type: "digital".to_string(),
                 delivery_hook: None,
                 weight: None,
-                price: 500,
+                price: Price(500),
                 currency: "USD".to_string(),
                 attributes: None,
                 sort_order: 0,
@@ -591,7 +592,7 @@ mod tests {
                 fulfillment_type: "digital".to_string(),
                 delivery_hook: None,
                 weight: None,
-                price: 2000,
+                price: Price(2000),
                 currency: "CNY".to_string(),
                 status: "active".to_string(),
                 attributes: None,
@@ -626,7 +627,7 @@ mod tests {
         assert!(ok);
         let found = super::find_by_id(&pool, p.id, None).await.unwrap().unwrap();
         assert_eq!(found.title, "New");
-        assert_eq!(found.price, 2000);
+        assert_eq!(found.price.0, 2000);
         assert_eq!(found.status, ProductStatus::Active);
         assert_eq!(found.description.unwrap(), "desc");
         assert_eq!(found.version, version + 1);
@@ -648,7 +649,7 @@ mod tests {
                 fulfillment_type: "digital".to_string(),
                 delivery_hook: None,
                 weight: None,
-                price: 1000,
+                price: Price(1000),
                 currency: "CNY".to_string(),
                 status: "draft".to_string(),
                 attributes: None,
@@ -796,7 +797,7 @@ mod tests {
                 fulfillment_type: "digital".to_string(),
                 delivery_hook: None,
                 weight: None,
-                price: 1000,
+                price: Price(1000),
                 currency: "CNY".to_string(),
                 attributes: None,
                 sort_order: 0,

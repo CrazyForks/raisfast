@@ -31,7 +31,7 @@ pub trait CommentService: Send + Sync {
         post_slug: &str,
         auth: &AuthUser,
         content: &str,
-        parent_id: Option<&str>,
+        parent_id: Option<SnowflakeId>,
         nickname: Option<&str>,
         email: Option<&str>,
     ) -> AppResult<CommentResponse>;
@@ -83,7 +83,7 @@ impl CommentService for CommentServiceImpl {
         post_slug: &str,
         auth: &AuthUser,
         content: &str,
-        parent_id: Option<&str>,
+        parent_id: Option<SnowflakeId>,
         nickname: Option<&str>,
         email: Option<&str>,
     ) -> AppResult<CommentResponse> {
@@ -91,8 +91,7 @@ impl CommentService for CommentServiceImpl {
             .await?
             .ok_or_else(|| AppError::not_found("post"))?;
 
-        if let Some(pid_str) = parent_id {
-            let pid = crate::types::snowflake_id::parse_id(pid_str)?;
+        if let Some(pid) = parent_id {
             let all_comments =
                 comment::find_approved_by_post(&self.pool, p.id, auth.tenant_id()).await?;
             let parent = all_comments
@@ -107,36 +106,16 @@ impl CommentService for CommentServiceImpl {
             comment::validate_depth(&all_comments, pid)?;
         }
 
-        let comment_input = CommentInput {
-            content: content.to_string(),
-            nickname: nickname.map(std::string::ToString::to_string),
-            email: email.map(std::string::ToString::to_string),
-            parent_id: parent_id.map(std::string::ToString::to_string),
-        };
-
-        let parent_id = if let Some(ref raw_id) = comment_input.parent_id {
-            if raw_id.is_empty() {
-                None
-            } else if let Ok(int_id) = raw_id.parse::<i64>() {
-                Some(int_id)
-            } else {
-                let cid = crate::types::snowflake_id::parse_id(raw_id)?;
-                comment::find_by_id(&self.pool, cid, auth.tenant_id())
-                    .await?
-                    .map(|c| *c.id)
-            }
-        } else {
-            None
-        };
+        let parent_id = parent_id.map(|pid| *pid);
 
         let c = comment::create(
             &self.pool,
             &CreateCommentCmd {
                 post_id: p.id,
                 created_by: auth.user_id(),
-                nickname: comment_input.nickname,
-                email: comment_input.email,
-                content: comment_input.content,
+                nickname: nickname.map(std::string::ToString::to_string),
+                email: email.map(std::string::ToString::to_string),
+                content: content.to_string(),
                 parent_id,
             },
             auth.tenant_id(),

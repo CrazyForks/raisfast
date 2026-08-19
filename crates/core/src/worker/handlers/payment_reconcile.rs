@@ -125,7 +125,7 @@ impl ReconcilePaymentsHandler {
         }
 
         if let Some(provider_amount) = status.amount
-            && provider_amount != order.amount
+            && provider_amount != order.amount.0
         {
             let detail = format!(
                 "amount_mismatch local={} provider={} order={}",

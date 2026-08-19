@@ -1,3 +1,4 @@
+use crate::types::price::Price;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -31,10 +32,10 @@ pub trait CouponService: Send + Sync {
         coupon_id: Option<SnowflakeId>,
         coupon_code: Option<&str>,
         user_id: SnowflakeId,
-        order_amount: i64,
+        order_amount: Price,
         tenant_id: Option<&str>,
     ) -> AppResult<Coupon>;
-    fn calculate_discount(&self, coupon: &Coupon, order_amount: i64) -> i64;
+    fn calculate_discount(&self, coupon: &Coupon, order_amount: Price) -> Price;
 }
 
 pub struct CouponServiceImpl {
@@ -66,7 +67,7 @@ impl CouponService for CouponServiceImpl {
                 title: req.title,
                 coupon_type: coupon_type.to_string(),
                 value: req.value,
-                min_order: req.min_order.unwrap_or(0),
+                min_order: req.min_order.unwrap_or(Price(0)),
                 max_uses: req.max_uses.unwrap_or(0),
                 max_uses_per_user: req.max_uses_per_user.unwrap_or(1),
                 starts_at: req.starts_at,
@@ -139,7 +140,7 @@ impl CouponService for CouponServiceImpl {
         coupon_id: Option<SnowflakeId>,
         coupon_code: Option<&str>,
         user_id: SnowflakeId,
-        order_amount: i64,
+        order_amount: Price,
         tenant_id: Option<&str>,
     ) -> AppResult<Coupon> {
         let coupon = match (coupon_id, coupon_code) {
@@ -170,7 +171,7 @@ impl CouponService for CouponServiceImpl {
             return Err(AppError::BadRequest("coupon_expired".into()));
         }
 
-        if coupon.min_order > 0 && order_amount < coupon.min_order {
+        if coupon.min_order.0 > 0 && order_amount.0 < coupon.min_order.0 {
             return Err(AppError::BadRequest("coupon_min_order_not_met".into()));
         }
 
@@ -190,13 +191,14 @@ impl CouponService for CouponServiceImpl {
         Ok(coupon)
     }
 
-    fn calculate_discount(&self, coupon: &Coupon, order_amount: i64) -> i64 {
+    fn calculate_discount(&self, coupon: &Coupon, order_amount: Price) -> Price {
         match coupon.coupon_type {
+            // Discount never exceeds the order amount.
             CouponType::Percent => {
-                let discount = order_amount * coupon.value / 100;
-                discount.min(order_amount)
+                let discount = Price(order_amount.0 * coupon.value.0 / 100);
+                discount.min_price(order_amount)
             }
-            CouponType::Fixed => coupon.value.min(order_amount),
+            CouponType::Fixed => coupon.value.min_price(order_amount),
         }
     }
 }
@@ -244,7 +246,7 @@ mod tests {
                     code: code.clone(),
                     title: "10% Off".into(),
                     coupon_type: Some("percent".into()),
-                    value: 10,
+                    value: Price(10),
                     min_order: None,
                     max_uses: None,
                     max_uses_per_user: None,
@@ -256,7 +258,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(c.code, code);
-        assert_eq!(c.value, 10);
+        assert_eq!(c.value.0, 10);
     }
 
     #[tokio::test]
@@ -272,7 +274,7 @@ mod tests {
                 code: dup_code.clone(),
                 title: "First".into(),
                 coupon_type: None,
-                value: 10,
+                value: Price(10),
                 min_order: None,
                 max_uses: None,
                 max_uses_per_user: None,
@@ -290,7 +292,7 @@ mod tests {
                     code: dup_code.clone(),
                     title: "Second".into(),
                     coupon_type: None,
-                    value: 20,
+                    value: Price(20),
                     min_order: None,
                     max_uses: None,
                     max_uses_per_user: None,
@@ -315,7 +317,7 @@ mod tests {
                     code: "X".into(),
                     title: "T".into(),
                     coupon_type: None,
-                    value: 10,
+                    value: Price(10),
                     min_order: None,
                     max_uses: None,
                     max_uses_per_user: None,
@@ -347,7 +349,7 @@ mod tests {
                     code: format!("UPD_{}", crate::utils::id::new_id()),
                     title: "Original".into(),
                     coupon_type: None,
-                    value: 10,
+                    value: Price(10),
                     min_order: None,
                     max_uses: None,
                     max_uses_per_user: None,
@@ -364,7 +366,7 @@ mod tests {
                 c.id,
                 UpdateCouponRequest {
                     title: Some("Updated".into()),
-                    value: Some(20),
+                    value: Some(Price(20)),
                     min_order: None,
                     max_uses: None,
                     max_uses_per_user: None,
@@ -377,7 +379,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(updated.title, "Updated");
-        assert_eq!(updated.value, 20);
+        assert_eq!(updated.value.0, 20);
     }
 
     #[tokio::test]
@@ -393,7 +395,7 @@ mod tests {
                     code: format!("DEL_{}", crate::utils::id::new_id()),
                     title: "Delete Me".into(),
                     coupon_type: None,
-                    value: 10,
+                    value: Price(10),
                     min_order: None,
                     max_uses: None,
                     max_uses_per_user: None,
@@ -427,7 +429,7 @@ mod tests {
                     code: code.clone(),
                     title: "Validate".into(),
                     coupon_type: None,
-                    value: 10,
+                    value: Price(10),
                     min_order: None,
                     max_uses: None,
                     max_uses_per_user: None,
@@ -439,7 +441,7 @@ mod tests {
             .unwrap();
 
         let validated = svc
-            .validate_coupon(Some(c.id), None, SnowflakeId(1), 1000, None)
+            .validate_coupon(Some(c.id), None, SnowflakeId(1), Price(1000), None)
             .await
             .unwrap();
         assert_eq!(validated.code, code);
@@ -458,7 +460,7 @@ mod tests {
                 code: code.clone(),
                 title: "By Code".into(),
                 coupon_type: None,
-                value: 10,
+                value: Price(10),
                 min_order: None,
                 max_uses: None,
                 max_uses_per_user: None,
@@ -470,7 +472,7 @@ mod tests {
         .unwrap();
 
         let validated = svc
-            .validate_coupon(None, Some(&code), SnowflakeId(1), 1000, None)
+            .validate_coupon(None, Some(&code), SnowflakeId(1), Price(1000), None)
             .await
             .unwrap();
         assert_eq!(validated.code, code);
@@ -481,7 +483,7 @@ mod tests {
         let pool = setup_pool().await;
         let svc = make_service(pool);
         let err = svc
-            .validate_coupon(None, None, SnowflakeId(1), 1000, None)
+            .validate_coupon(None, None, SnowflakeId(1), Price(1000), None)
             .await
             .unwrap_err();
         assert!(matches!(err, AppError::BadRequest(_)));
@@ -500,8 +502,8 @@ mod tests {
                     code: format!("MIN_{}", crate::utils::id::new_id()),
                     title: "Min Order".into(),
                     coupon_type: None,
-                    value: 10,
-                    min_order: Some(5000),
+                    value: Price(10),
+                    min_order: Some(Price(5000)),
                     max_uses: None,
                     max_uses_per_user: None,
                     starts_at: None,
@@ -512,7 +514,7 @@ mod tests {
             .unwrap();
 
         let err = svc
-            .validate_coupon(Some(c.id), None, SnowflakeId(1), 1000, None)
+            .validate_coupon(Some(c.id), None, SnowflakeId(1), Price(1000), None)
             .await
             .unwrap_err();
         assert!(matches!(err, AppError::BadRequest(ref s) if s == "coupon_min_order_not_met"));
@@ -531,7 +533,7 @@ mod tests {
                     code: format!("INACT_{}", crate::utils::id::new_id()),
                     title: "Inactive".into(),
                     coupon_type: None,
-                    value: 10,
+                    value: Price(10),
                     min_order: None,
                     max_uses: None,
                     max_uses_per_user: None,
@@ -552,7 +554,7 @@ mod tests {
         .unwrap();
 
         let err = svc
-            .validate_coupon(Some(c.id), None, SnowflakeId(1), 1000, None)
+            .validate_coupon(Some(c.id), None, SnowflakeId(1), Price(1000), None)
             .await
             .unwrap_err();
         assert!(matches!(err, AppError::BadRequest(ref s) if s == "coupon_not_active"));
@@ -568,8 +570,8 @@ mod tests {
             code: "P10".into(),
             title: "10%".into(),
             coupon_type: CouponType::Percent,
-            value: 10,
-            min_order: 0,
+            value: Price(10),
+            min_order: Price(0),
             max_uses: 0,
             used_count: 0,
             max_uses_per_user: 1,
@@ -579,8 +581,8 @@ mod tests {
             created_at: crate::utils::tz::now_utc(),
             updated_at: crate::utils::tz::now_utc(),
         };
-        assert_eq!(svc.calculate_discount(&coupon, 1000), 100);
-        assert_eq!(svc.calculate_discount(&coupon, 500), 50);
+        assert_eq!(svc.calculate_discount(&coupon, Price(1000)).0, 100);
+        assert_eq!(svc.calculate_discount(&coupon, Price(500)).0, 50);
     }
 
     #[tokio::test]
@@ -593,8 +595,8 @@ mod tests {
             code: "F200".into(),
             title: "200 off".into(),
             coupon_type: CouponType::Fixed,
-            value: 200,
-            min_order: 0,
+            value: Price(200),
+            min_order: Price(0),
             max_uses: 0,
             used_count: 0,
             max_uses_per_user: 1,
@@ -604,7 +606,7 @@ mod tests {
             created_at: crate::utils::tz::now_utc(),
             updated_at: crate::utils::tz::now_utc(),
         };
-        assert_eq!(svc.calculate_discount(&coupon, 1000), 200);
-        assert_eq!(svc.calculate_discount(&coupon, 100), 100);
+        assert_eq!(svc.calculate_discount(&coupon, Price(1000)).0, 200);
+        assert_eq!(svc.calculate_discount(&coupon, Price(100)).0, 100);
     }
 }

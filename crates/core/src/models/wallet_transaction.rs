@@ -1,3 +1,4 @@
+use crate::types::price::Price;
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 
@@ -43,8 +44,8 @@ pub struct WalletTransaction {
     pub wallet_id: SnowflakeId,
     pub user_id: SnowflakeId,
     pub entry_type: WalletEntryType,
-    pub amount: i64,
-    pub balance_after: i64,
+    pub amount: Price,
+    pub balance_after: Price,
     pub tx_type: WalletTxType,
     pub currency: String,
     pub transaction_no: String,
@@ -166,8 +167,8 @@ pub async fn tx_insert(
     wallet_id: SnowflakeId,
     user_id: SnowflakeId,
     entry_type: WalletEntryType,
-    amount: i64,
-    balance_after: i64,
+    amount: Price,
+    balance_after: Price,
     tx_type: WalletTxType,
     currency: &str,
     transaction_no: &str,
@@ -258,7 +259,7 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(found.amount, 1000);
+        assert_eq!(found.amount.0, 1000);
         assert_eq!(found.entry_type, WalletEntryType::Credit);
     }
 

@@ -1,10 +1,11 @@
 use crate::models::wallet_transaction::{WalletReferenceType, WalletTxType};
+use crate::types::price::Price;
 use crate::types::snowflake_id::SnowflakeId;
 
 pub struct CreateWalletOutboxCmd {
     pub user_id: SnowflakeId,
     pub currency: String,
-    pub amount: i64,
+    pub amount: Price,
     pub entry_type: String,
     pub tx_type: WalletTxType,
     pub transaction_no: String,

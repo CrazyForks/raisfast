@@ -1,3 +1,4 @@
+use crate::types::price::Price;
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 
@@ -21,7 +22,7 @@ pub struct WalletOutbox {
     pub id: SnowflakeId,
     pub user_id: SnowflakeId,
     pub currency: String,
-    pub amount: i64,
+    pub amount: Price,
     pub entry_type: String,
     pub tx_type: String,
     pub transaction_no: String,

@@ -61,6 +61,20 @@ impl DbBigint for &crate::types::snowflake_id::SnowflakeId {
     }
 }
 
+impl DbBigint for crate::types::price::Price {
+    type Output = i64;
+    fn to_bigint(self) -> Self::Output {
+        i64::from(self)
+    }
+}
+
+impl DbBigint for &crate::types::price::Price {
+    type Output = i64;
+    fn to_bigint(self) -> Self::Output {
+        i64::from(*self)
+    }
+}
+
 impl DbBigint for Option<i64> {
     type Output = Option<i64>;
     fn to_bigint(self) -> Self::Output {
@@ -83,6 +97,13 @@ impl DbBigint for Option<i32> {
 }
 
 impl DbBigint for Option<crate::types::snowflake_id::SnowflakeId> {
+    type Output = Option<i64>;
+    fn to_bigint(self) -> Self::Output {
+        self.map(i64::from)
+    }
+}
+
+impl DbBigint for Option<crate::types::price::Price> {
     type Output = Option<i64>;
     fn to_bigint(self) -> Self::Output {
         self.map(i64::from)

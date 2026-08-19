@@ -162,6 +162,7 @@ pub async fn count_by_user(
 #[cfg(test)]
 mod tests {
     use crate::db::DbDriver;
+    use crate::types::price::Price;
     use crate::types::snowflake_id::SnowflakeId;
 
     async fn setup_pool() -> crate::db::Pool {
@@ -196,7 +197,7 @@ mod tests {
                 fulfillment_type: "digital".to_string(),
                 delivery_hook: None,
                 weight: None,
-                price: 1000,
+                price: Price(1000),
                 currency: "CNY".to_string(),
                 attributes: None,
                 sort_order: 0,

@@ -1,3 +1,4 @@
+use crate::types::snowflake_id::SnowflakeId;
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "export-types")]
 use ts_rs::TS;
@@ -9,7 +10,7 @@ use crate::models::currencies::Currency;
 #[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Serialize, ToSchema)]
 pub struct CurrencyResponse {
-    pub id: String,
+    pub id: SnowflakeId,
     pub code: String,
     pub name: String,
     pub decimals: i64,
@@ -19,7 +20,7 @@ pub struct CurrencyResponse {
 impl From<Currency> for CurrencyResponse {
     fn from(c: Currency) -> Self {
         Self {
-            id: c.id.to_string(),
+            id: c.id,
             code: c.code,
             name: c.name,
             decimals: c.decimals,

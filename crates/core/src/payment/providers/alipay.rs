@@ -335,7 +335,7 @@ impl PaymentProvider for AlipayProvider {
 
         let biz = PrecreateBizContent {
             out_trade_no: order.id.to_string(),
-            total_amount: cents_to_amount(order.amount),
+            total_amount: cents_to_amount(order.amount.0),
             subject: order.title.clone(),
             timeout_express: Some("30m".to_string()),
         };

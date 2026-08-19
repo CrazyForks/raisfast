@@ -1,3 +1,5 @@
+use crate::types::price::Price;
+use crate::types::snowflake_id::SnowflakeId;
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "export-types")]
 use ts_rs::TS;
@@ -15,9 +17,9 @@ use crate::utils::tz::Timestamp;
 #[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Serialize, ToSchema)]
 pub struct WalletResponse {
-    pub id: String,
+    pub id: SnowflakeId,
     pub currency: String,
-    pub balance: i64,
+    pub balance: Price,
     pub status: WalletStatus,
     #[schema(value_type = String)]
     pub created_at: Timestamp,
@@ -29,7 +31,7 @@ impl WalletResponse {
     pub fn from_wallet(w: Wallet) -> AppResult<Self> {
         Ok(Self {
             status: w.status,
-            id: w.id.to_string(),
+            id: w.id,
             currency: w.currency,
             balance: w.balance,
             created_at: w.created_at,
@@ -42,10 +44,10 @@ impl WalletResponse {
 #[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Serialize, ToSchema)]
 pub struct WalletTransactionResponse {
-    pub id: String,
+    pub id: SnowflakeId,
     pub entry_type: WalletEntryType,
-    pub amount: i64,
-    pub balance_after: i64,
+    pub amount: Price,
+    pub balance_after: Price,
     pub tx_type: WalletTxType,
     pub currency: String,
     pub transaction_no: String,
@@ -63,7 +65,7 @@ impl WalletTransactionResponse {
             entry_type: tx.entry_type,
             tx_type: tx.tx_type,
             reference_type: tx.reference_type,
-            id: tx.id.to_string(),
+            id: tx.id,
             amount: tx.amount,
             balance_after: tx.balance_after,
             currency: tx.currency,
@@ -79,7 +81,7 @@ impl WalletTransactionResponse {
 #[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Deserialize, Validate, ToSchema)]
 pub struct AdminWalletOperationRequest {
-    pub user_id: String,
+    pub user_id: SnowflakeId,
     #[validate(
         length(min = 1),
         custom(function = "crate::dto::validate_currency_code")
@@ -87,8 +89,7 @@ pub struct AdminWalletOperationRequest {
     pub currency: String,
     #[validate(length(min = 1))]
     pub transaction_no: String,
-    #[validate(range(min = 1))]
-    pub amount: i64,
+    pub amount: Price,
     pub reference_type: Option<crate::models::wallet_transaction::WalletReferenceType>,
     pub reference_id: Option<String>,
     #[schema(value_type = Option<String>)]

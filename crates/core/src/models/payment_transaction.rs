@@ -1,3 +1,4 @@
+use crate::types::price::Price;
 use serde::{Deserialize, Serialize};
 
 use crate::errors::app_error::AppResult;
@@ -12,7 +13,7 @@ pub struct PaymentTransaction {
     pub order_id: Option<String>,
     pub user_id: SnowflakeId,
     pub tx_type: String,
-    pub amount: i64,
+    pub amount: Price,
     pub currency: String,
     pub provider_tx_id: String,
     pub status: String,
@@ -192,7 +193,7 @@ mod tests {
                 user_id: SnowflakeId(user_id),
                 order_id: Some("order-ref-1".into()),
                 title: "Test Payment".into(),
-                amount: 1000,
+                amount: Price(1000),
                 currency: "USD".into(),
                 channel_id: SnowflakeId(channel_id),
                 provider: "stripe".into(),
@@ -234,7 +235,7 @@ mod tests {
                 order_id: Some(format!("order-ref-{}", crate::utils::id::new_id())),
                 user_id: SnowflakeId(user_id),
                 tx_type: tx_type.into(),
-                amount: 1000,
+                amount: Price(1000),
                 currency: "USD".into(),
                 provider_tx_id: provider_tx_id.into(),
                 status: "succeeded".into(),
@@ -261,7 +262,7 @@ mod tests {
         assert_eq!(found.id, tx.id);
         assert_eq!(found.payment_order_id, SnowflakeId(po_id));
         assert_eq!(found.tx_type, "charge");
-        assert_eq!(found.amount, 1000);
+        assert_eq!(found.amount.0, 1000);
         assert_eq!(found.provider_tx_id, tx_id);
         assert_eq!(found.status, "succeeded");
     }

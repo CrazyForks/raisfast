@@ -6,14 +6,23 @@ use validator::Validate;
 
 use crate::models::user::UserRole;
 
-use super::validate_id_vec;
+fn validate_batch_ids(ids: &[String]) -> Result<(), validator::ValidationError> {
+    for id in ids {
+        if id.is_empty() || !id.chars().all(|c| c.is_ascii_alphanumeric()) {
+            let mut err = validator::ValidationError::new("invalid_id");
+            err.message = Some("invalid ID format".into());
+            return Err(err);
+        }
+    }
+    Ok(())
+}
 
 #[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Deserialize, Validate, ToSchema)]
 pub struct BatchRequest {
     #[validate(length(min = 1))]
     pub action: String,
-    #[validate(length(min = 1), custom(function = "validate_id_vec"))]
+    #[validate(length(min = 1), custom(function = "validate_batch_ids"))]
     pub ids: Vec<String>,
 }
 
@@ -22,7 +31,7 @@ pub struct BatchRequest {
 pub struct BatchRequestWithRole {
     #[validate(length(min = 1))]
     pub action: String,
-    #[validate(length(min = 1), custom(function = "validate_id_vec"))]
+    #[validate(length(min = 1), custom(function = "validate_batch_ids"))]
     pub ids: Vec<String>,
     pub role: Option<UserRole>,
 }

@@ -1,3 +1,4 @@
+use crate::types::snowflake_id::SnowflakeId;
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "export-types")]
 use ts_rs::TS;
@@ -20,9 +21,7 @@ pub struct CreatePostRequest {
     pub cover_image: Option<String>,
     pub image_ids: Option<String>,
     pub status: Option<PostStatus>,
-    #[validate(custom(function = "super::validate_optional_id"))]
-    pub category_id: Option<String>,
-    #[validate(custom(function = "super::validate_id_vec"))]
+    pub category_id: Option<SnowflakeId>,
     pub tag_ids: Option<Vec<String>>,
     pub meta_title: Option<String>,
     pub meta_description: Option<String>,
@@ -43,9 +42,7 @@ pub struct UpdatePostRequest {
     pub cover_image: Option<String>,
     pub image_ids: Option<String>,
     pub status: Option<PostStatus>,
-    #[validate(custom(function = "super::validate_optional_id"))]
-    pub category_id: Option<String>,
-    #[validate(custom(function = "super::validate_id_vec"))]
+    pub category_id: Option<SnowflakeId>,
     pub tag_ids: Option<Vec<String>>,
     pub meta_title: Option<String>,
     pub meta_description: Option<String>,
@@ -59,7 +56,7 @@ pub struct UpdatePostRequest {
 #[derive(Debug, Serialize, Deserialize, Clone, ToSchema)]
 #[non_exhaustive]
 pub struct PostResponse {
-    pub id: String,
+    pub id: SnowflakeId,
     pub title: String,
     pub slug: String,
     pub content: String,
@@ -91,8 +88,8 @@ pub struct PostResponse {
     pub published_at: Option<Timestamp>,
     pub title_highlight: Option<String>,
     pub excerpt_highlight: Option<String>,
-    pub created_by: Option<String>,
-    pub category_id: Option<String>,
+    pub created_by: Option<SnowflakeId>,
+    pub category_id: Option<SnowflakeId>,
     pub tenant_id: Option<String>,
 }
 
@@ -100,7 +97,7 @@ pub struct PostResponse {
 pub struct PostListQuery {
     pub page: Option<i64>,
     pub page_size: Option<i64>,
-    pub category_id: Option<String>,
+    pub category_id: Option<SnowflakeId>,
     pub tag_id: Option<String>,
     pub q: Option<String>,
 }
@@ -118,7 +115,7 @@ impl PostResponse {
         let status = p.status;
         let comment_status = p.comment_status;
         Ok(Self {
-            id: p.id.to_string(),
+            id: p.id,
             title: p.title,
             slug: p.slug,
             content: p.content,
@@ -146,8 +143,8 @@ impl PostResponse {
             published_at: p.published_at,
             title_highlight: None,
             excerpt_highlight: None,
-            created_by: Some(p.created_by.to_string()),
-            category_id: p.category_id.map(|id| id.to_string()),
+            created_by: Some(p.created_by),
+            category_id: p.category_id,
             category_name: None,
             tenant_id: p.tenant_id,
         })

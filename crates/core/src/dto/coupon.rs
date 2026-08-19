@@ -1,3 +1,5 @@
+use crate::types::price::Price;
+use crate::types::snowflake_id::SnowflakeId;
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "export-types")]
 use ts_rs::TS;
@@ -12,9 +14,8 @@ pub struct CreateCouponRequest {
     #[validate(length(min = 1, max = 255))]
     pub title: String,
     pub coupon_type: Option<String>,
-    #[validate(range(min = 1))]
-    pub value: i64,
-    pub min_order: Option<i64>,
+    pub value: Price,
+    pub min_order: Option<Price>,
     pub max_uses: Option<i64>,
     pub max_uses_per_user: Option<i64>,
     pub starts_at: Option<String>,
@@ -25,8 +26,8 @@ pub struct CreateCouponRequest {
 #[derive(Debug, Clone, Serialize, Deserialize, Validate, ToSchema)]
 pub struct UpdateCouponRequest {
     pub title: Option<String>,
-    pub value: Option<i64>,
-    pub min_order: Option<i64>,
+    pub value: Option<Price>,
+    pub min_order: Option<Price>,
     pub max_uses: Option<i64>,
     pub max_uses_per_user: Option<i64>,
     pub starts_at: Option<String>,
@@ -37,14 +38,14 @@ pub struct UpdateCouponRequest {
 #[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Serialize, ToSchema)]
 pub struct CouponResponse {
-    pub id: String,
+    pub id: SnowflakeId,
     pub code: String,
     pub title: String,
     pub coupon_type: String,
     #[cfg_attr(feature = "export-types", ts(type = "number"))]
-    pub value: i64,
+    pub value: Price,
     #[cfg_attr(feature = "export-types", ts(type = "number"))]
-    pub min_order: i64,
+    pub min_order: Price,
     #[cfg_attr(feature = "export-types", ts(type = "number"))]
     pub max_uses: i64,
     #[cfg_attr(feature = "export-types", ts(type = "number"))]
@@ -61,7 +62,7 @@ pub struct CouponResponse {
 impl From<crate::models::coupon::Coupon> for CouponResponse {
     fn from(c: crate::models::coupon::Coupon) -> Self {
         Self {
-            id: c.id.to_string(),
+            id: c.id,
             code: c.code,
             title: c.title,
             coupon_type: c.coupon_type.to_string(),

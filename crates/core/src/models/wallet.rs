@@ -1,3 +1,4 @@
+use crate::types::price::Price;
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 
@@ -17,7 +18,7 @@ pub struct Wallet {
     pub id: SnowflakeId,
     pub user_id: SnowflakeId,
     pub currency: String,
-    pub balance: i64,
+    pub balance: Price,
     pub version: i64,
     pub status: WalletStatus,
     pub created_at: Timestamp,
@@ -265,7 +266,7 @@ mod tests {
         let w = create(&pool, user.id, "CNY").await.unwrap();
         assert_eq!(w.user_id, user.id);
         assert_eq!(w.currency, "CNY");
-        assert_eq!(w.balance, 0);
+        assert_eq!(w.balance.0, 0);
         assert_eq!(w.version, 1);
         assert_eq!(w.status, WalletStatus::Active);
     }
@@ -348,7 +349,7 @@ mod tests {
         let user = insert_user(&pool).await;
         let w = find_or_create(&pool, user.id, "CNY").await.unwrap();
         assert_eq!(w.currency, "CNY");
-        assert_eq!(w.balance, 0);
+        assert_eq!(w.balance.0, 0);
     }
 
     #[tokio::test]

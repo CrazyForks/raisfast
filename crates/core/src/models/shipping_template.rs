@@ -1,3 +1,4 @@
+use crate::types::price::Price;
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "export-types")]
 use ts_rs::TS;
@@ -32,10 +33,10 @@ pub struct ShippingTemplate {
     #[sqlx(rename = "type")]
     pub template_type: ShippingTemplateType,
     pub first_unit: i64,
-    pub first_price: i64,
+    pub first_price: Price,
     pub additional_unit: i64,
-    pub additional_price: i64,
-    pub free_shipping_amount: i64,
+    pub additional_price: Price,
+    pub free_shipping_amount: Option<Price>,
     #[cfg_attr(feature = "export-types", ts(type = "unknown"))]
     pub regions: Option<serde_json::Value>,
     pub status: ShippingTemplateStatus,
@@ -129,7 +130,7 @@ pub async fn update(
             "first_price" => cmd.first_price.unwrap_or(existing.first_price),
             "additional_unit" => cmd.additional_unit.unwrap_or(existing.additional_unit),
             "additional_price" => cmd.additional_price.unwrap_or(existing.additional_price),
-            "free_shipping_amount" => cmd.free_shipping_amount.unwrap_or(existing.free_shipping_amount),
+            "free_shipping_amount" => cmd.free_shipping_amount.or(existing.free_shipping_amount),
             "regions" => cmd.regions.as_ref()
                 .map(|r| serde_json::from_str::<serde_json::Value>(r).unwrap_or_else(|_| serde_json::json!([])))
                 .or(existing.regions.clone())
@@ -171,10 +172,10 @@ mod tests {
             name: name.to_string(),
             template_type: "weight".to_string(),
             first_unit: 1000,
-            first_price: 500,
+            first_price: Price(500),
             additional_unit: 500,
-            additional_price: 200,
-            free_shipping_amount: 0,
+            additional_price: Price(200),
+            free_shipping_amount: Some(Price(0)),
             regions: "[]".to_string(),
         }
     }
@@ -189,7 +190,7 @@ mod tests {
         assert_eq!(found.name, "Standard");
         assert_eq!(found.template_type, ShippingTemplateType::Weight);
         assert_eq!(found.first_unit, 1000);
-        assert_eq!(found.first_price, 500);
+        assert_eq!(found.first_price.0, 500);
         assert_eq!(found.status, ShippingTemplateStatus::Active);
     }
 
@@ -257,7 +258,7 @@ mod tests {
                 name: Some("New".into()),
                 template_type: None,
                 first_unit: None,
-                first_price: Some(800),
+                first_price: Some(Price(800)),
                 additional_unit: None,
                 additional_price: None,
                 free_shipping_amount: None,
@@ -271,7 +272,7 @@ mod tests {
         assert!(ok);
         let found = super::find_by_id(&pool, t.id, None).await.unwrap().unwrap();
         assert_eq!(found.name, "New");
-        assert_eq!(found.first_price, 800);
+        assert_eq!(found.first_price.0, 800);
     }
 
     #[tokio::test]

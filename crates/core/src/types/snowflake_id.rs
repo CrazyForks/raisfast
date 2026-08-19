@@ -189,6 +189,20 @@ impl<'de> serde::Deserialize<'de> for SnowflakeId {
     }
 }
 
+impl utoipa::PartialSchema for SnowflakeId {
+    fn schema() -> utoipa::openapi::RefOr<utoipa::openapi::schema::Schema> {
+        utoipa::openapi::ObjectBuilder::new()
+            .schema_type(utoipa::openapi::schema::Type::String)
+            .into()
+    }
+}
+
+impl utoipa::ToSchema for SnowflakeId {
+    fn name() -> std::borrow::Cow<'static, str> {
+        std::borrow::Cow::Borrowed("String")
+    }
+}
+
 #[cfg(feature = "export-types")]
 impl ts_rs::TS for SnowflakeId {
     type WithoutGenerics = Self;

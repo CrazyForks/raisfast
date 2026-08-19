@@ -1,3 +1,4 @@
+use crate::types::snowflake_id::SnowflakeId;
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "export-types")]
 use ts_rs::TS;
@@ -9,7 +10,7 @@ use crate::models::page::{Page, PageStatus};
 #[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Serialize, ToSchema)]
 pub struct PageResponse {
-    pub id: String,
+    pub id: SnowflakeId,
     pub title: String,
     pub slug: String,
     pub content: Option<String>,
@@ -25,7 +26,7 @@ pub struct PageResponse {
 impl PageResponse {
     pub fn from_page(p: Page) -> Self {
         Self {
-            id: p.id.to_string(),
+            id: p.id,
             title: p.title,
             slug: p.slug,
             content: p.content,
@@ -51,7 +52,7 @@ pub struct CreatePageRequest {
     pub meta_description: Option<String>,
     pub og_image: Option<String>,
     pub template: Option<String>,
-    pub parent_id: Option<String>,
+    pub parent_id: Option<SnowflakeId>,
     pub sort_order: Option<i64>,
     pub status: Option<PageStatus>,
     pub cover_image: Option<String>,
@@ -69,7 +70,7 @@ pub struct UpdatePageRequest {
     pub meta_description: Option<String>,
     pub og_image: Option<String>,
     pub template: Option<String>,
-    pub parent_id: Option<Option<String>>,
+    pub parent_id: Option<Option<SnowflakeId>>,
     pub sort_order: Option<i64>,
     pub status: Option<PageStatus>,
     pub cover_image: Option<String>,
@@ -99,7 +100,7 @@ pub struct UpdateStatusRequest {
 #[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct ReorderItem {
-    pub id: String,
+    pub id: SnowflakeId,
     pub sort_order: i64,
 }
 

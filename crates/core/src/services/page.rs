@@ -47,7 +47,7 @@ pub trait PageService: Send + Sync {
         status: PageStatus,
         auth: &AuthUser,
     ) -> AppResult<Page>;
-    async fn reorder(&self, items: Vec<(String, i64)>, auth: &AuthUser) -> AppResult<()>;
+    async fn reorder(&self, items: Vec<(SnowflakeId, i64)>, auth: &AuthUser) -> AppResult<()>;
     async fn sitemap(&self, auth: &AuthUser) -> AppResult<Vec<(String, Option<String>)>>;
 }
 
@@ -152,10 +152,9 @@ impl PageService for PageServiceImpl {
         Ok(updated)
     }
 
-    async fn reorder(&self, items: Vec<(String, i64)>, auth: &AuthUser) -> AppResult<()> {
+    async fn reorder(&self, items: Vec<(SnowflakeId, i64)>, auth: &AuthUser) -> AppResult<()> {
         let mut resolved = Vec::new();
-        for (raw_id, sort_order) in items {
-            let id = crate::types::snowflake_id::parse_id(&raw_id)?;
+        for (id, sort_order) in items {
             let p = page::find_by_id(&self.pool, id, auth.tenant_id())
                 .await?
                 .ok_or_else(|| AppError::not_found("page"))?;

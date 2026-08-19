@@ -1,3 +1,4 @@
+use crate::types::price::Price;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -16,9 +17,9 @@ pub trait CartService: Send + Sync {
         &self,
         auth: &AuthUser,
         user_id: SnowflakeId,
-        product_id: String,
+        product_id: SnowflakeId,
         quantity: i64,
-        variant_id: Option<String>,
+        variant_id: Option<SnowflakeId>,
         attributes: Option<String>,
     ) -> AppResult<()>;
 
@@ -67,12 +68,11 @@ impl CartService for CartServiceImpl {
         &self,
         auth: &AuthUser,
         user_id: SnowflakeId,
-        product_id: String,
+        product_id: SnowflakeId,
         quantity: i64,
-        variant_id: Option<String>,
+        variant_id: Option<SnowflakeId>,
         attributes: Option<String>,
     ) -> AppResult<()> {
-        let product_id = crate::types::snowflake_id::parse_id(&product_id)?;
         let product = crate::models::product::find_by_id(&self.pool, product_id, auth.tenant_id())
             .await?
             .ok_or_else(|| AppError::not_found("product"))?;
@@ -81,10 +81,7 @@ impl CartService for CartServiceImpl {
             return Err(AppError::BadRequest("product_not_active".into()));
         }
 
-        let resolved_variant_id: Option<i64> = match variant_id.as_deref() {
-            Some(vid) => Some(*crate::types::snowflake_id::parse_id(vid)?),
-            None => None,
-        };
+        let resolved_variant_id: Option<i64> = variant_id.map(|v| *v);
 
         if quantity > 10000 {
             return Err(AppError::BadRequest("quantity_exceeds_limit".into()));
@@ -183,7 +180,7 @@ impl CartService for CartServiceImpl {
                 .await?;
 
         let mut response_items = Vec::with_capacity(items.len());
-        let mut total: i64 = 0;
+        let mut total = Price(0);
 
         for item in &items {
             let product =
@@ -191,18 +188,24 @@ impl CartService for CartServiceImpl {
                     .await?;
 
             let (title, price, cover_url, slug) = match product {
-                Some(ref p) => (p.title.clone(), p.price, p.cover_url.clone(), p.slug.clone()),
-                None => ("(deleted)".to_string(), 0, None, None),
+                Some(ref p) => (
+                    p.title.clone(),
+                    p.price,
+                    p.cover_url.clone(),
+                    p.slug.clone(),
+                ),
+                None => ("(deleted)".to_string(), Price(0), None, None),
             };
 
-            let line_total = price.checked_mul(item.quantity).unwrap_or(0);
-            total = total.checked_add(line_total).unwrap_or(i64::MAX);
+            let line_total = price.checked_mul_qty(item.quantity).unwrap_or(Price(0));
+            total = total
+                .checked_add_price(line_total)
+                .unwrap_or(Price(i64::MAX));
 
             response_items.push(CartItemResponse {
-                id: item.id.to_string(),
-                product_id: slug
-                    .filter(|s| !s.is_empty())
-                    .unwrap_or_else(|| item.product_id.to_string()),
+                id: item.id,
+                product_id: item.product_id,
+                product_slug: slug.filter(|s| !s.is_empty()),
                 quantity: item.quantity,
                 attributes: item.attributes.clone(),
                 title,
@@ -240,8 +243,8 @@ impl CartService for CartServiceImpl {
             return Err(AppError::BadRequest("cart_empty".into()));
         }
 
-        let mut order_items_data: Vec<(i64, i64, crate::models::product::Product)> = Vec::new();
-        let mut subtotal: i64 = 0;
+        let mut order_items_data: Vec<(i64, Price, crate::models::product::Product)> = Vec::new();
+        let mut subtotal = Price(0);
 
         for item in &cart_items {
             let product =
@@ -255,10 +258,10 @@ impl CartService for CartServiceImpl {
 
             let line_total = product
                 .price
-                .checked_mul(item.quantity)
+                .checked_mul_qty(item.quantity)
                 .ok_or_else(|| AppError::BadRequest("line_total_overflow".into()))?;
             subtotal = subtotal
-                .checked_add(line_total)
+                .checked_add_price(line_total)
                 .ok_or_else(|| AppError::BadRequest("subtotal_overflow".into()))?;
             order_items_data.push((item.quantity, line_total, product));
         }
@@ -273,8 +276,8 @@ impl CartService for CartServiceImpl {
                     user_id,
                     order_no,
                     subtotal,
-                    discount_amount: 0,
-                    shipping_amount: 0,
+                    discount_amount: Price(0),
+                    shipping_amount: Price(0),
                     total_amount,
                     currency: "CNY".into(),
                     buyer_name: None,
@@ -282,7 +285,7 @@ impl CartService for CartServiceImpl {
                     buyer_email: None,
                     shipping_address: None,
                     remark: None,
-                    tax_amount: 0,
+                    tax_amount: Price(0),
                     coupon_id: None,
                     shipping_address_id: None,
                     billing_address_id: None,
@@ -303,7 +306,7 @@ impl CartService for CartServiceImpl {
                     unit_price: product.price,
                     quantity: *quantity,
                     subtotal: *line_total,
-                    tax_amount: 0,
+                    tax_amount: Price(0),
                     cover_url: product.cover_url.clone(),
                     attributes: product.attributes.as_ref().map(|v| v.to_string()),
                 });

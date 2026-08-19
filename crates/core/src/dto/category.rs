@@ -1,19 +1,18 @@
+use crate::types::snowflake_id::SnowflakeId;
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "export-types")]
 use ts_rs::TS;
 use utoipa::ToSchema;
 use validator::Validate;
 
-use super::validate_optional_id;
-
 #[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Serialize, ToSchema)]
 pub struct CategoryResponse {
-    pub id: String,
+    pub id: SnowflakeId,
     pub name: String,
     pub slug: String,
     pub description: Option<String>,
-    pub parent_id: Option<String>,
+    pub parent_id: Option<SnowflakeId>,
     #[cfg_attr(feature = "export-types", ts(type = "number"))]
     pub sort_order: i64,
     pub cover_image: Option<String>,
@@ -29,11 +28,11 @@ pub struct CategoryResponse {
 impl CategoryResponse {
     pub fn from_category(cat: crate::models::category::Category) -> Self {
         Self {
-            id: cat.id.to_string(),
+            id: cat.id,
             name: cat.name,
             slug: cat.slug,
             description: cat.description,
-            parent_id: cat.parent_id.map(|v| v.to_string()),
+            parent_id: cat.parent_id,
             sort_order: cat.sort_order,
             cover_image: cat.cover_image,
             meta_title: cat.meta_title,
@@ -54,8 +53,7 @@ pub struct CreateCategoryRequest {
     pub name: String,
     pub slug: Option<String>,
     pub description: Option<String>,
-    #[validate(custom(function = "validate_optional_id"))]
-    pub parent_id: Option<String>,
+    pub parent_id: Option<SnowflakeId>,
     pub sort_order: Option<i64>,
     pub cover_image: Option<String>,
     pub meta_title: Option<String>,
@@ -72,8 +70,7 @@ pub struct UpdateCategoryRequest {
     pub name: Option<String>,
     pub slug: Option<String>,
     pub description: Option<String>,
-    #[validate(custom(function = "validate_optional_id"))]
-    pub parent_id: Option<String>,
+    pub parent_id: Option<SnowflakeId>,
     pub sort_order: Option<i64>,
     pub cover_image: Option<String>,
     pub meta_title: Option<String>,

@@ -1,15 +1,14 @@
+use crate::types::snowflake_id::SnowflakeId;
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "export-types")]
 use ts_rs::TS;
 use utoipa::ToSchema;
 use validator::Validate;
 
-use super::validate_optional_id;
-
 #[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Serialize, ToSchema)]
 pub struct ProductCategoryResponse {
-    pub id: String,
+    pub id: SnowflakeId,
     pub name: String,
     pub slug: String,
     pub description: Option<String>,
@@ -21,7 +20,7 @@ pub struct ProductCategoryResponse {
     pub og_title: Option<String>,
     pub og_description: Option<String>,
     pub og_image: Option<String>,
-    pub parent_id: Option<String>,
+    pub parent_id: Option<SnowflakeId>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -29,7 +28,7 @@ pub struct ProductCategoryResponse {
 impl ProductCategoryResponse {
     pub fn from_category(cat: crate::models::product_category::ProductCategory) -> Self {
         Self {
-            id: cat.id.to_string(),
+            id: cat.id,
             name: cat.name,
             slug: cat.slug,
             description: cat.description,
@@ -40,7 +39,7 @@ impl ProductCategoryResponse {
             og_title: cat.og_title,
             og_description: cat.og_description,
             og_image: cat.og_image,
-            parent_id: cat.parent_id.map(|v| v.to_string()),
+            parent_id: cat.parent_id,
             created_at: cat.created_at.to_rfc3339(),
             updated_at: cat.updated_at.to_rfc3339(),
         }
@@ -53,8 +52,7 @@ pub struct CreateProductCategoryRequest {
     #[validate(length(min = 1, max = 100))]
     pub name: String,
     pub description: Option<String>,
-    #[validate(custom(function = "validate_optional_id"))]
-    pub parent_id: Option<String>,
+    pub parent_id: Option<SnowflakeId>,
     pub sort_order: Option<i64>,
     pub cover_image: Option<String>,
     pub meta_title: Option<String>,
@@ -70,8 +68,7 @@ pub struct UpdateProductCategoryRequest {
     #[validate(length(min = 1, max = 100))]
     pub name: Option<String>,
     pub description: Option<String>,
-    #[validate(custom(function = "validate_optional_id"))]
-    pub parent_id: Option<String>,
+    pub parent_id: Option<SnowflakeId>,
     pub sort_order: Option<i64>,
     pub cover_image: Option<String>,
     pub meta_title: Option<String>,

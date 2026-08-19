@@ -1,3 +1,5 @@
+use crate::types::price::Price;
+use crate::types::snowflake_id::SnowflakeId;
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "export-types")]
 use ts_rs::TS;
@@ -10,10 +12,8 @@ pub struct AdminProductListQuery {
     pub page_size: Option<i64>,
     pub keyword: Option<String>,
     pub status: Option<String>,
-    pub category_id: Option<String>,
+    pub category_id: Option<SnowflakeId>,
 }
-
-use super::validate_optional_id;
 
 #[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Clone, Serialize, Deserialize, Validate, ToSchema)]
@@ -22,13 +22,12 @@ pub struct CreateProductRequest {
     pub title: String,
     pub description: Option<String>,
     pub cover_url: Option<String>,
-    #[validate(custom(function = "validate_optional_id"))]
-    pub category_id: Option<String>,
+    pub category_id: Option<SnowflakeId>,
     pub product_type: Option<String>,
     pub fulfillment_type: Option<String>,
     pub delivery_hook: Option<String>,
     pub weight: Option<i64>,
-    pub price: i64,
+    pub price: Price,
     pub currency: Option<String>,
     pub attributes: Option<String>,
     pub sort_order: Option<i64>,
@@ -36,7 +35,7 @@ pub struct CreateProductRequest {
     pub content: Option<String>,
     #[cfg_attr(feature = "export-types", ts(type = "unknown"))]
     pub image_ids: Option<String>,
-    pub original_price: Option<i64>,
+    pub original_price: Option<Price>,
     #[cfg_attr(feature = "export-types", ts(type = "unknown"))]
     pub specs: Option<String>,
     pub unit: Option<String>,
@@ -49,8 +48,8 @@ pub struct CreateProductRequest {
     pub og_description: Option<String>,
     pub og_image: Option<String>,
     pub stock: Option<i64>,
-    pub cost_price: Option<i64>,
-    pub sale_price: Option<i64>,
+    pub cost_price: Option<Price>,
+    pub sale_price: Option<Price>,
     pub has_variants: Option<bool>,
     pub tag_ids: Option<String>,
 }
@@ -62,13 +61,12 @@ pub struct UpdateProductRequest {
     pub title: Option<String>,
     pub description: Option<String>,
     pub cover_url: Option<String>,
-    #[validate(custom(function = "validate_optional_id"))]
-    pub category_id: Option<String>,
+    pub category_id: Option<SnowflakeId>,
     pub product_type: Option<String>,
     pub fulfillment_type: Option<String>,
     pub delivery_hook: Option<String>,
     pub weight: Option<i64>,
-    pub price: Option<i64>,
+    pub price: Option<Price>,
     pub currency: Option<String>,
     pub status: Option<String>,
     pub attributes: Option<String>,
@@ -78,7 +76,7 @@ pub struct UpdateProductRequest {
     pub content: Option<String>,
     #[cfg_attr(feature = "export-types", ts(type = "unknown"))]
     pub image_ids: Option<String>,
-    pub original_price: Option<i64>,
+    pub original_price: Option<Price>,
     #[cfg_attr(feature = "export-types", ts(type = "unknown"))]
     pub specs: Option<String>,
     pub unit: Option<String>,
@@ -91,8 +89,8 @@ pub struct UpdateProductRequest {
     pub og_description: Option<String>,
     pub og_image: Option<String>,
     pub stock: Option<i64>,
-    pub cost_price: Option<i64>,
-    pub sale_price: Option<i64>,
+    pub cost_price: Option<Price>,
+    pub sale_price: Option<Price>,
     pub has_variants: Option<bool>,
     pub tag_ids: Option<String>,
 }
@@ -100,8 +98,8 @@ pub struct UpdateProductRequest {
 #[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Serialize, ToSchema)]
 pub struct ProductResponse {
-    pub id: String,
-    pub category_id: Option<String>,
+    pub id: SnowflakeId,
+    pub category_id: Option<SnowflakeId>,
     pub title: String,
     pub description: Option<String>,
     pub cover_url: Option<String>,
@@ -111,7 +109,7 @@ pub struct ProductResponse {
     #[cfg_attr(feature = "export-types", ts(type = "number"))]
     pub weight: Option<i64>,
     #[cfg_attr(feature = "export-types", ts(type = "number"))]
-    pub price: i64,
+    pub price: Price,
     pub currency: String,
     pub status: String,
     #[cfg_attr(feature = "export-types", ts(type = "unknown"))]
@@ -123,7 +121,7 @@ pub struct ProductResponse {
     #[cfg_attr(feature = "export-types", ts(type = "unknown"))]
     pub image_ids: Option<String>,
     #[cfg_attr(feature = "export-types", ts(type = "number"))]
-    pub original_price: Option<i64>,
+    pub original_price: Option<Price>,
     #[cfg_attr(feature = "export-types", ts(type = "unknown"))]
     pub specs: Option<serde_json::Value>,
     pub unit: String,
@@ -144,9 +142,9 @@ pub struct ProductResponse {
     #[cfg_attr(feature = "export-types", ts(type = "number"))]
     pub stock: i64,
     #[cfg_attr(feature = "export-types", ts(type = "number"))]
-    pub cost_price: Option<i64>,
+    pub cost_price: Option<Price>,
     #[cfg_attr(feature = "export-types", ts(type = "number"))]
-    pub sale_price: Option<i64>,
+    pub sale_price: Option<Price>,
     pub has_variants: bool,
     #[cfg_attr(feature = "export-types", ts(type = "number"))]
     pub version: i64,
@@ -158,8 +156,8 @@ pub struct ProductResponse {
 impl From<crate::models::product::Product> for ProductResponse {
     fn from(p: crate::models::product::Product) -> Self {
         Self {
-            id: p.id.to_string(),
-            category_id: p.category_id.map(|c| c.to_string()),
+            id: p.id,
+            category_id: p.category_id,
             title: p.title,
             description: p.description,
             cover_url: p.cover_url,

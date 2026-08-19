@@ -1,3 +1,4 @@
+use crate::types::snowflake_id::SnowflakeId;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 #[cfg(feature = "export-types")]
@@ -10,7 +11,7 @@ use crate::models::user::{RegisteredVia, User, UserRole, UserStatus};
 use crate::models::user_credential::AuthType;
 use crate::utils::tz::Timestamp;
 
-use super::validate_password;
+use super::{validate_password, validate_username};
 
 pub type SocialLinks = HashMap<String, String>;
 pub type UserMetadata = serde_json::Value;
@@ -20,7 +21,7 @@ pub type UserMetadata = serde_json::Value;
 pub struct RegisterRequest {
     #[validate(email)]
     pub email: String,
-    #[validate(length(min = 2, max = 50))]
+    #[validate(custom(function = "validate_username"))]
     pub username: String,
     #[validate(length(min = 8, max = 128), custom(function = "validate_password"))]
     pub password: String,
@@ -31,7 +32,7 @@ pub struct RegisterRequest {
 pub struct AdminCreateUserRequest {
     #[validate(email)]
     pub email: String,
-    #[validate(length(min = 2, max = 50))]
+    #[validate(custom(function = "validate_username"))]
     pub username: String,
     #[validate(length(min = 8, max = 128), custom(function = "validate_password"))]
     pub password: String,
@@ -57,7 +58,7 @@ pub struct RefreshRequest {
 #[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Deserialize, Validate, ToSchema)]
 pub struct UpdateUserRequest {
-    #[validate(length(min = 2, max = 50))]
+    #[validate(custom(function = "validate_username"))]
     pub username: Option<String>,
     pub bio: Option<String>,
     pub website: Option<String>,
@@ -153,7 +154,7 @@ pub struct BindEmailRequest {
 #[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Serialize, ToSchema)]
 pub struct CredentialResponse {
-    pub id: String,
+    pub id: SnowflakeId,
     pub auth_type: AuthType,
     pub identifier: String,
     pub verified: bool,
@@ -166,7 +167,7 @@ pub struct CredentialResponse {
 impl CredentialResponse {
     pub fn from_credential(c: crate::models::user_credential::UserCredential) -> AppResult<Self> {
         Ok(Self {
-            id: c.id.to_string(),
+            id: c.id,
             auth_type: c.auth_type,
             identifier: c.identifier,
             verified: c.verified,
@@ -205,7 +206,7 @@ pub struct ResendVerificationRequest {
 #[derive(Debug, Serialize, Deserialize, Clone, ToSchema)]
 #[non_exhaustive]
 pub struct UserResponse {
-    pub id: String,
+    pub id: SnowflakeId,
     pub email: Option<String>,
     pub phone: Option<String>,
     pub username: String,
@@ -258,7 +259,7 @@ impl UserResponse {
         let status = user.status;
         let registered_via = user.registered_via;
         Ok(Self {
-            id: user.id.to_string(),
+            id: user.id,
             email,
             phone,
             username: user.username,
@@ -345,6 +346,46 @@ mod tests {
     }
 
     #[test]
+    fn register_request_username_valid() {
+        for name in [
+            "user",
+            "test_user",
+            "ab.cd",
+            "ab-cd",
+            "User2026",
+            &"a".repeat(128),
+        ] {
+            let req = RegisterRequest {
+                email: "test@example.com".to_string(),
+                username: name.to_string(),
+                password: "Password1".to_string(),
+            };
+            assert!(req.validate().is_ok(), "expected valid: {name}");
+        }
+    }
+
+    #[test]
+    fn register_request_username_invalid() {
+        for name in [
+            "abc",
+            "a.b",
+            "  spaced  ",
+            "_underscore",
+            "has space",
+            "中文用户名",
+            &"a".repeat(129),
+            "user\u{200B}name",
+        ] {
+            let req = RegisterRequest {
+                email: "test@example.com".to_string(),
+                username: name.to_string(),
+                password: "Password1".to_string(),
+            };
+            assert!(req.validate().is_err(), "expected invalid: {name:?}");
+        }
+    }
+
+    #[test]
     fn login_request_valid() {
         let req = LoginRequest {
             email: "test@example.com".to_string(),
@@ -398,7 +439,7 @@ mod tests {
     #[test]
     fn user_response_from_user_serializes() {
         let resp = UserResponse {
-            id: "doc-123".to_string(),
+            id: SnowflakeId::new(123),
             email: Some("test@example.com".to_string()),
             phone: None,
             username: "test".to_string(),
@@ -417,6 +458,6 @@ mod tests {
             updated_at: "2025-01-01T00:00:00Z".parse().unwrap(),
         };
         let json = serde_json::to_string(&resp).unwrap();
-        assert!(json.contains("\"id\":\"doc-123\""));
+        assert!(json.contains("\"id\":\"123\""));
     }
 }

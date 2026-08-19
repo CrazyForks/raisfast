@@ -1,21 +1,20 @@
+use crate::types::price::Price;
+use crate::types::snowflake_id::SnowflakeId;
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "export-types")]
 use ts_rs::TS;
 use utoipa::ToSchema;
 use validator::Validate;
 
-use super::validate_optional_id;
-
 #[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Clone, Serialize, Deserialize, Validate, ToSchema)]
 pub struct CreateProductVariantRequest {
-    #[validate(custom(function = "validate_optional_id"))]
-    pub product_id: String,
+    pub product_id: SnowflakeId,
     pub sku: Option<String>,
     #[validate(length(min = 1, max = 200))]
     pub title: String,
-    pub price: i64,
-    pub original_price: Option<i64>,
+    pub price: Price,
+    pub original_price: Option<Price>,
     pub stock: Option<i64>,
     pub attributes: Option<String>,
     pub image_url: Option<String>,
@@ -30,8 +29,8 @@ pub struct UpdateProductVariantRequest {
     pub sku: Option<String>,
     #[validate(length(min = 1, max = 200))]
     pub title: Option<String>,
-    pub price: Option<i64>,
-    pub original_price: Option<i64>,
+    pub price: Option<Price>,
+    pub original_price: Option<Price>,
     pub stock: Option<i64>,
     pub attributes: Option<String>,
     pub image_url: Option<String>,
@@ -43,12 +42,12 @@ pub struct UpdateProductVariantRequest {
 #[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Serialize, ToSchema)]
 pub struct ProductVariantResponse {
-    pub id: String,
+    pub id: SnowflakeId,
     pub sku: Option<String>,
     pub title: String,
     #[cfg_attr(feature = "export-types", ts(type = "number"))]
-    pub price: i64,
-    pub original_price: Option<i64>,
+    pub price: Price,
+    pub original_price: Option<Price>,
     #[cfg_attr(feature = "export-types", ts(type = "number"))]
     pub stock: i64,
     #[cfg_attr(feature = "export-types", ts(type = "unknown"))]
@@ -65,7 +64,7 @@ pub struct ProductVariantResponse {
 impl From<crate::models::product_variant::ProductVariant> for ProductVariantResponse {
     fn from(v: crate::models::product_variant::ProductVariant) -> Self {
         Self {
-            id: v.id.to_string(),
+            id: v.id,
             sku: v.sku,
             title: v.title,
             price: v.price,

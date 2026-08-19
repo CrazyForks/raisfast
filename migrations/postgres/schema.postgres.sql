@@ -1039,6 +1039,20 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_product_comments_unique ON product_comment
 CREATE INDEX IF NOT EXISTS idx_product_comments_user ON product_comments(user_id);
 CREATE INDEX IF NOT EXISTS idx_product_comments_status ON product_comments(status);
 CREATE INDEX IF NOT EXISTS idx_product_comments_tenant ON product_comments(tenant_id);
+-- Product Favorites (wishlist)
+CREATE TABLE IF NOT EXISTS product_favorites (
+    id BIGINT PRIMARY KEY,
+    tenant_id VARCHAR(64) NOT NULL DEFAULT 'default',
+    user_id BIGINT NOT NULL,
+    product_id BIGINT NOT NULL,
+    created_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_product_favorites_unique ON product_favorites(user_id, product_id);
+CREATE INDEX IF NOT EXISTS idx_product_favorites_user ON product_favorites(user_id);
+CREATE INDEX IF NOT EXISTS idx_product_favorites_product ON product_favorites(product_id);
+CREATE INDEX IF NOT EXISTS idx_product_favorites_tenant ON product_favorites(tenant_id);
+
 
 -- Coupons
 CREATE TABLE IF NOT EXISTS coupons (
@@ -1157,7 +1171,18 @@ INSERT INTO permissions (id, tenant_id, role_id, action, subject, fields, condit
     (10032, 'default', (SELECT id FROM roles WHERE name = 'reader'), 'create', 'user_addresses', NULL, NULL, NOW()),
     (10033, 'default', (SELECT id FROM roles WHERE name = 'reader'), 'read', 'user_addresses', NULL, NULL, NOW()),
     (10034, 'default', (SELECT id FROM roles WHERE name = 'reader'), 'update', 'user_addresses', NULL, NULL, NOW()),
-    (10035, 'default', (SELECT id FROM roles WHERE name = 'reader'), 'delete', 'user_addresses', NULL, NULL, NOW())
+    (10035, 'default', (SELECT id FROM roles WHERE name = 'reader'), 'delete', 'user_addresses', NULL, NULL, NOW()),
+    (10050, 'default', (SELECT id FROM roles WHERE name = 'reader'), 'create', 'cart_items', NULL, NULL, NOW()),
+    (10051, 'default', (SELECT id FROM roles WHERE name = 'reader'), 'read', 'cart_items', NULL, NULL, NOW()),
+    (10052, 'default', (SELECT id FROM roles WHERE name = 'reader'), 'update', 'cart_items', NULL, NULL, NOW()),
+    (10053, 'default', (SELECT id FROM roles WHERE name = 'reader'), 'delete', 'cart_items', NULL, NULL, NOW()),
+    (10054, 'default', (SELECT id FROM roles WHERE name = 'reader'), 'create', 'orders', NULL, NULL, NOW()),
+    (10055, 'default', (SELECT id FROM roles WHERE name = 'reader'), 'read', 'orders', NULL, NULL, NOW()),
+    (10056, 'default', (SELECT id FROM roles WHERE name = 'reader'), 'create', 'product_comments', NULL, NULL, NOW()),
+    (10057, 'default', (SELECT id FROM roles WHERE name = 'reader'), 'read', 'product_comments', NULL, NULL, NOW()),
+    (10058, 'default', (SELECT id FROM roles WHERE name = 'reader'), 'create', 'product_favorites', NULL, NULL, NOW()),
+    (10059, 'default', (SELECT id FROM roles WHERE name = 'reader'), 'read', 'product_favorites', NULL, NULL, NOW()),
+    (10060, 'default', (SELECT id FROM roles WHERE name = 'reader'), 'delete', 'product_favorites', NULL, NULL, NOW())
 ON CONFLICT DO NOTHING;
 
 -- Site options
@@ -1176,5 +1201,6 @@ INSERT INTO options (id, tenant_id, option_key, value, type, group_name, label, 
     (10012, 'default', 'default_role', '"reader"', 'select', 'discussion', 'Default role for new users', NULL, '{"values":["reader","author"]}', FALSE, TRUE, 22, NOW()),
     (10013, 'default', 'theme', '"default"', 'select', 'appearance', 'Current theme', NULL, '{"values":["default","corporate","minimal","warm"]}', TRUE, TRUE, 30, NOW()),
     (10014, 'default', 'maintenance_mode', 'false', 'boolean', 'appearance', 'Maintenance mode', 'When enabled, a maintenance page is shown to visitors', NULL, TRUE, TRUE, 31, NOW()),
-    (10015, 'default', 'default_currency', '"USD"', 'select', 'ecommerce', 'Default currency', 'Currency code for products and orders', '{"values":["USD","CNY","EUR","GBP","JPY","KRW","HKD","TWD","SGD","AUD","CAD"]}', TRUE, TRUE, 40, NOW())
+    (10015, 'default', 'default_currency', '"USD"', 'select', 'ecommerce', 'Default currency', 'Currency code for products and orders', '{"values":["USD","CNY","EUR","GBP","JPY","KRW","HKD","TWD","SGD","AUD","CAD"]}', TRUE, TRUE, 40, NOW()),
+    (10017, 'default', 'reserved_usernames', '"admin,administrator,root,system,official,support,staff,moderator,mod,help,info,mail,webmaster,security,billing,sales,owner,superuser,operator"', 'text', 'general', 'Reserved usernames', 'Comma-separated usernames that cannot be registered', '{"max_length":10000}', FALSE, TRUE, 5, NOW())
 ON CONFLICT (tenant_id, option_key) DO NOTHING;

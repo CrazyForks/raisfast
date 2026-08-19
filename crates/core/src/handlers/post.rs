@@ -200,9 +200,8 @@ pub async fn list(
 ) -> AppResult<axum::response::Response> {
     let pagination = PaginationParams::from_options(query.page, query.page_size);
 
-    let cat_id = if let Some(ref cid) = query.category_id {
-        let parsed = crate::types::snowflake_id::parse_id(cid)?;
-        raisfast_derive::crud_resolve_id!(&state.pool, "categories", *parsed)?
+    let cat_id = if let Some(cid) = query.category_id {
+        raisfast_derive::crud_resolve_id!(&state.pool, "categories", *cid)?
     } else {
         None
     };

@@ -1,3 +1,4 @@
+use crate::types::snowflake_id::SnowflakeId;
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "export-types")]
 use ts_rs::TS;
@@ -7,7 +8,7 @@ use validator::Validate;
 #[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Serialize, ToSchema)]
 pub struct TagResponse {
-    pub id: String,
+    pub id: SnowflakeId,
     pub name: String,
     pub slug: String,
     pub description: Option<String>,
@@ -18,7 +19,7 @@ pub struct TagResponse {
 impl TagResponse {
     pub fn from_tag(tag: crate::models::tag::Tag) -> Self {
         Self {
-            id: tag.id.to_string(),
+            id: tag.id,
             name: tag.name,
             slug: tag.slug,
             description: tag.description,

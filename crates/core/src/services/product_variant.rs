@@ -57,9 +57,8 @@ impl ProductVariantService for ProductVariantServiceImpl {
         auth: &AuthUser,
         req: CreateProductVariantRequest,
     ) -> AppResult<ProductVariant> {
-        let product_id_parsed = crate::types::snowflake_id::parse_id(&req.product_id)?;
         let product =
-            crate::models::product::find_by_id(&self.pool, product_id_parsed, auth.tenant_id())
+            crate::models::product::find_by_id(&self.pool, req.product_id, auth.tenant_id())
                 .await?
                 .ok_or_else(|| AppError::not_found("product"))?;
 

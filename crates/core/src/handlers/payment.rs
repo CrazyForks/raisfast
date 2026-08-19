@@ -222,7 +222,7 @@ pub fn routes(
 
 fn to_order_response(o: crate::models::payment_order::PaymentOrder) -> PaymentOrderResponse {
     PaymentOrderResponse {
-        id: o.id.to_string(),
+        id: o.id,
         order_id: o.order_id,
         title: o.title,
         amount: o.amount,
@@ -454,7 +454,7 @@ pub async fn list_available_channels_handler(
         .payment_service
         .list_available_channels(
             &auth,
-            &query.order_id,
+            query.order_id,
             query.country.as_deref(),
             query.language.as_deref(),
         )

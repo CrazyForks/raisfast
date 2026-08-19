@@ -1,3 +1,4 @@
+use crate::types::snowflake_id::SnowflakeId;
 use serde::Serialize;
 #[cfg(feature = "export-types")]
 use ts_rs::TS;
@@ -8,7 +9,7 @@ use crate::models::tenant::Tenant;
 #[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Serialize, ToSchema)]
 pub struct TenantResponse {
-    pub id: String,
+    pub id: SnowflakeId,
     pub name: String,
     pub domain: Option<String>,
     pub status: String,
@@ -21,7 +22,7 @@ pub struct TenantResponse {
 impl TenantResponse {
     pub fn from_tenant(t: Tenant) -> Self {
         Self {
-            id: t.id.to_string(),
+            id: t.id,
             name: t.name,
             domain: t.domain,
             status: t.status.to_string(),

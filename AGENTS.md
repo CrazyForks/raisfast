@@ -12,48 +12,35 @@ raisfast — Rust-powered high-performance BaaS and headless CMS. Single binary,
 
 ## Commands
 
-The default dev backend is PostgreSQL (`justfile` sets `db = "postgres"`).
+All common tasks are wrapped in [`justfile`](justfile) — **use `just`**, never hand-type `cargo` + env-var incantations. Run `just` (no args) to list all recipes.
+
+The default backend is **PostgreSQL**; switch with `RAISFAST_DB=sqlite|mysql just <recipe>` (or edit `db :=` in justfile).
 
 ```bash
-# Compile/run (PostgreSQL + JS + Rhai + search + payment + mcp)
-# The raisfast database must already contain the schema (see below).
-SQLX_OFFLINE=false DATABASE_URL="postgres://postgres:postgres@localhost:5432/raisfast" \
-  cargo clippy --tests --no-default-features \
-  --features "db-postgres,plugin-js,plugin-rhai,search-tantivy,payment-all,tunnel,mcp" -- -D warnings
-
-# Test (PostgreSQL)
-SQLX_OFFLINE=false DATABASE_URL="postgres://postgres:postgres@localhost:5432/raisfast" \
-  cargo test --no-default-features \
-  --features "db-postgres,plugin-js,plugin-rhai,search-tantivy,payment-all,tunnel,mcp"
-
-# Format check
-cargo fmt --check
+just dev            # start dev server (online mode: SQL validated against live DB)
+just dev-watch      # dev server + auto-reload on code change
+just check          # compile check (current backend's features)
+just lint           # clippy --tests -D warnings
+just fmt            # cargo fmt
+just qa             # fmt-check + lint
+just test           # all tests (serial on PG/MySQL, parallel on SQLite)
+just test-all       # one-shot: reset test DB → regenerate sqlx cache → run all tests
+just ci             # fmt → lint → test
+just db-init        # create DB + load schema (also embeds schema into binary)
+just db-prepare     # regenerate sqlx offline cache (after changing queries)
+just db-reset       # recreate DB (destructive)
+just pg-check       # / mysql-check / sqlite-check — quick compile check per backend
 ```
 
-### Postgres first-run
+### After changing the schema
 
-sqlx proc-macros need live tables at compile time, and the binary embeds the
-schema (`SCHEMA_SQL`) for first-run. After changing `migrations/postgres/schema.postgres.sql`,
-load it into the DB, then build:
-
-```bash
-psql "postgres://postgres:postgres@localhost:5432/raisfast" \
-  -f migrations/postgres/schema.postgres.sql
-```
-
-### SQLite commands (legacy path)
+sqlx proc-macros validate against live tables at compile time, and the binary
+embeds the schema (`SCHEMA_SQL`) for first-run. After editing
+`migrations/<backend>/schema.*.sql`, reload it and rebuild:
 
 ```bash
-# NOTE: DATABASE_URL must be absolute — sqlx proc-macros run with CWD = crate
-# root (crates/core/), so relative paths resolve wrongly. `$PWD` anchors to the
-# workspace root when commands are run from there.
-SQLX_OFFLINE=false DATABASE_URL="sqlite:$PWD/storage/db/raisfast.db?mode=rwc" \
-  cargo clippy --tests --no-default-features \
-  --features "db-sqlite,plugin-js,plugin-rhai" -- -D warnings
-
-SQLX_OFFLINE=false DATABASE_URL="sqlite:$PWD/storage/db/raisfast.db?mode=rwc" \
-  cargo test --no-default-features \
-  --features "db-sqlite,plugin-js,plugin-rhai"
+just db-init        # loads the updated schema into the dev DB
+just check          # rebuild with fresh schema
 ```
 
 ### Postgres type discipline
@@ -96,9 +83,58 @@ Handler → Service → Model (SQL)
 - **Error handling:** `thiserror` for `AppError` at handler boundaries; `anyhow` for internal service propagation.
 - **Database:** SQLite / PostgreSQL / MySQL via sqlx. Timestamps as `TIMESTAMPTZ` (PG/MySQL) or TEXT (SQLite). Always bind `DateTime<Utc>`, never strings.
 - **Cross-DB portability is mandatory.** All code must run on SQLite, PostgreSQL, and MySQL. Every SQL statement — including hand-written `sqlx::query()`, macro-generated CRUD, and test fixtures — must consider cross-database compatibility. Default to `Driver::` helpers for dialect-specific syntax (`?` vs `$N`, `MAX(a,b)` vs `GREATEST`, `AUTOINCREMENT`, `STRFTIME`, etc.). When a `Driver::` helper doesn't exist or a fundamental difference can't be abstracted, use `#[cfg(feature = "db-sqlite")]` / `#[cfg(feature = "db-postgres")]` / `#[cfg(feature = "db-mysql")]` to handle the edge case explicitly.
-- **Primary keys:** Snowflake ID (ferroid) with multiplicative inverse cipher + base62 encoding.
+- **Primary keys:** Snowflake ID (ferroid). See "SnowflakeId Encoding" below for the wire format.
 - **Auth:** JWT (HS256) with short-lived access tokens + DB-stored refresh tokens.
 - **Write lock:** All transactions go through `acquire_write()` (tokio Mutex) to serialize SQLite writes and eliminate `SQLITE_BUSY` tail latency.
+
+## SnowflakeId Encoding (id encryption on the wire)
+
+IDs may appear to clients as encrypted base62 strings (e.g. `"aB3xKp9"`), controlled by the
+`ID_ENCODING=true` env var (`types/snowflake_id.rs`). The whole mechanism is **type-driven via
+serde** — never handle it manually:
+
+- **DTO id fields use `SnowflakeId`, not `String`.** `Serialize` emits `encode_id()` (cipher +
+  base62 when enabled, plain digits when not); `Deserialize` accepts both forms and rejects
+  garbage with a 400. This means:
+  - Response ids are automatically encoded — **never call `encode_id()` by hand** in DTO
+    constructors or `From` impls.
+  - Request ids are automatically decoded — **never call `parse_id()` on a field that is already
+    `SnowflakeId`**.
+- **`parse_id()` is only for untyped boundaries**: `Path<String>`/`Query` extracts and other raw
+  strings (admin batch `ids: Vec<String>`). Once parsed, pass `SnowflakeId` through handler →
+  service → model; do not convert back to `String` between layers.
+- **Business numbers are not ids.** Fields like `order_no`, `provider_order_id`, or
+  `provider_tx_id` are human-readable strings — keep them `String`.
+- **sqlx is unaffected**: `SnowflakeId` is a transparent newtype over `i64`; DB reads/writes stay
+  numeric. Encoding is purely the JSON wire format, so toggling `ID_ENCODING` needs no data
+  migration.
+- **Frontends are transparent**: templates echo whatever string the API returns (encoded or
+  plain) back in requests — no SDK/template logic depends on the format.
+- **OpenAPI/TS export**: `SnowflakeId` implements `utoipa::PartialSchema`/`ToSchema` and
+  `ts_rs::TS` as `string`, so schema exports don't change.
+- When adding a new DTO with id fields: declare them `SnowflakeId` (or `Option<SnowflakeId>`),
+  fill them directly from model fields (`id: row.id`), and let serde do the rest.
+
+## Price (money amounts)
+
+Money is stored internally as integer **cents** (smallest currency unit), wrapped in the `Price`
+type (`types/price.rs`) — the same type-driven pattern as `SnowflakeId`:
+
+- **DB / models / commands use `Price`, not `i64`.** `Price` is `#[sqlx(transparent)]` over `i64`,
+  so sqlx reads/writes stay numeric with zero data migration. Arithmetic stays integer (no float
+  errors) — do math on `Price.0` or convert explicitly.
+- **Wire format is yuan**: `Serialize` emits `cents ÷ 100` (a JSON number), `Deserialize` accepts
+  yuan (number or string) and multiplies by 100. The API contract is "the price a customer sees"
+  (Shopify-style) — storefronts never divide.
+- **Never convert by hand.** No `* 100` / `/ 100` at call sites, in DTO constructors, in admin
+  forms, or in `formatPrice`-style display helpers. Assign `Price` straight through:
+  `price: req.price` (request → command → model) and `price: p.price` (model → DTO). Only the
+  serde impl touches the conversion.
+- **Constructors**: `Price::from_cents(i64)` (internal unit), `Price::from_yuan(f64)`,
+  `Price::as_yuan()` (display only).
+- **Admin/storefront**: admin submits yuan (no `×100`), edit echoes the API value as-is (no `÷100`);
+  the storefront `formatPrice` only adds the currency symbol.
+- Business identifiers like `order_no`/`provider_order_id` stay `String`.
 
 ## CRUD Macro System
 

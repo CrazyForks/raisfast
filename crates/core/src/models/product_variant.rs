@@ -1,3 +1,4 @@
+use crate::types::price::Price;
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "export-types")]
 use ts_rs::TS;
@@ -15,8 +16,8 @@ pub struct ProductVariant {
     pub product_id: SnowflakeId,
     pub sku: Option<String>,
     pub title: String,
-    pub price: i64,
-    pub original_price: Option<i64>,
+    pub price: Price,
+    pub original_price: Option<Price>,
     pub stock: i64,
     #[cfg_attr(feature = "export-types", ts(type = "unknown"))]
     pub attributes: Option<serde_json::Value>,
@@ -280,7 +281,7 @@ mod tests {
                 fulfillment_type: "digital".to_string(),
                 delivery_hook: None,
                 weight: None,
-                price: 1000,
+                price: Price(1000),
                 currency: "CNY".to_string(),
                 attributes: None,
                 sort_order: 0,
@@ -327,7 +328,7 @@ mod tests {
                 product_id: SnowflakeId(product_id),
                 sku: Some(format!("{sku}-{}", crate::utils::id::new_id())),
                 title: title.to_string(),
-                price: 1000,
+                price: Price(1000),
                 original_price: None,
                 stock: 50,
                 attributes: Some(r#"{"color":"red"}"#.to_string()),
@@ -352,7 +353,7 @@ mod tests {
         assert_eq!(found.id, v.id);
         assert_eq!(found.title, "Red Shirt");
         assert_eq!(found.sku, v.sku);
-        assert_eq!(found.price, 1000);
+        assert_eq!(found.price.0, 1000);
         assert_eq!(found.stock, 50);
         assert!(found.is_active);
     }
@@ -396,7 +397,7 @@ mod tests {
                 product_id: SnowflakeId(pid),
                 sku: Some(active_sku),
                 title: "Active".to_string(),
-                price: 100,
+                price: Price(100),
                 original_price: None,
                 stock: 10,
                 attributes: None,
@@ -415,7 +416,7 @@ mod tests {
                 product_id: SnowflakeId(pid),
                 sku: Some(inactive_sku),
                 title: "Inactive".to_string(),
-                price: 100,
+                price: Price(100),
                 original_price: None,
                 stock: 10,
                 attributes: None,
@@ -449,8 +450,8 @@ mod tests {
                 id: v.id,
                 sku: Some(new_sku.clone()),
                 title: "New".to_string(),
-                price: 2000,
-                original_price: Some(2500),
+                price: Price(2000),
+                original_price: Some(Price(2500)),
                 stock: 99,
                 attributes: None,
                 image_url: None,
@@ -467,8 +468,8 @@ mod tests {
         let found = super::find_by_id(&pool, v.id, None).await.unwrap().unwrap();
         assert_eq!(found.title, "New");
         assert_eq!(found.sku.unwrap(), new_sku);
-        assert_eq!(found.price, 2000);
-        assert_eq!(found.original_price.unwrap(), 2500);
+        assert_eq!(found.price.0, 2000);
+        assert_eq!(found.original_price.unwrap().0, 2500);
         assert_eq!(found.stock, 99);
     }
 
@@ -481,7 +482,7 @@ mod tests {
                 id: SnowflakeId(99999),
                 sku: None,
                 title: "X".to_string(),
-                price: 100,
+                price: Price(100),
                 original_price: None,
                 stock: 0,
                 attributes: None,
@@ -569,7 +570,7 @@ mod tests {
                 product_id: SnowflakeId(pid),
                 sku: Some(format!("SKU-TENANT-{}", crate::utils::id::new_id())),
                 title: "TenantVariant".to_string(),
-                price: 500,
+                price: Price(500),
                 original_price: None,
                 stock: 10,
                 attributes: None,

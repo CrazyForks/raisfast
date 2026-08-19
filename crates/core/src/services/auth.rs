@@ -169,6 +169,31 @@ pub fn generate_access_token_for_test(user_id: SnowflakeId, roles: Vec<UserRole>
     .unwrap_or_else(|e| panic!("test token generation failed: {e}"))
 }
 
+/// Reserved usernames live in the `reserved_usernames` site option
+/// (comma-separated, trimmed, case-insensitive). New databases are
+/// seeded with a sensible default list that admins may edit freely.
+pub(crate) async fn is_reserved_username(
+    pool: &crate::db::Pool,
+    username: &str,
+    tenant_id: Option<&str>,
+) -> AppResult<bool> {
+    let lower = username.to_ascii_lowercase();
+    if let Some(opt) =
+        crate::models::options::find_by_key(pool, "reserved_usernames", tenant_id).await?
+    {
+        let list = opt.value.as_str().unwrap_or_default().to_ascii_lowercase();
+        if list
+            .split(',')
+            .map(|s| s.trim().to_ascii_lowercase())
+            .filter(|s| !s.is_empty())
+            .any(|s| s == lower)
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 /// User registration.
 ///
 /// Checks if the email is already registered; if unique, hashes the password and creates
@@ -181,6 +206,9 @@ pub async fn register(
     require_email_verification: bool,
     pool: &crate::db::Pool,
 ) -> AppResult<UserResponse> {
+    if is_reserved_username(pool, &req.username, tenant_id).await? {
+        return Err(AppError::BadRequest("username_reserved".into()));
+    }
     if crate::models::user_credential::find_by_auth_type_and_identifier(
         pool,
         AuthType::Email,
@@ -253,6 +281,8 @@ pub async fn admin_create_user(
     tenant_id: Option<&str>,
     pool: &crate::db::Pool,
 ) -> AppResult<UserResponse> {
+    // No reserved-username check: admins hold the highest privilege and may
+    // create any name (e.g. assigning "support" to a staff account).
     if crate::models::user_credential::find_by_auth_type_and_identifier(
         pool,
         AuthType::Email,
@@ -631,6 +661,7 @@ pub async fn list_credentials(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::DbDriver;
 
     #[test]
     fn password_strength_rejects_short() {
@@ -655,6 +686,66 @@ mod tests {
     #[test]
     fn password_strength_accepts_valid() {
         assert!(validate_password_strength("Password1").is_ok());
+    }
+
+    #[sqlx::test]
+    async fn reserved_usernames() {
+        let pool = crate::test_pool!();
+        // single test to avoid cross-test races on the shared option row
+
+        // 1. names from the seeded option (case-insensitive)
+        for name in ["admin", "ADMIN", "Root", "webmaster"] {
+            assert!(
+                is_reserved_username(&pool, name, None).await.unwrap(),
+                "expected reserved: {name}"
+            );
+        }
+
+        // 2. normal names pass when the option is removed entirely
+        crate::models::options::delete_by_key(&pool, "reserved_usernames", None)
+            .await
+            .unwrap();
+        assert!(
+            !is_reserved_username(&pool, "admin", None).await.unwrap(),
+            "with no option configured, nothing is reserved"
+        );
+        assert!(
+            !is_reserved_username(&pool, "chris_zhong", None)
+                .await
+                .unwrap()
+        );
+
+        // 3. tenant-customized list from the site option (trimmed, case-insensitive)
+        sqlx::query(crate::db::safe_sql(&format!(
+            "INSERT INTO options (id, tenant_id, option_key, value, type, group_name, label, description, is_public, autoload, sort_order, updated_at) VALUES ({}, 'default', 'reserved_usernames', {}, 'text', 'general', 'Reserved usernames', NULL, FALSE, TRUE, 5, {})",
+            crate::db::Driver::ph(1),
+            crate::db::Driver::ph(2),
+            crate::db::Driver::ph(3),
+        )))
+        .bind(crate::utils::id::new_id())
+        .bind(serde_json::json!("raisfast, mybrand "))
+        .bind(crate::utils::tz::now_utc())
+        .execute(&pool)
+        .await
+        .unwrap();
+        assert!(
+            is_reserved_username(&pool, "raisfast", None).await.unwrap(),
+            "option-provided name should be reserved"
+        );
+        assert!(
+            is_reserved_username(&pool, "MyBrand", None).await.unwrap(),
+            "option entries are case-insensitive and trimmed"
+        );
+        assert!(
+            !is_reserved_username(&pool, "othername", None)
+                .await
+                .unwrap()
+        );
+
+        // cleanup (shared test DB): restore the seeded default list
+        crate::models::options::delete_by_key(&pool, "reserved_usernames", None)
+            .await
+            .unwrap();
     }
 
     #[test]

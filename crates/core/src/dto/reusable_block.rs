@@ -1,3 +1,4 @@
+use crate::types::snowflake_id::SnowflakeId;
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "export-types")]
 use ts_rs::TS;
@@ -9,7 +10,7 @@ use crate::models::reusable_block::ReusableBlock;
 #[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Serialize, ToSchema)]
 pub struct ReusableBlockResponse {
-    pub id: String,
+    pub id: SnowflakeId,
     pub name: String,
     pub content: String,
     pub created_at: String,
@@ -19,7 +20,7 @@ pub struct ReusableBlockResponse {
 impl ReusableBlockResponse {
     pub fn from_block(b: ReusableBlock) -> Self {
         Self {
-            id: b.id.to_string(),
+            id: b.id,
             name: b.name,
             content: b.content,
             created_at: b.created_at.to_rfc3339(),
