@@ -51,28 +51,29 @@ impl JobHandler for PingHandler {
         let line = format!("[{now}] ping: {message}\n");
 
         // Ensure storage dir exists, then append
-        if let Err(e) = tokio::fs::create_dir_all(&self.config.storage_root_dir).await {
-            tracing::warn!("[ping] failed to create dir: {e}");
-        }
+        tokio::fs::create_dir_all(&self.config.storage_root_dir)
+            .await
+            .map_err(|e| {
+                crate::errors::app_error::AppError::Internal(anyhow::anyhow!(
+                    "ping: create dir failed: {e}"
+                ))
+            })?;
 
         use tokio::io::AsyncWriteExt;
-        match tokio::fs::OpenOptions::new()
+        let mut f = tokio::fs::OpenOptions::new()
             .create(true)
             .append(true)
             .open(&log_path)
             .await
-        {
-            Ok(mut f) => {
-                if let Err(e) = f.write_all(line.as_bytes()).await {
-                    tracing::error!("[ping] write failed: {e}");
-                } else {
-                    tracing::info!("[ping] wrote to {log_path}: {message}");
-                }
-            }
-            Err(e) => {
-                tracing::error!("[ping] open failed: {e}");
-            }
-        }
+            .map_err(|e| {
+                crate::errors::app_error::AppError::Internal(anyhow::anyhow!(
+                    "ping: open {log_path} failed: {e}"
+                ))
+            })?;
+        f.write_all(line.as_bytes()).await.map_err(|e| {
+            crate::errors::app_error::AppError::Internal(anyhow::anyhow!("ping: write failed: {e}"))
+        })?;
+        tracing::info!("[ping] wrote to {log_path}: {message}");
 
         Ok(())
     }
@@ -100,7 +101,10 @@ mod tests {
         let content = tokio::fs::read_to_string(dir.path().join("cron-ping.log"))
             .await
             .unwrap();
-        assert!(content.contains("test-ping"));
+        assert!(
+            content.contains("test-ping"),
+            "unexpected log content: {content:?}"
+        );
     }
 }
 

@@ -1,0 +1,12 @@
+{
+  "db_name": "MySQL",
+  "query": "INSERT INTO `product_favorites` (`id`, `user_id`, `product_id`, `created_at`, `tenant_id`) VALUES (?, ?, ?, ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 5
+    },
+    "nullable": []
+  },
+  "hash": "bdea715397ea3e78d1d5e4fc2616ec18b6779fcb557c9ccacdc4de2acce74bdc"
+}
