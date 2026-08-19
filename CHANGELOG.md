@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.1] - 2026-08-19
+
+- Update adminui
+
 ## [0.4.0] - 2026-08-19
 
 - Expose product_id (slug preferred) in cart items for storefront links
