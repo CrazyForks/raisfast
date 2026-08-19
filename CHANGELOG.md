@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.0] - 2026-08-19
+
+- Expose product_id (slug preferred) in cart items for storefront links
+
+- Expect main as local branch
+
+- Type-driven SnowflakeId & Price across all layers
+
+- Update ecommerce process
+
 ## [0.3.19] - 2026-08-18
 
 - Improve ci process
