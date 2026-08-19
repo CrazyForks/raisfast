@@ -782,7 +782,7 @@ async fn create_with_invalid_category_id() {
     )
     .await;
     assert!(
-        status.is_server_error() || status == StatusCode::BAD_REQUEST,
+        status.is_client_error(),
         "expected error for invalid category_id, got {status}"
     );
 }

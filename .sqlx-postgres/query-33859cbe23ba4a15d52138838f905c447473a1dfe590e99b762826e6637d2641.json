@@ -1,0 +1,17 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO \"product_favorites\" (\"id\", \"user_id\", \"product_id\", \"created_at\") VALUES ($1, $2, $3, $4)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8",
+        "Int8",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "33859cbe23ba4a15d52138838f905c447473a1dfe590e99b762826e6637d2641"
+}

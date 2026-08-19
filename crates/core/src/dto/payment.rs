@@ -227,7 +227,9 @@ pub struct AvailableChannelsResponse {
 #[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct AvailableChannelsQuery {
-    pub order_id: SnowflakeId,
+    /// Raw order id — parsed after the auth check so unauthenticated callers
+    /// get 401 (not 400) regardless of id validity.
+    pub order_id: String,
     pub country: Option<String>,
     pub language: Option<String>,
 }

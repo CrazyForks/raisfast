@@ -106,7 +106,14 @@ impl std::iter::Sum for Price {
 
 impl Serialize for Price {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        serializer.serialize_f64(self.as_yuan())
+        // Whole-yuan amounts serialize as integer JSON numbers (e.g. `198`,
+        // not `198.0`) — canonical JSON; fractional amounts keep decimal form
+        // (e.g. `198.5`). Both parse identically as JS numbers.
+        if self.0 % 100 == 0 {
+            serializer.serialize_i64(self.0 / 100)
+        } else {
+            serializer.serialize_f64(self.as_yuan())
+        }
     }
 }
 

@@ -105,6 +105,40 @@ pub async fn find_by_id(
         .map_err(Into::into)
 }
 
+/// Fetch `id → slug` pairs for a batch of product ids in a single query.
+///
+/// Used to enrich order item responses with storefront links without N+1 lookups.
+pub async fn find_slugs_by_ids(
+    pool: &crate::db::Pool,
+    ids: &[SnowflakeId],
+    tenant_id: Option<&str>,
+) -> AppResult<Vec<(SnowflakeId, Option<String>)>> {
+    if ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let placeholders: Vec<String> = (1..=ids.len()).map(crate::db::Driver::ph).collect();
+    let sql = if tenant_id.is_some() {
+        format!(
+            "SELECT id, slug FROM products WHERE id IN ({}) AND tenant_id = {}",
+            placeholders.join(", "),
+            crate::db::Driver::ph(ids.len() + 1)
+        )
+    } else {
+        format!(
+            "SELECT id, slug FROM products WHERE id IN ({})",
+            placeholders.join(", ")
+        )
+    };
+    let mut q = sqlx::query_as::<_, (SnowflakeId, Option<String>)>(crate::db::safe_sql(&sql));
+    for id in ids {
+        q = q.bind(id);
+    }
+    if let Some(t) = tenant_id {
+        q = q.bind(t);
+    }
+    Ok(q.fetch_all(pool).await?)
+}
+
 pub async fn find_active_paginated(
     pool: &crate::db::Pool,
     tenant_id: Option<&str>,

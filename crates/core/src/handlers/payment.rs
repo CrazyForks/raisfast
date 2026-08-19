@@ -450,11 +450,13 @@ pub async fn list_available_channels_handler(
     State(state): State<crate::AppState>,
     Query(query): Query<AvailableChannelsQuery>,
 ) -> AppResult<ApiResponse<AvailableChannelsResponse>> {
+    let _ = auth.ensure_snowflake_user_id()?;
+    let order_id = crate::types::snowflake_id::parse_id(&query.order_id)?;
     let result = state
         .payment_service
         .list_available_channels(
             &auth,
-            query.order_id,
+            order_id,
             query.country.as_deref(),
             query.language.as_deref(),
         )

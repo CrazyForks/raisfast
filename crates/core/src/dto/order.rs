@@ -55,6 +55,10 @@ pub struct ShipOrderRequest {
 #[derive(Debug, Serialize, ToSchema)]
 pub struct OrderItemResponse {
     pub id: SnowflakeId,
+    /// Product referenced by this line item (absent for custom/deleted products).
+    pub product_id: Option<SnowflakeId>,
+    /// Product slug for storefront links (absent when the product has none).
+    pub product_slug: Option<String>,
     pub title: String,
     pub description: Option<String>,
     #[cfg_attr(feature = "export-types", ts(type = "number"))]
@@ -73,6 +77,8 @@ impl From<crate::models::order_item::OrderItem> for OrderItemResponse {
     fn from(i: crate::models::order_item::OrderItem) -> Self {
         Self {
             id: i.id,
+            product_id: i.product_id,
+            product_slug: None,
             title: i.title,
             description: i.description,
             unit_price: i.unit_price,

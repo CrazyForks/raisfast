@@ -113,16 +113,19 @@ qa: fmt-check lint
 # ── Tests ─────────────────────────────────────────────────────────
 
 # Run all raisfast tests (excludes bore-cli e2e tests that need a bore server)
+# ID_ENCODING=false keeps tests hermetic: `set dotenv-load` exports the dev
+# server's .env (ID_ENCODING=true) into recipes, which breaks tests that pass
+# plain-digit ids through `parse_id`.
 test *FLAGS: _link-cache
-    SQLX_OFFLINE=true DATABASE_URL={{db_url}} RAISFAST_TEST_DB_URL={{test_db_url}} cargo test -p raisfast --no-default-features --features "{{features}}" {{FLAGS}} {{test_threads}}
+    SQLX_OFFLINE=true ID_ENCODING=false DATABASE_URL={{db_url}} RAISFAST_TEST_DB_URL={{test_db_url}} cargo test -p raisfast --no-default-features --features "{{features}}" {{FLAGS}} {{test_threads}}
 
 # Run unit tests only
 test-unit: _link-cache
-    SQLX_OFFLINE=true DATABASE_URL={{db_url}} RAISFAST_TEST_DB_URL={{test_db_url}} cargo test -p raisfast --lib --no-default-features --features "{{features}}" {{test_threads}}
+    SQLX_OFFLINE=true ID_ENCODING=false DATABASE_URL={{db_url}} RAISFAST_TEST_DB_URL={{test_db_url}} cargo test -p raisfast --lib --no-default-features --features "{{features}}" {{test_threads}}
 
 # Run integration tests only
 test-integration: _link-cache
-    SQLX_OFFLINE=true DATABASE_URL={{db_url}} RAISFAST_TEST_DB_URL={{test_db_url}} cargo test -p raisfast --test api_tests --no-default-features --features "{{features}}" {{test_threads}}
+    SQLX_OFFLINE=true ID_ENCODING=false DATABASE_URL={{db_url}} RAISFAST_TEST_DB_URL={{test_db_url}} cargo test -p raisfast --test api --no-default-features --features "{{features}}" {{test_threads}}
 
 # ── Database ──────────────────────────────────────────────────────
 

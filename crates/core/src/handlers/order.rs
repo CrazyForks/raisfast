@@ -163,11 +163,37 @@ pub fn routes(
     )
 }
 
-fn to_order_response(
+async fn to_order_response(
+    pool: &crate::db::Pool,
+    tenant_id: Option<&str>,
     o: crate::models::order::Order,
     items: Vec<crate::models::order_item::OrderItem>,
-) -> OrderResponse {
-    OrderResponse {
+) -> AppResult<OrderResponse> {
+    use std::collections::HashMap;
+
+    let product_ids: Vec<crate::types::snowflake_id::SnowflakeId> =
+        items.iter().filter_map(|i| i.product_id).collect();
+    let slug_map: HashMap<crate::types::snowflake_id::SnowflakeId, Option<String>> =
+        crate::models::product::find_slugs_by_ids(pool, &product_ids, tenant_id)
+            .await?
+            .into_iter()
+            .collect();
+    let item_responses = items
+        .into_iter()
+        .map(|i| {
+            let product_id = i.product_id;
+            let mut r = OrderItemResponse::from(i);
+            if let Some(pid) = product_id {
+                r.product_slug = slug_map
+                    .get(&pid)
+                    .cloned()
+                    .flatten()
+                    .filter(|s| !s.is_empty());
+            }
+            r
+        })
+        .collect();
+    Ok(OrderResponse {
         id: o.id,
         order_no: o.order_no,
         subtotal: o.subtotal,
@@ -190,8 +216,8 @@ fn to_order_response(
         cancelled_at: o.cancelled_at.map(|t| t.to_string()),
         created_at: o.created_at.to_string(),
         updated_at: o.updated_at.to_string(),
-        items: items.into_iter().map(OrderItemResponse::from).collect(),
-    }
+        items: item_responses,
+    })
 }
 
 #[utoipa::path(post, path = "/orders", tag = "orders",
@@ -217,7 +243,9 @@ pub async fn create_order(
             tracing::error!("order create service failed: {e}");
             e
         })?;
-    Ok(ApiResponse::success(to_order_response(o, items)))
+    Ok(ApiResponse::success(
+        to_order_response(&state.pool, auth.tenant_id(), o, items).await?,
+    ))
 }
 
 #[utoipa::path(get, path = "/orders", tag = "orders",
@@ -235,10 +263,10 @@ pub async fn list_orders(
         .order_service
         .list_user(&auth, user_id, params.page, params.page_size)
         .await?;
-    let responses: Vec<_> = orders
-        .into_iter()
-        .map(|(o, items)| to_order_response(o, items))
-        .collect();
+    let mut responses = Vec::with_capacity(orders.len());
+    for (o, items) in orders {
+        responses.push(to_order_response(&state.pool, auth.tenant_id(), o, items).await?);
+    }
     Ok(params.paginate(responses, total))
 }
 
@@ -254,7 +282,9 @@ pub async fn get_order(
 ) -> AppResult<ApiResponse<OrderResponse>> {
     let id = crate::types::snowflake_id::parse_id(&id)?;
     let (o, items) = state.order_service.get(&auth, id).await?;
-    Ok(ApiResponse::success(to_order_response(o, items)))
+    Ok(ApiResponse::success(
+        to_order_response(&state.pool, auth.tenant_id(), o, items).await?,
+    ))
 }
 
 #[utoipa::path(put, path = "/orders/{id}", tag = "orders",
@@ -314,10 +344,10 @@ pub async fn admin_list(
             query.keyword.as_deref(),
         )
         .await?;
-    let responses: Vec<_> = orders
-        .into_iter()
-        .map(|(o, items)| to_order_response(o, items))
-        .collect();
+    let mut responses = Vec::with_capacity(orders.len());
+    for (o, items) in orders {
+        responses.push(to_order_response(&state.pool, auth.tenant_id(), o, items).await?);
+    }
     Ok(params.paginate(responses, total))
 }
 
@@ -333,7 +363,9 @@ pub async fn admin_get(
 ) -> AppResult<ApiResponse<OrderResponse>> {
     let id = crate::types::snowflake_id::parse_id(&id)?;
     let (o, items) = state.order_service.get(&auth, id).await?;
-    Ok(ApiResponse::success(to_order_response(o, items)))
+    Ok(ApiResponse::success(
+        to_order_response(&state.pool, auth.tenant_id(), o, items).await?,
+    ))
 }
 
 #[utoipa::path(post, path = "/admin/orders/{id}/ship", tag = "orders",

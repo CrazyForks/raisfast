@@ -82,11 +82,37 @@ pub fn routes(
     )
 }
 
-fn to_order_response(
+async fn to_order_response(
+    pool: &crate::db::Pool,
+    tenant_id: Option<&str>,
     o: crate::models::order::Order,
     items: Vec<crate::models::order_item::OrderItem>,
-) -> OrderResponse {
-    OrderResponse {
+) -> AppResult<OrderResponse> {
+    use std::collections::HashMap;
+
+    let product_ids: Vec<crate::types::snowflake_id::SnowflakeId> =
+        items.iter().filter_map(|i| i.product_id).collect();
+    let slug_map: HashMap<crate::types::snowflake_id::SnowflakeId, Option<String>> =
+        crate::models::product::find_slugs_by_ids(pool, &product_ids, tenant_id)
+            .await?
+            .into_iter()
+            .collect();
+    let item_responses = items
+        .into_iter()
+        .map(|i| {
+            let product_id = i.product_id;
+            let mut r = OrderItemResponse::from(i);
+            if let Some(pid) = product_id {
+                r.product_slug = slug_map
+                    .get(&pid)
+                    .cloned()
+                    .flatten()
+                    .filter(|s| !s.is_empty());
+            }
+            r
+        })
+        .collect();
+    Ok(OrderResponse {
         id: o.id,
         order_no: o.order_no,
         subtotal: o.subtotal,
@@ -109,8 +135,8 @@ fn to_order_response(
         cancelled_at: o.cancelled_at.map(|t| t.to_string()),
         created_at: o.created_at.to_string(),
         updated_at: o.updated_at.to_string(),
-        items: items.into_iter().map(OrderItemResponse::from).collect(),
-    }
+        items: item_responses,
+    })
 }
 
 #[utoipa::path(post, path = "/cart", tag = "cart",
@@ -213,5 +239,7 @@ pub async fn checkout(
 ) -> AppResult<ApiResponse<OrderResponse>> {
     let user_id = auth.ensure_snowflake_user_id()?;
     let (order, items) = state.cart_service.checkout(&auth, user_id).await?;
-    Ok(ApiResponse::success(to_order_response(order, items)))
+    Ok(ApiResponse::success(
+        to_order_response(&state.pool, auth.tenant_id(), order, items).await?,
+    ))
 }
