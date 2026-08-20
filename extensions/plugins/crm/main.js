@@ -1,4 +1,4 @@
-import { dbQuery, dbExec, ok, fail, extractJson, logInfo, eventEmit, newId,
+import { dbQuery, dbExec, ok, fail, extractJson, logInfo, eventEmit, newId, dbPh,
          dbInsert, dbFetchOne, dbFetchAll, dbUpdate, dbDelete, dbCount,
          dbIncrement, dbSum, dbGroupBy } from 'sdk';
 
@@ -59,12 +59,12 @@ export function on_content_updated(input) {
 export function getPipeline(input) {
     const stages = ["prospecting", "qualification", "proposal", "negotiation", "closed_won", "closed_lost"];
     const stageLabels = {
-        prospecting: "初步接触",
-        qualification: "需求确认",
-        proposal: "方案报价",
-        negotiation: "商务谈判",
-        closed_won: "赢单",
-        closed_lost: "丢单",
+        prospecting: "Prospecting",
+        qualification: "Qualification",
+        proposal: "Proposal",
+        negotiation: "Negotiation",
+        closed_won: "Closed Won",
+        closed_lost: "Closed Lost",
     };
 
     const pipeline = [];
@@ -249,8 +249,9 @@ export function getDashboardStats() {
     const activeCount = dbCount("crm_contacts", { status: "active" });
     const totalCompanies = dbCount("crm_companies");
 
-    const openDealCount = dbCount("crm_deals", "stage NOT IN ('closed_won', 'closed_lost')");
-    const openDealValue = dbSum("crm_deals", "amount", "stage NOT IN ('closed_won', 'closed_lost')");
+    const openStageWhere = [`stage NOT IN (${dbPh(1)}, ${dbPh(2)})`, "closed_won", "closed_lost"];
+    const openDealCount = dbCount("crm_deals", openStageWhere);
+    const openDealValue = dbSum("crm_deals", "amount", openStageWhere);
 
     const wonDealCount = dbCount("crm_deals", { stage: "closed_won" });
     const wonDealValue = dbSum("crm_deals", "amount", { stage: "closed_won" });
@@ -263,8 +264,10 @@ export function getDashboardStats() {
 
     const avgDealSize = wonDealCount > 0 ? Math.round(wonDealValue / wonDealCount) : 0;
 
+    const weekCutoff = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
     const activityThisWeek = dbQuery(
-        `SELECT CAST(COUNT(*) AS TEXT) as cnt FROM crm_activities WHERE activity_date >= date('now', '-7 days')`
+        `SELECT CAST(COUNT(*) AS TEXT) as cnt FROM crm_activities WHERE activity_date >= ${dbPh(1)}`,
+        [weekCutoff]
     );
     const weeklyActivities = activityThisWeek?.[0] ? parseInt(activityThisWeek[0].cnt, 10) : 0;
 
@@ -307,10 +310,12 @@ export function getLeaderboard() {
         limit: 10
     });
 
+    // date('now', '-30 days') is SQLite-specific; compute the cutoff in JS for portability.
+    const cutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
     const activityResult = dbGroupBy("crm_activities", {
         group_by: "owner_id",
         count: true,
-        where: "activity_date >= date('now', '-30 days')",
+        where: [`activity_date >= ${dbPh(1)}`, cutoff],
         order_by: "cnt DESC",
         limit: 10
     });
@@ -387,12 +392,12 @@ export function convertLead(input) {
 export function getFunnelReport() {
     const stages = ["prospecting", "qualification", "proposal", "negotiation", "closed_won", "closed_lost"];
     const stageLabels = {
-        prospecting: "初步接触",
-        qualification: "需求确认",
-        proposal: "方案报价",
-        negotiation: "商务谈判",
-        closed_won: "赢单",
-        closed_lost: "丢单",
+        prospecting: "Prospecting",
+        qualification: "Qualification",
+        proposal: "Proposal",
+        negotiation: "Negotiation",
+        closed_won: "Closed Won",
+        closed_lost: "Closed Lost",
     };
 
     const funnel = [];
@@ -453,11 +458,13 @@ export function getActivityReport() {
         ownerBreakdown.push({ owner_id: row.owner_id, count: parseInt(row.cnt, 10) });
     }
 
+    const cutoff30 = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
     const last30 = dbQuery(
         `SELECT substr(activity_date, 1, 10) as day, CAST(COUNT(*) AS TEXT) as cnt
          FROM crm_activities
-         WHERE activity_date >= date('now', '-30 days')
-         GROUP BY day ORDER BY day`
+         WHERE activity_date >= ${dbPh(1)}
+         GROUP BY day ORDER BY day`,
+        [cutoff30]
     );
     const daily = [];
     for (const row of (last30 || [])) {

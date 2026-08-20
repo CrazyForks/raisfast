@@ -2,7 +2,7 @@
 id = "com.raisfast.seo-rhai"
 name = "SEO Optimizer (Rhai)"
 version = "1.0.0"
-description = "Rhai 插件引擎验证：自动生成 SEO meta、HTML 注入、缓存预热、统计路由"
+description = "Rhai plugin engine validation: auto SEO meta generation, HTML injection, cache warm-up, stats routes"
 author = "raisfast"
 license = "MIT"
 runtime = "rhai"

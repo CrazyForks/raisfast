@@ -4,7 +4,7 @@ singular = "vote"
 plural = "votes"
 table = "forum_votes"
 group = "forum"
-description = "论坛投票记录"
+description = "Forum vote records"
 implements = ["ownable", "timestampable"]
 
 [fields.target_type]
@@ -12,19 +12,19 @@ type = "text"
 required = true
 max_length = 10
 immutable = true
-label = "目标类型"
+label = "Target Type"
 
 [fields.target_id]
 type = "text"
 required = true
 immutable = true
-label = "目标ID"
+label = "Target ID"
 
 [fields.user_id]
 type = "text"
 required = true
 immutable = true
-label = "投票用户"
+label = "Voter"
 
 [fields.value]
 type = "integer"
@@ -32,7 +32,7 @@ required = true
 min = -1
 max = 1
 default = 1
-label = "投票值"
+label = "Vote Value"
 
 [[indexes]]
 fields = ["target_type", "target_id", "user_id"]
@@ -40,10 +40,6 @@ unique = true
 
 [[indexes]]
 fields = ["target_id", "created_at"]
-
-[list_view]
-default_sort = "created_at:desc"
-columns = ["target_type", "target_id", "user_id", "value", "created_at"]
 
 [api.list]
 access = "admin"

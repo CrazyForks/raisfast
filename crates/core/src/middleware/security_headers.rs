@@ -25,46 +25,30 @@ static STRICT_TRANSPORT_SECURITY: HeaderName = HeaderName::from_static("strict-t
 
 static CONTENT_SECURITY_POLICY: HeaderName = HeaderName::from_static("content-security-policy");
 
-/// Build the Content-Security-Policy value, merging in optional extra sources from:
-/// - `CSP_SCRIPT_SRC`  — additional `script-src` origins (e.g. Cloudflare Insights)
-/// - `CSP_CONNECT_SRC` — additional `connect-src` origins
-/// - `CSP_STYLE_SRC`   — additional `style-src` origins
+/// Build the Content-Security-Policy value.
 ///
-/// Each is a space-separated list of origins. Cached for the process lifetime.
+/// Set the `CSP` env var to override the built-in policy entirely (verbatim
+/// header value, nginx-style). Typical additions: Cloudflare Insights beacon
+/// (`script-src`/`connect-src`) and the admin template gallery (`connect-src`/
+/// `img-src` for `https://raisfast.com`). Cached for the process lifetime.
 fn csp_value() -> &'static HeaderValue {
     static CSP: OnceLock<HeaderValue> = OnceLock::new();
-    CSP.get_or_init(|| {
-        let script_extra = std::env::var("CSP_SCRIPT_SRC").unwrap_or_default();
-        let connect_extra = std::env::var("CSP_CONNECT_SRC").unwrap_or_default();
-        let style_extra = std::env::var("CSP_STYLE_SRC").unwrap_or_default();
-
-        if script_extra.is_empty() && connect_extra.is_empty() && style_extra.is_empty() {
-            return HeaderValue::from_static(
-                "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'",
-            );
-        }
-
-        let script_src = if script_extra.is_empty() {
-            "'self'".to_string()
-        } else {
-            format!("'self' {script_extra}")
-        };
-        let connect_src = if connect_extra.is_empty() {
-            "'self'".to_string()
-        } else {
-            format!("'self' {connect_extra}")
-        };
-        let style_src = if style_extra.is_empty() {
-            "'self' 'unsafe-inline'".to_string()
-        } else {
-            format!("'self' 'unsafe-inline' {style_extra}")
-        };
-
-        let policy = format!(
-            "default-src 'self'; script-src {script_src}; style-src {style_src}; img-src 'self' data: blob:; font-src 'self'; connect-src {connect_src}; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
-        );
-        HeaderValue::from_str(&policy).expect("CSP header contains invalid characters")
+    CSP.get_or_init(|| match std::env::var("CSP") {
+        Ok(policy) if !policy.trim().is_empty() => match HeaderValue::from_str(policy.trim()) {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::warn!("invalid CSP env var ({e}), using default policy");
+                default_csp()
+            }
+        },
+        _ => default_csp(),
     })
+}
+
+fn default_csp() -> HeaderValue {
+    HeaderValue::from_static(
+        "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'",
+    )
 }
 
 /// Security response headers middleware.
@@ -101,4 +85,38 @@ pub async fn security_headers_with_hsts(request: Request, next: Next) -> Respons
         HeaderValue::from_static("max-age=63072000; includeSubDomains; preload"),
     );
     response
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn csp_value_returns_strict_default_without_env() {
+        // std::env::var reads the process env; the CSP var is unset in tests,
+        // so this exercises the default branch.
+        let default = default_csp();
+        let v = csp_value();
+        assert_eq!(v, default);
+        assert!(v.to_str().unwrap().contains("script-src 'self'"));
+    }
+
+    #[test]
+    fn default_csp_is_valid_directive_list() {
+        let default = default_csp();
+        let s = default.to_str().unwrap();
+        for directive in [
+            "default-src",
+            "script-src",
+            "style-src",
+            "img-src",
+            "font-src",
+            "connect-src",
+            "frame-ancestors",
+            "base-uri",
+            "form-action",
+        ] {
+            assert!(s.contains(directive), "missing {directive}");
+        }
+    }
 }

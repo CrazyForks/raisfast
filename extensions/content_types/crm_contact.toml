@@ -4,71 +4,71 @@ singular = "contact"
 plural = "contacts"
 table = "crm_contacts"
 group = "crm"
-description = "联系人"
+description = "Contacts"
 implements = ["ownable", "timestampable"]
 
 [fields.first_name]
 type = "text"
 required = true
 max_length = 100
-label = "名"
+label = "First Name"
 
 [fields.last_name]
 type = "text"
 required = true
 max_length = 100
-label = "姓"
+label = "Last Name"
 
 [fields.email]
 type = "email"
 required = true
 unique = true
-label = "邮箱"
+label = "Email"
 
 [fields.phone]
 type = "text"
-label = "电话"
+label = "Phone"
 
 [fields.mobile]
 type = "text"
-label = "手机"
+label = "Mobile"
 
 [fields.job_title]
 type = "text"
-label = "职位"
+label = "Job Title"
 
 [fields.company]
 type = "relation"
 relation_type = "many_to_one"
 target = "crm_companies"
 foreign_key = "company_id"
-label = "所属公司"
+label = "Company"
 
 [fields.source]
 type = "enum"
 enum_values = ["website", "referral", "linkedin", "cold_call", "event", "advertisement", "other"]
 default = "other"
-label = "来源渠道"
+label = "Source"
 
 [fields.status]
 type = "enum"
 enum_values = ["active", "inactive", "converted", "churned"]
 default = "active"
-label = "状态"
+label = "Status"
 
 [fields.lifecycle_stage]
 type = "enum"
 enum_values = ["subscriber", "lead", "marketing_qualified_lead", "sales_qualified_lead", "opportunity", "customer", "evangelist"]
 default = "lead"
-label = "生命周期阶段"
+label = "Lifecycle Stage"
 
 [fields.owner_id]
 type = "text"
-label = "负责人"
+label = "Owner"
 
 [fields.notes]
 type = "richtext"
-label = "备注"
+label = "Notes"
 
 [[indexes]]
 fields = ["email"]
@@ -85,10 +85,6 @@ fields = ["status"]
 
 [[indexes]]
 fields = ["lifecycle_stage"]
-
-[list_view]
-default_sort = "created_at:desc"
-columns = ["first_name", "last_name", "email", "company", "job_title", "status", "lifecycle_stage", "owner_id"]
 
 [api.list]
 access = "authed"

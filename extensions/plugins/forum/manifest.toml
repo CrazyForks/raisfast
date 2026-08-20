@@ -2,7 +2,7 @@
 id = "com.raisfast.forum"
 name = "Forum API"
 version = "0.1.0"
-description = "论坛 API：版块主题列表、投票、采纳、计数维护"
+description = "Forum API: board topic lists, voting, accepted answers, counter maintenance"
 author = "raisfast"
 license = "MIT"
 runtime = "js"

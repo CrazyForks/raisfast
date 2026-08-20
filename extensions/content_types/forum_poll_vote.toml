@@ -4,7 +4,7 @@ singular = "poll_vote"
 plural = "poll_votes"
 table = "forum_poll_votes"
 group = "forum"
-description = "投票记录"
+description = "Poll vote records"
 implements = ["ownable", "timestampable"]
 
 [fields.poll]
@@ -14,7 +14,7 @@ target = "forum_polls"
 foreign_key = "poll_id"
 required = true
 immutable = true
-label = "所属投票"
+label = "Poll"
 
 [fields.option]
 type = "relation"
@@ -23,13 +23,13 @@ target = "forum_poll_options"
 foreign_key = "option_id"
 required = true
 immutable = true
-label = "所选选项"
+label = "Selected Option"
 
 [fields.user_id]
 type = "text"
 required = true
 immutable = true
-label = "投票用户"
+label = "Voter"
 
 [[indexes]]
 fields = ["option_id", "user_id"]
@@ -37,10 +37,6 @@ unique = true
 
 [[indexes]]
 fields = ["poll_id", "user_id"]
-
-[list_view]
-default_sort = "created_at:desc"
-columns = ["poll", "option", "user_id", "created_at"]
 
 [api.list]
 access = "admin"

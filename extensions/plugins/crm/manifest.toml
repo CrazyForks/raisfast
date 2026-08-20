@@ -2,7 +2,7 @@
 id = "com.raisfast.crm"
 name = "CRM API"
 version = "0.1.0"
-description = "CRM 销售漏斗、Pipeline 管理、联系人时间线"
+description = "CRM sales funnel, pipeline management, contact timelines"
 author = "raisfast"
 license = "MIT"
 runtime = "js"

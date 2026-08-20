@@ -2,7 +2,7 @@
 id = "com.raisfast.blog-stats"
 name = "Blog Stats API"
 version = "1.0.0"
-description = "通过自定义路由暴露博客统计 API"
+description = "Exposes blog stats API via custom routes"
 author = "raisfast"
 license = "MIT"
 runtime = "lua"

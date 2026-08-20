@@ -3,7 +3,7 @@ name = "Article"
 singular = "article"
 plural = "articles"
 table = "articles"
-description = "文章"
+description = "Blog articles"
 slug_field = "title"
 implements = [
     "ownable",
@@ -13,59 +13,65 @@ implements = [
 [fields.title]
 type = "text"
 required = true
-label = "标题"
+label = "Title"
 max_length = 200
 
 [fields.slug]
 type = "uid"
 unique = true
-label = "URL 标识"
+label = "URL Slug"
 
 [fields.content]
 type = "richtext"
 required = true
-label = "正文"
+label = "Content"
 
 [fields.excerpt]
 type = "text"
-label = "摘要"
+label = "Excerpt"
 max_length = 500
 
 [fields.cover_image]
 type = "media"
-label = "封面图片"
+label = "Cover Image"
 accept = ["image/*"]
 
 [fields.author]
 type = "relation"
-label = "作者"
+label = "Author"
 relation_type = "many_to_one"
 target = "users"
 foreign_key = "author_id"
 
 [fields.category]
 type = "relation"
-label = "分类"
+label = "Category"
 relation_type = "many_to_one"
 target = "categories"
 foreign_key = "category_id"
 
 [fields.tags]
 type = "relation"
-label = "标签"
+label = "Tags"
 relation_type = "many_to_many"
 target = "tags"
 through = "articles_tags"
 
+[fields.status]
+type = "enum"
+enum_values = ["draft", "published", "archived"]
+default = "draft"
+label = "Status"
+
 [fields.view_count]
 type = "integer"
-label = "浏览量"
+label = "View Count"
 default = 0
 private = true
 
 [fields.is_pinned]
 type = "boolean"
-label = "是否置顶"
+label = "Pinned"
 default = false
 
 [[indexes]]

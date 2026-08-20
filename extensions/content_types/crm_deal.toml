@@ -4,70 +4,70 @@ singular = "deal"
 plural = "deals"
 table = "crm_deals"
 group = "crm"
-description = "商机/销售机会"
+description = "Deals and sales opportunities"
 implements = ["ownable", "timestampable"]
 
 [fields.title]
 type = "text"
 required = true
 max_length = 300
-label = "商机名称"
+label = "Deal Title"
 
 [fields.amount]
 type = "decimal"
 min = 0
 default = 0
-label = "金额"
+label = "Amount"
 
 [fields.currency]
 type = "enum"
 enum_values = ["CNY", "USD", "EUR", "GBP", "JPY"]
 default = "CNY"
-label = "币种"
+label = "Currency"
 
 [fields.stage]
 type = "enum"
 enum_values = ["prospecting", "qualification", "proposal", "negotiation", "closed_won", "closed_lost"]
 default = "prospecting"
-label = "阶段"
+label = "Stage"
 
 [fields.probability]
 type = "integer"
 min = 0
 max = 100
 default = 10
-label = "赢单概率(%)"
+label = "Win Probability (%)"
 
 [fields.contact]
 type = "relation"
 relation_type = "many_to_one"
 target = "crm_contacts"
 foreign_key = "contact_id"
-label = "关联联系人"
+label = "Related Contact"
 
 [fields.company]
 type = "relation"
 relation_type = "many_to_one"
 target = "crm_companies"
 foreign_key = "company_id"
-label = "关联公司"
+label = "Related Company"
 
 [fields.owner_id]
 type = "text"
-label = "负责人"
+label = "Owner"
 
 [fields.close_date]
 type = "date"
-label = "预计成交日期"
+label = "Expected Close Date"
 
 [fields.description]
 type = "richtext"
-label = "描述"
+label = "Description"
 
 [fields.loss_reason]
 type = "enum"
 enum_values = ["no_budget", "no_decision", "lost_to_competitor", "timing", "lack_of_fit", "other"]
-label = "丢单原因"
+label = "Loss Reason"
 
 [[indexes]]
 fields = ["stage"]
@@ -83,10 +83,6 @@ fields = ["contact_id"]
 
 [[indexes]]
 fields = ["close_date"]
-
-[list_view]
-default_sort = "created_at:desc"
-columns = ["title", "amount", "stage", "probability", "company", "contact", "owner_id", "close_date"]
 
 [api.list]
 access = "authed"

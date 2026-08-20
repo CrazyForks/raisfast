@@ -4,7 +4,7 @@ singular = "poll"
 plural = "polls"
 table = "forum_polls"
 group = "forum"
-description = "论坛投票"
+description = "Forum polls"
 implements = ["ownable", "timestampable"]
 
 [fields.topic]
@@ -14,13 +14,13 @@ target = "forum_topics"
 foreign_key = "topic_id"
 required = true
 immutable = true
-label = "所属主题"
+label = "Topic"
 
 [fields.question]
 type = "text"
 required = true
 max_length = 500
-label = "投票问题"
+label = "Question"
 
 [fields.max_choices]
 type = "integer"
@@ -28,20 +28,16 @@ required = true
 default = 1
 min = 1
 max = 20
-label = "每人最多选几项"
+label = "Max Choices per User"
 
 [fields.is_closed]
 type = "boolean"
 default = false
-label = "已关闭"
+label = "Closed"
 
 [[indexes]]
 fields = ["topic_id"]
 unique = true
-
-[list_view]
-default_sort = "created_at:desc"
-columns = ["topic", "question", "max_choices", "is_closed", "created_at"]
 
 [api.list]
 access = "admin"

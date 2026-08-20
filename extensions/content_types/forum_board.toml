@@ -4,7 +4,7 @@ singular = "board"
 plural = "boards"
 table = "forum_boards"
 group = "forum"
-description = "论坛版块"
+description = "Forum boards"
 implements = ["ownable", "timestampable"]
 slug_field = "name"
 
@@ -12,57 +12,56 @@ slug_field = "name"
 type = "text"
 required = true
 max_length = 100
-label = "版块名称"
+label = "Board Name"
 
 [fields.slug]
 type = "uid"
-target_field = "name"
 unique = true
-label = "URL 标识"
+label = "URL Slug"
 
 [fields.description]
 type = "text"
 max_length = 500
-label = "版块描述"
+label = "Description"
 
 [fields.icon]
 type = "media"
 accept = ["image/*"]
 max_count = 1
-label = "版块图标"
+label = "Icon"
 
 [fields.parent]
 type = "relation"
 relation_type = "many_to_one"
 target = "forum_boards"
 foreign_key = "parent_id"
-label = "父版块"
+label = "Parent Board"
 
 [fields.sort_order]
 type = "integer"
 default = 0
 min = 0
-label = "排序权重"
+label = "Sort Order"
 
 [fields.topic_count]
 type = "integer"
 default = 0
 private = true
-label = "主题数"
+label = "Topic Count"
 
 [fields.post_count]
 type = "integer"
 default = 0
 private = true
-label = "帖子数"
+label = "Post Count"
 
 [fields.last_activity_at]
 type = "datetime"
-label = "最后活跃时间"
+label = "Last Activity At"
 
 [fields.last_topic_id]
 type = "text"
-label = "最后主题ID"
+label = "Last Topic ID"
 
 [[indexes]]
 fields = ["slug"]
@@ -70,10 +69,6 @@ unique = true
 
 [[indexes]]
 fields = ["parent_id", "sort_order"]
-
-[list_view]
-default_sort = "sort_order:asc"
-columns = ["name", "slug", "topic_count", "post_count", "last_activity_at"]
 
 [api.list]
 access = "public"

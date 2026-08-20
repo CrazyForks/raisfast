@@ -4,7 +4,7 @@ singular = "topic"
 plural = "topics"
 table = "forum_topics"
 group = "forum"
-description = "论坛主题"
+description = "Forum topics"
 implements = ["ownable", "timestampable"]
 slug_field = "title"
 
@@ -12,18 +12,17 @@ slug_field = "title"
 type = "text"
 required = true
 max_length = 200
-label = "标题"
+label = "Title"
 
 [fields.slug]
 type = "uid"
-target_field = "title"
 unique = true
-label = "URL 标识"
+label = "URL Slug"
 
 [fields.content]
 type = "richtext"
 required = true
-label = "正文"
+label = "Content"
 
 [fields.board]
 type = "relation"
@@ -31,52 +30,52 @@ relation_type = "many_to_one"
 target = "forum_boards"
 foreign_key = "board_id"
 required = true
-label = "所属版块"
+label = "Board"
 
 [fields.author_id]
 type = "text"
 required = true
-label = "发帖人"
+label = "Author"
 
 [fields.reply_count]
 type = "integer"
 default = 0
 private = true
-label = "回复数"
+label = "Reply Count"
 
 [fields.view_count]
 type = "integer"
 default = 0
 private = true
-label = "浏览量"
+label = "View Count"
 
 [fields.last_reply_at]
 type = "datetime"
-label = "最后回复时间"
+label = "Last Reply At"
 
 [fields.last_reply_user_id]
 type = "text"
-label = "最后回复人"
+label = "Last Reply User"
 
 [fields.is_pinned]
 type = "boolean"
 default = false
-label = "置顶"
+label = "Pinned"
 
 [fields.is_locked]
 type = "boolean"
 default = false
-label = "锁定"
+label = "Locked"
 
 [fields.is_solved]
 type = "boolean"
 default = false
-label = "已解决"
+label = "Solved"
 
 [fields.tags]
 type = "text"
 max_length = 200
-label = "标签"
+label = "Tags"
 
 [[indexes]]
 fields = ["slug"]
@@ -87,10 +86,6 @@ fields = ["board_id", "is_pinned", "last_reply_at"]
 
 [[indexes]]
 fields = ["author_id", "created_at"]
-
-[list_view]
-default_sort = "is_pinned:desc,last_reply_at:desc"
-columns = ["title", "board", "author_id", "reply_count", "view_count", "is_pinned", "is_locked", "last_reply_at"]
 
 [api.list]
 access = "public"

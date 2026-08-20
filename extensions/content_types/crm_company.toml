@@ -4,55 +4,55 @@ singular = "company"
 plural = "companies"
 table = "crm_companies"
 group = "crm"
-description = "公司/组织"
+description = "Companies and organizations"
 implements = ["ownable", "timestampable"]
 
 [fields.name]
 type = "text"
 required = true
 max_length = 200
-label = "公司名称"
+label = "Company Name"
 
 [fields.website]
 type = "text"
-label = "网站"
+label = "Website"
 
 [fields.industry]
 type = "enum"
 enum_values = ["technology", "finance", "healthcare", "education", "retail", "manufacturing", "real_estate", "consulting", "media", "other"]
 default = "other"
-label = "行业"
+label = "Industry"
 
 [fields.size]
 type = "enum"
 enum_values = ["1-10", "11-50", "51-200", "201-500", "501-1000", "1000+"]
 default = "1-10"
-label = "公司规模"
+label = "Company Size"
 
 [fields.phone]
 type = "text"
-label = "电话"
+label = "Phone"
 
 [fields.address]
 type = "text"
-label = "地址"
+label = "Address"
 
 [fields.city]
 type = "text"
-label = "城市"
+label = "City"
 
 [fields.country]
 type = "text"
 default = "CN"
-label = "国家"
+label = "Country"
 
 [fields.description]
 type = "richtext"
-label = "公司简介"
+label = "Description"
 
 [fields.owner_id]
 type = "text"
-label = "负责人"
+label = "Owner"
 
 [[indexes]]
 fields = ["name"]
@@ -62,10 +62,6 @@ fields = ["industry"]
 
 [[indexes]]
 fields = ["owner_id", "created_at"]
-
-[list_view]
-default_sort = "created_at:desc"
-columns = ["name", "industry", "size", "city", "owner_id", "created_at"]
 
 [api.list]
 access = "authed"

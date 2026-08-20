@@ -4,43 +4,43 @@ singular = "note"
 plural = "notes"
 table = "crm_notes"
 group = "crm"
-description = "备注/跟进记录"
+description = "Notes and follow-up records"
 implements = ["ownable", "timestampable"]
 
 [fields.content]
 type = "richtext"
 required = true
-label = "内容"
+label = "Content"
 
 [fields.contact]
 type = "relation"
 relation_type = "many_to_one"
 target = "crm_contacts"
 foreign_key = "contact_id"
-label = "关联联系人"
+label = "Related Contact"
 
 [fields.company]
 type = "relation"
 relation_type = "many_to_one"
 target = "crm_companies"
 foreign_key = "company_id"
-label = "关联公司"
+label = "Related Company"
 
 [fields.deal]
 type = "relation"
 relation_type = "many_to_one"
 target = "crm_deals"
 foreign_key = "deal_id"
-label = "关联商机"
+label = "Related Deal"
 
 [fields.owner_id]
 type = "text"
-label = "创建者"
+label = "Creator"
 
 [fields.pinned]
 type = "boolean"
 default = false
-label = "置顶"
+label = "Pinned"
 
 [[indexes]]
 fields = ["contact_id", "created_at"]
@@ -53,10 +53,6 @@ fields = ["deal_id", "created_at"]
 
 [[indexes]]
 fields = ["owner_id", "created_at"]
-
-[list_view]
-default_sort = "pinned:desc,created_at:desc"
-columns = ["content", "contact", "company", "deal", "pinned", "owner_id", "created_at"]
 
 [api.list]
 access = "authed"

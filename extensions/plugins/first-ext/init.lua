@@ -1,7 +1,7 @@
 -- Blog Stats API Plugin
 --
--- 通过 routes 声明式注册自定义 REST 端点，暴露博客统计数据。
--- 使用 SDK v1 模块，通过 require("sdk") 导入工具函数。
+-- Registers custom REST endpoints declaratively via routes, exposing blog statistics.
+-- Uses the SDK v1 module, importing helper functions via require("sdk").
 
 local sdk = require("sdk")
 
