@@ -25,30 +25,77 @@ static STRICT_TRANSPORT_SECURITY: HeaderName = HeaderName::from_static("strict-t
 
 static CONTENT_SECURITY_POLICY: HeaderName = HeaderName::from_static("content-security-policy");
 
-/// Build the Content-Security-Policy value.
+/// Domains of raisfast's own infrastructure (docs site & template gallery),
+/// allowed by default because the shipped admin UI loads template data and
+/// screenshots from them — first-party features must work out of the box.
+const RAISFAST_ORIGINS: &str = "https://raisfast.com https://www.raisfast.com";
+
+/// Build the Content-Security-Policy value. Precedence (simple → expert):
 ///
-/// Set the `CSP` env var to override the built-in policy entirely (verbatim
-/// header value, nginx-style). Typical additions: Cloudflare Insights beacon
-/// (`script-src`/`connect-src`) and the admin template gallery (`connect-src`/
-/// `img-src` for `https://raisfast.com`). Cached for the process lifetime.
+/// 1. **Default (nothing set)** — strict policy; only raisfast's own domains
+///    are additionally allowed (built-in admin template gallery).
+/// 2. **`CSP_ALLOW`** — space-separated extra origins, appended to
+///    `script-src`, `connect-src`, `img-src` and `style-src`. Covers most
+///    third-party needs (analytics, chat widgets, CDN scripts), e.g.
+///    `CSP_ALLOW="https://static.cloudflareinsights.com https://cloudflareinsights.com"`.
+/// 3. **`CSP`** — full policy override (verbatim header value, nginx-style)
+///    for complete control; wins over everything above.
+///
+/// Cached for the process lifetime.
 fn csp_value() -> &'static HeaderValue {
     static CSP: OnceLock<HeaderValue> = OnceLock::new();
-    CSP.get_or_init(|| match std::env::var("CSP") {
-        Ok(policy) if !policy.trim().is_empty() => match HeaderValue::from_str(policy.trim()) {
-            Ok(v) => v,
-            Err(e) => {
-                tracing::warn!("invalid CSP env var ({e}), using default policy");
-                default_csp()
-            }
-        },
-        _ => default_csp(),
+    CSP.get_or_init(|| {
+        resolve_csp(
+            std::env::var("CSP").ok().as_deref(),
+            std::env::var("CSP_ALLOW").ok().as_deref(),
+        )
     })
 }
 
-fn default_csp() -> HeaderValue {
-    HeaderValue::from_static(
-        "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'",
+/// Pure resolution of the policy header from the `CSP` / `CSP_ALLOW` values.
+/// Deterministic and independent of the process environment (testable).
+fn resolve_csp(csp: Option<&str>, allow: Option<&str>) -> HeaderValue {
+    // 3. Full override (wins over CSP_ALLOW)
+    if let Some(policy) = csp.map(str::trim).filter(|p| !p.is_empty()) {
+        match HeaderValue::from_str(policy) {
+            Ok(v) => return v,
+            Err(e) => eprintln!(
+                "warning: invalid CSP env var ({e}); falling back to the default policy. \
+                 Hint: wrap values containing quotes in double quotes"
+            ),
+        }
+    }
+
+    // 2. Extra origins appended to the default policy, otherwise default.
+    let extra = allow.unwrap_or_default().trim();
+    HeaderValue::from_str(&build_csp(extra)).unwrap_or_else(|_| default_csp())
+}
+
+/// Compose the policy string from optional extra origins (pure; testable).
+fn build_csp(extra: &str) -> String {
+    if extra.is_empty() {
+        return format!(
+            "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; \
+             img-src 'self' data: blob: {RAISFAST_ORIGINS}; font-src 'self'; \
+             connect-src 'self' {RAISFAST_ORIGINS}; frame-ancestors 'none'; \
+             base-uri 'self'; form-action 'self'"
+        );
+    }
+    format!(
+        "default-src 'self'; script-src 'self' {extra}; style-src 'self' 'unsafe-inline' {extra}; \
+         img-src 'self' data: blob: {RAISFAST_ORIGINS} {extra}; font-src 'self'; \
+         connect-src 'self' {RAISFAST_ORIGINS} {extra}; frame-ancestors 'none'; \
+         base-uri 'self'; form-action 'self'"
     )
+}
+
+fn default_csp() -> HeaderValue {
+    // No unwrap/expect: build_csp only interpolates RAISFAST_ORIGINS / extra,
+    // both of which must come from env; on invalid header chars fall back to
+    // the static baseline below.
+    HeaderValue::from_str(&build_csp("")).unwrap_or(HeaderValue::from_static(
+        "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'",
+    ))
 }
 
 /// Security response headers middleware.
@@ -92,19 +139,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn csp_value_returns_strict_default_without_env() {
-        // std::env::var reads the process env; the CSP var is unset in tests,
-        // so this exercises the default branch.
-        let default = default_csp();
-        let v = csp_value();
-        assert_eq!(v, default);
-        assert!(v.to_str().unwrap().contains("script-src 'self'"));
+    fn resolve_default_policy_without_any_env() {
+        let v = resolve_csp(None, None);
+        assert_eq!(v, default_csp());
     }
 
     #[test]
-    fn default_csp_is_valid_directive_list() {
-        let default = default_csp();
-        let s = default.to_str().unwrap();
+    fn default_policy_has_all_directives() {
+        let s = build_csp("");
         for directive in [
             "default-src",
             "script-src",
@@ -118,5 +160,55 @@ mod tests {
         ] {
             assert!(s.contains(directive), "missing {directive}");
         }
+    }
+
+    #[test]
+    fn default_policy_allows_raisfast_own_domains() {
+        // The shipped admin template gallery loads templates.json and
+        // screenshots from raisfast.com / www.raisfast.com — must be allowed
+        // out of the box (connect-src + img-src).
+        let s = build_csp("");
+        assert!(
+            s.contains("img-src 'self' data: blob: https://raisfast.com https://www.raisfast.com")
+        );
+        assert!(s.contains("connect-src 'self' https://raisfast.com https://www.raisfast.com"));
+        // First-party domains are NOT allowed to run scripts by default.
+        assert_eq!(
+            s.split("script-src").nth(1).unwrap().split(';').next(),
+            Some(" 'self'")
+        );
+    }
+
+    #[test]
+    fn csp_allow_appends_extra_origins_to_all_fetch_directives() {
+        let s = build_csp("https://analytics.example.com");
+        assert!(s.contains("script-src 'self' https://analytics.example.com"));
+        assert!(s.contains("style-src 'self' 'unsafe-inline' https://analytics.example.com"));
+        assert!(s.contains("connect-src 'self' https://raisfast.com https://www.raisfast.com https://analytics.example.com"));
+        let base = build_csp("");
+        assert!(!base.contains("example.com"));
+    }
+
+    #[test]
+    fn full_csp_override_wins_over_csp_allow() {
+        let v = resolve_csp(Some("default-src 'self'"), Some("https://x.example.com"));
+        assert_eq!(v.to_str().unwrap(), "default-src 'self'");
+    }
+
+    #[test]
+    fn empty_or_whitespace_csp_falls_back_to_allow_tier() {
+        let v = resolve_csp(Some("   "), Some("https://analytics.example.com"));
+        assert!(
+            v.to_str()
+                .unwrap()
+                .contains("script-src 'self' https://analytics.example.com")
+        );
+    }
+
+    #[test]
+    fn invalid_csp_override_falls_back_to_default_policy() {
+        // '\n' is not a legal header byte → override rejected, default used.
+        let v = resolve_csp(Some("default-src 'self';\nscript-src *"), None);
+        assert_eq!(v, default_csp());
     }
 }

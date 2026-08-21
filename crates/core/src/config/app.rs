@@ -589,6 +589,28 @@ fn default_storage_root_dir() -> String {
     "./storage".into()
 }
 
+/// Load a dotenv file, printing a warning when it exists but fails to parse.
+///
+/// dotenvy aborts the whole file on the first malformed line — most commonly a
+/// value containing single quotes without an outer double-quote wrapper (e.g.
+/// `CSP=default-src 'self'; ...`). Without this warning that failure is
+/// completely silent: every variable in the file is skipped.
+///
+/// Uses `eprintln!` (not `tracing`) because this runs before the logging
+/// subscriber is installed.
+fn load_dotenv(path: &str) {
+    if let Err(e) = dotenvy::from_path(path) {
+        match &e {
+            dotenvy::Error::Io(io) if io.kind() == std::io::ErrorKind::NotFound => {}
+            _ => eprintln!(
+                "warning: failed to parse {path} ({e}); NONE of its variables were loaded. \
+                 Hint: wrap values containing quotes in double quotes, e.g. \
+                 KEY=\"value with 'single quotes'\""
+            ),
+        }
+    }
+}
+
 fn default_backup_retention() -> usize {
     10
 }
@@ -1302,9 +1324,9 @@ impl AppConfig {
             .or_else(|_| env::var("APP_ENV"))
             .unwrap_or_else(|_| "development".into());
 
-        dotenvy::from_path(".env").ok();
-        dotenvy::from_path(format!(".env.{profile}")).ok();
-        dotenvy::from_path(".env.local").ok();
+        load_dotenv(".env");
+        load_dotenv(&format!(".env.{profile}"));
+        load_dotenv(".env.local");
 
         let mut config = Self::from_env();
         config.started_at = Some(std::time::Instant::now());
@@ -1342,9 +1364,9 @@ impl AppConfig {
     ///
     /// Useful for CLI tools that need env vars but not a full `AppConfig`.
     pub fn load_env(profile: &str) {
-        dotenvy::from_path(".env").ok();
-        dotenvy::from_path(format!(".env.{profile}")).ok();
-        dotenvy::from_path(".env.local").ok();
+        load_dotenv(".env");
+        load_dotenv(&format!(".env.{profile}"));
+        load_dotenv(".env.local");
     }
 
     fn generate_app_key() -> String {

@@ -26,6 +26,7 @@
 
 <p align="center">
   <a href="https://github.com/RaisFast/raisfast/stargazers"><img src="https://img.shields.io/github/stars/RaisFast/raisfast?style=social" alt="GitHub Stars" /></a>
+  <a href="https://github.com/RaisFast/raisfast/releases"><img src="https://img.shields.io/github/downloads/RaisFast/raisfast/total?color=blue" alt="Total Downloads" /></a>
   <a href="https://github.com/RaisFast/raisfast/releases"><img src="https://img.shields.io/github/v/release/RaisFast/raisfast?color=blue" alt="Latest Release" /></a>
   <a href="https://github.com/RaisFast/raisfast"><img src="https://img.shields.io/badge/Rust-edition%202024-orange" alt="Rust Edition 2024" /></a>
   <a href="./LICENSE"><img src="https://img.shields.io/github/license/RaisFast/raisfast?color=success" alt="License" /></a>
