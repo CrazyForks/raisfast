@@ -2990,7 +2990,10 @@ type = "text"
     assert!(status.is_success(), "receipts list: {body:?}");
     let items = body["data"]["items"].as_array().unwrap();
     assert_eq!(items.len(), 1, "filtered list");
-    let trace_id = items[0]["id"].as_i64().unwrap();
+    let trace_id: i64 = items[0]["id"]
+        .as_str()
+        .and_then(|s| s.parse().ok())
+        .unwrap();
 
     // Detail: envelope + steps timeline.
     let (status, body) = send(

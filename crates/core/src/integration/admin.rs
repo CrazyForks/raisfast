@@ -648,10 +648,16 @@ pub async fn list_receipts(
     let items: Vec<Value> = rows
         .iter()
         .map(|r| {
+            // Ids serialize as SnowflakeId (encoded on the wire when
+            // ID_ENCODING is on) so path params round-trip through parse_id.
             json!({
-                "id": r.0, "channel_id": r.1, "external_id": r.2, "kind": r.3,
+                "id": crate::types::snowflake_id::SnowflakeId(r.0),
+                "channel_id": crate::types::snowflake_id::SnowflakeId(r.1),
+                "external_id": r.2, "kind": r.3,
                 "status": r.4, "attempts": r.5, "next_retry_at": r.6,
-                "raw_ref": r.7, "target_id": r.8, "received_at": r.9, "delivered_at": r.10,
+                "raw_ref": r.7,
+                "target_id": r.8.map(crate::types::snowflake_id::SnowflakeId),
+                "received_at": r.9, "delivered_at": r.10,
             })
         })
         .collect();
