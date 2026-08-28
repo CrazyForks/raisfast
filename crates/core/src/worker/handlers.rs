@@ -77,6 +77,7 @@ pub mod script;
 pub mod search_index;
 pub mod sitemap;
 pub mod sms;
+pub mod support_autoreply;
 #[cfg(feature = "cron-system")]
 pub mod system;
 pub mod thumbnail;
@@ -197,6 +198,13 @@ pub fn register_all(deps: HandlerDeps) -> JobHandlerRegistry {
     registry.register(
         "db_backup",
         Box::new(db_backup::DbBackupHandler::new(config.clone())),
+    );
+
+    // ── Integration plane: LLM auto-reply (config-driven, MVP-M1) ────────
+    registry.register_with_meta(
+        support_autoreply::META.id,
+        Box::new(support_autoreply::SupportAutoreplyHandler),
+        &support_autoreply::META,
     );
 
     // ── Cron handlers: collected from inventory self-registration ───────────

@@ -417,7 +417,7 @@ impl ContentRepository {
             if !field_exists {
                 continue;
             }
-            append_filter_clause(&mut where_clauses, &mut params, &mut param_idx, f);
+            append_filter_clause(&mut where_clauses, &mut params, &mut param_idx, f, ct);
         }
 
         for mf in &query.meta_filters {
@@ -2174,6 +2174,7 @@ fn append_filter_clause(
     params: &mut Vec<Value>,
     param_idx: &mut usize,
     f: &FieldFilter,
+    ct: &crate::content_type::schema::ContentTypeSchema,
 ) {
     let field = &f.field;
     let mut wrap = |op: FilterOp, v: &Value| {
@@ -2245,8 +2246,22 @@ fn append_filter_clause(
         | FilterOp::Gte
         | FilterOp::Lt
         | FilterOp::Lte => {
-            let p = crate::db::Driver::ph(*param_idx);
+            let raw = crate::db::Driver::ph(*param_idx);
             *param_idx += 1;
+            // Filter params bind as text; integer columns need an explicit
+            // cast or PostgreSQL rejects `bigint = text` (cross-db rule 3).
+            let is_int_col = ct.get_field(field).is_some_and(|fs| {
+                matches!(
+                    fs.field_type,
+                    crate::content_type::schema::FieldType::Integer
+                        | crate::content_type::schema::FieldType::BigInt
+                )
+            }) || field == COL_ID;
+            let p = if is_int_col {
+                crate::db::Driver::cast_int(&raw)
+            } else {
+                raw
+            };
             where_clauses.push(format!("{field} {} {p}", f.op.sql_op()));
             params.push(f.value.clone());
         }

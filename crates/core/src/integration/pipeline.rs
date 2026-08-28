@@ -114,6 +114,18 @@ impl Pipeline {
         }
     }
 
+    /// Content type registry (job handlers doing CT lookups/writes).
+    #[must_use]
+    pub fn registry(&self) -> &Arc<crate::content_type::ContentTypeRegistry> {
+        &self.registry
+    }
+
+    /// Content repository (CT CRUD for job handlers outside the pipeline tx).
+    #[must_use]
+    pub fn repo(&self) -> &ContentRepository {
+        &self.repo
+    }
+
     /// Archive the raw body for replay/audit (§10.2). Returns the stored path.
     /// `archive-strict` channels fail the pipeline when archiving fails;
     /// default channels degrade to `None` + warn (availability first).
@@ -1171,7 +1183,13 @@ impl Pipeline {
                         job_type: job_type.to_string(),
                         payload,
                     },
-                    max_attempts: None,
+                    // Declared per job (route_extra.jobs[].max_attempts) — e.g.
+                    // `support.autoreply` sets 1: LLM failures go to a human,
+                    // not back through the queue (mvp-plan M1 failure policy).
+                    max_attempts: job
+                        .get("max_attempts")
+                        .and_then(Value::as_u64)
+                        .map(|v| v.clamp(1, u64::from(u32::MAX)) as u32),
                     run_after: None,
                     cron_schedule_id: None,
                     cron_log_id: None,

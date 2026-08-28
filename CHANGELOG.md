@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+- Integration Plane MVP-M1 — LLM auto-reply: `support.autoreply` job handler (contact merge by channel+sender, open-conversation reuse, user-message linking, context window, `call_api_traced` LLM call, assistant message + `integration.message` SSE); `route_extra.jobs[].max_attempts` honored on enqueue; failure → conversation `pending` (human takeover) + `integration.autoreply_failed` alert
+- Cross-db fix (production): CT repository filter params bind as text — integer-column filters now cast via `Driver::cast_int` (PostgreSQL `bigint = text` rejection)
 - Integration Plane M0 — declarative outbound egress: `itg_api_clients` / `itg_egress_log` tables (all three backends), `integration.call_api()` / `call_api_traced()` entry points (op template rendering, bearer / api-key-header auth from sealed vault credentials, per-client rate limit, 20s timeout, full call log with trace_id / tokens / model)
 - Plugin host API `callApi(clientKey, op, input)` across JS / Rhai / Lua / WASM (new `egress` permission in plugin manifest gates allowed client keys); ambient TRACE_CTX attaches automatically
 - Admin API: `/api/v1/admin/integration/api-clients` CRUD + `test-call`, `/api/v1/admin/integration/egress-log`, receipts `{id}/trace` now joins egress calls

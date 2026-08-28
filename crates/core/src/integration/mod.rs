@@ -193,9 +193,16 @@ impl IntegrationPlane {
 
     /// Emit an `integration.alert` event (observability alerts, §10.2).
     pub fn emit_alert(&self, alert_type: &str, data: serde_json::Value) {
+        self.emit_event(alert_type, data);
+    }
+
+    /// Emit a custom `integration.*` event (SSE fan-out). The event type
+    /// should carry the `integration.` prefix so `filter=integration.*`
+    /// subscribers receive it.
+    pub fn emit_event(&self, event_type: &str, data: serde_json::Value) {
         self.alert_emitter.emit(crate::event::Event::Custom {
             source: "integration".into(),
-            event_type: alert_type.to_string(),
+            event_type: event_type.to_string(),
             data,
         });
     }

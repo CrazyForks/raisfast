@@ -2111,7 +2111,6 @@ required = true
         .await
         .unwrap();
     plane.channels().refresh().await.unwrap();
-    raisfast::integration::set_shared(state.integration.clone().unwrap());
 
     // 1. First push → route fails (missing required) → retrying, ack 200.
     let (status, _) = send(
@@ -4189,6 +4188,12 @@ async fn egress_mock_api(listener: tokio::net::TcpListener) {
         axum::Json(json!({"header": name, "value": v}))
     }
 
+    async fn seen() -> axum::Json<Value> {
+        let bodies: Vec<String> = SEEN_BODY.lock().unwrap().clone();
+        let auths: Vec<String> = SEEN_AUTH.lock().unwrap().clone();
+        axum::Json(json!({"bodies": bodies, "auths": auths}))
+    }
+
     async fn fail() -> (StatusCode, &'static str) {
         (StatusCode::INTERNAL_SERVER_ERROR, "boom")
     }
@@ -4197,7 +4202,8 @@ async fn egress_mock_api(listener: tokio::net::TcpListener) {
         .route("/v1/chat-messages", post(chat))
         .route("/v1/items/{id}", get(item))
         .route("/v1/echo-header/{name}", get(echo_header))
-        .route("/v1/fail", post(fail));
+        .route("/v1/fail", post(fail))
+        .route("/v1/seen", get(seen));
     axum::serve(listener, app).await.unwrap();
 }
 
@@ -4699,4 +4705,404 @@ type = "text"
             .any(|c| c["client_key"] == "adm-llm"),
         "deleted client still listed: {body:?}"
     );
+}
+
+// ── Integration Plane M1: support.autoreply ──────────────────────
+
+/// Register the support CT trio (contact / conversation / message).
+async fn autoreply_schemas(state: &AppState) {
+    let tomls = [
+        (
+            "sc_contact",
+            r#"
+[content_type]
+name = "AR Contact"
+singular = "sc_contact"
+plural = "sc_contacts"
+table = "sc_contacts"
+
+[fields.channel]
+type = "text"
+
+[fields.sender]
+type = "text"
+"#,
+        ),
+        (
+            "sc_conversation",
+            r#"
+[content_type]
+name = "AR Conversation"
+singular = "sc_conversation"
+plural = "sc_conversations"
+table = "sc_conversations"
+
+[fields.contact_id]
+type = "bigint"
+
+[fields.status]
+type = "text"
+"#,
+        ),
+        (
+            "sc_message",
+            r#"
+[content_type]
+name = "AR Message"
+singular = "sc_message"
+plural = "sc_messages"
+table = "sc_messages"
+
+[fields.conversation_id]
+type = "bigint"
+
+[fields.role]
+type = "text"
+
+[fields.body]
+type = "text"
+
+[fields.external_id]
+type = "text"
+"#,
+        ),
+    ];
+    for (_, toml) in tomls {
+        let schema =
+            raisfast::content_type::schema::ContentTypeSchema::parse_from_str(toml).unwrap();
+        let repo = raisfast::content_type::repository::ContentRepository::new(state.pool.clone());
+        repo.migrate(&schema, &state.protocol_registry)
+            .await
+            .unwrap();
+        state
+            .content_type_registry
+            .register(
+                schema,
+                &state.config.rule_engine,
+                &state.config.builtins.reserved_route_segments(),
+                &state.protocol_registry.names(),
+                &state.protocol_registry,
+            )
+            .unwrap();
+    }
+}
+
+fn autoreply_channel(
+    key: &str,
+    client: &str,
+    op: &str,
+    window: i64,
+) -> raisfast::integration::ItgChannel {
+    raisfast::integration::ItgChannel {
+        id: raisfast::utils::id::new_snowflake_id(),
+        tenant_id: "default".into(),
+        channel_key: key.into(),
+        provider: "generic".into(),
+        display_name: key.into(),
+        mode: "push".into(),
+        transport: "http1".into(),
+        framing: "raw".into(),
+        codec: "json".into(),
+        endpoint: None,
+        verify_kind: "none".into(),
+        verify_config: None,
+        credentials: None,
+        mapping: Some(json!({
+            "external_id": "$.id",
+            "sender": "$.user",
+            "payload": {"body": "$.text"}
+        })),
+        normalizer_plugin: None,
+        pull_semantics: None,
+        pull_config: None,
+        stream_config: None,
+        ack_kind: "http-200".into(),
+        redelivery_max: 5,
+        backpressure: None,
+        target_type: "sc_message".into(),
+        route_extra: Some(json!({
+            "jobs": [{"job_type": "support.autoreply", "max_attempts": 1}],
+            "autoreply": {
+                "client": client,
+                "op": op,
+                "context_window": window,
+                "system_prompt": "你是客服",
+                "output_field": "text"
+            }
+        })),
+        status: "idle".into(),
+        last_error: None,
+        lease_owner: None,
+        enabled: true,
+        version: 1,
+        shadow: false,
+        created_at: raisfast::utils::tz::now_utc(),
+        updated_at: raisfast::utils::tz::now_utc(),
+    }
+}
+
+#[tokio::test]
+async fn integration_autoreply_end_to_end() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(egress_mock_api(listener));
+
+    let (mut app, state) = test_app().await;
+    let _ = &mut app;
+    autoreply_schemas(&state).await;
+    let plane = state.integration.as_ref().unwrap();
+    // The handler reaches the plane via the process-wide handle.
+    raisfast::integration::set_shared(state.integration.clone().unwrap());
+
+    // LLM client (no auth) + channels (window = 2).
+    let ops = json!({"chat": {"method": "POST", "path": "/v1/chat-messages",
+                              "output": {"text": "$.answer"}}});
+    let mut client = insert_egress_client(
+        &state,
+        plane,
+        "ar-llm",
+        json!({"kind": "none"}),
+        None,
+        ops,
+        None,
+    )
+    .await;
+    client.base_url = format!("http://{addr}");
+    sqlx::query(raisfast::db::safe_sql(&format!(
+        "UPDATE itg_api_clients SET base_url = {} WHERE id = {}",
+        raisfast::db::Driver::ph(1),
+        raisfast::db::Driver::ph(2)
+    )))
+    .bind(&client.base_url)
+    .bind(*client.id)
+    .execute(&state.pool)
+    .await
+    .unwrap();
+
+    let channel = autoreply_channel("ar-ch", "ar-llm", "chat", 2);
+    raisfast::integration::channel::model::insert(&state.pool, &channel)
+        .await
+        .unwrap();
+    plane.channels().refresh().await.unwrap();
+
+    // SSE fan-out: capture integration.message from the app's event bus.
+    let mut rx = state.eventbus.subscribe();
+
+    // ── Round 1: first message from alice ─────────────────────────────
+    let (status, _) = send(
+        &mut app,
+        post_json(
+            "/api/v1/ingress/ar-ch",
+            json!({"id": "m1", "user": "alice", "text": "你好"}),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "push 1 acked");
+    let trace1: i64 = sqlx::query_scalar(raisfast::db::safe_sql(&format!(
+        "SELECT id FROM itg_receipts WHERE external_id = {}",
+        raisfast::db::Driver::ph(1)
+    )))
+    .bind("m1")
+    .fetch_one(&state.pool)
+    .await
+    .unwrap();
+
+    let handler = raisfast::worker::handlers::support_autoreply::SupportAutoreplyHandler;
+    raisfast::worker::JobHandler::handle(
+        &handler,
+        &raisfast::worker::Job::Custom {
+            job_type: "support.autoreply".into(),
+            payload: json!({"trace_id": trace1, "channel_key": "ar-ch"}),
+        },
+    )
+    .await
+    .unwrap();
+
+    let contacts: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM sc_contacts WHERE sender = 'alice'")
+            .fetch_one(&state.pool)
+            .await
+            .unwrap();
+    assert_eq!(contacts, 1, "one contact (merged by sender)");
+    let conv1: i64 = sqlx::query_scalar(
+        "SELECT id FROM sc_conversations WHERE status = 'open' ORDER BY id DESC LIMIT 1",
+    )
+    .fetch_one(&state.pool)
+    .await
+    .unwrap();
+
+    let user_msg: (i64,) =
+        sqlx::query_as("SELECT conversation_id FROM sc_messages WHERE external_id = 'm1'")
+            .fetch_one(&state.pool)
+            .await
+            .unwrap();
+    assert_eq!(user_msg.0, conv1, "user message linked to conversation");
+
+    let reply: String = sqlx::query_scalar(raisfast::db::safe_sql(&format!(
+        "SELECT body FROM sc_messages WHERE external_id = {}",
+        raisfast::db::Driver::ph(1)
+    )))
+    .bind(format!("reply-{trace1}"))
+    .fetch_one(&state.pool)
+    .await
+    .unwrap();
+    assert_eq!(reply, "mock-reply", "assistant message stored");
+
+    // egress_log trace 对账
+    let logs = raisfast::integration::egress::list_log(
+        &state.pool,
+        Some(raisfast::types::snowflake_id::SnowflakeId(trace1)),
+        None,
+        10,
+    )
+    .await
+    .unwrap();
+    assert_eq!(logs.len(), 1, "exactly one LLM call for trace: {logs:?}");
+    assert_eq!(logs[0].op, "chat");
+
+    // SSE integration.message 广播
+    let mut saw_message = false;
+    while let Ok(ev) = rx.try_recv() {
+        if let raisfast::eventbus::Event::Custom {
+            event_type, data, ..
+        } = ev.as_ref()
+            && event_type == "integration.message"
+        {
+            saw_message = true;
+            assert_eq!(data["role"], "assistant");
+            assert_eq!(data["body"], "mock-reply");
+            assert_eq!(data["conversation_id"].as_i64().unwrap_or(conv1), conv1);
+        }
+    }
+    assert!(saw_message, "integration.message broadcast");
+
+    // ── Round 2: second message, same sender → same conversation ───────
+    let (status, _) = send(
+        &mut app,
+        post_json(
+            "/api/v1/ingress/ar-ch",
+            json!({"id": "m2", "user": "alice", "text": "还在吗"}),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "push 2 acked");
+    let trace2: i64 = sqlx::query_scalar(raisfast::db::safe_sql(&format!(
+        "SELECT id FROM itg_receipts WHERE external_id = {}",
+        raisfast::db::Driver::ph(1)
+    )))
+    .bind("m2")
+    .fetch_one(&state.pool)
+    .await
+    .unwrap();
+    raisfast::worker::JobHandler::handle(
+        &handler,
+        &raisfast::worker::Job::Custom {
+            job_type: "support.autoreply".into(),
+            payload: json!({"trace_id": trace2, "channel_key": "ar-ch"}),
+        },
+    )
+    .await
+    .unwrap();
+
+    let conv2: i64 = sqlx::query_scalar(
+        "SELECT id FROM sc_conversations WHERE status = 'open' ORDER BY id DESC LIMIT 1",
+    )
+    .fetch_one(&state.pool)
+    .await
+    .unwrap();
+    assert_eq!(conv1, conv2, "same sender merges into one conversation");
+    let contacts: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM sc_contacts WHERE sender = 'alice'")
+            .fetch_one(&state.pool)
+            .await
+            .unwrap();
+    assert_eq!(contacts, 1, "still one contact");
+
+    // ── Failure branch: LLM 500 → job fails, conversation → pending ────
+    let ops = json!({"chat": {"method": "POST", "path": "/v1/fail"}});
+    let mut fail_client = insert_egress_client(
+        &state,
+        plane,
+        "ar-fail",
+        json!({"kind": "none"}),
+        None,
+        ops,
+        None,
+    )
+    .await;
+    fail_client.base_url = format!("http://{addr}");
+    sqlx::query(raisfast::db::safe_sql(&format!(
+        "UPDATE itg_api_clients SET base_url = {} WHERE id = {}",
+        raisfast::db::Driver::ph(1),
+        raisfast::db::Driver::ph(2)
+    )))
+    .bind(&fail_client.base_url)
+    .bind(*fail_client.id)
+    .execute(&state.pool)
+    .await
+    .unwrap();
+    let fail_channel = autoreply_channel("ar-fail-ch", "ar-fail", "chat", 10);
+    raisfast::integration::channel::model::insert(&state.pool, &fail_channel)
+        .await
+        .unwrap();
+    plane.channels().refresh().await.unwrap();
+
+    let (status, _) = send(
+        &mut app,
+        post_json(
+            "/api/v1/ingress/ar-fail-ch",
+            json!({"id": "f1", "user": "bob", "text": "hi"}),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let fail_trace: i64 = sqlx::query_scalar(raisfast::db::safe_sql(&format!(
+        "SELECT id FROM itg_receipts WHERE external_id = {}",
+        raisfast::db::Driver::ph(1)
+    )))
+    .bind("f1")
+    .fetch_one(&state.pool)
+    .await
+    .unwrap();
+    let res = raisfast::worker::JobHandler::handle(
+        &handler,
+        &raisfast::worker::Job::Custom {
+            job_type: "support.autoreply".into(),
+            payload: json!({"trace_id": fail_trace, "channel_key": "ar-fail-ch"}),
+        },
+    )
+    .await;
+    assert!(res.is_err(), "LLM failure fails the job");
+    let fail_conv_status: String = sqlx::query_scalar(
+        "SELECT status FROM sc_conversations c JOIN sc_contacts t ON c.contact_id = t.id \
+        WHERE t.sender = 'bob' ORDER BY c.id DESC LIMIT 1",
+    )
+    .fetch_one(&state.pool)
+    .await
+    .unwrap();
+    assert_eq!(fail_conv_status, "pending", "failure → human takeover");
+    let bob_assistants: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM sc_messages WHERE role = 'assistant' AND conversation_id IN \
+         (SELECT c.id FROM sc_conversations c JOIN sc_contacts t ON c.contact_id = t.id WHERE t.sender = 'bob')",
+    )
+    .fetch_one(&state.pool)
+    .await
+    .unwrap();
+    assert_eq!(bob_assistants, 0, "no assistant message on failure");
+
+    // ── Context window = 2: the LLM prompt only carries the last 2 ──────
+    let seen: Value = reqwest::get(format!("http://{addr}/v1/seen"))
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let bodies = seen["bodies"].as_array().unwrap();
+    let last = bodies.last().unwrap().as_str().unwrap_or("{}");
+    let prompt: Value = serde_json::from_str(last).unwrap();
+    let messages = prompt["messages"].as_array().unwrap();
+    assert_eq!(messages.len(), 2, "context_window truncates: {prompt}");
+    assert_eq!(messages[0]["content"], "你好", "chronological order");
+    assert_eq!(messages[1]["content"], "还在吗");
+    assert_eq!(prompt["system"], "你是客服");
 }
