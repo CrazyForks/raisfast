@@ -16,6 +16,7 @@
 //! - [`trace`] — `TRACE_CTX` task-local + step-timeline recorder
 //! - [`api_client`] — declarative outbound API clients (`itg_api_clients`)
 //! - [`egress`] — L5 outbound executor + `itg_egress_log`
+//! - [`token`] — OAuth client-credentials token provider (cached)
 
 pub mod admin;
 pub mod api_client;
@@ -31,6 +32,7 @@ pub mod pipeline;
 pub mod receipt;
 pub mod routes;
 pub mod supervisor;
+pub mod token;
 pub mod trace;
 pub mod vault;
 pub mod verify;

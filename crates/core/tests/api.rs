@@ -5110,3 +5110,711 @@ async fn integration_autoreply_end_to_end() {
     assert_eq!(messages[1]["content"], "还在吗");
     assert_eq!(prompt["system"], "你是客服");
 }
+
+// ── Integration Plane: dispatch framing (generic discriminator-field WS) ──
+
+#[tokio::test]
+async fn integration_ws_stream_dispatch_mode() {
+    use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
+    use futures::{SinkExt, StreamExt};
+    use std::sync::Mutex;
+
+    // Mock long-connection gateway (any {command: ...} JSON protocol):
+    // token endpoint → ws: connect(auth in first frame) → conn_ack →
+    // server-ping/client-pong → event frame with escaped-JSON content.
+    static SAW_CONNECT: Mutex<Vec<String>> = Mutex::new(Vec::new());
+    static SAW_PONG: Mutex<Vec<String>> = Mutex::new(Vec::new());
+    static SENT_EVENT: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+    async fn token_endpoint(axum::Json(body): axum::Json<Value>) -> axum::Json<Value> {
+        assert_eq!(
+            body["app_id"], "cli_test_app",
+            "grant fields reach token endpoint"
+        );
+        assert_eq!(body["app_secret"], "test_secret");
+        axum::Json(json!({"code": 0, "tenant_access_token": "t-dispatch-1", "expire": 7200}))
+    }
+
+    async fn gateway(ws: WebSocket) {
+        let (mut sender, mut receiver) = ws.split();
+        let mut acked = false;
+        while let Some(Ok(msg)) = receiver.next().await {
+            let Message::Text(text) = msg else { continue };
+            let t = text.as_str().to_string();
+            let Ok(v) = serde_json::from_str::<Value>(&t) else {
+                continue;
+            };
+            match v["command"].as_str() {
+                Some("connect") => {
+                    SAW_CONNECT.lock().unwrap().push(t);
+                    let _ = sender
+                        .send(Message::Text(
+                            r#"{"command":"conn_ack","code":0,"msg":""}"#.into(),
+                        ))
+                        .await;
+                    acked = true;
+                    // Reverse heartbeat: server pings, client must pong.
+                    let _ = sender
+                        .send(Message::Text(r#"{"command":"ping"}"#.into()))
+                        .await;
+                }
+                Some("pong") => {
+                    SAW_PONG.lock().unwrap().push(t);
+                    // Only after liveness is proven do we deliver the event.
+                    let evt = r#"{"command":"event","headers":{"event_id":"disp-1","event_type":"im.message.receive_v1"},"event":{"sender":{"sender_id":{"open_id":"ou_disp"}},"message":{"content":"{\"text\":\"hello dispatch\"}"}}}"#.to_string();
+                    SENT_EVENT.lock().unwrap().push(evt.clone());
+                    let _ = sender.send(Message::Text(evt.into())).await;
+                }
+                _ => {
+                    let _ = acked;
+                }
+            }
+        }
+    }
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        let app = axum::Router::new()
+            .route("/auth/token", post(token_endpoint))
+            .route(
+                "/gateway",
+                axum::routing::get(|ws: WebSocketUpgrade| async move { ws.on_upgrade(gateway) }),
+            );
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let (mut app, state) = test_app().await;
+    let plane = state.integration.clone().unwrap();
+
+    let toml = r#"
+[content_type]
+name = "Ingress Note"
+singular = "ingress_note"
+plural = "ingress_notes"
+table = "ingress_notes"
+
+[fields.external_id]
+type = "text"
+
+[fields.body]
+type = "text"
+"#;
+    let schema = raisfast::content_type::schema::ContentTypeSchema::parse_from_str(toml).unwrap();
+    let repo = raisfast::content_type::repository::ContentRepository::new(state.pool.clone());
+    repo.migrate(&schema, &state.protocol_registry)
+        .await
+        .unwrap();
+    state
+        .content_type_registry
+        .register(
+            schema,
+            &state.config.rule_engine,
+            &state.config.builtins.reserved_route_segments(),
+            &state.protocol_registry.names(),
+            &state.protocol_registry,
+        )
+        .unwrap();
+
+    // oauth-cc credentials: grant fields double as template vars.
+    let creds = plane
+        .vault()
+        .unwrap()
+        .seal(
+            &serde_json::json!({
+                "kind": "oauth-cc",
+                "token_url": format!("http://{addr}/auth/token"),
+                "grant": {"app_id": "cli_test_app", "app_secret": "test_secret"},
+                "token_path": "tenant_access_token",
+                "expire_path": "expire"
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+    let channel = raisfast::integration::ItgChannel {
+        id: raisfast::utils::id::new_snowflake_id(),
+        tenant_id: "default".into(),
+        channel_key: "disp-ch".into(),
+        provider: "long-connection-generic".into(),
+        display_name: "Dispatch".into(),
+        mode: "stream".into(),
+        transport: "ws".into(),
+        framing: "dispatch".into(),
+        codec: "json".into(),
+        endpoint: Some(format!("ws://{addr}/gateway")),
+        verify_kind: "none".into(),
+        verify_config: None,
+        credentials: Some(creds),
+        mapping: Some(json!({
+            "external_id": "$.headers.event_id",
+            "sender": "$.event.sender.sender_id.open_id",
+            "payload": {"body": "$.event.message.content | as_json($.text)"}
+        })),
+        normalizer_plugin: None,
+        pull_semantics: None,
+        pull_config: None,
+        stream_config: Some(json!({
+            "handshake": {
+                "frames": [
+                    "{\"command\":\"connect\",\"headers\":{\"Authorization\":\"Bearer {{token}}\",\"app_id\":\"{{app_id}}\"},\"service_id\":1}"
+                ],
+                "ack": {"match": {"path": "$.command", "equals": "conn_ack"}, "code_path": "$.code"}
+            },
+            "reply_heartbeat": {
+                "match": {"path": "$.command", "equals": "ping"},
+                "reply": {"command": "pong"}
+            },
+            "events": {
+                "match": {"path": "$.command", "equals": "event"},
+                "payload_path": "$"
+            }
+        })),
+        ack_kind: "none".into(),
+        redelivery_max: 5,
+        backpressure: None,
+        target_type: "ingress_note".into(),
+        route_extra: None,
+        status: "idle".into(),
+        last_error: None,
+        lease_owner: None,
+        enabled: true,
+        version: 1,
+        shadow: false,
+        created_at: raisfast::utils::tz::now_utc(),
+        updated_at: raisfast::utils::tz::now_utc(),
+    };
+    raisfast::integration::channel::model::insert(&state.pool, &channel)
+        .await
+        .unwrap();
+    let sup = plane.ensure_supervisor();
+    sup.wake();
+    let _ = &mut app;
+
+    // Wait for the event to be routed.
+    let mut routed = false;
+    for _ in 0..80 {
+        let n: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM ingress_notes WHERE external_id = 'disp-1'")
+                .fetch_one(&state.pool)
+                .await
+                .unwrap();
+        if n == 1 {
+            routed = true;
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    if !routed {
+        let health: Vec<String> = sup
+            .health_snapshot()
+            .iter()
+            .map(|h| format!("{h:?}"))
+            .collect();
+        eprintln!("health: {health:?}");
+        eprintln!("sent events: {:?}", *SENT_EVENT.lock().unwrap());
+    }
+    assert!(routed, "dispatch event routed");
+
+    // Handshake carried the dynamic token + grant var.
+    let connect = SAW_CONNECT.lock().unwrap()[0].clone();
+    assert!(
+        connect.contains("t-dispatch-1"),
+        "oauth-cc token rendered into handshake: {connect}"
+    );
+    assert!(
+        connect.contains("cli_test_app"),
+        "grant var rendered: {connect}"
+    );
+    // Reverse heartbeat answered.
+    assert!(
+        !SAW_PONG.lock().unwrap().is_empty(),
+        "server-ping → client-pong"
+    );
+
+    // Escaped-JSON content unescaped via the as_json pipe.
+    let body: String =
+        sqlx::query_scalar("SELECT body FROM ingress_notes WHERE external_id = 'disp-1'")
+            .fetch_one(&state.pool)
+            .await
+            .unwrap();
+    assert_eq!(body, "hello dispatch", "as_json($.text) pipe: {body}");
+}
+
+// ── Integration Plane: pb-frame (protobuf envelope, pbbp2 wire) ──────────
+
+#[tokio::test]
+async fn integration_ws_pb_frame_mode() {
+    use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
+    use futures::{SinkExt, StreamExt};
+    use prost::Message as _;
+    use raisfast::integration::connector::pb_frame::{PbFrame, PbHeader};
+    use std::sync::Mutex;
+
+    // Mock gateway: HTTP exchange → ws (expect prost ping w/ service_id,
+    // reply pong, deliver a 2-fragment event OUT OF ORDER, await ack).
+    static SAW_PING: Mutex<Vec<i32>> = Mutex::new(Vec::new());
+    static SAW_ACK: Mutex<Vec<String>> = Mutex::new(Vec::new());
+    static PB_ADDR: Mutex<String> = Mutex::new(String::new());
+
+    async fn endpoint_exchange(axum::Json(body): axum::Json<Value>) -> axum::Json<Value> {
+        assert_eq!(
+            body["AppID"], "cli_pb_app",
+            "template vars reach the exchange"
+        );
+        let host = PB_ADDR.lock().unwrap().clone();
+        axum::Json(json!({
+            "code": 0,
+            "data": {"URL": format!("ws://{host}/gw?device_id=dev1&service_id=42")}
+        }))
+    }
+
+    async fn gateway(ws: WebSocket) {
+        let (mut sender, mut receiver) = ws.split();
+        let mut delivered = false;
+        while let Some(Ok(msg)) = receiver.next().await {
+            let Message::Binary(bin) = msg else { continue };
+            let Ok(frame) = PbFrame::decode(bin.as_ref()) else {
+                continue;
+            };
+            if frame.method == 0 {
+                // Client heartbeat: record service id, reply pong.
+                SAW_PING.lock().unwrap().push(frame.service);
+                let pong = PbFrame {
+                    service: frame.service,
+                    method: 0,
+                    headers: vec![PbHeader {
+                        key: "type".into(),
+                        value: "pong".into(),
+                    }],
+                    ..PbFrame::default()
+                };
+                let _ = sender
+                    .send(Message::Binary(pong.encode_to_vec().into()))
+                    .await;
+                if !delivered {
+                    delivered = true;
+                    // Two-fragment event, seq 2 first (reassembly by seq).
+                    let event = r#"{"header":{"event_id":"pb-1","event_type":"im.message.receive_v1"},"event":{"message":{"content":"{\"text\":\"hello pb\"}"}}}"#;
+                    let (a, b) = event.split_at(event.len() / 2);
+                    for (seq, part) in [(2_u64, b), (1_u64, a)] {
+                        let frag = PbFrame {
+                            method: 1,
+                            headers: vec![
+                                PbHeader {
+                                    key: "type".into(),
+                                    value: "event".into(),
+                                },
+                                PbHeader {
+                                    key: "message_id".into(),
+                                    value: "m-pb".into(),
+                                },
+                                PbHeader {
+                                    key: "sum".into(),
+                                    value: "2".into(),
+                                },
+                                PbHeader {
+                                    key: "seq".into(),
+                                    value: seq.to_string(),
+                                },
+                            ],
+                            payload: Some(part.as_bytes().to_vec()),
+                            ..PbFrame::default()
+                        };
+                        let _ = sender
+                            .send(Message::Binary(frag.encode_to_vec().into()))
+                            .await;
+                    }
+                }
+            } else {
+                // Ack from the client: method=1 with {"code":200}.
+                let body = String::from_utf8_lossy(frame.payload.as_deref().unwrap_or_default())
+                    .to_string();
+                SAW_ACK.lock().unwrap().push(body);
+            }
+        }
+    }
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    *PB_ADDR.lock().unwrap() = format!("127.0.0.1:{}", addr.port());
+    tokio::spawn(async move {
+        let app = axum::Router::new()
+            .route("/endpoint", post(endpoint_exchange))
+            .route(
+                "/gw",
+                axum::routing::get(|ws: WebSocketUpgrade| async move { ws.on_upgrade(gateway) }),
+            );
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let (mut app, state) = test_app().await;
+    let plane = state.integration.clone().unwrap();
+
+    let toml = r#"
+[content_type]
+name = "Ingress Note"
+singular = "ingress_note"
+plural = "ingress_notes"
+table = "ingress_notes"
+
+[fields.external_id]
+type = "text"
+
+[fields.body]
+type = "text"
+"#;
+    let schema = raisfast::content_type::schema::ContentTypeSchema::parse_from_str(toml).unwrap();
+    let repo = raisfast::content_type::repository::ContentRepository::new(state.pool.clone());
+    repo.migrate(&schema, &state.protocol_registry)
+        .await
+        .unwrap();
+    state
+        .content_type_registry
+        .register(
+            schema,
+            &state.config.rule_engine,
+            &state.config.builtins.reserved_route_segments(),
+            &state.protocol_registry.names(),
+            &state.protocol_registry,
+        )
+        .unwrap();
+
+    // Grant fields double as pre_connect template vars (no oauth-cc needed —
+    // the exchange itself carries the credentials).
+    let creds = plane
+        .vault()
+        .unwrap()
+        .seal(
+            &serde_json::json!({
+                "grant": {"AppID": "cli_pb_app", "AppSecret": "pb-secret"}
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+    let channel = raisfast::integration::ItgChannel {
+        id: raisfast::utils::id::new_snowflake_id(),
+        tenant_id: "default".into(),
+        channel_key: "pb-ch".into(),
+        provider: "pb-gateway-generic".into(),
+        display_name: "PB".into(),
+        mode: "stream".into(),
+        transport: "ws".into(),
+        framing: "pb-frame".into(),
+        codec: "json".into(),
+        endpoint: Some("ws://placeholder.invalid/gw".into()),
+        verify_kind: "none".into(),
+        verify_config: None,
+        credentials: Some(creds),
+        mapping: Some(json!({
+            "external_id": "$.header.event_id",
+            "sender": "$.event.sender.sender_id.open_id",
+            "payload": {"body": "$.event.message.content | as_json($.text)"}
+        })),
+        normalizer_plugin: None,
+        pull_semantics: None,
+        pull_config: None,
+        stream_config: Some(json!({
+            "pre_connect": {
+                "url": format!("http://{addr}/endpoint"),
+                "body": {"AppID": "{{AppID}}", "AppSecret": "{{AppSecret}}"},
+                "code_path": "$.code", "ok_code": 0,
+                "url_path": "$.data.URL"
+            },
+            "pb_frame": {
+                "ping_interval_secs": 1,
+                "events": {"equals": "event"},
+                "fragment": {"id_header": "message_id", "sum_header": "sum", "seq_header": "seq"},
+                "ack": true, "ack_code": 200
+            }
+        })),
+        ack_kind: "none".into(),
+        redelivery_max: 5,
+        backpressure: None,
+        target_type: "ingress_note".into(),
+        route_extra: None,
+        status: "idle".into(),
+        last_error: None,
+        lease_owner: None,
+        enabled: true,
+        version: 1,
+        shadow: false,
+        created_at: raisfast::utils::tz::now_utc(),
+        updated_at: raisfast::utils::tz::now_utc(),
+    };
+    raisfast::integration::channel::model::insert(&state.pool, &channel)
+        .await
+        .unwrap();
+    let sup = plane.ensure_supervisor();
+    sup.wake();
+    let _ = &mut app;
+
+    // The reassembled event routes exactly once.
+    let mut routed = 0_i64;
+    for _ in 0..100 {
+        routed =
+            sqlx::query_scalar("SELECT COUNT(*) FROM ingress_notes WHERE external_id = 'pb-1'")
+                .fetch_one(&state.pool)
+                .await
+                .unwrap();
+        if routed == 1 {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    if routed != 1 {
+        let health: Vec<String> = sup
+            .health_snapshot()
+            .iter()
+            .map(|h| format!("{h:?}"))
+            .collect();
+        eprintln!("health: {health:?}");
+        eprintln!("pings seen: {:?}", *SAW_PING.lock().unwrap());
+        eprintln!("acks seen: {:?}", *SAW_ACK.lock().unwrap());
+        let steps: Option<String> = sqlx::query_scalar(raisfast::db::safe_sql(&format!(
+            "SELECT {} FROM itg_receipts WHERE channel_id = {}",
+            raisfast::db::Driver::cast_text("steps"),
+            raisfast::db::Driver::ph(1)
+        )))
+        .bind(*channel.id)
+        .fetch_one(&state.pool)
+        .await
+        .unwrap_or(None);
+        eprintln!("receipt steps: {steps:?}");
+    }
+    assert_eq!(routed, 1, "reassembled event routed once");
+
+    let body: String =
+        sqlx::query_scalar("SELECT body FROM ingress_notes WHERE external_id = 'pb-1'")
+            .fetch_one(&state.pool)
+            .await
+            .unwrap();
+    assert_eq!(body, "hello pb", "as_json dug the text out: {body}");
+
+    // Heartbeat carried the service id from the exchanged URL.
+    let pings = SAW_PING.lock().unwrap().clone();
+    assert!(
+        pings.contains(&42),
+        "prost ping with service_id=42: {pings:?}"
+    );
+    // Ack replied on the same connection.
+    let acks = SAW_ACK.lock().unwrap().clone();
+    assert!(
+        acks.iter().any(|a| a.contains("\"code\":200")),
+        "ack frame: {acks:?}"
+    );
+}
+
+// ── Integration Plane: dispatch framing over a DingTalk-style stream ─────
+
+#[tokio::test]
+async fn integration_ws_dingtalk_stream_mode() {
+    use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
+    use futures::{SinkExt, StreamExt};
+    use std::sync::Mutex;
+
+    // Mock DingTalk gateway: exchange (endpoint+ticket split) → ws:
+    // WS-protocol keepalive (client ping), JSON frames with type/topic,
+    // string-in-string data, ack expected with the frame's messageId.
+    static SAW_TICKET: Mutex<Vec<String>> = Mutex::new(Vec::new());
+    static SAW_ACK: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+    async fn exchange(axum::Json(body): axum::Json<Value>) -> axum::Json<Value> {
+        assert_eq!(body["clientId"], "ding_demo_app");
+        assert_eq!(
+            body["subscriptions"][0]["topic"], "/v1.0/bot",
+            "subscriptions template rendered"
+        );
+        axum::Json(json!({
+            "endpoint": format!("ws://{}", DING_ADDR.lock().unwrap().clone()),
+            "ticket": "tkt-6f2a-9b31"
+        }))
+    }
+    static DING_ADDR: Mutex<String> = Mutex::new(String::new());
+
+    async fn gateway(ws: WebSocket) {
+        let (mut sender, mut receiver) = ws.split();
+        let mut delivered = false;
+        while let Some(Ok(msg)) = receiver.next().await {
+            match msg {
+                Message::Ping(_) => {
+                    // Client WS keepalive proves liveness; deliver the event.
+                    if !delivered {
+                        delivered = true;
+                        let frame = r#"{"specVersion":"1.0","type":"CALLBACK","headers":{"contentType":"application/json","messageId":"ding-m1","topic":"/v1.0/bot","time":1},"data":"{\"text\":{\"content\":\"hello ding\"},\"senderStaffId\":\"staff_9\",\"conversationId\":\"cid_1\"}"}"#;
+                        let _ = sender.send(Message::Text(frame.into())).await;
+                    }
+                }
+                Message::Text(t) => {
+                    // Ack frame from the client: {"code":200,"headers":{"messageId":...}}
+                    SAW_ACK.lock().unwrap().push(t.as_str().to_string());
+                }
+                _ => {}
+            }
+        }
+    }
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    *DING_ADDR.lock().unwrap() = format!("127.0.0.1:{}", addr.port());
+    tokio::spawn(async move {
+        let app = axum::Router::new()
+            .route("/connections/open", post(exchange))
+            .route(
+                "/stream",
+                axum::routing::get(|ws: WebSocketUpgrade| async move { ws.on_upgrade(gateway) }),
+            );
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let (mut app, state) = test_app().await;
+    let plane = state.integration.clone().unwrap();
+
+    let toml = r#"
+[content_type]
+name = "Ingress Note"
+singular = "ingress_note"
+plural = "ingress_notes"
+table = "ingress_notes"
+
+[fields.external_id]
+type = "text"
+
+[fields.body]
+type = "text"
+"#;
+    let schema = raisfast::content_type::schema::ContentTypeSchema::parse_from_str(toml).unwrap();
+    let repo = raisfast::content_type::repository::ContentRepository::new(state.pool.clone());
+    repo.migrate(&schema, &state.protocol_registry)
+        .await
+        .unwrap();
+    state
+        .content_type_registry
+        .register(
+            schema,
+            &state.config.rule_engine,
+            &state.config.builtins.reserved_route_segments(),
+            &state.protocol_registry.names(),
+            &state.protocol_registry,
+        )
+        .unwrap();
+
+    let creds = plane
+        .vault()
+        .unwrap()
+        .seal(
+            &serde_json::json!({
+                "grant": {"clientId": "ding_demo_app", "clientSecret": "ding-secret"}
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+    let channel = raisfast::integration::ItgChannel {
+        id: raisfast::utils::id::new_snowflake_id(),
+        tenant_id: "default".into(),
+        channel_key: "ding-ch".into(),
+        provider: "dingtalk-stream".into(),
+        display_name: "DingTalk".into(),
+        mode: "stream".into(),
+        transport: "ws".into(),
+        framing: "dispatch".into(),
+        codec: "json".into(),
+        endpoint: Some("wss://placeholder.invalid".into()),
+        verify_kind: "none".into(),
+        verify_config: None,
+        credentials: Some(creds),
+        mapping: Some(json!({
+            "external_id": "$.headers.messageId",
+            "sender": "$.data.senderStaffId",
+            "payload": {"body": "$.data | as_json($.text.content)"}
+        })),
+        normalizer_plugin: None,
+        pull_semantics: None,
+        pull_config: None,
+        stream_config: Some(json!({
+            "pre_connect": {
+                "url": format!("http://{addr}/connections/open"),
+                "body": {
+                    "clientId": "{{clientId}}",
+                    "clientSecret": "{{clientSecret}}",
+                    "subscriptions": [{"type": "CALLBACK", "topic": "/v1.0/bot"}],
+                    "ua": "dingtalk-sdk-python/v0.20-union",
+                    "localIp": "127.0.0.1"
+                },
+                "headers": {"Accept": "application/json"},
+                "url_template": "{{endpoint}}/stream?ticket={{ticket}}"
+            },
+            "ws_keepalive": true,
+            "heartbeat_secs": 1,
+            "events": {"match": {"path": "$.type", "equals": "CALLBACK"}, "payload_path": "$"},
+            "ack_reply": {"code": 200, "headers": {"messageId": "{{id}}"}, "message": "ok", "data": "{}"},
+            "ack_reply_id_path": "$.headers.messageId"
+        })),
+        ack_kind: "none".into(),
+        redelivery_max: 5,
+        backpressure: None,
+        target_type: "ingress_note".into(),
+        route_extra: None,
+        status: "idle".into(),
+        last_error: None,
+        lease_owner: None,
+        enabled: true,
+        version: 1,
+        shadow: false,
+        created_at: raisfast::utils::tz::now_utc(),
+        updated_at: raisfast::utils::tz::now_utc(),
+    };
+    raisfast::integration::channel::model::insert(&state.pool, &channel)
+        .await
+        .unwrap();
+    let sup = plane.ensure_supervisor();
+    sup.wake();
+    let _ = &mut app;
+
+    let mut routed = 0_i64;
+    for _ in 0..100 {
+        routed =
+            sqlx::query_scalar("SELECT COUNT(*) FROM ingress_notes WHERE external_id = 'ding-m1'")
+                .fetch_one(&state.pool)
+                .await
+                .unwrap();
+        if routed == 1 {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    if routed != 1 {
+        let health: Vec<String> = sup
+            .health_snapshot()
+            .iter()
+            .map(|h| format!("{h:?}"))
+            .collect();
+        eprintln!("health: {health:?}");
+        let err: Option<String> = sqlx::query_scalar(raisfast::db::safe_sql(&format!(
+            "SELECT last_error FROM itg_channels WHERE id = {}",
+            raisfast::db::Driver::ph(1)
+        )))
+        .bind(*channel.id)
+        .fetch_one(&state.pool)
+        .await
+        .unwrap_or(None);
+        eprintln!("last_error: {err:?}");
+    }
+    assert_eq!(routed, 1, "dingtalk-style event routed");
+
+    let body: String =
+        sqlx::query_scalar("SELECT body FROM ingress_notes WHERE external_id = 'ding-m1'")
+            .fetch_one(&state.pool)
+            .await
+            .unwrap();
+    assert_eq!(body, "hello ding", "as_json dug text.content: {body}");
+
+    let acks = SAW_ACK.lock().unwrap().join(" | ");
+    assert!(
+        acks.contains("\"messageId\":\"ding-m1\"") && acks.contains("\"code\":200"),
+        "ack with messageId: {acks}"
+    );
+    let _ = &SAW_TICKET;
+}

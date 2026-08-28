@@ -57,6 +57,7 @@ enum Pipe {
     AsDatetime,
     Default(Value),
     Regex(String),
+    AsJson(Option<String>),
 }
 
 /// `when` condition — M1 supports `{ "all": [ {"==": [expr, literal]}, ... ] }`
@@ -203,6 +204,11 @@ fn compile_expr(v: &Value) -> Result<Expr, AppError> {
         let pipe = match part {
             "as_number" => Pipe::AsNumber,
             "as_datetime" => Pipe::AsDatetime,
+            "as_json" => Pipe::AsJson(None),
+            _ if part.starts_with("as_json(") && part.ends_with(')') => {
+                let inner = &part[9..part.len() - 1];
+                Pipe::AsJson(Some(inner.to_string()))
+            }
             _ if part.starts_with("default(") && part.ends_with(')') => {
                 let inner = &part[8..part.len() - 1];
                 Pipe::Default(parse_const(inner))
@@ -400,6 +406,30 @@ fn apply_pipe(pipe: &Pipe, v: Value) -> Result<Value, AppError> {
                 Ok(Value::from(n))
             }
         }
+        Pipe::AsJson(sub_path) => {
+            // Escaped payloads: a JSON *string* holding JSON. The optional
+            // sub-path (`as_json($.text)`) digs one field out of the parsed
+            // value — string-in-string envelopes (IM message content, …).
+            let text = v
+                .as_str()
+                .ok_or_else(|| AppError::BadRequest("as_json: value is not a string".into()))?;
+            let parsed: Value = serde_json::from_str(text).map_err(|e| {
+                AppError::BadRequest(format!("as_json: '{text}' is not valid JSON: {e}"))
+            })?;
+            match sub_path {
+                None => Ok(parsed),
+                Some(path) => {
+                    let mut cur = &parsed;
+                    for key in path.strip_prefix("$.").unwrap_or(path).split('.') {
+                        if key.is_empty() {
+                            continue;
+                        }
+                        cur = cur.get(key).unwrap_or(&Value::Null);
+                    }
+                    Ok(cur.clone())
+                }
+            }
+        }
         Pipe::AsDatetime => {
             // Validates RFC3339-ish input; passes through unchanged.
             let s = v
@@ -530,6 +560,35 @@ mod tests {
 
         let err = compile(&json!({"payload": {}})).expect_err("no external_id");
         assert!(err.to_string().contains("external_id"));
+    }
+
+    #[test]
+    fn as_json_pipe_parses_and_digs() {
+        // Escaped-JSON envelope (IM-style message content).
+        let plan = compile_ok(json!({
+            "external_id": "$.id",
+            "payload": {
+                "whole": "$.content | as_json",
+                "text": "$.content | as_json($.text)",
+                "nested": "$.content | as_json($.meta.lang)"
+            }
+        }));
+        // After one layer of JSON parsing the field VALUE is clean JSON
+        // (the backslashes lived in the outer wire document).
+        let content = r#"{"text":"hi","meta":{"lang":"zh"}}"#.to_string();
+        let out = plan
+            .apply(&json!({"id": "e1", "content": content}))
+            .unwrap()
+            .unwrap();
+        assert_eq!(out.payload["text"], "hi");
+        assert_eq!(out.payload["nested"], "zh");
+        assert_eq!(out.payload["whole"]["meta"]["lang"], "zh");
+
+        // Non-JSON string → compile fine, apply fails loudly.
+        let err = plan
+            .apply(&json!({"id": "e2", "content": "oops"}))
+            .expect_err("bad json");
+        assert!(err.to_string().contains("as_json"));
     }
 
     #[test]

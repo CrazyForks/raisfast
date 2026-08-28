@@ -151,6 +151,26 @@ pub struct AppState {
     pub handler_registry: Arc<crate::worker::JobHandlerRegistry>,
 }
 
+/// Install the process-wide rustls CryptoProvider (ring).
+///
+/// The dependency tree pulls BOTH `ring` (tungstenite/lettre) and
+/// `aws-lc-rs` (reqwest chains), so rustls cannot auto-detect a default —
+/// the first TLS handshake of a fresh runtime would PANIC
+/// ("Could not automatically determine the process-level CryptoProvider").
+/// Installing once, up front, keeps every consumer (reqwest, axum-server,
+/// tokio-tungstenite, lettre) on one provider.
+pub fn install_tls_provider() {
+    use std::sync::Once;
+    static ONCE: Once = Once::new();
+    ONCE.call_once(|| {
+        let provider = rustls::crypto::ring::default_provider();
+        if provider.install_default().is_err() {
+            // Already installed by another path — fine, same process.
+            tracing::debug!("rustls provider already installed (ring)");
+        }
+    });
+}
+
 /// Build AppState (shared by HTTP server and Tauri)
 pub async fn build_app_state(
     config: &AppConfig,

@@ -226,7 +226,7 @@ impl EgressExecutor {
             }
         };
 
-        if let Some(secret) = self.resolve_secret(&client)? {
+        if let Some(secret) = self.resolve_secret(&client).await? {
             request = match client.auth_kind() {
                 "bearer" => {
                     let prefix = client
@@ -313,7 +313,7 @@ impl EgressExecutor {
     }
 
     /// Unseal the credential secret (None when the client has no credentials).
-    fn resolve_secret(&self, client: &ItgApiClient) -> AppResult<Option<String>> {
+    async fn resolve_secret(&self, client: &ItgApiClient) -> AppResult<Option<String>> {
         let Some(sealed) = client.credentials.as_deref() else {
             return Ok(None);
         };
@@ -326,6 +326,13 @@ impl EgressExecutor {
         let json = vault.unseal(sealed)?;
         let value: Value = serde_json::from_str(&json)
             .map_err(|e| AppError::Internal(anyhow::anyhow!("credential json: {e}")))?;
+        // OAuth client-credentials: a shared, cached dynamic token (the same
+        // one the stream connectors use — one refresh serves both sides).
+        if super::token::is_oauth_cc(&value) {
+            return super::token::resolve_token(&client.client_key, &value)
+                .await
+                .map(Some);
+        }
         Ok(value
             .get("secret")
             .and_then(Value::as_str)

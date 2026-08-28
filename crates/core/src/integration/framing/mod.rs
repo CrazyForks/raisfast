@@ -17,17 +17,17 @@ use crate::errors::app_error::AppError;
 /// - `BadRequest` for malformed JSON bodies
 pub fn decode(framing: &str, codec: &str, body: &[u8]) -> Result<Value, AppError> {
     match (framing, codec) {
-        // `json-rpc` bodies reach the pipeline already disassembled by the
-        // connector (notifications carry the extracted payload) — decode as
-        // plain JSON.
-        ("raw" | "json-rpc", "json") => {
+        // `json-rpc` and `dispatch` bodies reach the pipeline already
+        // disassembled by the connector (the extractor picked the payload)
+        // — decode as plain JSON.
+        ("raw" | "json-rpc" | "dispatch" | "pb-frame", "json") => {
             if body.is_empty() {
                 return Ok(Value::Null);
             }
             serde_json::from_slice(body)
                 .map_err(|e| AppError::BadRequest(format!("malformed JSON body: {e}")))
         }
-        ("raw" | "json-rpc", _) => Err(AppError::BadRequest(format!(
+        ("raw" | "json-rpc" | "dispatch" | "pb-frame", _) => Err(AppError::BadRequest(format!(
             "codec '{codec}' not supported in this phase — use 'json' or a normalizer plugin"
         ))),
         (other, _) => Err(AppError::BadRequest(format!(

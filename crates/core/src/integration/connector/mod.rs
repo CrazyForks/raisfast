@@ -6,6 +6,7 @@ pub mod http_pull;
 
 #[cfg(feature = "integration-stream")]
 pub mod mqtt_client;
+pub mod pb_frame;
 #[cfg(feature = "integration-stream")]
 pub mod tcp_listen;
 #[cfg(feature = "integration-stream")]

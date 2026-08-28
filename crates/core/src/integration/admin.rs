@@ -58,6 +58,9 @@ fn default_true() -> bool {
 pub struct UpdateChannelRequest {
     pub display_name: Option<String>,
     pub endpoint: Option<String>,
+    /// Protocol switch (raw|json-rpc|dispatch|pb-frame) — changing the wire
+    /// protocol of a channel is a legit ops action.
+    pub framing: Option<String>,
     pub verify_kind: Option<String>,
     pub verify_config: Option<Value>,
     pub credentials: Option<Value>,
@@ -115,6 +118,10 @@ fn validate_stack(req: &CreateChannelRequest) -> Result<(), AppError> {
     let framing_ok = match (req.framing.as_str(), req.codec.as_str()) {
         ("raw", "json") => true,
         ("json-rpc", "json") if req.mode == "stream" && req.transport == "ws" => true,
+        // Declarative protocol profile (command/type discriminator frames).
+        ("dispatch", "json") if req.mode == "stream" && req.transport == "ws" => true,
+        // Protobuf envelope frames (pbbp2 wire shape, config semantics).
+        ("pb-frame", "json") if req.mode == "stream" && req.transport == "ws" => true,
         _ => false,
     };
     if !framing_ok {
@@ -303,6 +310,9 @@ pub async fn update_channel(
     if let Some(endpoint) = &req.endpoint {
         ch.endpoint = Some(endpoint.clone());
     }
+    if let Some(framing) = &req.framing {
+        ch.framing = framing.clone();
+    }
     if let Some(kind) = &req.verify_kind {
         ch.verify_kind = kind.clone();
     }
@@ -342,6 +352,7 @@ pub async fn update_channel(
         bind: [
             "display_name" => &ch.display_name,
             "endpoint" => ch.endpoint.as_deref(),
+            "framing" => &ch.framing,
             "verify_kind" => &ch.verify_kind,
             "verify_config" => ch.verify_config.as_ref(),
             "credentials" => ch.credentials.as_deref(),

@@ -191,9 +191,9 @@ CODE=$(echo "$RES" | head -1)
 
 # ── 7. 清理 ──────────────────────────────────────────────────
 sec "cleanup"
-api DELETE "/admin/integration/channels/$CH_ID" >/dev/null && ok "channel deleted"
-api DELETE "/admin/integration/api-clients/$CLIENT_ID" >/dev/null && ok "client deleted"
-api DELETE "/admin/integration/api-clients/$RL_ID" >/dev/null && ok "rl client deleted"
+api POST "/admin/integration/channels/$CH_ID/delete" "{}" >/dev/null && ok "channel deleted"
+api POST "/admin/integration/api-clients/$CLIENT_ID/delete" "{}" >/dev/null && ok "client deleted"
+api POST "/admin/integration/api-clients/$RL_ID/delete" "{}" >/dev/null && ok "rl client deleted"
 
 # ── 汇总 ─────────────────────────────────────────────────────
 printf '\n\033[1m结果: %d passed, %d failed\033[0m\n' "$PASS" "$FAIL"

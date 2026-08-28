@@ -28,6 +28,8 @@ use clap::Parser;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    // BEFORE anything TLS touches rustls (reqwest/tungstenite/axum-server).
+    raisfast::install_tls_provider();
     // Parse CLI before config init: `--help`/`--version` and config-free
     // commands (`app new`) must work without DATABASE_URL set
     // (required on non-SQLite builds).

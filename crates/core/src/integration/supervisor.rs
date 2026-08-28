@@ -61,6 +61,22 @@ impl ConnectionSink {
         let owned = Arc::new(ch.clone());
         self.plane.pipeline().run_stream_frame(&owned, body).await
     }
+
+    /// The plane's credential vault — connectors unseal channel credentials
+    /// through the sink instead of the process-wide handle (testable).
+    #[must_use]
+    pub fn vault(&self) -> Option<&crate::integration::vault::Vault> {
+        self.plane.vault()
+    }
+
+    /// Connector-established: persist `connected` (DB + health map). Call
+    /// once the protocol handshake completes and the link is delivering.
+    pub async fn mark_connected(&self, ch: &ItgChannel) {
+        let _ = channel::model::update_status(self.plane.pool(), ch.id, "connected", None).await;
+        if let Some(sup) = self.plane.supervisor() {
+            sup.record_connected(ch.id.0, &ch.channel_key);
+        }
+    }
 }
 
 type ConnectorFactory = Arc<dyn Fn() -> Box<dyn StreamConnector> + Send + Sync>;
@@ -334,6 +350,26 @@ impl IngressSupervisor {
         }
         self.record_state(id, &ch.channel_key, "stopped", reconnects, None)
             .await;
+    }
+
+    /// Flip one channel's in-memory health to connected (sink path).
+    pub fn record_connected(&self, id: i64, channel_key: &str) {
+        let connected_at = crate::utils::tz::now_utc().to_rfc3339();
+        self.health
+            .entry(id)
+            .and_modify(|h| {
+                h.state = "connected".into();
+                h.connected_at = Some(connected_at.clone());
+                h.last_error = None;
+            })
+            .or_insert_with(|| ChannelHealth {
+                channel_id: id,
+                channel_key: channel_key.to_string(),
+                state: "connected".into(),
+                connected_at: Some(connected_at),
+                reconnects: 0,
+                last_error: None,
+            });
     }
 
     async fn record_state(
