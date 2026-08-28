@@ -1167,6 +1167,49 @@ CREATE INDEX IF NOT EXISTS idx_itg_receipts_channel_status ON itg_receipts(chann
 CREATE INDEX IF NOT EXISTS idx_itg_receipts_retry ON itg_receipts(status, next_retry_at);
 
 -- ============================================================
+-- Integration Plane (M0): itg_api_clients / itg_egress_log
+-- ============================================================
+
+-- Declarative outbound API clients (integration.md §9.2)
+CREATE TABLE IF NOT EXISTS itg_api_clients (
+    id BIGINT PRIMARY KEY,
+    tenant_id TEXT NOT NULL DEFAULT 'default',
+    client_key TEXT NOT NULL,
+    display_name TEXT NOT NULL,
+    base_url TEXT NOT NULL,
+    auth JSONB,                       -- {kind: bearer|api-key-header|none, header, prefix}
+    credentials TEXT,                 -- sealed (AES-256-GCM, base64); never echoed
+    rate_limit JSONB,                 -- {per_minute} fixed window
+    ops JSONB,                        -- {op: {method, path, output?}}
+    enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW(),
+    UNIQUE (tenant_id, client_key)
+);
+
+CREATE INDEX IF NOT EXISTS idx_itg_api_clients_tenant ON itg_api_clients(tenant_id);
+
+-- Full outbound call log (integration.md §10.7: trace_id = itg_receipts.id)
+CREATE TABLE IF NOT EXISTS itg_egress_log (
+    id BIGINT PRIMARY KEY,
+    trace_id BIGINT,                  -- source receipt id (NULL for standalone calls)
+    client_key TEXT NOT NULL,
+    op TEXT NOT NULL,
+    status TEXT NOT NULL,             -- success | error
+    http_status BIGINT,
+    latency_ms BIGINT NOT NULL DEFAULT 0,
+    tokens_in BIGINT,
+    tokens_out BIGINT,
+    model TEXT,
+    error TEXT,
+    response_summary TEXT,            -- truncated response body (first 2000 chars)
+    created_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_itg_egress_log_trace ON itg_egress_log(trace_id);
+CREATE INDEX IF NOT EXISTS idx_itg_egress_log_client_time ON itg_egress_log(client_key, created_at);
+
+-- ============================================================
 -- Seed data
 -- ============================================================
 

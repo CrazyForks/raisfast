@@ -49,6 +49,7 @@ interface host-api {
     get-config: func(key: string) -> option<string>;
     http-get: func(url: string) -> option<string>;
     http-post: func(url: string, body: string) -> option<string>;
+    call-api: func(client-key: string, op: string, input: string) -> option<string>;
     get-data: func(key: string) -> option<string>;
     set-data: func(key: string, value: string) -> bool;
     get-post: func(slug: string) -> option<string>;

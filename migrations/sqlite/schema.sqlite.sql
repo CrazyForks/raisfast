@@ -1173,6 +1173,49 @@ CREATE INDEX IF NOT EXISTS idx_itg_receipts_channel_status ON itg_receipts(chann
 CREATE INDEX IF NOT EXISTS idx_itg_receipts_retry ON itg_receipts(status, next_retry_at);
 
 -- ============================================================
+-- Integration Plane (M0): itg_api_clients / itg_egress_log
+-- ============================================================
+
+-- Declarative outbound API clients (integration.md §9.2)
+CREATE TABLE IF NOT EXISTS itg_api_clients (
+    id INTEGER PRIMARY KEY,
+    tenant_id TEXT NOT NULL DEFAULT 'default',
+    client_key TEXT NOT NULL,
+    display_name TEXT NOT NULL,
+    base_url TEXT NOT NULL,
+    auth TEXT,
+    credentials TEXT,
+    rate_limit TEXT,
+    ops TEXT,
+    enabled BOOLEAN NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    UNIQUE (tenant_id, client_key)
+);
+
+CREATE INDEX IF NOT EXISTS idx_itg_api_clients_tenant ON itg_api_clients(tenant_id);
+
+-- Full outbound call log (integration.md §10.7: trace_id = itg_receipts.id)
+CREATE TABLE IF NOT EXISTS itg_egress_log (
+    id INTEGER PRIMARY KEY,
+    trace_id INTEGER,
+    client_key TEXT NOT NULL,
+    op TEXT NOT NULL,
+    status TEXT NOT NULL,
+    http_status INTEGER,
+    latency_ms INTEGER NOT NULL DEFAULT 0,
+    tokens_in INTEGER,
+    tokens_out INTEGER,
+    model TEXT,
+    error TEXT,
+    response_summary TEXT,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_itg_egress_log_trace ON itg_egress_log(trace_id);
+CREATE INDEX IF NOT EXISTS idx_itg_egress_log_client_time ON itg_egress_log(client_key, created_at);
+
+-- ============================================================
 -- Seed data
 -- ============================================================
 

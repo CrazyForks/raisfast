@@ -3,15 +3,17 @@
 //! (防重入); payloads carry `channel_key`.
 
 use crate::errors::app_error::AppResult;
-use crate::worker::handler::{HandlerMeta, JobHandler};
 use crate::worker::Job;
+use crate::worker::handler::{HandlerMeta, JobHandler};
 
 static META: HandlerMeta = HandlerMeta {
     id: "ingress.pull",
     display_name: "集成渠道拉取",
     description: "对 cursor 模式的 pull 渠道执行一轮分页拉取（建议通过渠道的 cron 调度自动运行）",
     category: "集成",
-    params_schema: Some(r#"{"type":"object","properties":{"channel_key":{"type":"string","description":"渠道路由键"}},"required":["channel_key"]}"#),
+    params_schema: Some(
+        r#"{"type":"object","properties":{"channel_key":{"type":"string","description":"渠道路由键"}},"required":["channel_key"]}"#,
+    ),
     icon: None,
 };
 
@@ -27,8 +29,11 @@ impl JobHandler for IngressPullHandler {
             tracing::warn!("ingress.pull without channel_key: {payload}");
             return Ok(());
         };
-        let Some(plane) = crate::integration::shared_plane() else {
-            tracing::warn!(channel_key, "ingress.pull: integration plane not initialized");
+        let Some(plane) = crate::integration::shared() else {
+            tracing::warn!(
+                channel_key,
+                "ingress.pull: integration plane not initialized"
+            );
             return Ok(());
         };
         let channel = plane
@@ -36,7 +41,10 @@ impl JobHandler for IngressPullHandler {
             .get(crate::constants::DEFAULT_TENANT, channel_key)
             .await?;
         if channel.mode != "pull" {
-            tracing::warn!(channel_key, "ingress.pull: channel is not pull mode — skipped");
+            tracing::warn!(
+                channel_key,
+                "ingress.pull: channel is not pull mode — skipped"
+            );
             return Ok(());
         }
         if !channel.enabled || channel.shadow {

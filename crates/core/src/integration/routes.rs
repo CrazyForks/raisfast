@@ -7,17 +7,17 @@
 //! plus a per-channel rate limit. Routes register as `public` for the
 //! permission guard.
 
-use axum::body::Bytes;
-use axum::extract::{Path, Query, State};
-use axum::http::{HeaderMap, StatusCode};
-use axum::response::{IntoResponse, Response};
+use crate::AppState;
 use crate::errors::app_error::{AppError, AppResult};
 use crate::errors::response::ApiResponse;
 use crate::integration::channel::ItgChannel;
 use crate::integration::pipeline::{AckAction, ReplayOutcome};
 use crate::integration::verify::{InboundHttpRequest, VerifyOutcome};
 use crate::middleware::auth::{AuthUser, TokenAction};
-use crate::AppState;
+use axum::body::Bytes;
+use axum::extract::{Path, Query, State};
+use axum::http::{HeaderMap, StatusCode};
+use axum::response::{IntoResponse, Response};
 
 /// POST /admin/integration/receipts/{id}/replay — re-run the route from the
 /// stored envelope snapshot (§6.4). Modes: `upsert` (default) / `dry-run`.
@@ -30,7 +30,9 @@ pub async fn replay(
     auth.ensure_admin()?;
     auth.ensure_scope("integration", TokenAction::Update)?;
     let Some(plane) = state.integration.as_ref() else {
-        return Err(AppError::Internal(anyhow::anyhow!("integration plane disabled")));
+        return Err(AppError::Internal(anyhow::anyhow!(
+            "integration plane disabled"
+        )));
     };
     let trace_id = crate::types::snowflake_id::parse_id(&id)?;
     let dry_run = body
@@ -39,10 +41,7 @@ pub async fn replay(
         .map(|m| m == "dry-run")
         .unwrap_or(false);
 
-    let outcome = plane
-        .pipeline()
-        .run_replay(trace_id, dry_run)
-        .await?;
+    let outcome = plane.pipeline().run_replay(trace_id, dry_run).await?;
     let data = match outcome {
         ReplayOutcome::Upserted { target_id } => serde_json::json!({
             "replayed": true,
@@ -65,9 +64,7 @@ pub async fn replay(
 pub struct IngressRateLimiter {
     inner: dashmap::DashMap<
         String,
-        crate::middleware::rate_limit::RateLimiter<
-            crate::middleware::rate_limit::MemoryStore,
-        >,
+        crate::middleware::rate_limit::RateLimiter<crate::middleware::rate_limit::MemoryStore>,
     >,
 }
 
@@ -87,7 +84,9 @@ impl IngressRateLimiter {
             .as_ref()
             .and_then(|b| b.get("per_second"))
             .and_then(serde_json::Value::as_u64)
-            .map_or(DEFAULT_PER_MINUTE, |ps| (ps * 60).min(u64::from(u32::MAX)) as u32);
+            .map_or(DEFAULT_PER_MINUTE, |ps| {
+                (ps * 60).min(u64::from(u32::MAX)) as u32
+            });
         // Window 60s with `per_minute` budget — mirrors RateLimiter::new(min, window).
         let limiter = self
             .inner
@@ -254,17 +253,204 @@ pub fn routes(
         "ingress",
         "public"
     );
-    let r = crate::reg_route!(r, registry, false, "/admin/integration/receipts/{id}/replay", post, replay, "integration", "admin/integration");
-    let r = crate::reg_route!(r, registry, false, "/admin/integration/receipts", get, crate::integration::admin::list_receipts, "integration", "admin/integration");
-    let r = crate::reg_route!(r, registry, false, "/admin/integration/receipts/{id}", get, crate::integration::admin::get_receipt, "integration", "admin/integration");
-    let r = crate::reg_route!(r, registry, false, "/admin/integration/receipts/{id}/trace", get, crate::integration::admin::get_trace, "integration", "admin/integration");
-    let r = crate::reg_route!(r, registry, false, "/admin/integration/channels", get, crate::integration::admin::list_channels, "integration", "admin/integration");
-    let r = crate::reg_route!(r, registry, false, "/admin/integration/channels", post, crate::integration::admin::create_channel, "integration", "admin/integration");
-    let r = crate::reg_route!(r, registry, false, "/admin/integration/channels/health", get, crate::integration::admin::channels_health, "integration", "admin/integration");
-    let r = crate::reg_route!(r, registry, false, "/admin/integration/channels/{id}", get, crate::integration::admin::get_channel, "integration", "admin/integration");
-    let r = crate::reg_route!(r, registry, false, "/admin/integration/channels/{id}/health", get, crate::integration::admin::channel_health, "integration", "admin/integration");
-    let r = crate::reg_route!(r, registry, false, "/admin/integration/channels/{id}", put, crate::integration::admin::update_channel, "integration", "admin/integration");
-    let r = crate::reg_route!(r, registry, false, "/admin/integration/channels/{id}", delete, crate::integration::admin::delete_channel, "integration", "admin/integration");
-    let r = crate::reg_route!(r, registry, false, "/admin/integration/channels/{id}/test-mapping", post, crate::integration::admin::test_mapping, "integration", "admin/integration");
-    crate::reg_route!(r, registry, false, "/admin/integration/channels/{id}/test-connection", post, crate::integration::admin::test_connection, "integration", "admin/integration")
+    let r = crate::reg_route!(
+        r,
+        registry,
+        false,
+        "/admin/integration/receipts/{id}/replay",
+        post,
+        replay,
+        "integration",
+        "admin/integration"
+    );
+    let r = crate::reg_route!(
+        r,
+        registry,
+        false,
+        "/admin/integration/receipts",
+        get,
+        crate::integration::admin::list_receipts,
+        "integration",
+        "admin/integration"
+    );
+    let r = crate::reg_route!(
+        r,
+        registry,
+        false,
+        "/admin/integration/receipts/{id}",
+        get,
+        crate::integration::admin::get_receipt,
+        "integration",
+        "admin/integration"
+    );
+    let r = crate::reg_route!(
+        r,
+        registry,
+        false,
+        "/admin/integration/receipts/{id}/trace",
+        get,
+        crate::integration::admin::get_trace,
+        "integration",
+        "admin/integration"
+    );
+    let r = crate::reg_route!(
+        r,
+        registry,
+        false,
+        "/admin/integration/channels",
+        get,
+        crate::integration::admin::list_channels,
+        "integration",
+        "admin/integration"
+    );
+    let r = crate::reg_route!(
+        r,
+        registry,
+        false,
+        "/admin/integration/channels",
+        post,
+        crate::integration::admin::create_channel,
+        "integration",
+        "admin/integration"
+    );
+    let r = crate::reg_route!(
+        r,
+        registry,
+        false,
+        "/admin/integration/channels/health",
+        get,
+        crate::integration::admin::channels_health,
+        "integration",
+        "admin/integration"
+    );
+    let r = crate::reg_route!(
+        r,
+        registry,
+        false,
+        "/admin/integration/channels/{id}",
+        get,
+        crate::integration::admin::get_channel,
+        "integration",
+        "admin/integration"
+    );
+    let r = crate::reg_route!(
+        r,
+        registry,
+        false,
+        "/admin/integration/channels/{id}/health",
+        get,
+        crate::integration::admin::channel_health,
+        "integration",
+        "admin/integration"
+    );
+    let r = crate::reg_route!(
+        r,
+        registry,
+        false,
+        "/admin/integration/channels/{id}",
+        put,
+        crate::integration::admin::update_channel,
+        "integration",
+        "admin/integration"
+    );
+    let r = crate::reg_route!(
+        r,
+        registry,
+        false,
+        "/admin/integration/channels/{id}",
+        delete,
+        crate::integration::admin::delete_channel,
+        "integration",
+        "admin/integration"
+    );
+    let r = crate::reg_route!(
+        r,
+        registry,
+        false,
+        "/admin/integration/channels/{id}/test-mapping",
+        post,
+        crate::integration::admin::test_mapping,
+        "integration",
+        "admin/integration"
+    );
+    let r = crate::reg_route!(
+        r,
+        registry,
+        false,
+        "/admin/integration/channels/{id}/test-connection",
+        post,
+        crate::integration::admin::test_connection,
+        "integration",
+        "admin/integration"
+    );
+    let r = crate::reg_route!(
+        r,
+        registry,
+        false,
+        "/admin/integration/api-clients",
+        get,
+        crate::integration::admin::list_api_clients,
+        "integration",
+        "admin/integration"
+    );
+    let r = crate::reg_route!(
+        r,
+        registry,
+        false,
+        "/admin/integration/api-clients",
+        post,
+        crate::integration::admin::create_api_client,
+        "integration",
+        "admin/integration"
+    );
+    let r = crate::reg_route!(
+        r,
+        registry,
+        false,
+        "/admin/integration/api-clients/{id}",
+        get,
+        crate::integration::admin::get_api_client,
+        "integration",
+        "admin/integration"
+    );
+    let r = crate::reg_route!(
+        r,
+        registry,
+        false,
+        "/admin/integration/api-clients/{id}",
+        put,
+        crate::integration::admin::update_api_client,
+        "integration",
+        "admin/integration"
+    );
+    let r = crate::reg_route!(
+        r,
+        registry,
+        false,
+        "/admin/integration/api-clients/{id}",
+        delete,
+        crate::integration::admin::delete_api_client,
+        "integration",
+        "admin/integration"
+    );
+    let r = crate::reg_route!(
+        r,
+        registry,
+        false,
+        "/admin/integration/api-clients/{id}/test-call",
+        post,
+        crate::integration::admin::test_call,
+        "integration",
+        "admin/integration"
+    );
+    crate::reg_route!(
+        r,
+        registry,
+        false,
+        "/admin/integration/egress-log",
+        get,
+        crate::integration::admin::list_egress_log,
+        "integration",
+        "admin/integration"
+    )
 }

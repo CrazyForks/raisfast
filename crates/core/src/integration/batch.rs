@@ -112,9 +112,7 @@ impl TelemetryBatcher {
                     Some(e) => e,
                     None => continue,
                 };
-                let time_up = entry
-                    .first_at
-                    .is_some_and(|t| t.elapsed() >= self.window);
+                let time_up = entry.first_at.is_some_and(|t| t.elapsed() >= self.window);
                 let size_up = entry.items.len() >= self.max_n;
                 if (time_up || size_up) && !entry.items.is_empty() {
                     let items = std::mem::take(&mut entry.items);
@@ -135,7 +133,10 @@ impl TelemetryBatcher {
     /// Stats snapshot for the health API.
     #[must_use]
     pub fn stats_snapshot(&self) -> HashMap<i64, BatchStats> {
-        self.stats.iter().map(|s| (*s.key(), s.value().clone())).collect()
+        self.stats
+            .iter()
+            .map(|s| (*s.key(), s.value().clone()))
+            .collect()
     }
 
     fn stat(&self, channel_id: i64, f: impl FnOnce(&mut BatchStats)) {

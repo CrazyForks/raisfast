@@ -51,14 +51,13 @@ fn parse_endpoint(ch: &ItgChannel) -> AppResult<Endpoint> {
         .map(|s| (s, true))
         .or_else(|| raw.strip_prefix("mqtt://").map(|s| (s, false)))
         .map(|(s, tls)| (s.to_string(), tls));
-    let (hostport, _tls) =
-        stripped.ok_or_else(|| AppError::BadRequest("endpoint must be mqtt:// or mqtts://".into()))?;
+    let (hostport, _tls) = stripped
+        .ok_or_else(|| AppError::BadRequest("endpoint must be mqtt:// or mqtts://".into()))?;
     let (host, port) = match hostport.rsplit_once(':') {
         Some((h, p)) => (
             h.to_string(),
-            p.parse::<u16>().map_err(|_| {
-                AppError::BadRequest(format!("invalid mqtt port in '{raw}'"))
-            })?,
+            p.parse::<u16>()
+                .map_err(|_| AppError::BadRequest(format!("invalid mqtt port in '{raw}'")))?,
         ),
         None => (hostport, 1883),
     };
@@ -133,8 +132,7 @@ async fn run(ch: Arc<ItgChannel>, sink: ConnectionSink) -> AppResult<()> {
                 } else {
                     // Non-JSON payloads become a JSON wrapper the mapping can read.
                     let text = String::from_utf8_lossy(&publish.payload);
-                    serde_json::to_vec(&Value::String(text.into_owned()))
-                        .unwrap_or_default()
+                    serde_json::to_vec(&Value::String(text.into_owned())).unwrap_or_default()
                 };
                 let outcome = sink.submit(&ch, payload).await;
                 let _ = outcome;
@@ -154,7 +152,7 @@ fn vault_password(ch: &ItgChannel) -> AppResult<Option<String>> {
     let Some(sealed) = ch.credentials.as_deref() else {
         return Ok(None);
     };
-    let Some(vault) = crate::integration::shared_plane().and_then(|p| p.vault().cloned()) else {
+    let Some(vault) = crate::integration::shared().and_then(|p| p.vault().cloned()) else {
         return Err(AppError::Internal(anyhow::anyhow!(
             "mqtt credentials present but vault sealed"
         )));

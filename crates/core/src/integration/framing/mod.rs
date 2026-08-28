@@ -24,9 +24,8 @@ pub fn decode(framing: &str, codec: &str, body: &[u8]) -> Result<Value, AppError
             if body.is_empty() {
                 return Ok(Value::Null);
             }
-            serde_json::from_slice(body).map_err(|e| {
-                AppError::BadRequest(format!("malformed JSON body: {e}"))
-            })
+            serde_json::from_slice(body)
+                .map_err(|e| AppError::BadRequest(format!("malformed JSON body: {e}")))
         }
         ("raw" | "json-rpc", _) => Err(AppError::BadRequest(format!(
             "codec '{codec}' not supported in this phase — use 'json' or a normalizer plugin"

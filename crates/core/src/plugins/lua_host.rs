@@ -61,6 +61,18 @@ pub fn register_host_functions(
     host.set("httpPost", http_post_fn)?;
 
     let hc = host_ctx.clone();
+    let call_api_fn = lua.create_function(
+        move |lua, (client_key, op, input): (String, String, String)| {
+            Ok(mlua::Value::String(lua.create_string(hc.api_call(
+                &client_key,
+                &op,
+                &input,
+            ))?))
+        },
+    )?;
+    host.set("callApi", call_api_fn)?;
+
+    let hc = host_ctx.clone();
     let get_data_fn = lua.create_function(move |lua, key: String| match hc.get_data(&key) {
         Some(val) => Ok(mlua::Value::String(lua.create_string(&val)?)),
         None => Ok(mlua::Value::Nil),

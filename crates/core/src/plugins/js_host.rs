@@ -57,6 +57,15 @@ pub fn register_host_functions(
     host.set("httpPost", http_post_fn)?;
 
     let hc = host_ctx.clone();
+    let call_api_fn = Function::new(
+        ctx.clone(),
+        move |client_key: String, op: String, input: String| -> String {
+            hc.api_call(&client_key, &op, &input)
+        },
+    )?;
+    host.set("callApi", call_api_fn)?;
+
+    let hc = host_ctx.clone();
     let get_data_fn = Function::new(ctx.clone(), move |key: String| -> Option<String> {
         hc.get_data(&key)
     })?;

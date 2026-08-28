@@ -53,6 +53,14 @@ pub fn register_host_functions(
     });
 
     let hc = host_ctx.clone();
+    engine.register_fn(
+        "callApi",
+        move |client_key: &str, op: &str, input: &str| -> String {
+            hc.api_call(client_key, op, input)
+        },
+    );
+
+    let hc = host_ctx.clone();
     engine.register_fn("getData", move |key: &str| -> rhai::Dynamic {
         match hc.get_data(key) {
             Some(v) => v.into(),

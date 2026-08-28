@@ -14,12 +14,16 @@
 //! - [`routes`] — `/api/v1/ingress/{channel_key}` endpoints
 //! - [`vault`] — credential sealing (AES-256-GCM)
 //! - [`trace`] — `TRACE_CTX` task-local + step-timeline recorder
+//! - [`api_client`] — declarative outbound API clients (`itg_api_clients`)
+//! - [`egress`] — L5 outbound executor + `itg_egress_log`
 
 pub mod admin;
+pub mod api_client;
 pub mod batch;
 pub mod channel;
 pub mod connector;
 pub mod cursor;
+pub mod egress;
 pub mod envelope;
 pub mod framing;
 pub mod mapping;
@@ -32,31 +36,31 @@ pub mod vault;
 pub mod verify;
 
 pub use channel::{ItgChannel, ItgChannelStore};
+pub use egress::{EgressReceipt, EgressRequest};
 pub use envelope::{InboundEnvelope, InboundKind};
 pub use pipeline::{Pipeline, PipelineOutcome, RetryResult};
 pub use trace::TraceCtx;
 
-/// Process-wide shared plane handle — set once at startup, read by worker
-/// handlers (`ingress.retry`/`ingress.pull`) that are constructed before the
-/// AppState exists. `None` when the plane is disabled.
-static SHARED_PLANE: std::sync::OnceLock<std::sync::Arc<IntegrationPlane>> =
-    std::sync::OnceLock::new();
+/// Process-wide shared integration handle — set once at startup, read by
+/// worker handlers (`ingress.retry`/`ingress.pull`) that are constructed
+/// before the AppState exists. `None` when the integration plane is disabled.
+static SHARED: std::sync::OnceLock<std::sync::Arc<IntegrationPlane>> = std::sync::OnceLock::new();
 
-/// Install the shared plane (called once from `build_app_state`).
-pub fn set_shared_plane(plane: std::sync::Arc<IntegrationPlane>) {
-    let _ = SHARED_PLANE.set(plane);
+/// Install the shared integration handle (called once from `build_app_state`).
+pub fn set_shared(integration: std::sync::Arc<IntegrationPlane>) {
+    let _ = SHARED.set(integration);
 }
 
-/// Access the shared plane, if initialized and enabled.
+/// Access the shared integration handle, if initialized and enabled.
 #[must_use]
-pub fn shared_plane() -> Option<std::sync::Arc<IntegrationPlane>> {
-    SHARED_PLANE.get().cloned()
+pub fn shared() -> Option<std::sync::Arc<IntegrationPlane>> {
+    SHARED.get().cloned()
 }
 
-/// Convenience: the shared pipeline handle.
+/// Convenience: the shared inbound pipeline handle.
 #[must_use]
 pub fn shared_pipeline() -> Option<std::sync::Arc<Pipeline>> {
-    shared_plane().map(|p| p.pipeline_arc())
+    shared().map(|p| p.pipeline_arc())
 }
 
 use crate::config::app::IntegrationConfig;
@@ -74,6 +78,7 @@ pub struct IntegrationPlane {
     pipeline: std::sync::Arc<Pipeline>,
     limiter: routes::IngressRateLimiter,
     vault: Option<vault::Vault>,
+    egress: egress::EgressExecutor,
 }
 
 impl IntegrationPlane {
@@ -108,6 +113,7 @@ impl IntegrationPlane {
         pipeline.spawn_batch_flusher();
         Ok(Self {
             supervisor: std::sync::OnceLock::new(),
+            egress: egress::EgressExecutor::new(pool_handle.clone(), vault.clone(), config.clone()),
             pool: pool_handle,
             alert_emitter,
             config,
@@ -172,7 +178,9 @@ impl IntegrationPlane {
 
     /// Telemetry batch stats (health API source).
     #[must_use]
-    pub fn telemetry_batch_stats(&self) -> std::collections::HashMap<i64, crate::integration::batch::BatchStats> {
+    pub fn telemetry_batch_stats(
+        &self,
+    ) -> std::collections::HashMap<i64, crate::integration::batch::BatchStats> {
         self.pipeline.batcher.stats_snapshot()
     }
 
@@ -196,6 +204,50 @@ impl IntegrationPlane {
     #[must_use]
     pub fn vault(&self) -> Option<&vault::Vault> {
         self.vault.as_ref()
+    }
+
+    /// The outbound executor (L5).
+    #[must_use]
+    pub fn egress(&self) -> &egress::EgressExecutor {
+        &self.egress
+    }
+
+    /// One outbound api-client call — the single egress entry point for
+    /// services, worker handlers and plugins (§9.1). Resolves the op template,
+    /// injects sealed auth, rate-limits, logs to `itg_egress_log`; ambient
+    /// `TRACE_CTX` attaches automatically when present.
+    ///
+    /// # Errors
+    ///
+    /// See [`egress::EgressExecutor::call`].
+    pub async fn call_api(
+        &self,
+        client_key: impl Into<String>,
+        op: impl Into<String>,
+        input: serde_json::Value,
+    ) -> crate::errors::app_error::AppResult<EgressReceipt> {
+        self.egress
+            .call(EgressRequest::new(client_key, op, input))
+            .await
+    }
+
+    /// [`Self::call_api`] with an explicit trace id — for callers outside any
+    /// `TRACE_CTX` scope (e.g. a job handler recovering the id from its
+    /// payload).
+    ///
+    /// # Errors
+    ///
+    /// See [`egress::EgressExecutor::call`].
+    pub async fn call_api_traced(
+        &self,
+        trace_id: i64,
+        client_key: impl Into<String>,
+        op: impl Into<String>,
+        input: serde_json::Value,
+    ) -> crate::errors::app_error::AppResult<EgressReceipt> {
+        self.egress
+            .call(EgressRequest::new(client_key, op, input).with_trace(trace_id))
+            .await
     }
 
     /// Inbound body size limit (bytes).

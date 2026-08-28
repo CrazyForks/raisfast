@@ -189,7 +189,9 @@ pub async fn run(
                 headers: Vec::new(),
                 body: serde_json::to_vec(item).unwrap_or_default(),
             };
-            let outcome = pipeline.run_push(&std::sync::Arc::new(clone_channel_shallow(channel)), &req).await;
+            let outcome = pipeline
+                .run_push(&std::sync::Arc::new(clone_channel_shallow(channel)), &req)
+                .await;
             if outcome.duplicate {
                 summary.duplicates += 1;
             } else if outcome.delivered {
@@ -239,7 +241,10 @@ fn clone_channel_shallow(channel: &ItgChannel) -> ItgChannel {
 /// # Errors
 ///
 /// Returns `AppError` when credentials exist but the vault is sealed.
-pub fn pull_token(channel: &ItgChannel, vault: Option<&crate::integration::vault::Vault>) -> AppResult<Option<String>> {
+pub fn pull_token(
+    channel: &ItgChannel,
+    vault: Option<&crate::integration::vault::Vault>,
+) -> AppResult<Option<String>> {
     let Some(sealed) = channel.credentials.as_deref() else {
         return Ok(None);
     };

@@ -567,6 +567,8 @@ fn default_mcp_local_tenant() -> String {
 /// | `INTEGRATION_VAULT_KEY` | String | (empty) | Master key for credential encryption (any length; SHA-256 stretched to AES-256). Empty = vault sealed: credential writes are rejected |
 /// | `INTEGRATION_INGRESS_BODY_LIMIT` | usize | `1048576` | Max inbound request body size (bytes) |
 /// | `INTEGRATION_RECEIPTS_RETENTION_DAYS` | u64 | `90` | Receipt retention before archiving/cleanup |
+/// | `INTEGRATION_EGRESS_TIMEOUT_SECS` | u64 | `20` | Outbound api-client call timeout |
+/// | `INTEGRATION_EGRESS_LOG_RETENTION_DAYS` | u64 | `90` | Egress log retention before cleanup |
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IntegrationConfig {
     #[serde(default = "default_true")]
@@ -580,6 +582,12 @@ pub struct IntegrationConfig {
     /// Receipts older than this (and delivered/dead) are archived then cleaned.
     #[serde(default = "default_receipts_retention_days")]
     pub receipts_retention_days: u64,
+    /// Outbound api-client call timeout (§9.2).
+    #[serde(default = "default_egress_timeout_secs")]
+    pub egress_timeout_secs: u64,
+    /// Egress log rows older than this are cleaned (same policy as receipts).
+    #[serde(default = "default_egress_log_retention_days")]
+    pub egress_log_retention_days: u64,
 }
 
 impl Default for IntegrationConfig {
@@ -589,6 +597,8 @@ impl Default for IntegrationConfig {
             vault_key: None,
             ingress_body_limit: default_ingress_body_limit(),
             receipts_retention_days: default_receipts_retention_days(),
+            egress_timeout_secs: default_egress_timeout_secs(),
+            egress_log_retention_days: default_egress_log_retention_days(),
         }
     }
 }
@@ -612,6 +622,14 @@ impl IntegrationConfig {
                 .ok()
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(defaults.receipts_retention_days),
+            egress_timeout_secs: env::var("INTEGRATION_EGRESS_TIMEOUT_SECS")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(defaults.egress_timeout_secs),
+            egress_log_retention_days: env::var("INTEGRATION_EGRESS_LOG_RETENTION_DAYS")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(defaults.egress_log_retention_days),
         }
     }
 }
@@ -621,6 +639,14 @@ fn default_ingress_body_limit() -> usize {
 }
 
 fn default_receipts_retention_days() -> u64 {
+    90
+}
+
+fn default_egress_timeout_secs() -> u64 {
+    20
+}
+
+fn default_egress_log_retention_days() -> u64 {
     90
 }
 

@@ -74,9 +74,9 @@ struct WhenCond {
 ///
 /// `BadRequest` with actionable guidance on any unsupported syntax.
 pub fn compile(mapping: &Value) -> Result<MappingPlan, AppError> {
-    let obj = mapping.as_object().ok_or_else(|| {
-        AppError::BadRequest("mapping must be a JSON object".into())
-    })?;
+    let obj = mapping
+        .as_object()
+        .ok_or_else(|| AppError::BadRequest("mapping must be a JSON object".into()))?;
 
     let external_id = obj
         .get("external_id")
@@ -114,7 +114,7 @@ pub fn compile(mapping: &Value) -> Result<MappingPlan, AppError> {
         Some(_) => {
             return Err(AppError::BadRequest(
                 "mapping 'payload' must be an object of {target: expr}".into(),
-            ))
+            ));
         }
     };
 
@@ -150,14 +150,16 @@ fn compile_when(v: &Value) -> Result<WhenCond, AppError> {
                     return Err(AppError::BadRequest(format!(
                         "when operator '{other}' not supported (== / != only) — \
                          complex filtering belongs in a normalizer plugin"
-                    )))
+                    )));
                 }
             };
-            let arr = args.as_array().ok_or_else(|| {
-                AppError::BadRequest(format!("'{op}' expects [expr, literal]"))
-            })?;
+            let arr = args
+                .as_array()
+                .ok_or_else(|| AppError::BadRequest(format!("'{op}' expects [expr, literal]")))?;
             if arr.len() != 2 {
-                return Err(AppError::BadRequest(format!("'{op}' expects exactly 2 args")));
+                return Err(AppError::BadRequest(format!(
+                    "'{op}' expects exactly 2 args"
+                )));
             }
             conds.push((compile_expr(&arr[0])?, arr[1].clone(), expect_equal));
         }
@@ -212,7 +214,7 @@ fn compile_expr(v: &Value) -> Result<Expr, AppError> {
                 return Err(AppError::BadRequest(format!(
                     "pipe function '{other}' not supported \
                      (as_number | as_datetime | default(v) | regex(pattern))"
-                )))
+                )));
             }
         };
         pipes.push(pipe);
@@ -302,8 +304,10 @@ impl MappingPlan {
             return Ok(None);
         }
 
-        let external_id = eval_to_string(&self.external_id, input, "external_id")?
-            .ok_or_else(|| AppError::BadRequest("mapping 'external_id' resolved to nothing".into()))?;
+        let external_id =
+            eval_to_string(&self.external_id, input, "external_id")?.ok_or_else(|| {
+                AppError::BadRequest("mapping 'external_id' resolved to nothing".into())
+            })?;
         if external_id.is_empty() {
             return Err(AppError::BadRequest(
                 "mapping 'external_id' resolved to an empty string".into(),
@@ -362,12 +366,8 @@ fn eval_value(expr: &Expr, input: &Value) -> Result<Value, AppError> {
             let mut cur = input;
             for seg in segments {
                 cur = match (seg, cur) {
-                    (Segment::Key(k), Value::Object(o)) => o
-                        .get(k)
-                        .unwrap_or(&Value::Null),
-                    (Segment::Index(i), Value::Array(a)) => a
-                        .get(*i)
-                        .unwrap_or(&Value::Null),
+                    (Segment::Key(k), Value::Object(o)) => o.get(k).unwrap_or(&Value::Null),
+                    (Segment::Index(i), Value::Array(a)) => a.get(*i).unwrap_or(&Value::Null),
                     _ => &Value::Null,
                 };
             }
@@ -385,13 +385,13 @@ fn apply_pipe(pipe: &Pipe, v: Value) -> Result<Value, AppError> {
         Pipe::AsNumber => {
             let n = match &v {
                 Value::Number(_) => return Ok(v),
-                Value::String(s) => s
-                    .parse::<f64>()
-                    .map_err(|_| AppError::BadRequest(format!("as_number: '{s}' is not numeric")))?,
+                Value::String(s) => s.parse::<f64>().map_err(|_| {
+                    AppError::BadRequest(format!("as_number: '{s}' is not numeric"))
+                })?,
                 _ => {
                     return Err(AppError::BadRequest(
                         "as_number: value is neither number nor numeric string".into(),
-                    ))
+                    ));
                 }
             };
             if let Some(i) = n_as_i64(n) {
@@ -424,7 +424,9 @@ fn apply_pipe(pipe: &Pipe, v: Value) -> Result<Value, AppError> {
             if let Some(caps) = re.captures(&s) {
                 // First capture group if present, otherwise the full match.
                 let m = caps.get(1).or_else(|| caps.get(0));
-                Ok(Value::String(m.map(|x| x.as_str().to_string()).unwrap_or(s)))
+                Ok(Value::String(
+                    m.map(|x| x.as_str().to_string()).unwrap_or(s),
+                ))
             } else {
                 Ok(Value::Null)
             }
@@ -489,7 +491,9 @@ mod tests {
             "payload": {},
             "when": {"all": [{"!=": ["$.type", "message"]}]}
         }));
-        let out = plan.apply(&json!({"id": 1, "type": "message"})).expect("apply");
+        let out = plan
+            .apply(&json!({"id": 1, "type": "message"}))
+            .expect("apply");
         assert!(out.is_none());
     }
 
@@ -517,7 +521,9 @@ mod tests {
     #[test]
     fn syntax_errors_guide_to_plugin() {
         let err = compile(&json!({"external_id": "$..wildcard"})).expect_err("wildcard");
-        assert!(err.to_string().contains("normalizer plugin") || err.to_string().contains("segment"));
+        assert!(
+            err.to_string().contains("normalizer plugin") || err.to_string().contains("segment")
+        );
 
         let err = compile(&json!({"external_id": "$.id | upper"})).expect_err("bad pipe");
         assert!(err.to_string().contains("not supported"));
@@ -528,7 +534,8 @@ mod tests {
 
     #[test]
     fn bad_datetime_rejected() {
-        let plan = compile_ok(json!({"external_id": "$.id", "payload": {"t": "$.ts | as_datetime"}}));
+        let plan =
+            compile_ok(json!({"external_id": "$.id", "payload": {"t": "$.ts | as_datetime"}}));
         let err = plan
             .apply(&json!({"id": 1, "ts": "not-a-date"}))
             .expect_err("bad date");

@@ -31,7 +31,10 @@ pub fn parse(text: &str) -> Option<JsonRpcFrame> {
         return None;
     }
     Some(JsonRpcFrame {
-        method: obj.get("method").and_then(Value::as_str).map(str::to_string),
+        method: obj
+            .get("method")
+            .and_then(Value::as_str)
+            .map(str::to_string),
         id: obj.get("id").cloned(),
         payload: obj
             .get("params")
@@ -79,8 +82,8 @@ mod tests {
 
     #[test]
     fn notification_vs_response_vs_raw() {
-        let notif = parse(r#"{"jsonrpc":"2.0","method":"events","params":{"a":1}}"#)
-            .expect("notification");
+        let notif =
+            parse(r#"{"jsonrpc":"2.0","method":"events","params":{"a":1}}"#).expect("notification");
         assert!(notif.is_notification());
         assert_eq!(notif.payload["a"], 1);
 

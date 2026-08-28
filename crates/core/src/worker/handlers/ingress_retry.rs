@@ -4,15 +4,17 @@
 
 use crate::errors::app_error::AppResult;
 use crate::integration::pipeline::RetryResult;
-use crate::worker::handler::{HandlerMeta, JobHandler};
 use crate::worker::Job;
+use crate::worker::handler::{HandlerMeta, JobHandler};
 
 static META: HandlerMeta = HandlerMeta {
     id: "ingress.retry",
     display_name: "集成入站重试",
     description: "对路由失败的入站信封按退避策略重跑路由（内部自动调度，无需手动创建）",
     category: "集成",
-    params_schema: Some(r#"{"type":"object","properties":{"trace_id":{"type":"integer","description":"回执/追踪 ID"},"attempt":{"type":"integer","description":"当前重试序号"}},"required":["trace_id"]}"#),
+    params_schema: Some(
+        r#"{"type":"object","properties":{"trace_id":{"type":"integer","description":"回执/追踪 ID"},"attempt":{"type":"integer","description":"当前重试序号"}},"required":["trace_id"]}"#,
+    ),
     icon: None,
 };
 
@@ -48,6 +50,4 @@ impl JobHandler for IngressRetryHandler {
     }
 }
 
-crate::register_cron_handler!(&META, |_deps| {
-    Box::new(IngressRetryHandler)
-});
+crate::register_cron_handler!(&META, |_deps| { Box::new(IngressRetryHandler) });

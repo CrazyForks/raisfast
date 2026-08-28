@@ -263,7 +263,7 @@ pub async fn build_app_state(
             )
             .await?,
         );
-        integration::set_shared_plane(plane.clone());
+        integration::set_shared(plane.clone());
         Some(plane)
     } else {
         None

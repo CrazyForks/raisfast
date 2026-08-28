@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO itg_api_clients (id, client_key, display_name, base_url, auth, credentials, rate_limit, ops, enabled, created_at, updated_at, tenant_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 12
+    },
+    "nullable": []
+  },
+  "hash": "47fccdef0a8f5bd9c25b2e586dfd8662c21c55e64ac7d86c394eb919071822df"
+}

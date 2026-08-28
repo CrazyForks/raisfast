@@ -36,11 +36,7 @@ impl InboundHttpRequest {
     pub fn query_param(&self, name: &str) -> Option<&str> {
         self.query.split('&').find_map(|pair| {
             let (k, v) = pair.split_once('=')?;
-            if k == name {
-                Some(v)
-            } else {
-                None
-            }
+            if k == name { Some(v) } else { None }
         })
     }
 }
@@ -68,7 +64,10 @@ fn constant_eq(a: &[u8], b: &[u8]) -> bool {
     if a.len() != b.len() {
         return false;
     }
-    a.iter().zip(b.iter()).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
+    a.iter()
+        .zip(b.iter())
+        .fold(0u8, |acc, (x, y)| acc | (x ^ y))
+        == 0
 }
 
 /// Unseal the channel credentials JSON ({} when none stored).
@@ -89,7 +88,10 @@ fn credentials_json(channel: &ItgChannel, vault: Option<&Vault>) -> Result<Value
 }
 
 fn cred_str<'a>(creds: &'a Value, key: &str) -> Option<&'a str> {
-    creds.get(key).and_then(Value::as_str).filter(|s| !s.is_empty())
+    creds
+        .get(key)
+        .and_then(Value::as_str)
+        .filter(|s| !s.is_empty())
 }
 
 fn cfg_str(config: &Value, key: &str, default: &str) -> String {
@@ -105,7 +107,11 @@ fn cfg_u64(config: &Value, key: &str, default: u64) -> u64 {
 }
 
 /// Dispatch by `verify_kind`.
-pub fn verify(channel: &ItgChannel, vault: Option<&Vault>, req: &InboundHttpRequest) -> VerifyOutcome {
+pub fn verify(
+    channel: &ItgChannel,
+    vault: Option<&Vault>,
+    req: &InboundHttpRequest,
+) -> VerifyOutcome {
     let config = channel.verify_config.clone().unwrap_or(Value::Null);
     match channel.verify_kind.as_str() {
         "hmac-sha256" => verify_hmac(&config, channel, vault, req),
@@ -288,8 +294,8 @@ mod tests {
     fn sign(secret: &str, body: &[u8]) -> String {
         use hmac::{Hmac, KeyInit, Mac};
         type HmacSha256 = Hmac<sha2::Sha256>;
-        let mut mac = HmacSha256::new_from_slice(secret.as_bytes())
-            .unwrap_or_else(|_| panic!("hmac init"));
+        let mut mac =
+            HmacSha256::new_from_slice(secret.as_bytes()).unwrap_or_else(|_| panic!("hmac init"));
         mac.update(body);
         format!("sha256={}", hex::encode(mac.finalize().into_bytes()))
     }
@@ -361,7 +367,11 @@ mod tests {
     fn token_via_header_or_query() {
         let vault = Vault::from_secret("k").expect("vault");
         let creds = vault.seal(r#"{"token":"tok1"}"#).expect("seal");
-        let ch = channel("token", serde_json::json!({"query_param": "token"}), Some(creds));
+        let ch = channel(
+            "token",
+            serde_json::json!({"query_param": "token"}),
+            Some(creds),
+        );
 
         let req = request(b"{}", &[("x-ingress-token", "tok1")]);
         assert!(matches!(verify(&ch, Some(&vault), &req), VerifyOutcome::Ok));

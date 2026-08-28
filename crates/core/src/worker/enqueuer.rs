@@ -230,7 +230,13 @@ mod tests {
 
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
-        let jobs = queue.dequeue(10).await.unwrap();
+        let jobs: Vec<_> = queue
+            .dequeue(10)
+            .await
+            .unwrap()
+            .into_iter()
+            .filter(|j| matches!(j.job, Job::RebuildSearchIndex { .. }))
+            .collect();
         assert_eq!(jobs.len(), 1);
         assert!(matches!(
             &jobs[0].job,
@@ -247,7 +253,13 @@ mod tests {
 
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
-        let jobs = queue.dequeue(10).await.unwrap();
+        let jobs: Vec<_> = queue
+            .dequeue(10)
+            .await
+            .unwrap()
+            .into_iter()
+            .filter(|j| matches!(j.job, Job::SendWelcomeEmail { .. }))
+            .collect();
         assert_eq!(jobs.len(), 1);
         assert!(matches!(
             &jobs[0].job,
@@ -265,7 +277,13 @@ mod tests {
 
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
-        let jobs = queue.dequeue(10).await.unwrap();
+        let jobs: Vec<_> = queue
+            .dequeue(10)
+            .await
+            .unwrap()
+            .into_iter()
+            .filter(|j| matches!(j.job, Job::GenerateThumbnail { .. }))
+            .collect();
         assert_eq!(jobs.len(), 1);
         assert!(matches!(
             &jobs[0].job,
@@ -300,7 +318,13 @@ mod tests {
 
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
-        let jobs = queue.dequeue(10).await.unwrap();
+        let jobs: Vec<_> = queue
+            .dequeue(10)
+            .await
+            .unwrap()
+            .into_iter()
+            .filter(|j| matches!(j.job, Job::RebuildSearchIndex { .. }))
+            .collect();
         assert_eq!(jobs.len(), 2);
     }
 }

@@ -132,8 +132,10 @@ pub async fn find_by_id(pool: &crate::db::Pool, id: SnowflakeId) -> AppResult<Op
         "SELECT id, channel_id, external_id, kind, status, attempts, next_retry_at, envelope,          steps, target_id FROM itg_receipts WHERE id = {}",
         crate::db::Driver::ph(1)
     );
-    let row: Option<ReceiptRow> =
-        sqlx::query_as(crate::db::safe_sql(&sql)).bind(*id).fetch_optional(pool).await?;
+    let row: Option<ReceiptRow> = sqlx::query_as(crate::db::safe_sql(&sql))
+        .bind(*id)
+        .fetch_optional(pool)
+        .await?;
     Ok(row)
 }
 
@@ -153,12 +155,11 @@ pub async fn find_state_tx(
         crate::db::Driver::ph(1),
         crate::db::Driver::ph(2)
     );
-    let row: Option<ReceiptState> =
-        sqlx::query_as(crate::db::safe_sql(&sql))
-            .bind(*channel_id)
-            .bind(external_id)
-            .fetch_optional(&mut *tx)
-            .await?;
+    let row: Option<ReceiptState> = sqlx::query_as(crate::db::safe_sql(&sql))
+        .bind(*channel_id)
+        .bind(external_id)
+        .fetch_optional(&mut *tx)
+        .await?;
     Ok(row)
 }
 
@@ -245,8 +246,10 @@ pub async fn append_step(pool: &crate::db::Pool, id: SnowflakeId, entry: &Value)
             "SELECT steps FROM itg_receipts WHERE id = {}",
             crate::db::Driver::ph(1)
         );
-        let existing: Option<(Option<Value>,)> =
-            sqlx::query_as(crate::db::safe_sql(&sql)).bind(*id).fetch_optional(&mut *tx).await?;
+        let existing: Option<(Option<Value>,)> = sqlx::query_as(crate::db::safe_sql(&sql))
+            .bind(*id)
+            .fetch_optional(&mut *tx)
+            .await?;
         let Some((steps,)) = existing else {
             return Ok::<(), crate::errors::app_error::AppError>(());
         };
@@ -287,8 +290,10 @@ pub async fn flip_pending_step(
             "SELECT steps FROM itg_receipts WHERE id = {}",
             crate::db::Driver::ph(1)
         );
-        let existing: Option<(Option<Value>,)> =
-            sqlx::query_as(crate::db::safe_sql(&sql)).bind(*id).fetch_optional(&mut *tx).await?;
+        let existing: Option<(Option<Value>,)> = sqlx::query_as(crate::db::safe_sql(&sql))
+            .bind(*id)
+            .fetch_optional(&mut *tx)
+            .await?;
         let Some((steps,)) = existing else {
             return Ok::<(), crate::errors::app_error::AppError>(());
         };
@@ -301,9 +306,7 @@ pub async fn flip_pending_step(
             if entry.get("step").and_then(Value::as_str) == Some(target.as_str())
                 && entry.get("status").and_then(Value::as_str) == Some("pending")
             {
-                entry["status"] = Value::String(
-                    if ok { "ok" } else { "failed" }.into(),
-                );
+                entry["status"] = Value::String(if ok { "ok" } else { "failed" }.into());
                 entry["detail"] = Value::String(detail.to_string());
                 changed = true;
             }

@@ -2,11 +2,12 @@
 //! (integration.md §11). All handlers are `ensure_admin` + scoped to the
 //! `integration` domain; credentials never echo back (only `has_credentials`).
 
+use crate::db::driver::DbDriver;
 use axum::Json;
 use serde::Deserialize;
 use serde_json::{Value, json};
-use crate::db::driver::DbDriver;
 
+use crate::AppState;
 use crate::errors::app_error::{AppError, AppResult};
 use crate::errors::response::ApiResponse;
 use crate::integration::channel::{self, ItgChannel};
@@ -14,7 +15,6 @@ use crate::integration::receipt;
 use crate::integration::vault::Vault;
 use crate::middleware::auth::{AuthUser, TokenAction};
 use crate::utils::pagination::PaginationParams;
-use crate::AppState;
 
 // ── DTOs ─────────────────────────────────────────────────────────────
 
@@ -523,11 +523,17 @@ pub async fn channel_health(
         .integration
         .as_ref()
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("integration plane disabled")))?;
-    let sup = plane
-        .supervisor()
-        .and_then(|s| s.health_snapshot().into_iter().find(|h| h.channel_id == id.0));
+    let sup = plane.supervisor().and_then(|s| {
+        s.health_snapshot()
+            .into_iter()
+            .find(|h| h.channel_id == id.0)
+    });
     let batch = plane.telemetry_batch_stats().get(&id.0).cloned();
-    Ok(ApiResponse::success(health_body(&ch, sup.as_ref(), batch.as_ref())))
+    Ok(ApiResponse::success(health_body(
+        &ch,
+        sup.as_ref(),
+        batch.as_ref(),
+    )))
 }
 
 // ── Receipts & trace ─────────────────────────────────────────────────
@@ -554,21 +560,32 @@ pub async fn list_receipts(
     auth.ensure_scope("integration", TokenAction::Read)?;
     params.pagination.sanitize();
 
+    // Typed binds: PG rejects `bigint = text` on loose string binds, so ids
+    // bind as i64 and status as text — collected in SQL order.
+    #[derive(Default)]
+    struct ReceiptBinds {
+        channel_id: Option<i64>,
+        status: Option<String>,
+        trace_id: Option<i64>,
+    }
     let mut clauses: Vec<String> = Vec::new();
-    let mut binds: Vec<String> = Vec::new();
+    let mut binds = ReceiptBinds::default();
+    let mut next_ph = 1_usize;
     if let Some(ch) = &params.channel_id {
         let id = crate::types::snowflake_id::parse_id(ch)?;
-        clauses.push(format!("channel_id = {}", crate::db::Driver::ph(binds.len() + 1)));
-        binds.push(id.to_string());
+        clauses.push(format!("channel_id = {}", crate::db::Driver::ph(next_ph)));
+        next_ph += 1;
+        binds.channel_id = Some(id.0);
     }
     if let Some(status) = &params.status {
-        clauses.push(format!("status = {}", crate::db::Driver::ph(binds.len() + 1)));
-        binds.push(status.clone());
+        clauses.push(format!("status = {}", crate::db::Driver::ph(next_ph)));
+        next_ph += 1;
+        binds.status = Some(status.clone());
     }
     if let Some(trace) = &params.trace_id {
         let id = crate::types::snowflake_id::parse_id(trace)?;
-        clauses.push(format!("id = {}", crate::db::Driver::ph(binds.len() + 1)));
-        binds.push(id.to_string());
+        clauses.push(format!("id = {}", crate::db::Driver::ph(next_ph)));
+        binds.trace_id = Some(id.0);
     }
     let where_sql = if clauses.is_empty() {
         String::new()
@@ -583,11 +600,15 @@ pub async fn list_receipts(
     let count_sql = format!("SELECT COUNT(*) FROM itg_receipts{where_sql}");
 
     let count: i64 = {
-        let mut q = sqlx::query_scalar::<crate::db::pool::Db, i64>(
-            crate::db::safe_sql(&count_sql),
-        );
-        for b in &binds {
-            q = q.bind(b);
+        let mut q = sqlx::query_scalar::<crate::db::pool::Db, i64>(crate::db::safe_sql(&count_sql));
+        if let Some(c) = binds.channel_id {
+            q = q.bind(c);
+        }
+        if let Some(ref s) = binds.status {
+            q = q.bind(s);
+        }
+        if let Some(t) = binds.trace_id {
+            q = q.bind(t);
         }
         q.fetch_one(&state.pool).await?
     };
@@ -595,14 +616,32 @@ pub async fn list_receipts(
     let page = params.pagination.page.max(1);
     let page_size = params.pagination.page_size;
     let offset = (page - 1) * page_size;
-    let page_sql = format!(
-        "{base} ORDER BY id DESC LIMIT {page_size} OFFSET {offset}"
-    );
-    let mut q = sqlx::query_as::<crate::db::pool::Db, (i64, i64, String, String, String, i64, Option<String>, Option<String>, Option<i64>, String, Option<String>)>(
-        crate::db::safe_sql(&page_sql),
-    );
-    for b in &binds {
-        q = q.bind(b);
+    let page_sql = format!("{base} ORDER BY id DESC LIMIT {page_size} OFFSET {offset}");
+    // Timestamps decode as `Timestamp` (PG TIMESTAMPTZ rejects String decode).
+    let mut q = sqlx::query_as::<
+        crate::db::pool::Db,
+        (
+            i64,
+            i64,
+            String,
+            String,
+            String,
+            i64,
+            Option<crate::utils::tz::Timestamp>,
+            Option<String>,
+            Option<i64>,
+            crate::utils::tz::Timestamp,
+            Option<crate::utils::tz::Timestamp>,
+        ),
+    >(crate::db::safe_sql(&page_sql));
+    if let Some(c) = binds.channel_id {
+        q = q.bind(c);
+    }
+    if let Some(ref s) = binds.status {
+        q = q.bind(s);
+    }
+    if let Some(t) = binds.trace_id {
+        q = q.bind(t);
     }
     let rows = q.fetch_all(&state.pool).await?;
 
@@ -636,7 +675,9 @@ pub async fn get_receipt(
     let row = receipt::find_by_id(&state.pool, id)
         .await?
         .ok_or_else(|| AppError::NotFound(format!("receipt {id} not found")))?;
-    let channel = channel::model::find_by_id(&state.pool, row.channel_id).await.ok();
+    let channel = channel::model::find_by_id(&state.pool, row.channel_id)
+        .await
+        .ok();
     Ok(ApiResponse::success(json!({
         "id": row.id, "channel_id": row.channel_id,
         "channel_key": channel.map(|c| c.channel_key),
@@ -652,7 +693,8 @@ pub async fn get_receipt(
 }
 
 /// GET /admin/integration/receipts/{id}/trace — async chain embedded in the
-/// step timeline (jobs / retries / replays). `itg_egress_log` joins in P3.
+/// step timeline (jobs / retries / replays) plus the egress calls sharing
+/// this trace id (`itg_egress_log`, §10.7).
 pub async fn get_trace(
     auth: AuthUser,
     State(state): State<AppState>,
@@ -670,17 +712,27 @@ pub async fn get_trace(
     let first_pass: Vec<&Value> = arr
         .iter()
         .filter(|s| {
-            s["step"]
-                .as_str()
-                .is_some_and(|n| ["queue", "verify", "normalize", "dedup", "route", "ack", "archive"]
-                    .contains(&n))
+            s["step"].as_str().is_some_and(|n| {
+                [
+                    "queue",
+                    "verify",
+                    "normalize",
+                    "dedup",
+                    "route",
+                    "ack",
+                    "archive",
+                ]
+                .contains(&n)
+            })
         })
         .collect();
     let async_chain: Vec<&Value> = arr
         .iter()
         .filter(|s| {
             s["step"].as_str().is_some_and(|n| {
-                n.starts_with("job:") || n.starts_with("replay#") || n == "pipeline-pass"
+                n.starts_with("job:")
+                    || n.starts_with("replay#")
+                    || n == "pipeline-pass"
                     || n.starts_with("retry#")
             })
         })
@@ -691,6 +743,8 @@ pub async fn get_trace(
         .filter(|s| s["status"] == "pending")
         .collect();
 
+    let egress = crate::integration::egress::list_log(&state.pool, Some(id), None, 100).await?;
+
     Ok(ApiResponse::success(json!({
         "trace_id": row.id.0,
         "status": row.status,
@@ -698,8 +752,279 @@ pub async fn get_trace(
         "async_chain": async_chain,
         "pending_count": pending.len(),
         "complete": pending.is_empty(),
+        "egress": egress,
     })))
 }
 
 // Imports used by handler signatures.
 use axum::extract::{Path, Query, State};
+
+// ── API clients (L5 egress, MVP-M0) ──────────────────────────────────
+
+#[derive(Deserialize)]
+pub struct CreateApiClientRequest {
+    pub client_key: String,
+    #[serde(default)]
+    pub display_name: String,
+    pub base_url: String,
+    pub auth: Option<Value>,
+    /// Plaintext credentials JSON `{"secret": "..."}` — sealed on write.
+    pub credentials: Option<Value>,
+    pub rate_limit: Option<Value>,
+    pub ops: Option<Value>,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+}
+
+#[derive(Deserialize)]
+pub struct UpdateApiClientRequest {
+    pub display_name: Option<String>,
+    pub base_url: Option<String>,
+    pub auth: Option<Value>,
+    pub credentials: Option<Value>,
+    pub rate_limit: Option<Value>,
+    pub ops: Option<Value>,
+    pub enabled: Option<bool>,
+}
+
+fn api_client_to_json(c: &crate::integration::api_client::ItgApiClient) -> Value {
+    let mut v = serde_json::to_value(c).unwrap_or(Value::Null);
+    if let Some(obj) = v.as_object_mut() {
+        obj.remove("credentials");
+        obj.insert(
+            "has_credentials".into(),
+            Value::Bool(c.credentials.is_some()),
+        );
+    }
+    v
+}
+
+pub async fn list_api_clients(
+    auth: AuthUser,
+    State(state): State<AppState>,
+) -> AppResult<ApiResponse<Vec<Value>>> {
+    auth.ensure_admin()?;
+    auth.ensure_scope("integration", TokenAction::Read)?;
+    let rows = crate::integration::api_client::model::find_all(&state.pool).await?;
+    Ok(ApiResponse::success(
+        rows.iter().map(api_client_to_json).collect(),
+    ))
+}
+
+pub async fn create_api_client(
+    auth: AuthUser,
+    State(state): State<AppState>,
+    Json(req): Json<CreateApiClientRequest>,
+) -> AppResult<ApiResponse<Value>> {
+    auth.ensure_admin()?;
+    auth.ensure_scope("integration", TokenAction::Create)?;
+    let plane = state
+        .integration
+        .as_ref()
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("integration plane disabled")))?;
+    crate::integration::api_client::validate(&req.base_url, req.auth.as_ref(), req.ops.as_ref())?;
+    if req.client_key.is_empty() || req.client_key.contains('/') {
+        return Err(AppError::BadRequest(
+            "client_key must be a non-empty path segment (no '/')".into(),
+        ));
+    }
+    let sealed = seal_credentials(plane.vault(), req.credentials.as_ref())?;
+
+    if crate::integration::api_client::model::find_by_key(
+        &state.pool,
+        crate::constants::DEFAULT_TENANT,
+        &req.client_key,
+    )
+    .await?
+    .is_some()
+    {
+        return Err(AppError::BadRequest(format!(
+            "client_key '{}' already exists",
+            req.client_key
+        )));
+    }
+
+    let client = crate::integration::api_client::ItgApiClient {
+        id: crate::utils::id::new_snowflake_id(),
+        tenant_id: crate::constants::DEFAULT_TENANT.to_string(),
+        client_key: req.client_key.clone(),
+        display_name: if req.display_name.is_empty() {
+            req.client_key.clone()
+        } else {
+            req.display_name.clone()
+        },
+        base_url: req.base_url.clone(),
+        auth: req.auth.clone(),
+        credentials: sealed,
+        rate_limit: req.rate_limit.clone(),
+        ops: req.ops.clone(),
+        enabled: req.enabled,
+        created_at: crate::utils::tz::now_utc(),
+        updated_at: crate::utils::tz::now_utc(),
+    };
+    crate::integration::api_client::model::insert(&state.pool, &client).await?;
+    Ok(ApiResponse::success(api_client_to_json(&client)))
+}
+
+pub async fn get_api_client(
+    auth: AuthUser,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> AppResult<ApiResponse<Value>> {
+    auth.ensure_admin()?;
+    auth.ensure_scope("integration", TokenAction::Read)?;
+    let id = crate::types::snowflake_id::parse_id(&id)?;
+    let client = crate::integration::api_client::model::find_by_id(&state.pool, id).await?;
+    Ok(ApiResponse::success(api_client_to_json(&client)))
+}
+
+pub async fn update_api_client(
+    auth: AuthUser,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(req): Json<UpdateApiClientRequest>,
+) -> AppResult<ApiResponse<Value>> {
+    auth.ensure_admin()?;
+    auth.ensure_scope("integration", TokenAction::Update)?;
+    let id = crate::types::snowflake_id::parse_id(&id)?;
+    let plane = state
+        .integration
+        .as_ref()
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("integration plane disabled")))?;
+    let mut client = crate::integration::api_client::model::find_by_id(&state.pool, id).await?;
+
+    if let Some(name) = &req.display_name {
+        client.display_name = name.clone();
+    }
+    if let Some(base_url) = &req.base_url {
+        client.base_url = base_url.clone();
+    }
+    if let Some(auth_cfg) = &req.auth {
+        client.auth = Some(auth_cfg.clone());
+    }
+    if let Some(rate_limit) = &req.rate_limit {
+        client.rate_limit = Some(rate_limit.clone());
+    }
+    if let Some(ops) = &req.ops {
+        client.ops = Some(ops.clone());
+    }
+    if let Some(creds) = &req.credentials {
+        client.credentials = seal_credentials(plane.vault(), Some(creds))?;
+    }
+    if let Some(enabled) = req.enabled {
+        client.enabled = enabled;
+    }
+    crate::integration::api_client::validate(
+        &client.base_url,
+        client.auth.as_ref(),
+        client.ops.as_ref(),
+    )?;
+    client.updated_at = crate::utils::tz::now_utc();
+
+    let now = client.updated_at;
+    let result = raisfast_derive::crud_update!(
+        &state.pool, "itg_api_clients",
+        bind: [
+            "display_name" => &client.display_name,
+            "base_url" => &client.base_url,
+            "auth" => client.auth.as_ref(),
+            "credentials" => client.credentials.as_deref(),
+            "rate_limit" => client.rate_limit.as_ref(),
+            "ops" => client.ops.as_ref(),
+            "enabled" => client.enabled,
+            "updated_at" => now
+        ],
+        where: ("id", id)
+    )?;
+    AppError::expect_affected(&result, "itg_api_client")?;
+    Ok(ApiResponse::success(api_client_to_json(&client)))
+}
+
+pub async fn delete_api_client(
+    auth: AuthUser,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> AppResult<ApiResponse<()>> {
+    auth.ensure_admin()?;
+    auth.ensure_scope("integration", TokenAction::Delete)?;
+    let id = crate::types::snowflake_id::parse_id(&id)?;
+    crate::integration::api_client::model::delete_by_id(&state.pool, id).await?;
+    Ok(ApiResponse::success(()))
+}
+
+#[derive(Deserialize)]
+pub struct TestCallRequest {
+    pub op: String,
+    #[serde(default = "default_empty_object")]
+    pub input: Value,
+}
+
+fn default_empty_object() -> Value {
+    Value::Object(serde_json::Map::new())
+}
+
+/// POST .../api-clients/{id}/test-call — fire one op against the client's
+/// real endpoint; the call is logged like any egress (no trace).
+pub async fn test_call(
+    auth: AuthUser,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(req): Json<TestCallRequest>,
+) -> AppResult<ApiResponse<Value>> {
+    auth.ensure_admin()?;
+    auth.ensure_scope("integration", TokenAction::Read)?;
+    let id = crate::types::snowflake_id::parse_id(&id)?;
+    let client = crate::integration::api_client::model::find_by_id(&state.pool, id).await?;
+    let plane = state
+        .integration
+        .as_ref()
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("integration plane disabled")))?;
+    let receipt = plane
+        .call_api(client.client_key.clone(), req.op, req.input)
+        .await?;
+    Ok(ApiResponse::success(json!({
+        "status": receipt.status,
+        "output": receipt.output,
+        "tokens_in": receipt.tokens_in,
+        "tokens_out": receipt.tokens_out,
+        "model": receipt.model,
+        "log_id": receipt.log_id.to_string(),
+    })))
+}
+
+#[derive(Deserialize)]
+pub struct EgressLogParams {
+    #[serde(default)]
+    pub trace_id: Option<String>,
+    #[serde(default)]
+    pub client_key: Option<String>,
+    #[serde(default)]
+    pub limit: Option<u64>,
+}
+
+/// GET /admin/integration/egress-log — outbound call log (filterable by
+/// trace_id for the receipt → egress chain).
+pub async fn list_egress_log(
+    auth: AuthUser,
+    State(state): State<AppState>,
+    Query(params): Query<EgressLogParams>,
+) -> AppResult<ApiResponse<Value>> {
+    auth.ensure_admin()?;
+    auth.ensure_scope("integration", TokenAction::Read)?;
+    let trace_id = match &params.trace_id {
+        Some(t) => Some(crate::types::snowflake_id::parse_id(t)?),
+        None => None,
+    };
+    let limit = params.limit.unwrap_or(50).min(500);
+    let rows = crate::integration::egress::list_log(
+        &state.pool,
+        trace_id,
+        params.client_key.as_deref(),
+        limit,
+    )
+    .await?;
+    Ok(ApiResponse::success(json!({
+        "items": rows,
+        "count": rows.len(),
+    })))
+}

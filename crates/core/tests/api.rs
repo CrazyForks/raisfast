@@ -53,6 +53,8 @@ pub(crate) fn test_config() -> AppConfig {
         .to_string_lossy()
         .into();
     cfg.base_url = "http://localhost:9000".into();
+    // Vault key so integration credential sealing works in tests.
+    cfg.integration.vault_key = Some("test-vault-secret".into());
     let mut key_bytes = [0u8; 32];
     getrandom::fill(&mut key_bytes).unwrap();
     cfg.app_key = Some(base64::Engine::encode(
@@ -566,8 +568,7 @@ async fn build_test_app(pool: raisfast::db::Pool) -> (axum::Router, AppState) {
         ))
         .route(
             "/ingress/{channel_key}",
-            get(raisfast::integration::routes::challenge)
-                .post(raisfast::integration::routes::push),
+            get(raisfast::integration::routes::challenge).post(raisfast::integration::routes::push),
         )
         .route(
             "/admin/integration/channels",
@@ -603,6 +604,25 @@ async fn build_test_app(pool: raisfast::db::Pool) -> (axum::Router, AppState) {
         .route(
             "/admin/integration/channels/{id}/health",
             get(raisfast::integration::admin::channel_health),
+        )
+        .route(
+            "/admin/integration/api-clients",
+            get(raisfast::integration::admin::list_api_clients)
+                .post(raisfast::integration::admin::create_api_client),
+        )
+        .route(
+            "/admin/integration/api-clients/{id}",
+            get(raisfast::integration::admin::get_api_client)
+                .put(raisfast::integration::admin::update_api_client)
+                .delete(raisfast::integration::admin::delete_api_client),
+        )
+        .route(
+            "/admin/integration/api-clients/{id}/test-call",
+            post(raisfast::integration::admin::test_call),
+        )
+        .route(
+            "/admin/integration/egress-log",
+            get(raisfast::integration::admin::list_egress_log),
         )
         .layer(from_fn_with_state(
             state.clone(),
@@ -1862,10 +1882,11 @@ type = "text"
 [fields.body]
 type = "text"
 "#;
-    let schema =
-        raisfast::content_type::schema::ContentTypeSchema::parse_from_str(toml).unwrap();
+    let schema = raisfast::content_type::schema::ContentTypeSchema::parse_from_str(toml).unwrap();
     let repo = raisfast::content_type::repository::ContentRepository::new(state.pool.clone());
-    repo.migrate(&schema, &state.protocol_registry).await.unwrap();
+    repo.migrate(&schema, &state.protocol_registry)
+        .await
+        .unwrap();
     state
         .content_type_registry
         .register(
@@ -1931,11 +1952,15 @@ type = "text"
     assert_eq!(status, StatusCode::OK, "first push should be acked 200");
 
     let receipts: Vec<(i64, String, Option<String>)> =
-        sqlx::query_as("SELECT id, status, steps FROM itg_receipts WHERE channel_id = ?")
-            .bind(*channel.id)
-            .fetch_all(&state.pool)
-            .await
-            .unwrap();
+        sqlx::query_as(raisfast::db::safe_sql(&format!(
+            "SELECT id, status, {} FROM itg_receipts WHERE channel_id = {}",
+            raisfast::db::Driver::cast_text("steps"),
+            raisfast::db::Driver::ph(1)
+        )))
+        .bind(*channel.id)
+        .fetch_all(&state.pool)
+        .await
+        .unwrap();
     assert_eq!(receipts.len(), 1, "exactly one receipt");
     assert_eq!(receipts[0].1, "delivered");
     let steps: Value =
@@ -1945,45 +1970,50 @@ type = "text"
         .map(|a| a.iter().filter_map(|s| s["step"].as_str()).collect())
         .unwrap_or_default();
     for expected in ["verify", "normalize", "dedup", "route", "ack"] {
-        assert!(names.contains(&expected), "steps missing '{expected}': {names:?}");
+        assert!(
+            names.contains(&expected),
+            "steps missing '{expected}': {names:?}"
+        );
     }
     assert!(
         names.iter().any(|n| n.starts_with("job:")),
         "pending job placeholder present: {names:?}"
     );
 
-    let ct_row: Option<(i64, String, String)> =
-        sqlx::query_as("SELECT id, external_id, body FROM ingress_notes WHERE external_id = ?")
-            .bind("m-001")
-            .fetch_optional(&state.pool)
-            .await
-            .unwrap();
+    let ct_row: Option<(i64, String, String)> = sqlx::query_as(raisfast::db::safe_sql(&format!(
+        "SELECT id, external_id, body FROM ingress_notes WHERE external_id = {}",
+        raisfast::db::Driver::ph(1)
+    )))
+    .bind("m-001")
+    .fetch_optional(&state.pool)
+    .await
+    .unwrap();
     let ct_row = ct_row.expect("CT row written");
     assert_eq!(ct_row.2, "hello plane");
     assert_eq!(ct_row.1, "m-001");
 
     // 4. Repost the same body → duplicate, no second receipt/CT row.
-    let (status, _) = send(
-        &mut app,
-        post_json("/api/v1/ingress/e2e-notes", body),
-    )
-    .await;
+    let (status, _) = send(&mut app, post_json("/api/v1/ingress/e2e-notes", body)).await;
     assert_eq!(status, StatusCode::OK, "duplicate must also be acked 200");
 
-    let count: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM itg_receipts WHERE channel_id = ?")
-            .bind(*channel.id)
-            .fetch_one(&state.pool)
-            .await
-            .unwrap();
+    let count: i64 = sqlx::query_scalar(raisfast::db::safe_sql(&format!(
+        "SELECT COUNT(*) FROM itg_receipts WHERE channel_id = {}",
+        raisfast::db::Driver::ph(1)
+    )))
+    .bind(*channel.id)
+    .fetch_one(&state.pool)
+    .await
+    .unwrap();
     assert_eq!(count, 1, "dedup keeps exactly one receipt");
 
-    let ct_count: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM ingress_notes WHERE external_id = ?")
-            .bind("m-001")
-            .fetch_one(&state.pool)
-            .await
-            .unwrap();
+    let ct_count: i64 = sqlx::query_scalar(raisfast::db::safe_sql(&format!(
+        "SELECT COUNT(*) FROM ingress_notes WHERE external_id = {}",
+        raisfast::db::Driver::ph(1)
+    )))
+    .bind("m-001")
+    .fetch_one(&state.pool)
+    .await
+    .unwrap();
     assert_eq!(ct_count, 1, "dedup keeps exactly one CT row");
 
     // 5. GET challenge echo handshake.
@@ -2024,10 +2054,11 @@ type = "text"
 type = "text"
 required = true
 "#;
-    let schema =
-        raisfast::content_type::schema::ContentTypeSchema::parse_from_str(toml).unwrap();
+    let schema = raisfast::content_type::schema::ContentTypeSchema::parse_from_str(toml).unwrap();
     let repo = raisfast::content_type::repository::ContentRepository::new(state.pool.clone());
-    repo.migrate(&schema, &state.protocol_registry).await.unwrap();
+    repo.migrate(&schema, &state.protocol_registry)
+        .await
+        .unwrap();
     state
         .content_type_registry
         .register(
@@ -2080,7 +2111,7 @@ required = true
         .await
         .unwrap();
     plane.channels().refresh().await.unwrap();
-    raisfast::integration::set_shared_plane(state.integration.clone().unwrap());
+    raisfast::integration::set_shared(state.integration.clone().unwrap());
 
     // 1. First push → route fails (missing required) → retrying, ack 200.
     let (status, _) = send(
@@ -2090,42 +2121,53 @@ required = true
     .await;
     assert_eq!(status, StatusCode::OK, "internal mode acks 200 on failure");
 
-    let row: (String, i64) =
-        sqlx::query_as("SELECT status, attempts FROM itg_receipts WHERE channel_id = ?")
-            .bind(*channel.id)
-            .fetch_one(&state.pool)
-            .await
-            .unwrap();
+    let row: (String, i64) = sqlx::query_as(raisfast::db::safe_sql(&format!(
+        "SELECT status, attempts FROM itg_receipts WHERE channel_id = {}",
+        raisfast::db::Driver::ph(1)
+    )))
+    .bind(*channel.id)
+    .fetch_one(&state.pool)
+    .await
+    .unwrap();
     assert_eq!(row.0, "retrying", "first failure → retrying");
     assert_eq!(row.1, 1, "attempts = 1");
-    let trace_id: i64 =
-        sqlx::query_scalar("SELECT id FROM itg_receipts WHERE channel_id = ?")
-            .bind(*channel.id)
-            .fetch_one(&state.pool)
-            .await
-            .unwrap();
+    let trace_id: i64 = sqlx::query_scalar(raisfast::db::safe_sql(&format!(
+        "SELECT id FROM itg_receipts WHERE channel_id = {}",
+        raisfast::db::Driver::ph(1)
+    )))
+    .bind(*channel.id)
+    .fetch_one(&state.pool)
+    .await
+    .unwrap();
 
     // 2. Simulate the retry job: still failing → attempts=2, still retrying.
     let pipeline = plane.pipeline();
     let res = pipeline.run_retry(trace_id).await.unwrap();
-    assert_eq!(res, raisfast::integration::pipeline::RetryResult::Rescheduled);
-    let row: (String, i64) =
-        sqlx::query_as("SELECT status, attempts FROM itg_receipts WHERE id = ?")
-            .bind(trace_id)
-            .fetch_one(&state.pool)
-            .await
-            .unwrap();
+    assert_eq!(
+        res,
+        raisfast::integration::pipeline::RetryResult::Rescheduled
+    );
+    let row: (String, i64) = sqlx::query_as(raisfast::db::safe_sql(&format!(
+        "SELECT status, attempts FROM itg_receipts WHERE id = {}",
+        raisfast::db::Driver::ph(1)
+    )))
+    .bind(trace_id)
+    .fetch_one(&state.pool)
+    .await
+    .unwrap();
     assert_eq!((row.0.as_str(), row.1), ("retrying", 2));
 
     // 3. Retry again → exceeds redelivery_max=2 → dead + steps record.
     let res = pipeline.run_retry(trace_id).await.unwrap();
     assert_eq!(res, raisfast::integration::pipeline::RetryResult::Dead);
-    let status_str: String =
-        sqlx::query_scalar("SELECT status FROM itg_receipts WHERE id = ?")
-            .bind(trace_id)
-            .fetch_one(&state.pool)
-            .await
-            .unwrap();
+    let status_str: String = sqlx::query_scalar(raisfast::db::safe_sql(&format!(
+        "SELECT status FROM itg_receipts WHERE id = {}",
+        raisfast::db::Driver::ph(1)
+    )))
+    .bind(trace_id)
+    .fetch_one(&state.pool)
+    .await
+    .unwrap();
     assert_eq!(status_str, "dead");
 }
 
@@ -2175,16 +2217,21 @@ async fn integration_retry_recovers_when_target_appears() {
 
     let (status, _) = send(
         &mut app,
-        post_json("/api/v1/ingress/recover-ch", json!({"id": "rc-1", "text": "later"})),
+        post_json(
+            "/api/v1/ingress/recover-ch",
+            json!({"id": "rc-1", "text": "later"}),
+        ),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    let trace_id: i64 =
-        sqlx::query_scalar("SELECT id FROM itg_receipts WHERE channel_id = ?")
-            .bind(*channel.id)
-            .fetch_one(&state.pool)
-            .await
-            .unwrap();
+    let trace_id: i64 = sqlx::query_scalar(raisfast::db::safe_sql(&format!(
+        "SELECT id FROM itg_receipts WHERE channel_id = {}",
+        raisfast::db::Driver::ph(1)
+    )))
+    .bind(*channel.id)
+    .fetch_one(&state.pool)
+    .await
+    .unwrap();
 
     // Target CT appears → retry succeeds → delivered + CT row + steps merged.
     let toml = r#"
@@ -2200,10 +2247,11 @@ type = "text"
 [fields.body]
 type = "text"
 "#;
-    let schema =
-        raisfast::content_type::schema::ContentTypeSchema::parse_from_str(toml).unwrap();
+    let schema = raisfast::content_type::schema::ContentTypeSchema::parse_from_str(toml).unwrap();
     let repo = raisfast::content_type::repository::ContentRepository::new(state.pool.clone());
-    repo.migrate(&schema, &state.protocol_registry).await.unwrap();
+    repo.migrate(&schema, &state.protocol_registry)
+        .await
+        .unwrap();
     state
         .content_type_registry
         .register(
@@ -2217,30 +2265,37 @@ type = "text"
 
     let res = plane.pipeline().run_retry(trace_id).await.unwrap();
     assert_eq!(res, raisfast::integration::pipeline::RetryResult::Delivered);
-    let status_str: String =
-        sqlx::query_scalar("SELECT status FROM itg_receipts WHERE id = ?")
-            .bind(trace_id)
-            .fetch_one(&state.pool)
-            .await
-            .unwrap();
+    let status_str: String = sqlx::query_scalar(raisfast::db::safe_sql(&format!(
+        "SELECT status FROM itg_receipts WHERE id = {}",
+        raisfast::db::Driver::ph(1)
+    )))
+    .bind(trace_id)
+    .fetch_one(&state.pool)
+    .await
+    .unwrap();
     assert_eq!(status_str, "delivered");
 
-    let body: String =
-        sqlx::query_scalar("SELECT body FROM recover_notes WHERE external_id = ?")
-            .bind("rc-1")
-            .fetch_one(&state.pool)
-            .await
-            .unwrap();
+    let body: String = sqlx::query_scalar(raisfast::db::safe_sql(&format!(
+        "SELECT body FROM recover_notes WHERE external_id = {}",
+        raisfast::db::Driver::ph(1)
+    )))
+    .bind("rc-1")
+    .fetch_one(&state.pool)
+    .await
+    .unwrap();
     assert_eq!(body, "later");
 
     // Normalize ran exactly once (snapshot determinism): no counter available,
     // but envelope snapshot must equal the first pass payload.
-    let env: String =
-        sqlx::query_scalar("SELECT CAST(envelope AS TEXT) FROM itg_receipts WHERE id = ?")
-            .bind(trace_id)
-            .fetch_one(&state.pool)
-            .await
-            .unwrap();
+    let env: String = sqlx::query_scalar(raisfast::db::safe_sql(&format!(
+        "SELECT {} FROM itg_receipts WHERE id = {}",
+        raisfast::db::Driver::cast_text("envelope"),
+        raisfast::db::Driver::ph(1)
+    )))
+    .bind(trace_id)
+    .fetch_one(&state.pool)
+    .await
+    .unwrap();
     assert!(env.contains("rc-1"), "snapshot persisted");
 }
 
@@ -2300,10 +2355,11 @@ type = "text"
 [fields.body]
 type = "text"
 "#;
-    let schema =
-        raisfast::content_type::schema::ContentTypeSchema::parse_from_str(toml).unwrap();
+    let schema = raisfast::content_type::schema::ContentTypeSchema::parse_from_str(toml).unwrap();
     let repo = raisfast::content_type::repository::ContentRepository::new(state.pool.clone());
-    repo.migrate(&schema, &state.protocol_registry).await.unwrap();
+    repo.migrate(&schema, &state.protocol_registry)
+        .await
+        .unwrap();
     state
         .content_type_registry
         .register(
@@ -2321,20 +2377,25 @@ type = "text"
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    let trace_id: i64 =
-        sqlx::query_scalar("SELECT id FROM itg_receipts WHERE channel_id = ?")
-            .bind(*channel.id)
-            .fetch_one(&state.pool)
-            .await
-            .unwrap();
+    let trace_id: i64 = sqlx::query_scalar(raisfast::db::safe_sql(&format!(
+        "SELECT id FROM itg_receipts WHERE channel_id = {}",
+        raisfast::db::Driver::ph(1)
+    )))
+    .bind(*channel.id)
+    .fetch_one(&state.pool)
+    .await
+    .unwrap();
 
     // Pending placeholder exists.
-    let steps: String =
-        sqlx::query_scalar("SELECT CAST(steps AS TEXT) FROM itg_receipts WHERE id = ?")
-            .bind(trace_id)
-            .fetch_one(&state.pool)
-            .await
-            .unwrap();
+    let steps: String = sqlx::query_scalar(raisfast::db::safe_sql(&format!(
+        "SELECT {} FROM itg_receipts WHERE id = {}",
+        raisfast::db::Driver::cast_text("steps"),
+        raisfast::db::Driver::ph(1)
+    )))
+    .bind(trace_id)
+    .fetch_one(&state.pool)
+    .await
+    .unwrap();
     assert!(steps.contains("\"job:flip.echo\"") && steps.contains("\"pending\""));
 
     // Flip to terminal + append a manual entry.
@@ -2356,12 +2417,15 @@ type = "text"
     .await
     .unwrap();
 
-    let steps: String =
-        sqlx::query_scalar("SELECT CAST(steps AS TEXT) FROM itg_receipts WHERE id = ?")
-            .bind(trace_id)
-            .fetch_one(&state.pool)
-            .await
-            .unwrap();
+    let steps: String = sqlx::query_scalar(raisfast::db::safe_sql(&format!(
+        "SELECT {} FROM itg_receipts WHERE id = {}",
+        raisfast::db::Driver::cast_text("steps"),
+        raisfast::db::Driver::ph(1)
+    )))
+    .bind(trace_id)
+    .fetch_one(&state.pool)
+    .await
+    .unwrap();
     let parsed: Value = serde_json::from_str(&steps).unwrap();
     let arr = parsed.as_array().unwrap();
     let flip = arr
@@ -2420,10 +2484,11 @@ type = "text"
 [fields.body]
 type = "text"
 "#;
-    let schema =
-        raisfast::content_type::schema::ContentTypeSchema::parse_from_str(toml).unwrap();
+    let schema = raisfast::content_type::schema::ContentTypeSchema::parse_from_str(toml).unwrap();
     let repo = raisfast::content_type::repository::ContentRepository::new(state.pool.clone());
-    repo.migrate(&schema, &state.protocol_registry).await.unwrap();
+    repo.migrate(&schema, &state.protocol_registry)
+        .await
+        .unwrap();
     state
         .content_type_registry
         .register(
@@ -2487,22 +2552,36 @@ type = "text"
     )
     .await
     .unwrap();
-    assert_eq!((s.fetched, s.delivered, s.duplicates, s.failed), (3, 3, 0, 0));
+    assert_eq!(
+        (s.fetched, s.delivered, s.duplicates, s.failed),
+        (3, 3, 0, 0)
+    );
     assert_eq!(s.pages, 2, "page_size=2 → two pages");
 
-    let cursor: String = sqlx::query_scalar(
-        "SELECT CAST(cursor_value AS TEXT) FROM itg_channel_cursors WHERE channel_id = ?",
-    )
+    let cursor: String = sqlx::query_scalar(raisfast::db::safe_sql(&format!(
+        "SELECT {} FROM itg_channel_cursors WHERE channel_id = {}",
+        raisfast::db::Driver::cast_text("cursor_value"),
+        raisfast::db::Driver::ph(1)
+    )))
     .bind(*channel.id)
     .fetch_one(&state.pool)
     .await
     .unwrap();
-    assert!(cursor.contains("\"since_id\":\"3\""), "cursor at last id: {cursor}");
+    let cursor_json: Value = serde_json::from_str(&cursor).unwrap_or(Value::Null);
+    assert_eq!(cursor_json["since_id"], "3", "cursor at last id: {cursor}");
 
-    let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM ingress_notes")
-        .fetch_one(&state.pool)
-        .await
-        .unwrap();
+    let n: i64 = sqlx::query_scalar(raisfast::db::safe_sql(&format!(
+        "SELECT COUNT(*) FROM ingress_notes WHERE external_id IN ({}, {}, {})",
+        raisfast::db::Driver::ph(1),
+        raisfast::db::Driver::ph(2),
+        raisfast::db::Driver::ph(3)
+    )))
+    .bind("1")
+    .bind("2")
+    .bind("3")
+    .fetch_one(&state.pool)
+    .await
+    .unwrap();
     assert_eq!(n, 3);
 
     // ── Run 2: incremental (two new items only) ────────────────────────
@@ -2530,12 +2609,16 @@ type = "text"
 
     // ── Run 4: cursor rewind (simulate lost advance) → duplicates absorbed,
     //    no duplicate CT rows —— 不重不漏 ───────────────────────────────
-    sqlx::query("UPDATE itg_channel_cursors SET cursor_value = ? WHERE channel_id = ?")
-        .bind(json!({"since_id": "2"}))
-        .bind(*channel.id)
-        .execute(&state.pool)
-        .await
-        .unwrap();
+    sqlx::query(raisfast::db::safe_sql(&format!(
+        "UPDATE itg_channel_cursors SET cursor_value = {} WHERE channel_id = {}",
+        raisfast::db::Driver::ph(1),
+        raisfast::db::Driver::ph(2)
+    )))
+    .bind(json!({"since_id": "2"}))
+    .bind(*channel.id)
+    .execute(&state.pool)
+    .await
+    .unwrap();
     let s = raisfast::integration::connector::http_pull::run(
         &state.pool,
         plane.pipeline(),
@@ -2548,17 +2631,31 @@ type = "text"
     assert_eq!(s.duplicates, 3, "rewind re-fetches are all duplicates");
     assert_eq!(s.delivered, 0);
 
-    let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM ingress_notes")
-        .fetch_one(&state.pool)
-        .await
-        .unwrap();
+    let n: i64 = sqlx::query_scalar(raisfast::db::safe_sql(&format!(
+        "SELECT COUNT(*) FROM ingress_notes WHERE external_id IN ({}, {}, {}, {}, {})",
+        raisfast::db::Driver::ph(1),
+        raisfast::db::Driver::ph(2),
+        raisfast::db::Driver::ph(3),
+        raisfast::db::Driver::ph(4),
+        raisfast::db::Driver::ph(5)
+    )))
+    .bind("1")
+    .bind("2")
+    .bind("3")
+    .bind("4")
+    .bind("5")
+    .fetch_one(&state.pool)
+    .await
+    .unwrap();
     assert_eq!(n, 5, "still exactly five CT rows");
-    let receipts: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM itg_receipts WHERE channel_id = ?")
-            .bind(*channel.id)
-            .fetch_one(&state.pool)
-            .await
-            .unwrap();
+    let receipts: i64 = sqlx::query_scalar(raisfast::db::safe_sql(&format!(
+        "SELECT COUNT(*) FROM itg_receipts WHERE channel_id = {}",
+        raisfast::db::Driver::ph(1)
+    )))
+    .bind(*channel.id)
+    .fetch_one(&state.pool)
+    .await
+    .unwrap();
     assert_eq!(receipts, 5, "five receipts, no duplicates rows");
 }
 
@@ -2582,10 +2679,11 @@ unique = true
 [fields.body]
 type = "text"
 "#;
-    let schema =
-        raisfast::content_type::schema::ContentTypeSchema::parse_from_str(toml).unwrap();
+    let schema = raisfast::content_type::schema::ContentTypeSchema::parse_from_str(toml).unwrap();
     let repo = raisfast::content_type::repository::ContentRepository::new(state.pool.clone());
-    repo.migrate(&schema, &state.protocol_registry).await.unwrap();
+    repo.migrate(&schema, &state.protocol_registry)
+        .await
+        .unwrap();
     state
         .content_type_registry
         .register(
@@ -2638,16 +2736,22 @@ type = "text"
     // ── Push → raw archived + raw_ref in snapshot ──────────────────────
     let (status, _) = send(
         &mut app,
-        post_json("/api/v1/ingress/archive-ch", json!({"id": "a-1", "text": "original"})),
+        post_json(
+            "/api/v1/ingress/archive-ch",
+            json!({"id": "a-1", "text": "original"}),
+        ),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    let (trace_id, env_json): (i64, String) =
-        sqlx::query_as("SELECT id, CAST(envelope AS TEXT) FROM itg_receipts WHERE channel_id = ?")
-            .bind(*channel.id)
-            .fetch_one(&state.pool)
-            .await
-            .unwrap();
+    let (trace_id, env_json): (i64, String) = sqlx::query_as(raisfast::db::safe_sql(&format!(
+        "SELECT id, {} FROM itg_receipts WHERE channel_id = {}",
+        raisfast::db::Driver::cast_text("envelope"),
+        raisfast::db::Driver::ph(1)
+    )))
+    .bind(*channel.id)
+    .fetch_one(&state.pool)
+    .await
+    .unwrap();
     let env: Value = serde_json::from_str(&env_json).unwrap();
     let raw_ref = env["raw_ref"].as_str().expect("raw_ref set").to_string();
     assert!(raw_ref.contains("integration/raw"), "path: {raw_ref}");
@@ -2659,11 +2763,14 @@ type = "text"
     assert_eq!(raw, br#"{"id":"a-1","text":"original"}"#);
 
     // ── Corrupt the target row, then replay (upsert) ───────────────────
-    sqlx::query("UPDATE ingress_notes SET body = 'stale' WHERE external_id = ?")
-        .bind("a-1")
-        .execute(&state.pool)
-        .await
-        .unwrap();
+    sqlx::query(raisfast::db::safe_sql(&format!(
+        "UPDATE ingress_notes SET body = 'stale' WHERE external_id = {}",
+        raisfast::db::Driver::ph(1)
+    )))
+    .bind("a-1")
+    .execute(&state.pool)
+    .await
+    .unwrap();
 
     use raisfast::types::snowflake_id::SnowflakeId;
     let outcome = plane
@@ -2678,31 +2785,41 @@ type = "text"
         _ => panic!("expected Upserted"),
     }
 
-    let body: String =
-        sqlx::query_scalar("SELECT body FROM ingress_notes WHERE external_id = ?")
-            .bind("a-1")
-            .fetch_one(&state.pool)
-            .await
-            .unwrap();
+    let body: String = sqlx::query_scalar(raisfast::db::safe_sql(&format!(
+        "SELECT body FROM ingress_notes WHERE external_id = {}",
+        raisfast::db::Driver::ph(1)
+    )))
+    .bind("a-1")
+    .fetch_one(&state.pool)
+    .await
+    .unwrap();
     assert_eq!(body, "original", "replay restored the snapshot payload");
 
-    let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM ingress_notes")
-        .fetch_one(&state.pool)
-        .await
-        .unwrap();
+    let n: i64 = sqlx::query_scalar(raisfast::db::safe_sql(&format!(
+        "SELECT COUNT(*) FROM ingress_notes WHERE external_id = {}",
+        raisfast::db::Driver::ph(1)
+    )))
+    .bind("a-1")
+    .fetch_one(&state.pool)
+    .await
+    .unwrap();
     assert_eq!(n, 1, "upsert does not duplicate rows");
 
     // steps: original timeline intact + replay#N appended.
-    let steps: String =
-        sqlx::query_scalar("SELECT CAST(steps AS TEXT) FROM itg_receipts WHERE id = ?")
-            .bind(trace_id)
-            .fetch_one(&state.pool)
-            .await
-            .unwrap();
+    let steps: String = sqlx::query_scalar(raisfast::db::safe_sql(&format!(
+        "SELECT {} FROM itg_receipts WHERE id = {}",
+        raisfast::db::Driver::cast_text("steps"),
+        raisfast::db::Driver::ph(1)
+    )))
+    .bind(trace_id)
+    .fetch_one(&state.pool)
+    .await
+    .unwrap();
     let parsed: Value = serde_json::from_str(&steps).unwrap();
     let arr = parsed.as_array().unwrap();
     assert!(
-        arr.iter().any(|s| s["step"].as_str().unwrap_or("").starts_with("replay#")),
+        arr.iter()
+            .any(|s| s["step"].as_str().unwrap_or("").starts_with("replay#")),
         "replay appended: {steps}"
     );
     assert!(
@@ -2719,14 +2836,21 @@ type = "text"
     match outcome {
         raisfast::integration::pipeline::ReplayOutcome::DryRun { report } => {
             assert_eq!(report["external_id"], "a-1");
-            assert!(report["would_write"]["body"] == "original", "report carries snapshot payload");
+            assert!(
+                report["would_write"]["body"] == "original",
+                "report carries snapshot payload"
+            );
         }
         _ => panic!("expected DryRun"),
     }
-    let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM ingress_notes")
-        .fetch_one(&state.pool)
-        .await
-        .unwrap();
+    let n: i64 = sqlx::query_scalar(raisfast::db::safe_sql(&format!(
+        "SELECT COUNT(*) FROM ingress_notes WHERE external_id = {}",
+        raisfast::db::Driver::ph(1)
+    )))
+    .bind("a-1")
+    .fetch_one(&state.pool)
+    .await
+    .unwrap();
     assert_eq!(n, 1, "dry-run wrote nothing");
 }
 
@@ -2759,10 +2883,11 @@ type = "text"
 [fields.body]
 type = "text"
 "#;
-    let schema =
-        raisfast::content_type::schema::ContentTypeSchema::parse_from_str(toml).unwrap();
+    let schema = raisfast::content_type::schema::ContentTypeSchema::parse_from_str(toml).unwrap();
     let repo = raisfast::content_type::repository::ContentRepository::new(state.pool.clone());
-    repo.migrate(&schema, &state.protocol_registry).await.unwrap();
+    repo.migrate(&schema, &state.protocol_registry)
+        .await
+        .unwrap();
     state
         .content_type_registry
         .register(
@@ -2814,7 +2939,11 @@ type = "text"
         ),
     )
     .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST, "stream rejected in this phase");
+    assert_eq!(
+        status,
+        StatusCode::BAD_REQUEST,
+        "stream rejected in this phase"
+    );
 
     // ── test-mapping preview (zero writes) ───────────────────────────
     let (status, body) = send(
@@ -2834,16 +2963,25 @@ type = "text"
     // ── Push through the created channel, then query receipts ────────
     let (status, _) = send(
         &mut app,
-        post_json("/api/v1/ingress/admin-ch", json!({"id": "adm-1", "text": "via admin api"})),
+        post_json(
+            "/api/v1/ingress/admin-ch",
+            json!({"id": "adm-1", "text": "via admin api"}),
+        ),
     )
     .await;
-    assert_eq!(status, StatusCode::OK, "routed through admin-created channel");
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "routed through admin-created channel"
+    );
 
     let (status, body) = send(
         &mut app,
         Request::builder()
             .method("GET")
-            .uri("/api/v1/admin/integration/receipts?status=delivered")
+            .uri(format!(
+                "/api/v1/admin/integration/receipts?status=delivered&channel_id={channel_id}"
+            ))
             .header(header::AUTHORIZATION, format!("Bearer {token}"))
             .body(Body::empty())
             .unwrap(),
@@ -2874,7 +3012,9 @@ type = "text"
         &mut app,
         Request::builder()
             .method("GET")
-            .uri(format!("/api/v1/admin/integration/receipts/{trace_id}/trace"))
+            .uri(format!(
+                "/api/v1/admin/integration/receipts/{trace_id}/trace"
+            ))
             .header(header::AUTHORIZATION, format!("Bearer {token}"))
             .body(Body::empty())
             .unwrap(),
@@ -2937,7 +3077,11 @@ type = "text"
         post_json("/api/v1/ingress/admin-ch", json!({"id": "adm-2"})),
     )
     .await;
-    assert_eq!(status, StatusCode::NOT_FOUND, "deleted channel no longer routes");
+    assert_eq!(
+        status,
+        StatusCode::NOT_FOUND,
+        "deleted channel no longer routes"
+    );
 
     // Unauthenticated admin access → forbidden.
     let (status, _) = send(
@@ -2954,8 +3098,8 @@ type = "text"
 
 #[tokio::test]
 async fn integration_supervisor_lifecycle() {
-    use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::Arc as StdArc;
+    use std::sync::atomic::{AtomicU64, Ordering};
 
     let (mut app, state) = test_app().await;
     let _ = &mut app;
@@ -2987,11 +3131,8 @@ async fn integration_supervisor_lifecycle() {
     }
 
     let sup = plane.ensure_supervisor();
-    sup.register_connector(
-        "mock",
-        StdArc::new(|| Box::new(MockConnector)),
-    )
-    .await;
+    sup.register_connector("mock", StdArc::new(|| Box::new(MockConnector)))
+        .await;
 
     // Target CT + stream channel.
     let toml = r#"
@@ -3007,10 +3148,11 @@ type = "text"
 [fields.body]
 type = "text"
 "#;
-    let schema =
-        raisfast::content_type::schema::ContentTypeSchema::parse_from_str(toml).unwrap();
+    let schema = raisfast::content_type::schema::ContentTypeSchema::parse_from_str(toml).unwrap();
     let repo = raisfast::content_type::repository::ContentRepository::new(state.pool.clone());
-    repo.migrate(&schema, &state.protocol_registry).await.unwrap();
+    repo.migrate(&schema, &state.protocol_registry)
+        .await
+        .unwrap();
     state
         .content_type_registry
         .register(
@@ -3063,12 +3205,11 @@ type = "text"
     // ── Task spawns, retries twice, then connects and routes a frame ────
     let mut delivered = false;
     for _ in 0..40 {
-        let n: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM ingress_notes WHERE external_id = 'sup-1'",
-        )
-        .fetch_one(&state.pool)
-        .await
-        .unwrap();
+        let n: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM ingress_notes WHERE external_id = 'sup-1'")
+                .fetch_one(&state.pool)
+                .await
+                .unwrap();
         if n == 1 {
             delivered = true;
             break;
@@ -3085,24 +3226,24 @@ type = "text"
     assert_eq!(h.state, "connecting", "third attempt holds: {h:?}");
     assert!(h.reconnects >= 2, "backoff retried: {h:?}");
     assert!(
-        h.last_error.as_deref().is_some_and(|e| e.contains("disconnect")),
+        h.last_error
+            .as_deref()
+            .is_some_and(|e| e.contains("disconnect")),
         "last error recorded"
     );
 
     // ── Hot disable → task stops ────────────────────────────────────────
-    raisfast::integration::channel::model::update_status(
-        &state.pool,
-        channel.id,
-        "disabled",
-        None,
-    )
-    .await
-    .unwrap();
-    sqlx::query("UPDATE itg_channels SET enabled = 0 WHERE id = ?")
-        .bind(*channel.id)
-        .execute(&state.pool)
+    raisfast::integration::channel::model::update_status(&state.pool, channel.id, "disabled", None)
         .await
         .unwrap();
+    sqlx::query(raisfast::db::safe_sql(&format!(
+        "UPDATE itg_channels SET enabled = FALSE WHERE id = {}",
+        raisfast::db::Driver::ph(1)
+    )))
+    .bind(*channel.id)
+    .execute(&state.pool)
+    .await
+    .unwrap();
     sup.wake();
     tokio::time::sleep(std::time::Duration::from_millis(300)).await;
     let h = sup
@@ -3185,10 +3326,11 @@ type = "text"
 [fields.body]
 type = "text"
 "#;
-    let schema =
-        raisfast::content_type::schema::ContentTypeSchema::parse_from_str(toml).unwrap();
+    let schema = raisfast::content_type::schema::ContentTypeSchema::parse_from_str(toml).unwrap();
     let repo = raisfast::content_type::repository::ContentRepository::new(state.pool.clone());
-    repo.migrate(&schema, &state.protocol_registry).await.unwrap();
+    repo.migrate(&schema, &state.protocol_registry)
+        .await
+        .unwrap();
     state
         .content_type_registry
         .register(
@@ -3249,12 +3391,11 @@ type = "text"
     // First connection: notification routed + ack frame sent back.
     let mut routed1 = false;
     for _ in 0..80 {
-        let n: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM ingress_notes WHERE external_id = 'ws-0'",
-        )
-        .fetch_one(&state.pool)
-        .await
-        .unwrap();
+        let n: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM ingress_notes WHERE external_id = 'ws-0'")
+                .fetch_one(&state.pool)
+                .await
+                .unwrap();
         if n == 1 {
             routed1 = true;
             break;
@@ -3267,12 +3408,15 @@ type = "text"
             .iter()
             .map(|h| format!("{:?}", h))
             .collect();
-        let receipts: Vec<(String, String)> =
-            sqlx::query_as("SELECT status, CAST(steps AS TEXT) FROM itg_receipts WHERE channel_id = ?")
-                .bind(*channel.id)
-                .fetch_all(&state.pool)
-                .await
-                .unwrap_or_default();
+        let receipts: Vec<(String, String)> = sqlx::query_as(raisfast::db::safe_sql(&format!(
+            "SELECT status, {} FROM itg_receipts WHERE channel_id = {}",
+            raisfast::db::Driver::cast_text("steps"),
+            raisfast::db::Driver::ph(1)
+        )))
+        .bind(*channel.id)
+        .fetch_all(&state.pool)
+        .await
+        .unwrap_or_default();
         let acks = ACK_RECEIVED.lock().unwrap().clone();
         // Direct pipeline replay of the exact frame to surface the error.
         let probe = plane
@@ -3283,17 +3427,23 @@ type = "text"
             )
             .await;
         let probe_receipts: Vec<(String, String)> =
-            sqlx::query_as("SELECT status, CAST(steps AS TEXT) FROM itg_receipts")
-                .fetch_all(&state.pool)
-                .await
-                .unwrap_or_default();
+            sqlx::query_as(raisfast::db::safe_sql(&format!(
+                "SELECT status, {} FROM itg_receipts",
+                raisfast::db::Driver::cast_text("steps")
+            )))
+            .fetch_all(&state.pool)
+            .await
+            .unwrap_or_default();
         panic!(
             "not routed. health={health:?} receipts={receipts:?} probe={:?} probe_receipts={probe_receipts:?} acks={acks:?}",
             probe
         );
     }
     assert!(routed1, "first notification routed to CT");
-    assert!(SAW_SUBSCRIBE.load(Ordering::SeqCst), "subscribe handshake seen");
+    assert!(
+        SAW_SUBSCRIBE.load(Ordering::SeqCst),
+        "subscribe handshake seen"
+    );
 
     // Ack frame received by the gateway (envelope_id echoed).
     let ack_seen = tokio::time::timeout(std::time::Duration::from_secs(5), async {
@@ -3313,20 +3463,25 @@ type = "text"
     // notification (ws-1) routed — supervisor self-healed with backoff.
     let mut routed2 = false;
     for _ in 0..100 {
-        let n: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM ingress_notes WHERE external_id = 'ws-1'",
-        )
-        .fetch_one(&state.pool)
-        .await
-        .unwrap();
+        let n: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM ingress_notes WHERE external_id = 'ws-1'")
+                .fetch_one(&state.pool)
+                .await
+                .unwrap();
         if n == 1 {
             routed2 = true;
             break;
         }
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     }
-    assert!(routed2, "reconnected + resubscribed + second notification routed");
-    assert!(CONN_COUNT.load(Ordering::SeqCst) >= 2, "at least two connections");
+    assert!(
+        routed2,
+        "reconnected + resubscribed + second notification routed"
+    );
+    assert!(
+        CONN_COUNT.load(Ordering::SeqCst) >= 2,
+        "at least two connections"
+    );
 
     sup.shutdown().await;
 }
@@ -3355,10 +3510,11 @@ type = "text"
 [fields.body]
 type = "text"
 "#;
-    let schema =
-        raisfast::content_type::schema::ContentTypeSchema::parse_from_str(toml).unwrap();
+    let schema = raisfast::content_type::schema::ContentTypeSchema::parse_from_str(toml).unwrap();
     let repo = raisfast::content_type::repository::ContentRepository::new(state.pool.clone());
-    repo.migrate(&schema, &state.protocol_registry).await.unwrap();
+    repo.migrate(&schema, &state.protocol_registry)
+        .await
+        .unwrap();
     state
         .content_type_registry
         .register(
@@ -3425,23 +3581,31 @@ type = "text"
     let mut c1 = tokio::net::TcpStream::connect(addr).await.unwrap();
     let mut banner = Vec::new();
     let _ = c1.read(&mut banner).await; // welcome banner (may race, ignore)
-    c1.write_all(br#"{"id":"tcp-1","text":"first"}"#).await.unwrap();
+    c1.write_all(br#"{"id":"tcp-1","text":"first"}"#)
+        .await
+        .unwrap();
     c1.write_all(b"\n").await.unwrap();
-    c1.write_all(br#"{"id":"tcp-2","text":"second"}"#).await.unwrap();
+    c1.write_all(br#"{"id":"tcp-2","text":"second"}"#)
+        .await
+        .unwrap();
     c1.write_all(b"\n").await.unwrap();
 
     let mut c2 = tokio::net::TcpStream::connect(addr).await.unwrap();
-    c2.write_all(br#"{"id":"tcp-3","text":"third"}"#).await.unwrap();
+    c2.write_all(br#"{"id":"tcp-3","text":"third"}"#)
+        .await
+        .unwrap();
     c2.write_all(b"\n").await.unwrap();
     drop(c1);
     drop(c2);
 
-    let mut routed = 0;
+    let mut routed: i64 = 0;
     for _ in 0..60 {
-        routed = sqlx::query_scalar("SELECT COUNT(*) FROM ingress_notes")
-            .fetch_one(&state.pool)
-            .await
-            .unwrap();
+        routed = sqlx::query_scalar(raisfast::db::safe_sql(
+            "SELECT COUNT(*) FROM ingress_notes WHERE external_id LIKE 'tcp-%'",
+        ))
+        .fetch_one(&state.pool)
+        .await
+        .unwrap();
         if routed == 3 {
             break;
         }
@@ -3449,12 +3613,14 @@ type = "text"
     }
     assert_eq!(routed, 3, "all line frames routed");
 
-    let receipts: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM itg_receipts WHERE channel_id = ?")
-            .bind(*channel.id)
-            .fetch_one(&state.pool)
-            .await
-            .unwrap();
+    let receipts: i64 = sqlx::query_scalar(raisfast::db::safe_sql(&format!(
+        "SELECT COUNT(*) FROM itg_receipts WHERE channel_id = {}",
+        raisfast::db::Driver::ph(1)
+    )))
+    .bind(*channel.id)
+    .fetch_one(&state.pool)
+    .await
+    .unwrap();
     assert_eq!(receipts, 3);
 
     sup.shutdown().await;
@@ -3478,10 +3644,11 @@ type = "text"
 [fields.body]
 type = "text"
 "#;
-    let schema =
-        raisfast::content_type::schema::ContentTypeSchema::parse_from_str(toml).unwrap();
+    let schema = raisfast::content_type::schema::ContentTypeSchema::parse_from_str(toml).unwrap();
     let repo = raisfast::content_type::repository::ContentRepository::new(state.pool.clone());
-    repo.migrate(&schema, &state.protocol_registry).await.unwrap();
+    repo.migrate(&schema, &state.protocol_registry)
+        .await
+        .unwrap();
     state
         .content_type_registry
         .register(
@@ -3542,35 +3709,46 @@ type = "text"
 
     let (status, _) = send(
         &mut app,
-        post_json("/api/v1/ingress/sample-keep", json!({"id": "t-keep", "v": "x"})),
+        post_json(
+            "/api/v1/ingress/sample-keep",
+            json!({"id": "t-keep", "v": "x"}),
+        ),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
     let (status, _) = send(
         &mut app,
-        post_json("/api/v1/ingress/sample-drop", json!({"id": "t-drop", "v": 2})),
+        post_json(
+            "/api/v1/ingress/sample-drop",
+            json!({"id": "t-drop", "v": 2}),
+        ),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "sampled-out still acks 200");
 
     let mut keep_rows: i64 = 0;
     for _ in 0..40 {
-        keep_rows = sqlx::query_scalar("SELECT COUNT(*) FROM itg_receipts WHERE channel_id = ?")
-            .bind(*keep_all.id)
-            .fetch_one(&state.pool)
-            .await
-            .unwrap();
+        keep_rows = sqlx::query_scalar(raisfast::db::safe_sql(&format!(
+            "SELECT COUNT(*) FROM itg_receipts WHERE channel_id = {}",
+            raisfast::db::Driver::ph(1)
+        )))
+        .bind(*keep_all.id)
+        .fetch_one(&state.pool)
+        .await
+        .unwrap();
         if keep_rows == 1 {
             break;
         }
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     }
-    let drop_rows: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM itg_receipts WHERE channel_id = ?")
-            .bind(*drop_all.id)
-            .fetch_one(&state.pool)
-            .await
-            .unwrap();
+    let drop_rows: i64 = sqlx::query_scalar(raisfast::db::safe_sql(&format!(
+        "SELECT COUNT(*) FROM itg_receipts WHERE channel_id = {}",
+        raisfast::db::Driver::ph(1)
+    )))
+    .bind(*drop_all.id)
+    .fetch_one(&state.pool)
+    .await
+    .unwrap();
     assert_eq!(keep_rows, 1, "rate 100 keeps everything");
     assert_eq!(drop_rows, 0, "rate 0 drops before any DB write");
 }
@@ -3593,10 +3771,11 @@ type = "text"
 [fields.body]
 type = "text"
 "#;
-    let schema =
-        raisfast::content_type::schema::ContentTypeSchema::parse_from_str(toml).unwrap();
+    let schema = raisfast::content_type::schema::ContentTypeSchema::parse_from_str(toml).unwrap();
     let repo = raisfast::content_type::repository::ContentRepository::new(state.pool.clone());
-    repo.migrate(&schema, &state.protocol_registry).await.unwrap();
+    repo.migrate(&schema, &state.protocol_registry)
+        .await
+        .unwrap();
     state
         .content_type_registry
         .register(
@@ -3676,14 +3855,13 @@ type = "text"
     .await;
     assert_eq!(status, StatusCode::OK);
 
-    let mut tele_rows = 0;
+    let mut tele_rows: i64 = 0;
     for _ in 0..50 {
-        tele_rows = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM ingress_notes WHERE external_id LIKE 'bt-%'",
-        )
-        .fetch_one(&state.pool)
-        .await
-        .unwrap();
+        tele_rows =
+            sqlx::query_scalar("SELECT COUNT(*) FROM ingress_notes WHERE external_id LIKE 'bt-%'")
+                .fetch_one(&state.pool)
+                .await
+                .unwrap();
         if tele_rows == 5 {
             break;
         }
@@ -3698,9 +3876,10 @@ type = "text"
     assert_eq!(msg_rows, 1, "message unaffected by batch path");
 
     // Batch steps marker present.
-    let steps: String = sqlx::query_scalar(
-        "SELECT CAST(steps AS TEXT) FROM itg_receipts WHERE external_id = 'bt-0'",
-    )
+    let steps: String = sqlx::query_scalar(raisfast::db::safe_sql(&format!(
+        "SELECT {} FROM itg_receipts WHERE external_id = 'bt-0'",
+        raisfast::db::Driver::cast_text("steps")
+    )))
     .fetch_one(&state.pool)
     .await
     .unwrap();
@@ -3721,14 +3900,13 @@ type = "text"
             raisfast::integration::pipeline::AckAction::Http { status: 200, .. }
         ));
     }
-    let mut big = 0;
+    let mut big: i64 = 0;
     for _ in 0..80 {
-        big = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM ingress_notes WHERE external_id LIKE 'bs-%'",
-        )
-        .fetch_one(&state.pool)
-        .await
-        .unwrap();
+        big =
+            sqlx::query_scalar("SELECT COUNT(*) FROM ingress_notes WHERE external_id LIKE 'bs-%'")
+                .fetch_one(&state.pool)
+                .await
+                .unwrap();
         if big == 120 {
             break;
         }
@@ -3737,18 +3915,23 @@ type = "text"
     assert_eq!(big, 120, "size-trigger flushed the bulk wave");
 
     // No losses: receipts count == sent count for the channel.
-    let receipts: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM itg_receipts WHERE channel_id = ?")
-            .bind(*tele.id)
-            .fetch_one(&state.pool)
-            .await
-            .unwrap();
+    let receipts: i64 = sqlx::query_scalar(raisfast::db::safe_sql(&format!(
+        "SELECT COUNT(*) FROM itg_receipts WHERE channel_id = {}",
+        raisfast::db::Driver::ph(1)
+    )))
+    .bind(*tele.id)
+    .fetch_one(&state.pool)
+    .await
+    .unwrap();
     assert_eq!(receipts, 125, "5 + 120 = 125 receipts, zero loss");
 
     // Duplicate within batch semantics: repost one telemetry id → no new row.
     let _ = send(
         &mut app,
-        post_json("/api/v1/ingress/batch-tele", json!({"id": "bt-0", "v": 999})),
+        post_json(
+            "/api/v1/ingress/batch-tele",
+            json!({"id": "bt-0", "v": 999}),
+        ),
     )
     .await;
     tokio::time::sleep(std::time::Duration::from_millis(400)).await;
@@ -3789,10 +3972,11 @@ type = "text"
 [fields.body]
 type = "text"
 "#;
-    let schema =
-        raisfast::content_type::schema::ContentTypeSchema::parse_from_str(toml).unwrap();
+    let schema = raisfast::content_type::schema::ContentTypeSchema::parse_from_str(toml).unwrap();
     let repo = raisfast::content_type::repository::ContentRepository::new(state.pool.clone());
-    repo.migrate(&schema, &state.protocol_registry).await.unwrap();
+    repo.migrate(&schema, &state.protocol_registry)
+        .await
+        .unwrap();
     state
         .content_type_registry
         .register(
@@ -3859,7 +4043,7 @@ type = "text"
 
     // ── SSE: subscribe with integration.* prefix filter ────────────────
     let sse_req = Request::builder()
-        .uri("/api/v1/events?filter=ingress.*")
+        .uri("/api/v1/events?filter=integration.*")
         .body(Body::empty())
         .unwrap();
     let mut sse_app = app.clone();
@@ -3876,10 +4060,13 @@ type = "text"
     assert_eq!(resp.status(), StatusCode::OK);
     let mut body_stream = resp.into_body().into_data_stream();
 
-    // Trigger: one message push (broadcasts integration ingress.received).
+    // Trigger: one message push (broadcasts integration.received).
     let (status, _) = send(
         &mut app,
-        post_json("/api/v1/ingress/sse-msg", json!({"id": "sse-1", "text": "hi"})),
+        post_json(
+            "/api/v1/ingress/sse-msg",
+            json!({"id": "sse-1", "text": "hi"}),
+        ),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
@@ -3891,7 +4078,7 @@ type = "text"
         while let Some(chunk) = body_stream.next().await {
             let bytes = chunk.unwrap_or_default();
             seen.push_str(&String::from_utf8_lossy(&bytes));
-            if seen.contains("ingress.received") {
+            if seen.contains("integration.received") {
                 return true;
             }
         }
@@ -3926,7 +4113,10 @@ type = "text"
     // Telemetry push → batch stats non-zero after flush.
     let _ = send(
         &mut app,
-        post_json("/api/v1/ingress/sse-tele", json!({"id": "st-1", "text": "t"})),
+        post_json(
+            "/api/v1/ingress/sse-tele",
+            json!({"id": "st-1", "text": "t"}),
+        ),
     )
     .await;
     tokio::time::sleep(std::time::Duration::from_millis(400)).await;
@@ -3934,7 +4124,10 @@ type = "text"
     let (status, body) = send(
         &mut app,
         Request::builder()
-            .uri(format!("/api/v1/admin/integration/channels/{}/health", tele_ch.id))
+            .uri(format!(
+                "/api/v1/admin/integration/channels/{}/health",
+                tele_ch.id
+            ))
             .header(header::AUTHORIZATION, format!("Bearer {token}"))
             .body(Body::empty())
             .unwrap(),
@@ -3946,4 +4139,561 @@ type = "text"
         .as_u64()
         .unwrap_or(0);
     assert!(submitted >= 1, "batch stats flowed into health: {body:?}");
+}
+
+// ── Integration Plane M0: egress (api-clients) ────────────────────
+
+/// Mock third-party API for egress tests: bearer-protected chat (LLM-style),
+/// path-rendered GET, an api-key-header echo, and a failing endpoint.
+async fn egress_mock_api(listener: tokio::net::TcpListener) {
+    use axum::extract::Path;
+    use axum::response::IntoResponse;
+    use std::sync::Mutex;
+    static SEEN_AUTH: Mutex<Vec<String>> = Mutex::new(Vec::new());
+    static SEEN_BODY: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+    async fn chat(headers: header::HeaderMap, body: axum::body::Bytes) -> impl IntoResponse {
+        let auth = headers
+            .get(header::AUTHORIZATION)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("")
+            .to_string();
+        SEEN_AUTH.lock().unwrap().push(auth);
+        SEEN_BODY
+            .lock()
+            .unwrap()
+            .push(String::from_utf8_lossy(&body).to_string());
+        axum::Json(json!({
+            "answer": "mock-reply",
+            "usage": {"prompt_tokens": 10, "completion_tokens": 5},
+            "model": "mock-llm-1"
+        }))
+    }
+
+    async fn item(Path(id): Path<String>) -> axum::Json<Value> {
+        axum::Json(json!({"id": id, "ok": true}))
+    }
+
+    async fn echo_header(
+        headers: header::HeaderMap,
+        Path(name): Path<String>,
+    ) -> axum::Json<Value> {
+        let v = headers
+            .get(&name)
+            .and_then(|h| h.to_str().ok())
+            .unwrap_or("")
+            .to_string();
+        axum::Json(json!({"header": name, "value": v}))
+    }
+
+    async fn fail() -> (StatusCode, &'static str) {
+        (StatusCode::INTERNAL_SERVER_ERROR, "boom")
+    }
+
+    let app = axum::Router::new()
+        .route("/v1/chat-messages", post(chat))
+        .route("/v1/items/{id}", get(item))
+        .route("/v1/echo-header/{name}", get(echo_header))
+        .route("/v1/fail", post(fail));
+    axum::serve(listener, app).await.unwrap();
+}
+
+async fn insert_egress_client(
+    state: &AppState,
+    plane: &raisfast::integration::IntegrationPlane,
+    key: &str,
+    auth: Value,
+    secret: Option<&str>,
+    ops: Value,
+    rate_limit: Option<Value>,
+) -> raisfast::integration::api_client::ItgApiClient {
+    let client = raisfast::integration::api_client::ItgApiClient {
+        id: raisfast::utils::id::new_snowflake_id(),
+        tenant_id: "default".into(),
+        client_key: key.into(),
+        display_name: key.into(),
+        base_url: format!("http://egress-mock-{}.invalid", key),
+        auth: Some(auth),
+        credentials: secret.map(|s| {
+            plane
+                .vault()
+                .unwrap()
+                .seal(&format!("{{\"secret\":\"{s}\"}}"))
+                .unwrap()
+        }),
+        rate_limit,
+        ops: Some(ops),
+        enabled: true,
+        created_at: raisfast::utils::tz::now_utc(),
+        updated_at: raisfast::utils::tz::now_utc(),
+    };
+    raisfast::integration::api_client::model::insert(&state.pool, &client)
+        .await
+        .unwrap();
+    client
+}
+
+#[tokio::test]
+async fn integration_egress_call_end_to_end() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(egress_mock_api(listener));
+
+    let (mut app, state) = test_app().await;
+    let _ = &mut app;
+    let plane = state.integration.as_ref().unwrap();
+
+    // Main client: bearer auth + output mapping + GET op.
+    let ops = json!({
+        "chat": {
+            "method": "POST", "path": "/v1/chat-messages",
+            "output": {"text": "$.answer"}
+        },
+        "get_item": {"method": "GET", "path": "/v1/items/{id}"},
+        "fail": {"method": "POST", "path": "/v1/fail"}
+    });
+    let mut main_client = insert_egress_client(
+        &state,
+        plane,
+        "eg-llm",
+        json!({"kind": "bearer"}),
+        Some("sk-secret-1"),
+        ops,
+        None,
+    )
+    .await;
+    main_client.base_url = format!("http://{addr}");
+    sqlx::query(raisfast::db::safe_sql(&format!(
+        "UPDATE itg_api_clients SET base_url = {} WHERE id = {}",
+        raisfast::db::Driver::ph(1),
+        raisfast::db::Driver::ph(2)
+    )))
+    .bind(&main_client.base_url)
+    .bind(*main_client.id)
+    .execute(&state.pool)
+    .await
+    .unwrap();
+
+    // ── Success: POST with bearer auth, output mapping, usage extraction ──
+    let receipt = plane
+        .call_api("eg-llm", "chat", json!({"query": "hi"}))
+        .await
+        .expect("chat call");
+    assert_eq!(receipt.status, 200);
+    assert_eq!(receipt.output["text"], "mock-reply");
+    assert_eq!(receipt.body["answer"], "mock-reply");
+    assert_eq!(receipt.tokens_in, Some(10));
+    assert_eq!(receipt.tokens_out, Some(5));
+    assert_eq!(receipt.model.as_deref(), Some("mock-llm-1"));
+
+    // ── Path rendering on GET + explicit trace id lands in the log ──
+    let traced_trace = raisfast::utils::id::new_snowflake_id().0;
+    let receipt = plane
+        .call_api_traced(traced_trace, "eg-llm", "get_item", json!({"id": "abc 7"}))
+        .await
+        .expect("get call");
+    assert_eq!(receipt.status, 200);
+    assert_eq!(receipt.body["id"], "abc 7", "percent-encoded round trip");
+    assert_eq!(receipt.body["ok"], true);
+
+    // ── Non-2xx: Err + error log row ──
+    let err = plane.call_api("eg-llm", "fail", json!({})).await;
+    assert!(err.is_err(), "500 must surface as error");
+
+    // ── Rate limit: per_minute=1 → second call rejected + logged ──
+    let ops = json!({"ok": {"method": "GET", "path": "/v1/items/{id}"}});
+    let mut rl_client = insert_egress_client(
+        &state,
+        plane,
+        "eg-rl",
+        json!({"kind": "none"}),
+        None,
+        ops,
+        Some(json!({"per_minute": 1})),
+    )
+    .await;
+    rl_client.base_url = format!("http://{addr}");
+    sqlx::query(raisfast::db::safe_sql(&format!(
+        "UPDATE itg_api_clients SET base_url = {} WHERE id = {}",
+        raisfast::db::Driver::ph(1),
+        raisfast::db::Driver::ph(2)
+    )))
+    .bind(&rl_client.base_url)
+    .bind(*rl_client.id)
+    .execute(&state.pool)
+    .await
+    .unwrap();
+    plane
+        .call_api("eg-rl", "ok", json!({"id": "1"}))
+        .await
+        .expect("first call passes");
+    let second = plane.call_api("eg-rl", "ok", json!({"id": "2"})).await;
+    assert!(second.is_err(), "second call must be rate limited");
+
+    // ── api-key-header auth ──
+    let ops = json!({"ping": {"method": "GET", "path": "/v1/echo-header/X-Api-Key"}});
+    let mut key_client = insert_egress_client(
+        &state,
+        plane,
+        "eg-key",
+        json!({"kind": "api-key-header", "header": "X-Api-Key"}),
+        Some("key-42"),
+        ops,
+        None,
+    )
+    .await;
+    key_client.base_url = format!("http://{addr}");
+    sqlx::query(raisfast::db::safe_sql(&format!(
+        "UPDATE itg_api_clients SET base_url = {} WHERE id = {}",
+        raisfast::db::Driver::ph(1),
+        raisfast::db::Driver::ph(2)
+    )))
+    .bind(&key_client.base_url)
+    .bind(*key_client.id)
+    .execute(&state.pool)
+    .await
+    .unwrap();
+    let receipt = plane
+        .call_api("eg-key", "ping", json!({}))
+        .await
+        .expect("ping");
+    assert_eq!(receipt.body["value"], "key-42");
+
+    // ── Log assertions: trace filter + status/error columns ──
+    let rows = raisfast::integration::egress::list_log(
+        &state.pool,
+        Some(raisfast::types::snowflake_id::SnowflakeId(traced_trace)),
+        None,
+        10,
+    )
+    .await
+    .unwrap();
+    assert_eq!(rows.len(), 1, "trace_id filter: {rows:?}");
+    assert_eq!(rows[0].client_key, "eg-llm");
+    assert_eq!(rows[0].op, "get_item");
+    assert_eq!(rows[0].status, "success");
+
+    let llm_logs = raisfast::integration::egress::list_log(&state.pool, None, Some("eg-llm"), 50)
+        .await
+        .unwrap();
+    assert!(
+        llm_logs
+            .iter()
+            .any(|r| r.op == "chat" && r.tokens_in == Some(10) && r.tokens_out == Some(5)),
+        "chat usage logged: {llm_logs:?}"
+    );
+
+    let errors = raisfast::integration::egress::list_log(&state.pool, None, Some("eg-llm"), 50)
+        .await
+        .unwrap();
+    assert!(
+        errors
+            .iter()
+            .any(|r| r.status == "error" && r.http_status == Some(500)),
+        "500 logged: {errors:?}"
+    );
+    let rl_logs = raisfast::integration::egress::list_log(&state.pool, None, Some("eg-rl"), 50)
+        .await
+        .unwrap();
+    assert!(
+        rl_logs
+            .iter()
+            .any(|r| r.error.as_deref() == Some("rate limited")),
+        "rate-limited attempt logged: {rl_logs:?}"
+    );
+
+    // ── Credentials stay sealed in the DB ──
+    let stored: Option<String> =
+        sqlx::query_scalar("SELECT credentials FROM itg_api_clients WHERE client_key = 'eg-llm'")
+            .fetch_one(&state.pool)
+            .await
+            .unwrap();
+    let sealed = stored.unwrap_or_default();
+    assert!(
+        !sealed.contains("sk-secret-1"),
+        "plaintext leaked: {sealed}"
+    );
+
+    // ── Unknown client / op / disabled ──
+    assert!(plane.call_api("eg-none", "chat", json!({})).await.is_err());
+    assert!(plane.call_api("eg-llm", "nope", json!({})).await.is_err());
+}
+
+#[tokio::test]
+async fn integration_admin_api_clients_and_egress_log() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(egress_mock_api(listener));
+
+    let (mut app, state) = test_app().await;
+    let _ = create_admin(&state.pool).await;
+    let (status, body) = send(
+        &mut app,
+        post_json(
+            "/api/v1/auth/login",
+            json!({ "email": ADMIN_EMAIL.with(|c| c.borrow().clone()), "password": "AdminPass123!" }),
+        ),
+    )
+    .await;
+    assert!(status.is_success(), "admin login failed: {status} {body:?}");
+    let token = body["data"]["access_token"].as_str().unwrap().to_string();
+
+    // ── Create: sealed credentials, never echoed ──
+    let (status, body) = send(
+        &mut app,
+        post_json_auth(
+            "/api/v1/admin/integration/api-clients",
+            json!({
+                "client_key": "adm-llm",
+                "base_url": format!("http://{addr}"),
+                "auth": {"kind": "bearer"},
+                "credentials": {"secret": "adm-secret-9"},
+                "ops": {
+                    "chat": {"method": "POST", "path": "/v1/chat-messages",
+                             "output": {"text": "$.answer"}}
+                }
+            }),
+            &token,
+        ),
+    )
+    .await;
+    assert!(status.is_success(), "create: {status} {body:?}");
+    assert_eq!(body["data"]["client_key"], "adm-llm");
+    assert_eq!(body["data"]["has_credentials"], true);
+    assert!(
+        body["data"].get("credentials").is_none(),
+        "credentials echoed"
+    );
+    let client_id = body["data"]["id"].as_str().unwrap().to_string();
+
+    // ── Duplicate key → 400; bad ops → 400 ──
+    let (status, _) = send(
+        &mut app,
+        post_json_auth(
+            "/api/v1/admin/integration/api-clients",
+            json!({"client_key": "adm-llm", "base_url": format!("http://{addr}"), "ops": {}}),
+            &token,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let (status, body) = send(
+        &mut app,
+        post_json_auth(
+            "/api/v1/admin/integration/api-clients",
+            json!({
+                "client_key": "adm-bad",
+                "base_url": format!("http://{addr}"),
+                "auth": {"kind": "weird"},
+                "ops": {}
+            }),
+            &token,
+        ),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::BAD_REQUEST,
+        "bad auth kind rejected: {body:?}"
+    );
+
+    // ── List + get ──
+    let (status, body) = send(
+        &mut app,
+        get_auth("/api/v1/admin/integration/api-clients", &token),
+    )
+    .await;
+    assert!(status.is_success());
+    assert!(
+        body["data"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|c| c["client_key"] == "adm-llm")
+    );
+    let (status, body) = send(
+        &mut app,
+        get_auth(
+            &format!("/api/v1/admin/integration/api-clients/{client_id}"),
+            &token,
+        ),
+    )
+    .await;
+    assert!(status.is_success());
+    assert_eq!(body["data"]["has_credentials"], true);
+
+    // ── Update display name ──
+    let (status, body) = send(
+        &mut app,
+        put_json_auth(
+            &format!("/api/v1/admin/integration/api-clients/{client_id}"),
+            json!({"display_name": "ADM LLM"}),
+            &token,
+        ),
+    )
+    .await;
+    assert!(status.is_success(), "update: {body:?}");
+    assert_eq!(body["data"]["display_name"], "ADM LLM");
+
+    // ── test-call: fires the op, logs, maps output ──
+    let (status, body) = send(
+        &mut app,
+        post_json_auth(
+            &format!("/api/v1/admin/integration/api-clients/{client_id}/test-call"),
+            json!({"op": "chat", "input": {"query": "hi"}}),
+            &token,
+        ),
+    )
+    .await;
+    assert!(status.is_success(), "test-call: {status} {body:?}");
+    assert_eq!(body["data"]["status"], 200);
+    assert_eq!(body["data"]["output"]["text"], "mock-reply");
+    assert_eq!(body["data"]["tokens_in"], 10);
+
+    // ── egress-log list endpoint ──
+    let (status, body) = send(
+        &mut app,
+        get_auth(
+            "/api/v1/admin/integration/egress-log?client_key=adm-llm",
+            &token,
+        ),
+    )
+    .await;
+    assert!(status.is_success());
+    let items = body["data"]["items"].as_array().unwrap();
+    assert!(!items.is_empty(), "egress log rows: {body:?}");
+    assert!(items.iter().all(|r| r["client_key"] == "adm-llm"));
+
+    // ── receipts trace join: push a message, egress with its trace id ──
+    let toml = r#"
+[content_type]
+name = "Ingress Note"
+singular = "ingress_note"
+plural = "ingress_notes"
+table = "ingress_notes"
+
+[fields.external_id]
+type = "text"
+
+[fields.body]
+type = "text"
+"#;
+    let schema = raisfast::content_type::schema::ContentTypeSchema::parse_from_str(toml).unwrap();
+    let repo = raisfast::content_type::repository::ContentRepository::new(state.pool.clone());
+    repo.migrate(&schema, &state.protocol_registry)
+        .await
+        .unwrap();
+    state
+        .content_type_registry
+        .register(
+            schema,
+            &state.config.rule_engine,
+            &state.config.builtins.reserved_route_segments(),
+            &state.protocol_registry.names(),
+            &state.protocol_registry,
+        )
+        .unwrap();
+
+    let channel = raisfast::integration::ItgChannel {
+        id: raisfast::utils::id::new_snowflake_id(),
+        tenant_id: "default".into(),
+        channel_key: "eg-trace-ch".into(),
+        provider: "generic".into(),
+        display_name: "eg".into(),
+        mode: "push".into(),
+        transport: "http1".into(),
+        framing: "raw".into(),
+        codec: "json".into(),
+        endpoint: None,
+        verify_kind: "none".into(),
+        verify_config: None,
+        credentials: None,
+        mapping: Some(json!({"external_id": "$.id", "payload": {"body": "$.text"}})),
+        normalizer_plugin: None,
+        pull_semantics: None,
+        pull_config: None,
+        stream_config: None,
+        ack_kind: "http-200".into(),
+        redelivery_max: 5,
+        backpressure: None,
+        target_type: "ingress_note".into(),
+        route_extra: None,
+        status: "idle".into(),
+        last_error: None,
+        lease_owner: None,
+        enabled: true,
+        version: 1,
+        shadow: false,
+        created_at: raisfast::utils::tz::now_utc(),
+        updated_at: raisfast::utils::tz::now_utc(),
+    };
+    raisfast::integration::channel::model::insert(&state.pool, &channel)
+        .await
+        .unwrap();
+    let plane = state.integration.as_ref().unwrap();
+    plane.channels().refresh().await.unwrap();
+    let (status, _) = send(
+        &mut app,
+        post_json(
+            "/api/v1/ingress/eg-trace-ch",
+            json!({"id": "t-1", "text": "hi"}),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let receipt_id: i64 = sqlx::query_scalar(raisfast::db::safe_sql(&format!(
+        "SELECT id FROM itg_receipts WHERE external_id = 't-1' AND channel_id = {}",
+        raisfast::db::Driver::ph(1)
+    )))
+    .bind(*channel.id)
+    .fetch_one(&state.pool)
+    .await
+    .unwrap();
+
+    plane
+        .call_api_traced(receipt_id, "adm-llm", "chat", json!({"query": "go"}))
+        .await
+        .expect("traced call");
+
+    let (status, body) = send(
+        &mut app,
+        get_auth(
+            &format!("/api/v1/admin/integration/receipts/{receipt_id}/trace"),
+            &token,
+        ),
+    )
+    .await;
+    assert!(status.is_success(), "trace: {body:?}");
+    let egress = body["data"]["egress"].as_array().unwrap();
+    assert!(
+        egress.iter().any(|r| r["client_key"] == "adm-llm"
+            && r["trace_id"].as_str() == Some(&receipt_id.to_string())),
+        "egress joined into trace: {body:?}"
+    );
+    assert_eq!(body["data"]["status"], "delivered", "push routed: {body:?}");
+
+    // ── Delete ──
+    let (status, _) = send(
+        &mut app,
+        delete_auth(
+            &format!("/api/v1/admin/integration/api-clients/{client_id}"),
+            &token,
+        ),
+    )
+    .await;
+    assert!(status.is_success());
+    let (status, body) = send(
+        &mut app,
+        get_auth("/api/v1/admin/integration/api-clients", &token),
+    )
+    .await;
+    assert!(status.is_success());
+    assert!(
+        !body["data"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|c| c["client_key"] == "adm-llm"),
+        "deleted client still listed: {body:?}"
+    );
 }

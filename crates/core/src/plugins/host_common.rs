@@ -233,6 +233,40 @@ impl HostContext {
         })
     }
 
+    /// Outbound api-client call (`host.callApi`, mvp-plan D3).
+    ///
+    /// Routes through the integration plane so auth injection, rate limiting
+    /// and `itg_egress_log` tracing apply uniformly; the ambient `TRACE_CTX`
+    /// (when the plugin runs inside a traced job) attaches automatically.
+    /// Returns `{"status":..,"output":..,"tokens_in":..,"tokens_out":..,"model":..}`
+    /// on success or `{"error": ".."}` on failure — JSON string form for all engines.
+    #[must_use]
+    pub fn api_call(&self, client_key: &str, op: &str, input: &str) -> String {
+        let fail = |msg: String| serde_json::json!({ "error": msg }).to_string();
+        if !PermissionChecker::is_egress_allowed(&self.permissions, client_key) {
+            return fail(format!("egress client not allowed: {client_key}"));
+        }
+        let Some(integration) = crate::integration::shared() else {
+            return fail("integration plane disabled".into());
+        };
+        let parsed: serde_json::Value = serde_json::from_str(input)
+            .unwrap_or_else(|_| serde_json::Value::String(input.to_string()));
+        let handle = tokio::runtime::Handle::current();
+        tokio::task::block_in_place(|| {
+            match handle.block_on(integration.call_api(client_key, op, parsed)) {
+                Ok(receipt) => serde_json::json!({
+                    "status": receipt.status,
+                    "output": receipt.output,
+                    "tokens_in": receipt.tokens_in,
+                    "tokens_out": receipt.tokens_out,
+                    "model": receipt.model,
+                })
+                .to_string(),
+                Err(e) => fail(e.to_string()),
+            }
+        })
+    }
+
     /// Read from plugin KV store
     pub fn get_data(&self, key: &str) -> Option<String> {
         let Some(pool) = &self.pool else {
@@ -1685,6 +1719,30 @@ mod tests {
         let ctx = HostContext::new("test", config, "p1".into(), Permissions::default(), None);
         let result = ctx.http_get("https://evil.com");
         assert!(result.contains("not allowed"));
+    }
+
+    #[test]
+    fn host_context_api_call_blocked_without_permission() {
+        let config = make_test_config();
+        let ctx = HostContext::new("test", config, "p1".into(), Permissions::default(), None);
+        let result = ctx.api_call("dify", "chat", "{}");
+        assert!(result.contains("egress client not allowed"));
+    }
+
+    #[test]
+    fn host_context_api_call_allowed_client_only() {
+        let config = make_test_config();
+        let perms = Permissions {
+            egress: vec!["dify".into()],
+            ..Permissions::default()
+        };
+        let ctx = HostContext::new("test", config, "p1".into(), perms, None);
+        // Permission passes but no shared integration plane in unit tests —
+        // distinct error proves the gate itself let the call through.
+        let ok_client = ctx.api_call("dify", "chat", "{}");
+        assert!(ok_client.contains("integration plane disabled"));
+        let denied = ctx.api_call("other", "chat", "{}");
+        assert!(denied.contains("egress client not allowed"));
     }
 
     #[test]

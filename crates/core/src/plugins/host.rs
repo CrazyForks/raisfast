@@ -28,6 +28,10 @@ impl Host for Arc<HostContext> {
         Some((**self).http_post(&url, &body))
     }
 
+    fn call_api(&mut self, client_key: String, op: String, input: String) -> Option<String> {
+        Some((**self).api_call(&client_key, &op, &input))
+    }
+
     fn get_data(&mut self, key: String) -> Option<String> {
         (**self).get_data(&key)
     }

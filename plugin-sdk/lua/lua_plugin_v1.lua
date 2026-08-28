@@ -132,6 +132,16 @@ function M.httpPostJson(url, body)
     return ok and decoded or nil
 end
 
+function M.callApi(clientKey, op, input)
+    local jsonBody = input == nil and "{}" or (type(input) == "string" and input or RaisFastHost.jsonEncode(input))
+    local ok, decoded = pcall(RaisFastHost.jsonDecode, RaisFastHost.callApi(clientKey, op, jsonBody))
+    if not ok then return nil, "decode failed" end
+    if decoded and decoded.error then
+        return nil, decoded.error
+    end
+    return decoded
+end
+
 function M.configGet(key) return RaisFastHost.getConfig(key) end
 
 function M.storeGet(key) return RaisFastHost.getData(key) end

@@ -123,6 +123,18 @@ pub trait DbDriver: sealed::Sealed {
     /// SQLite and PostgreSQL store timestamps as TEXT already.
     fn cast_ts(expr: &str) -> String;
 
+    /// Cast a JSON column expression to text for decoding as Rust `String`.
+    ///
+    /// PostgreSQL JSONB and MySQL JSON are typed; SQLite stores JSON as TEXT.
+    fn cast_text(expr: &str) -> String;
+
+    /// Cast a bind placeholder to JSON for equality comparison.
+    ///
+    /// MySQL compares a JSON column against a string param textually
+    /// (normalization mismatches); casting the param to JSON makes the
+    /// comparison structural. SQLite/PostgreSQL bind JSON natively.
+    fn cast_json(expr: &str) -> String;
+
     /// `RETURNING *` clause (empty string on MySQL).
     fn returning_clause() -> &'static str;
 
@@ -238,6 +250,14 @@ impl DbDriver for Sqlite {
     }
 
     fn cast_ts(expr: &str) -> String {
+        expr.to_string()
+    }
+
+    fn cast_text(expr: &str) -> String {
+        expr.to_string()
+    }
+
+    fn cast_json(expr: &str) -> String {
         expr.to_string()
     }
 
@@ -407,6 +427,14 @@ impl DbDriver for Postgres {
         // Postgres timestamps are typed; cast to TEXT so the value decodes as
         // Rust `String` (matching SQLite's ISO-text timestamps).
         format!("CAST({expr} AS TEXT)")
+    }
+
+    fn cast_text(expr: &str) -> String {
+        format!("CAST({expr} AS TEXT)")
+    }
+
+    fn cast_json(expr: &str) -> String {
+        expr.to_string()
     }
 
     fn returning_clause() -> &'static str {
@@ -585,6 +613,14 @@ impl DbDriver for MySql {
 
     fn cast_ts(expr: &str) -> String {
         format!("CAST({expr} AS CHAR)")
+    }
+
+    fn cast_text(expr: &str) -> String {
+        format!("CAST({expr} AS CHAR)")
+    }
+
+    fn cast_json(expr: &str) -> String {
+        format!("CAST({expr} AS JSON)")
     }
 
     fn returning_clause() -> &'static str {

@@ -116,6 +116,13 @@ export function httpPostJson(url, body) {
         return null;
     return JSON.parse(result);
 }
+export function callApi(clientKey, op, input) {
+    const json = input == null ? "{}" : (typeof input === "string" ? input : JSON.stringify(input));
+    const result = JSON.parse(RaisFastHost.callApi(clientKey, op, json));
+    if (result.error)
+        throw new Error(result.error);
+    return result;
+}
 export function configGet(key) {
     return RaisFastHost.getConfig(key);
 }

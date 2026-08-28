@@ -12,9 +12,9 @@ use std::time::Instant;
 use serde_json::{Value, json};
 
 use crate::constants::COL_ID;
-use crate::db::driver::DbDriver;
-use crate::content_type::repository::{ContentRepository, SaveContext};
 use crate::content_type::ContentTypeRegistry;
+use crate::content_type::repository::{ContentRepository, SaveContext};
+use crate::db::driver::DbDriver;
 use crate::db::pool::DbConnection;
 use crate::errors::app_error::{AppError, AppResult};
 use crate::event::{Event, EventEmitter};
@@ -24,11 +24,11 @@ use crate::integration::framing;
 use crate::integration::mapping::{self, MappingPlan, Normalized};
 use crate::integration::receipt;
 use crate::integration::trace::{StepEntry, StepTimeline, TraceCtx};
-use crate::integration::verify::{InboundHttpRequest, VerifyOutcome};
 use crate::integration::vault::Vault;
+use crate::integration::verify::{InboundHttpRequest, VerifyOutcome};
 use crate::types::snowflake_id::SnowflakeId;
-use crate::worker::JobQueue;
 use crate::utils::tz::Timestamp;
+use crate::worker::JobQueue;
 
 /// How to answer the connector after the pipeline finishes.
 #[derive(Debug, Clone)]
@@ -89,8 +89,7 @@ pub struct Pipeline {
     vault: Option<Vault>,
     /// Compiled mapping plans, keyed by (channel id, updated_at) — the
     /// updated_at component invalidates on channel config changes.
-    plan_cache:
-        dashmap::DashMap<(i64, String), Arc<MappingPlan>>,
+    plan_cache: dashmap::DashMap<(i64, String), Arc<MappingPlan>>,
 }
 
 impl Pipeline {
@@ -263,7 +262,10 @@ impl Pipeline {
         let Some(normalized) = normalized else {
             // Timeline already carries the failing step (or skip note).
             return PipelineOutcome {
-                ack: AckAction::Http { status: 400, body: None },
+                ack: AckAction::Http {
+                    status: 400,
+                    body: None,
+                },
                 receipt_id,
                 duplicate: false,
                 delivered: false,
@@ -280,7 +282,10 @@ impl Pipeline {
                 "telemetry dropped by sample_rate"
             );
             return PipelineOutcome {
-                ack: AckAction::Http { status: 200, body: None },
+                ack: AckAction::Http {
+                    status: 200,
+                    body: None,
+                },
                 receipt_id,
                 duplicate: false,
                 delivered: false,
@@ -323,7 +328,10 @@ impl Pipeline {
             };
             self.batcher.submit(channel.id.0, item);
             return PipelineOutcome {
-                ack: AckAction::Http { status: 200, body: None },
+                ack: AckAction::Http {
+                    status: 200,
+                    body: None,
+                },
                 receipt_id,
                 duplicate: false,
                 delivered: false, // batched, not yet routed
@@ -337,7 +345,10 @@ impl Pipeline {
             Err(archive_err) => {
                 timeline.push(StepEntry::failed("archive", 0, archive_err.to_string()));
                 return PipelineOutcome {
-                    ack: AckAction::Http { status: 500, body: None },
+                    ack: AckAction::Http {
+                        status: 500,
+                        body: None,
+                    },
                     receipt_id,
                     duplicate: false,
                     delivered: false,
@@ -393,7 +404,10 @@ impl Pipeline {
                 // Transaction-level failure (begin/commit/SQL): fail closed.
                 tracing::error!(trace_id = receipt_id, error = %err, "ingress pipeline tx failed");
                 PipelineOutcome {
-                    ack: AckAction::Http { status: 500, body: None },
+                    ack: AckAction::Http {
+                        status: 500,
+                        body: None,
+                    },
                     receipt_id,
                     duplicate: false,
                     delivered: false,
@@ -475,7 +489,10 @@ impl Pipeline {
         if let Value::Object(obj) = &mut data {
             // Replay-upsert association (§6.4): default the CT's external link.
             if ct.get_field("external_id").is_some() && !obj.contains_key("external_id") {
-                obj.insert("external_id".into(), Value::String(envelope.external_id.clone()));
+                obj.insert(
+                    "external_id".into(),
+                    Value::String(envelope.external_id.clone()),
+                );
             }
         }
 
@@ -511,8 +528,6 @@ impl Pipeline {
             .map(SnowflakeId::new))
     }
 
-
-
     /// Transaction wrapper for the dedup+route pass (the macro's early
     /// `return Err` requires an `AppResult`-returning function).
     #[allow(clippy::too_many_arguments)]
@@ -530,8 +545,16 @@ impl Pipeline {
     ) -> Result<PipelineOutcome, AppError> {
         crate::in_transaction!(&self.pool, tx, {
             self.dedup_route_tx(
-                &mut tx, channel, envelope, envelope_json, external_id, kind, hash,
-                timeline, receipt_id, now,
+                &mut tx,
+                channel,
+                envelope,
+                envelope_json,
+                external_id,
+                kind,
+                hash,
+                timeline,
+                receipt_id,
+                now,
             )
             .await
         })
@@ -567,7 +590,11 @@ impl Pipeline {
         timeline.push(StepEntry::done(
             "dedup",
             0,
-            if inserted.is_some() { "first" } else { "duplicate" },
+            if inserted.is_some() {
+                "first"
+            } else {
+                "duplicate"
+            },
         ));
 
         if inserted.is_none() {
@@ -576,7 +603,10 @@ impl Pipeline {
             // this re-delivery IS the provider's retry: re-route from snapshot.
             let Some(state) = receipt::find_state_tx(tx, channel.id, external_id).await? else {
                 return Ok(PipelineOutcome {
-                    ack: AckAction::Http { status: 200, body: None },
+                    ack: AckAction::Http {
+                        status: 200,
+                        body: None,
+                    },
                     receipt_id,
                     duplicate: true,
                     delivered: true,
@@ -592,7 +622,10 @@ impl Pipeline {
                     "duplicate external_id with DIFFERENT payload hash — provider bug?"
                 );
                 return Ok(PipelineOutcome {
-                    ack: AckAction::Http { status: 200, body: None },
+                    ack: AckAction::Http {
+                        status: 200,
+                        body: None,
+                    },
                     receipt_id: state.id.0,
                     duplicate: true,
                     delivered: true,
@@ -609,7 +642,10 @@ impl Pipeline {
                     .await;
             }
             return Ok(PipelineOutcome {
-                ack: AckAction::Http { status: 200, body: None },
+                ack: AckAction::Http {
+                    status: 200,
+                    body: None,
+                },
                 receipt_id: state.id.0,
                 duplicate: true,
                 delivered: state.status == receipt::STATUS_DELIVERED,
@@ -626,7 +662,9 @@ impl Pipeline {
                     format!(
                         "ct={},target={}",
                         channel.target_type,
-                        target_id.map(|i| i.to_string()).unwrap_or_else(|| "-".into())
+                        target_id
+                            .map(|i| i.to_string())
+                            .unwrap_or_else(|| "-".into())
                     ),
                 ));
                 timeline.push(StepEntry::done("ack", 0, channel.ack_kind.clone()));
@@ -640,7 +678,10 @@ impl Pipeline {
                 )
                 .await?;
                 Ok(PipelineOutcome {
-                    ack: AckAction::Http { status: 200, body: None },
+                    ack: AckAction::Http {
+                        status: 200,
+                        body: None,
+                    },
                     receipt_id,
                     duplicate: false,
                     delivered: true,
@@ -665,7 +706,10 @@ impl Pipeline {
                     )
                     .await?;
                     return Ok(PipelineOutcome {
-                        ack: AckAction::Http { status: 500, body: None },
+                        ack: AckAction::Http {
+                            status: 500,
+                            body: None,
+                        },
                         receipt_id,
                         duplicate: false,
                         delivered: false,
@@ -692,7 +736,10 @@ impl Pipeline {
                 )
                 .await?;
                 Ok(PipelineOutcome {
-                    ack: AckAction::Http { status: 200, body: None },
+                    ack: AckAction::Http {
+                        status: 200,
+                        body: None,
+                    },
                     receipt_id,
                     duplicate: false,
                     delivered: false,
@@ -733,7 +780,9 @@ impl Pipeline {
                     t.elapsed().as_millis() as u64,
                     format!(
                         "external-redelivery#{attempt},target={}",
-                        target_id.map(|i| i.to_string()).unwrap_or_else(|| "-".into())
+                        target_id
+                            .map(|i| i.to_string())
+                            .unwrap_or_else(|| "-".into())
                     ),
                 ));
                 receipt::mark_delivered_tx(
@@ -746,7 +795,10 @@ impl Pipeline {
                 )
                 .await?;
                 Ok(PipelineOutcome {
-                    ack: AckAction::Http { status: 200, body: None },
+                    ack: AckAction::Http {
+                        status: 200,
+                        body: None,
+                    },
                     receipt_id: state.id.0,
                     duplicate: true,
                     delivered: true,
@@ -768,7 +820,10 @@ impl Pipeline {
                     receipt::mark_dead_tx(tx, state.id, &timeline.to_json()).await?;
                     self.emit_dead_letter(channel, state.id.0, &route_err.to_string());
                     return Ok(PipelineOutcome {
-                        ack: AckAction::Http { status: 500, body: None },
+                        ack: AckAction::Http {
+                            status: 500,
+                            body: None,
+                        },
                         receipt_id: state.id.0,
                         duplicate: true,
                         delivered: false,
@@ -785,7 +840,10 @@ impl Pipeline {
                 )
                 .await?;
                 Ok(PipelineOutcome {
-                    ack: AckAction::Http { status: 500, body: None },
+                    ack: AckAction::Http {
+                        status: 500,
+                        body: None,
+                    },
                     receipt_id: state.id.0,
                     duplicate: true,
                     delivered: false,
@@ -808,7 +866,8 @@ impl Pipeline {
             // Already delivered by another path / dead — nothing to do.
             return Ok(RetryResult::Skipped);
         }
-        let channel = crate::integration::channel::model::find_by_id(&self.pool, row.channel_id).await?;
+        let channel =
+            crate::integration::channel::model::find_by_id(&self.pool, row.channel_id).await?;
         if !channel.enabled || channel.shadow {
             // Channel disabled mid-retry: record + defer one more cycle (§6.4).
             let attempt = row.attempts;
@@ -838,7 +897,9 @@ impl Pipeline {
             channel_key: channel.channel_key.clone(),
         };
         crate::integration::trace::with_trace(ctx, async {
-            let result = self.retry_attempt(&channel, &row, &envelope, attempt, now).await?;
+            let result = self
+                .retry_attempt(&channel, &row, &envelope, attempt, now)
+                .await?;
             if result == RetryResult::Delivered {
                 self.post_route(&channel, &envelope).await;
             }
@@ -859,14 +920,19 @@ impl Pipeline {
         crate::in_transaction!(&self.pool, tx, {
             let mut timeline = crate::integration::trace::StepTimeline::new();
             let t = Instant::now();
-            match self.route_tx(&mut tx, channel, envelope, &mut timeline).await {
+            match self
+                .route_tx(&mut tx, channel, envelope, &mut timeline)
+                .await
+            {
                 Ok(target_id) => {
                     timeline.push(StepEntry::done(
                         "route",
                         t.elapsed().as_millis() as u64,
                         format!(
                             "internal-retry#{attempt},target={}",
-                            target_id.map(|i| i.to_string()).unwrap_or_else(|| "-".into())
+                            target_id
+                                .map(|i| i.to_string())
+                                .unwrap_or_else(|| "-".into())
                         ),
                     ));
                     let merged = merge_steps(row.steps.as_ref(), &timeline, true);
@@ -916,8 +982,7 @@ impl Pipeline {
     async fn schedule_retry_job(&self, trace_id: i64, attempt: i64) {
         let queue = crate::worker::DefaultJobQueue::new(self.pool.clone());
         let run_after = crate::utils::tz::now_utc()
-            + chrono::TimeDelta::try_seconds(receipt::backoff_secs(attempt))
-                .unwrap_or_default();
+            + chrono::TimeDelta::try_seconds(receipt::backoff_secs(attempt)).unwrap_or_default();
         let new_job = crate::worker::NewJob {
             job: crate::worker::Job::Custom {
                 job_type: "ingress.retry".into(),
@@ -1032,7 +1097,9 @@ impl Pipeline {
                         Ok(_) => pipeline.batcher.record_flush(channel_id, n),
                         Err(err) => {
                             tracing::error!(channel_id, error = %err, "telemetry batch flush failed");
-                            pipeline.batcher.record_flush_error(channel_id, &err.to_string());
+                            pipeline
+                                .batcher
+                                .record_flush_error(channel_id, &err.to_string());
                         }
                     }
                 }
@@ -1069,7 +1136,7 @@ impl Pipeline {
         if broadcast {
             self.emitter.emit(Event::Custom {
                 source: "integration".into(),
-                event_type: "ingress.received".into(),
+                event_type: "integration.received".into(),
                 data: json!({
                     "trace_id": envelope.receipt_id.0,
                     "channel": channel.channel_key,
@@ -1091,10 +1158,7 @@ impl Pipeline {
                 let Some(job_type) = job.get("job_type").and_then(Value::as_str) else {
                     continue;
                 };
-                let mut payload = job
-                    .get("payload")
-                    .cloned()
-                    .unwrap_or_else(|| json!({}));
+                let mut payload = job.get("payload").cloned().unwrap_or_else(|| json!({}));
                 if let Value::Object(obj) = &mut payload {
                     obj.insert("trace_id".into(), json!(envelope.receipt_id.0));
                     obj.insert(
@@ -1139,7 +1203,11 @@ impl Pipeline {
     ///
     /// Returns `AppError` when the receipt/channel/CT is missing or the route
     /// fails (`upsert` mode — the receipt keeps its current status then).
-    pub async fn run_replay(&self, receipt_id: SnowflakeId, dry_run: bool) -> AppResult<ReplayOutcome> {
+    pub async fn run_replay(
+        &self,
+        receipt_id: SnowflakeId,
+        dry_run: bool,
+    ) -> AppResult<ReplayOutcome> {
         let row = receipt::find_by_id(&self.pool, receipt_id)
             .await?
             .ok_or_else(|| AppError::NotFound(format!("receipt {receipt_id} not found")))?;
@@ -1162,12 +1230,13 @@ impl Pipeline {
             .steps
             .as_ref()
             .and_then(|v| v.as_array().map(|a| a.len()))
-            .unwrap_or(0)
-            as i64
+            .unwrap_or(0) as i64
             + 1;
 
         if dry_run {
-            let existing = self.find_target_by_external(&channel, &envelope.external_id).await?;
+            let existing = self
+                .find_target_by_external(&channel, &envelope.external_id)
+                .await?;
             let report = json!({
                 "trace_id": row.id.0,
                 "channel": channel.channel_key,
@@ -1222,11 +1291,10 @@ impl Pipeline {
             ct.table,
             crate::db::Driver::ph(1)
         );
-        let id: Option<i64> =
-            sqlx::query_scalar(crate::db::safe_sql(&sql))
-                .bind(external_id)
-                .fetch_optional(&self.pool)
-                .await?;
+        let id: Option<i64> = sqlx::query_scalar(crate::db::safe_sql(&sql))
+            .bind(external_id)
+            .fetch_optional(&self.pool)
+            .await?;
         Ok(id)
     }
 
@@ -1248,15 +1316,15 @@ impl Pipeline {
         envelope: &InboundEnvelope,
         now: Timestamp,
     ) -> AppResult<ReplayOutcome> {
-        let existing = self.find_target_by_external(channel, &envelope.external_id).await?;
-        let ct = self
-            .resolve_target_ct(channel)?
-            .ok_or_else(|| {
-                AppError::BadRequest(format!(
-                    "target content type '{}' not found",
-                    channel.target_type
-                ))
-            })?;
+        let existing = self
+            .find_target_by_external(channel, &envelope.external_id)
+            .await?;
+        let ct = self.resolve_target_ct(channel)?.ok_or_else(|| {
+            AppError::BadRequest(format!(
+                "target content type '{}' not found",
+                channel.target_type
+            ))
+        })?;
 
         let mut data = envelope.payload.clone();
         if let Value::Object(obj) = &mut data
@@ -1285,7 +1353,9 @@ impl Pipeline {
                 if let Err(err) = self.finalize_replay_delivered(row, Some(id), now).await {
                     tracing::warn!(trace_id = row.id.0, error = %err, "replay status flip failed");
                 }
-                Ok(ReplayOutcome::Upserted { target_id: Some(id) })
+                Ok(ReplayOutcome::Upserted {
+                    target_id: Some(id),
+                })
             }
             None => {
                 let target_id = crate::in_transaction!(&self.pool, tx, {

@@ -16,8 +16,8 @@ use serde_json::json;
 use tokio::sync::{Mutex, Notify};
 
 use crate::db::driver::DbDriver;
-use crate::integration::channel::{self, ItgChannel};
 use crate::integration::IntegrationPlane;
+use crate::integration::channel::{self, ItgChannel};
 
 /// In-memory health snapshot per channel (M5 health API source).
 #[derive(Debug, Clone, serde::Serialize)]
@@ -53,7 +53,11 @@ pub struct ConnectionSink {
 
 impl ConnectionSink {
     /// Push one frame (raw bytes) through the full pipeline.
-    pub async fn submit(&self, ch: &ItgChannel, body: Vec<u8>) -> crate::integration::pipeline::PipelineOutcome {
+    pub async fn submit(
+        &self,
+        ch: &ItgChannel,
+        body: Vec<u8>,
+    ) -> crate::integration::pipeline::PipelineOutcome {
         let owned = Arc::new(ch.clone());
         self.plane.pipeline().run_stream_frame(&owned, body).await
     }
@@ -100,27 +104,15 @@ impl IngressSupervisor {
                 #[cfg(feature = "integration-stream")]
                 {
                     use crate::integration::connector;
-                    factories
-                        .entry("ws".into())
-                        .or_insert_with(|| {
-                            Arc::new(|| {
-                                Box::new(connector::ws_client::WsClientConnector)
-                            })
-                        });
-                    factories
-                        .entry("mqtt".into())
-                        .or_insert_with(|| {
-                            Arc::new(|| {
-                                Box::new(connector::mqtt_client::MqttClientConnector)
-                            })
-                        });
-                    factories
-                        .entry("tcp".into())
-                        .or_insert_with(|| {
-                            Arc::new(|| {
-                                Box::new(connector::tcp_listen::TcpListenConnector)
-                            })
-                        });
+                    factories.entry("ws".into()).or_insert_with(|| {
+                        Arc::new(|| Box::new(connector::ws_client::WsClientConnector))
+                    });
+                    factories.entry("mqtt".into()).or_insert_with(|| {
+                        Arc::new(|| Box::new(connector::mqtt_client::MqttClientConnector))
+                    });
+                    factories.entry("tcp".into()).or_insert_with(|| {
+                        Arc::new(|| Box::new(connector::tcp_listen::TcpListenConnector))
+                    });
                 }
                 drop(factories);
                 sup_seed.wake();
@@ -200,8 +192,7 @@ impl IngressSupervisor {
     ///
     /// Returns `AppError` on the channel query failure.
     pub async fn rescan(self: &Arc<Self>) -> crate::errors::app_error::AppResult<()> {
-        const CHANNEL_SCAN_COLS: &str =
-            "id, tenant_id, channel_key, provider, display_name, mode, transport, framing, \
+        const CHANNEL_SCAN_COLS: &str = "id, tenant_id, channel_key, provider, display_name, mode, transport, framing, \
              codec, endpoint, verify_kind, verify_config, credentials, mapping, \
              normalizer_plugin, pull_semantics, pull_config, stream_config, ack_kind, \
              redelivery_max, backpressure, target_type, route_extra, status, last_error, \
@@ -209,10 +200,9 @@ impl IngressSupervisor {
         let sql = format!(
             "SELECT {CHANNEL_SCAN_COLS} FROM itg_channels WHERE mode IN ('stream', 'listen')"
         );
-        let rows: Vec<ItgChannel> =
-            sqlx::query_as(crate::db::safe_sql(&sql))
-                .fetch_all(&self.pool)
-                .await?;
+        let rows: Vec<ItgChannel> = sqlx::query_as(crate::db::safe_sql(&sql))
+            .fetch_all(&self.pool)
+            .await?;
         let desired: HashMap<i64, ItgChannel> = rows
             .into_iter()
             .filter(|c| c.enabled && !c.shadow)
@@ -234,7 +224,10 @@ impl IngressSupervisor {
             if let Some(mut health) = self.health.get_mut(&id) {
                 health.state = "stopped".into();
             }
-            tracing::info!(channel_id = id, "supervisor: task stopped (disabled/removed)");
+            tracing::info!(
+                channel_id = id,
+                "supervisor: task stopped (disabled/removed)"
+            );
         }
         // Spawn tasks for new channels.
         let spawned: Vec<i64> = desired
@@ -351,8 +344,9 @@ impl IngressSupervisor {
         reconnects: u64,
         error: Option<String>,
     ) {
-        let connected_at =
-            (state == "connected").then(crate::utils::tz::now_utc).map(|t| t.to_rfc3339());
+        let connected_at = (state == "connected")
+            .then(crate::utils::tz::now_utc)
+            .map(|t| t.to_rfc3339());
         // Sticky last_error: cleared only by a successful connection.
         let last_error = error.clone().or_else(|| {
             self.health
@@ -384,7 +378,11 @@ impl IngressSupervisor {
     }
 }
 
-async fn set_lease(pool: &crate::db::Pool, id: crate::types::snowflake_id::SnowflakeId, lease: &str) -> crate::errors::app_error::AppResult<()> {
+async fn set_lease(
+    pool: &crate::db::Pool,
+    id: crate::types::snowflake_id::SnowflakeId,
+    lease: &str,
+) -> crate::errors::app_error::AppResult<()> {
     let now = crate::utils::tz::now_utc();
     let sql = format!(
         "UPDATE itg_channels SET lease_owner = {}, updated_at = {} WHERE id = {}",

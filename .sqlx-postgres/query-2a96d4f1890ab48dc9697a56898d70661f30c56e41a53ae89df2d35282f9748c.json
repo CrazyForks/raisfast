@@ -1,0 +1,24 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO \"itg_api_clients\" (\"id\", \"client_key\", \"display_name\", \"base_url\", \"auth\", \"credentials\", \"rate_limit\", \"ops\", \"enabled\", \"created_at\", \"updated_at\") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text",
+        "Text",
+        "Text",
+        "Jsonb",
+        "Text",
+        "Jsonb",
+        "Jsonb",
+        "Bool",
+        "Timestamptz",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "2a96d4f1890ab48dc9697a56898d70661f30c56e41a53ae89df2d35282f9748c"
+}

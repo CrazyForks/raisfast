@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+- Integration Plane M0 — declarative outbound egress: `itg_api_clients` / `itg_egress_log` tables (all three backends), `integration.call_api()` / `call_api_traced()` entry points (op template rendering, bearer / api-key-header auth from sealed vault credentials, per-client rate limit, 20s timeout, full call log with trace_id / tokens / model)
+- Plugin host API `callApi(clientKey, op, input)` across JS / Rhai / Lua / WASM (new `egress` permission in plugin manifest gates allowed client keys); ambient TRACE_CTX attaches automatically
+- Admin API: `/api/v1/admin/integration/api-clients` CRUD + `test-call`, `/api/v1/admin/integration/egress-log`, receipts `{id}/trace` now joins egress calls
+- `integration.egress_cleanup` cron handler (retention via `INTEGRATION_EGRESS_LOG_RETENTION_DAYS`, default 90)
+- Event prefix unified: `ingress.received` → `integration.received` (SSE consumers should filter `integration.*`)
+
 ## [0.4.1] - 2026-08-19
 
 - Update adminui

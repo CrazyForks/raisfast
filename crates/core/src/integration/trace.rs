@@ -1,7 +1,7 @@
 //! TRACE_CTX — task-local trace context + step-timeline recorder (§10.7).
 //!
 //! Set once at pipeline entry (and again at job-execution entry), read
-//! automatically by `emit_event` / `plane.send` / plugin host APIs so plugin
+//! automatically by `emit_event` / `call_api` / plugin host APIs so plugin
 //! authors never have to thread trace ids by hand.
 
 use serde_json::{Value, json};

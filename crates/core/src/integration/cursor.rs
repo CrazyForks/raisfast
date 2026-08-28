@@ -22,11 +22,10 @@ pub async fn read(pool: &crate::db::Pool, channel_id: SnowflakeId) -> AppResult<
         "SELECT cursor_value FROM itg_channel_cursors WHERE channel_id = {}",
         crate::db::Driver::ph(1)
     );
-    let row: Option<(Value,)> =
-        sqlx::query_as(crate::db::safe_sql(&sql))
-            .bind(*channel_id)
-            .fetch_optional(pool)
-            .await?;
+    let row: Option<(Value,)> = sqlx::query_as(crate::db::safe_sql(&sql))
+        .bind(*channel_id)
+        .fetch_optional(pool)
+        .await?;
     Ok(row.map(|(v,)| v))
 }
 
@@ -52,7 +51,7 @@ pub async fn advance(
                 crate::db::Driver::ph(1),
                 crate::db::Driver::ph(2),
                 crate::db::Driver::ph(3),
-                crate::db::Driver::ph(4)
+                crate::db::Driver::cast_json(&crate::db::Driver::ph(4))
             );
             sqlx::query(crate::db::safe_sql(&sql))
                 .bind(new)

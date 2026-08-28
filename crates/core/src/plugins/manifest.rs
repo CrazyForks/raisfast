@@ -188,6 +188,10 @@ pub struct Permissions {
     pub database: Vec<String>,
     #[serde(default)]
     pub filesystem: Vec<String>,
+    /// Outbound api-client keys the plugin may call via `egress.call`
+    /// (empty = denied, `*` = all clients).
+    #[serde(default)]
+    pub egress: Vec<String>,
     pub max_memory_mb: Option<u32>,
     pub timeout_ms: Option<u64>,
 }

@@ -23,9 +23,9 @@ use serde_json::Value;
 
 use crate::errors::app_error::{AppError, AppResult};
 use crate::integration::channel::ItgChannel;
-use crate::integration::supervisor::StreamConnector;
 use crate::integration::framing::jsonrpc;
 use crate::integration::supervisor::ConnectionSink;
+use crate::integration::supervisor::StreamConnector;
 
 pub struct WsClientConnector;
 
@@ -162,7 +162,7 @@ fn auth_token(ch: &ItgChannel) -> AppResult<Option<String>> {
     let Some(sealed) = ch.credentials.as_deref() else {
         return Ok(None);
     };
-    let Some(vault) = crate::integration::shared_plane().and_then(|p| p.vault().cloned()) else {
+    let Some(vault) = crate::integration::shared().and_then(|p| p.vault().cloned()) else {
         return Err(AppError::Internal(anyhow::anyhow!(
             "ws credentials present but vault sealed"
         )));
@@ -211,9 +211,7 @@ async fn handle_text(
             if !frame.is_notification() {
                 return Ok(());
             }
-            if !notif_filter.is_empty()
-                && frame.method.as_deref() != Some(notif_filter)
-            {
+            if !notif_filter.is_empty() && frame.method.as_deref() != Some(notif_filter) {
                 tracing::debug!(
                     channel = %ch.channel_key,
                     method = ?frame.method,
@@ -237,9 +235,7 @@ async fn handle_text(
                     write
                         .send(tokio_tungstenite::tungstenite::Message::Text(reply.into()))
                         .await
-                        .map_err(|e| {
-                            AppError::Internal(anyhow::anyhow!("ws ack send: {e}"))
-                        })?;
+                        .map_err(|e| AppError::Internal(anyhow::anyhow!("ws ack send: {e}")))?;
                 }
             }
             let _ = outcome;

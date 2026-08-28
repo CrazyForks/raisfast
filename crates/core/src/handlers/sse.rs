@@ -86,7 +86,7 @@ pub async fn subscribe(
         };
 
         // `Event::Custom` surfaces its inner event_type as the SSE event name
-        // (e.g. `ingress.received`, `integration.channel_state`) so filters
+        // (e.g. `integration.received`, `integration.channel_state`) so filters
         // like `integration.*` work; other events keep their display name.
         let custom_type = match arc_event.as_ref() {
             Event::Custom { event_type, .. } => Some(event_type.clone()),

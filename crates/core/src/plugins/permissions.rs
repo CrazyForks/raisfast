@@ -70,6 +70,19 @@ impl PermissionChecker {
         })
     }
 
+    /// Check if an api-client key is in the egress whitelist.
+    ///
+    /// Patterns are exact client keys or a `*` wildcard. Empty = all
+    /// `egress.call` host API use denied (endpoints are admin-curated, but a
+    /// plugin still needs to declare outbound intent).
+    #[must_use]
+    pub fn is_egress_allowed(permissions: &Permissions, client_key: &str) -> bool {
+        permissions
+            .egress
+            .iter()
+            .any(|pattern| pattern == "*" || pattern == client_key)
+    }
+
     /// Check if a table allows read-only access
     #[must_use]
     pub fn is_table_readable(permissions: &Permissions, table: &str) -> bool {
@@ -298,6 +311,7 @@ mod tests {
             config: config.into_iter().map(String::from).collect(),
             database: database.into_iter().map(String::from).collect(),
             filesystem: vec![],
+            egress: vec![],
             max_memory_mb: None,
             timeout_ms: None,
         }
@@ -310,6 +324,17 @@ mod tests {
             &p,
             "https://example.com/api"
         ));
+    }
+
+    #[test]
+    fn egress_whitelist_exact_and_wildcard() {
+        let mut p = perms(vec![], vec![], vec![]);
+        assert!(!PermissionChecker::is_egress_allowed(&p, "dify"));
+        p.egress = vec!["dify".into()];
+        assert!(PermissionChecker::is_egress_allowed(&p, "dify"));
+        assert!(!PermissionChecker::is_egress_allowed(&p, "qdrant"));
+        p.egress = vec!["*".into()];
+        assert!(PermissionChecker::is_egress_allowed(&p, "anything"));
     }
 
     #[test]

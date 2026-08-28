@@ -157,7 +157,8 @@ impl WorkerRunner {
         } else {
             tracing::warn!("no handler for job type '{job_type}', marking dead");
             self.queue.dead(&job.id, "no handler registered").await?;
-            self.trace_flip(job, false, "no handler registered".to_string()).await;
+            self.trace_flip(job, false, "no handler registered".to_string())
+                .await;
             self.writeback_cron_log(job, Err("no handler registered".to_string()))
                 .await;
             return Ok(());

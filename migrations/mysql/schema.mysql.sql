@@ -1117,6 +1117,47 @@ CREATE TABLE IF NOT EXISTS itg_receipts (
 );
 
 -- ============================================================
+-- Integration Plane (M0): itg_api_clients / itg_egress_log
+-- ============================================================
+
+-- Declarative outbound API clients (integration.md §9.2)
+CREATE TABLE IF NOT EXISTS itg_api_clients (
+    id BIGINT PRIMARY KEY,
+    tenant_id VARCHAR(36) NOT NULL DEFAULT 'default',
+    client_key VARCHAR(255) NOT NULL,
+    display_name VARCHAR(255) NOT NULL,
+    base_url VARCHAR(500) NOT NULL,
+    auth JSON,
+    credentials TEXT,
+    rate_limit JSON,
+    ops JSON,
+    enabled BOOLEAN NOT NULL DEFAULT 1,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uq_itg_api_clients_tenant_key (tenant_id, client_key),
+    INDEX idx_itg_api_clients_tenant (tenant_id)
+);
+
+-- Full outbound call log (integration.md §10.7: trace_id = itg_receipts.id)
+CREATE TABLE IF NOT EXISTS itg_egress_log (
+    id BIGINT PRIMARY KEY,
+    trace_id BIGINT NULL,
+    client_key VARCHAR(255) NOT NULL,
+    op VARCHAR(255) NOT NULL,
+    status VARCHAR(20) NOT NULL,
+    http_status BIGINT NULL,
+    latency_ms BIGINT NOT NULL DEFAULT 0,
+    tokens_in BIGINT NULL,
+    tokens_out BIGINT NULL,
+    model VARCHAR(255) NULL,
+    error TEXT,
+    response_summary TEXT,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_itg_egress_log_trace (trace_id),
+    INDEX idx_itg_egress_log_client_time (client_key, created_at)
+);
+
+-- ============================================================
 -- Seed data
 -- ============================================================
 

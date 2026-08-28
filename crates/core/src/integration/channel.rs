@@ -195,9 +195,7 @@ pub mod model {
     }
 
     pub async fn find_by_id(pool: &crate::db::Pool, id: SnowflakeId) -> AppResult<ItgChannel> {
-        Ok(
-            raisfast_derive::crud_find_one!(pool, "itg_channels", ItgChannel, where: ("id", id))?,
-        )
+        Ok(raisfast_derive::crud_find_one!(pool, "itg_channels", ItgChannel, where: ("id", id))?)
     }
 
     /// All rows (every version, every state) — cache refresh input.
@@ -349,7 +347,7 @@ mod tests {
         let rows = vec![
             channel(1, true, false),
             channel(2, true, false),
-            channel(3, true, true),  // shadow: never routed
+            channel(3, true, true),   // shadow: never routed
             channel(4, false, false), // disabled: never routed
         ];
         let active = ItgChannel::resolve_active(&rows).expect("active row exists");

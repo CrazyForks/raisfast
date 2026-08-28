@@ -43,7 +43,11 @@ pub async fn validate_create_tx(
 /// Unique checks run inside the caller's transaction — used by transaction-participating
 /// inserts (e.g. the integration plane pipeline writing CT rows alongside its receipt
 /// bookkeeping in one atomic unit).
-pub async fn validate_create_conn<'e, E>(conn: E, ct: &ContentTypeSchema, data: &Value) -> Result<(), AppError>
+pub async fn validate_create_conn<'e, E>(
+    conn: E,
+    ct: &ContentTypeSchema,
+    data: &Value,
+) -> Result<(), AppError>
 where
     E: sqlx::Executor<'e, Database = crate::db::pool::Db>,
 {
@@ -438,8 +442,7 @@ where
             let s = check
                 .sql
                 .replace(&crate::db::Driver::ph(1), &crate::db::Driver::ph(idx));
-            let with_id =
-                s.replace(&crate::db::Driver::ph(2), &crate::db::Driver::ph(idx + 1));
+            let with_id = s.replace(&crate::db::Driver::ph(2), &crate::db::Driver::ph(idx + 1));
             idx += 2;
             bind_exclude.push(true);
             with_id
@@ -474,10 +477,7 @@ where
     for (i, row) in rows.iter().enumerate() {
         let count: i64 = row.try_get(0).unwrap_or(0);
         if count > 0 {
-            errors.push(format!(
-                "field '{}': value already exists",
-                checks[i].field
-            ));
+            errors.push(format!("field '{}': value already exists", checks[i].field));
         }
     }
     Ok(())
