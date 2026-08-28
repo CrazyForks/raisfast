@@ -1070,6 +1070,7 @@ CREATE TABLE IF NOT EXISTS itg_channels (
     normalizer_plugin VARCHAR(255),
     pull_semantics VARCHAR(20),
     pull_config JSON,
+    stream_config JSON,
     ack_kind VARCHAR(20) NOT NULL DEFAULT 'http-200',
     redelivery_max INT NOT NULL DEFAULT 5,
     backpressure JSON,

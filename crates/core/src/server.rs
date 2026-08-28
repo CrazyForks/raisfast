@@ -153,6 +153,12 @@ async fn build_app(
         .await;
     }
 
+    // Integration plane: start the connection supervisor (stream/listen
+    // channels) alongside the worker pool. No-op when the plane is disabled.
+    if let Some(plane) = state.integration.clone() {
+        let _supervisor = plane.ensure_supervisor();
+    }
+
     let cors = build_cors(config);
     let mut api_v1 = axum::Router::new();
 

@@ -80,15 +80,15 @@ pub(crate) async fn test_app_with_tenants() -> (axum::Router, AppState) {
 
 async fn build_test_app(pool: raisfast::db::Pool) -> (axum::Router, AppState) {
     let config = Arc::new(test_config());
-    let emitter =
-        raisfast::event::EventEmitter::eventbus_only(raisfast::eventbus::EventBus::new(256));
+    let shared_bus = raisfast::eventbus::EventBus::new(256);
+    let emitter = raisfast::event::EventEmitter::eventbus_only(shared_bus.clone());
     let content_registry = Arc::new(raisfast::content_type::ContentTypeRegistry::new());
     let state = AppState {
         pool: pool.clone(),
         config: config.clone(),
         jwt_decoding_key: jsonwebtoken::DecodingKey::from_secret(config.jwt_secret.as_bytes()),
         plugins: PluginManager::new(config.clone()).await,
-        eventbus: raisfast::eventbus::EventBus::new(256),
+        eventbus: shared_bus.clone(),
         post_service: {
             Arc::new(raisfast::services::post::PostServiceImpl::new(
                 Arc::new(pool.clone()),
@@ -595,6 +595,14 @@ async fn build_test_app(pool: raisfast::db::Pool) -> (axum::Router, AppState) {
         .route(
             "/admin/integration/receipts/{id}/trace",
             get(raisfast::integration::admin::get_trace),
+        )
+        .route(
+            "/admin/integration/channels/health",
+            get(raisfast::integration::admin::channels_health),
+        )
+        .route(
+            "/admin/integration/channels/{id}/health",
+            get(raisfast::integration::admin::channel_health),
         )
         .layer(from_fn_with_state(
             state.clone(),
@@ -1893,6 +1901,7 @@ type = "text"
         normalizer_plugin: None,
         pull_semantics: None,
         pull_config: None,
+        stream_config: None,
         ack_kind: "http-200".into(),
         redelivery_max: 5,
         backpressure: None,
@@ -2052,6 +2061,7 @@ required = true
         normalizer_plugin: None,
         pull_semantics: None,
         pull_config: None,
+        stream_config: None,
         ack_kind: "http-200".into(),
         redelivery_max: 2,
         backpressure: None,
@@ -2143,6 +2153,7 @@ async fn integration_retry_recovers_when_target_appears() {
         normalizer_plugin: None,
         pull_semantics: None,
         pull_config: None,
+        stream_config: None,
         ack_kind: "http-200".into(),
         redelivery_max: 5,
         backpressure: None,
@@ -2256,6 +2267,7 @@ async fn integration_pending_flip_and_append_step() {
         normalizer_plugin: None,
         pull_semantics: None,
         pull_config: None,
+        stream_config: None,
         ack_kind: "http-200".into(),
         redelivery_max: 5,
         backpressure: None,
@@ -2445,6 +2457,7 @@ type = "text"
             "list_path": "$.items", "id_field": "id",
             "param": "since_id", "page_size": 2, "max_pages": 10
         })),
+        stream_config: None,
         ack_kind: "none".into(),
         redelivery_max: 5,
         backpressure: None,
@@ -2602,6 +2615,7 @@ type = "text"
         normalizer_plugin: None,
         pull_semantics: None,
         pull_config: None,
+        stream_config: None,
         ack_kind: "http-200".into(),
         redelivery_max: 5,
         backpressure: None,
@@ -2936,4 +2950,1000 @@ type = "text"
     )
     .await;
     assert_eq!(status, StatusCode::UNAUTHORIZED, "anonymous blocked");
+}
+
+#[tokio::test]
+async fn integration_supervisor_lifecycle() {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::Arc as StdArc;
+
+    let (mut app, state) = test_app().await;
+    let _ = &mut app;
+    let plane = state.integration.clone().unwrap();
+
+    // Mock connector: first 2 runs fail instantly, then holds until aborted;
+    // frames it "receives" are pushed through the sink into the pipeline.
+    static RUNS: AtomicU64 = AtomicU64::new(0);
+    struct MockConnector;
+    #[async_trait::async_trait]
+    impl raisfast::integration::supervisor::StreamConnector for MockConnector {
+        async fn run(
+            &self,
+            ch: StdArc<raisfast::integration::ItgChannel>,
+            sink: raisfast::integration::supervisor::ConnectionSink,
+        ) -> anyhow::Result<()> {
+            let n = RUNS.fetch_add(1, Ordering::SeqCst);
+            if n < 2 {
+                anyhow::bail!("simulated disconnect #{n}");
+            }
+            // Third run: push a frame then hold (until task aborted).
+            let body = br#"{"id":"sup-1","text":"from stream"}"#.to_vec();
+            let outcome = sink.submit(&ch, body).await;
+            assert!(outcome.delivered || outcome.duplicate, "frame routed");
+            loop {
+                tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+            }
+        }
+    }
+
+    let sup = plane.ensure_supervisor();
+    sup.register_connector(
+        "mock",
+        StdArc::new(|| Box::new(MockConnector)),
+    )
+    .await;
+
+    // Target CT + stream channel.
+    let toml = r#"
+[content_type]
+name = "Ingress Note"
+singular = "ingress_note"
+plural = "ingress_notes"
+table = "ingress_notes"
+
+[fields.external_id]
+type = "text"
+
+[fields.body]
+type = "text"
+"#;
+    let schema =
+        raisfast::content_type::schema::ContentTypeSchema::parse_from_str(toml).unwrap();
+    let repo = raisfast::content_type::repository::ContentRepository::new(state.pool.clone());
+    repo.migrate(&schema, &state.protocol_registry).await.unwrap();
+    state
+        .content_type_registry
+        .register(
+            schema,
+            &state.config.rule_engine,
+            &state.config.builtins.reserved_route_segments(),
+            &state.protocol_registry.names(),
+            &state.protocol_registry,
+        )
+        .unwrap();
+
+    let channel = raisfast::integration::ItgChannel {
+        id: raisfast::utils::id::new_snowflake_id(),
+        tenant_id: "default".into(),
+        channel_key: "sup-ch".into(),
+        provider: "mock".into(),
+        display_name: "Sup".into(),
+        mode: "stream".into(),
+        transport: "mock".into(),
+        framing: "raw".into(),
+        codec: "json".into(),
+        endpoint: Some("mock://local".into()),
+        verify_kind: "none".into(),
+        verify_config: None,
+        credentials: None,
+        mapping: Some(json!({"external_id": "$.id", "payload": {"body": "$.text"}})),
+        normalizer_plugin: None,
+        pull_semantics: None,
+        pull_config: None,
+        stream_config: Some(json!({"heartbeat_secs": 1})),
+        ack_kind: "none".into(),
+        redelivery_max: 5,
+        backpressure: None,
+        target_type: "ingress_note".into(),
+        route_extra: None,
+        status: "idle".into(),
+        last_error: None,
+        lease_owner: None,
+        enabled: true,
+        version: 1,
+        shadow: false,
+        created_at: raisfast::utils::tz::now_utc(),
+        updated_at: raisfast::utils::tz::now_utc(),
+    };
+    raisfast::integration::channel::model::insert(&state.pool, &channel)
+        .await
+        .unwrap();
+    sup.wake();
+
+    // ── Task spawns, retries twice, then connects and routes a frame ────
+    let mut delivered = false;
+    for _ in 0..40 {
+        let n: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM ingress_notes WHERE external_id = 'sup-1'",
+        )
+        .fetch_one(&state.pool)
+        .await
+        .unwrap();
+        if n == 1 {
+            delivered = true;
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    assert!(delivered, "stream frame routed after 2 retries");
+
+    let health = sup.health_snapshot();
+    let h = health
+        .iter()
+        .find(|h| h.channel_id == channel.id.0)
+        .expect("health entry");
+    assert_eq!(h.state, "connecting", "third attempt holds: {h:?}");
+    assert!(h.reconnects >= 2, "backoff retried: {h:?}");
+    assert!(
+        h.last_error.as_deref().is_some_and(|e| e.contains("disconnect")),
+        "last error recorded"
+    );
+
+    // ── Hot disable → task stops ────────────────────────────────────────
+    raisfast::integration::channel::model::update_status(
+        &state.pool,
+        channel.id,
+        "disabled",
+        None,
+    )
+    .await
+    .unwrap();
+    sqlx::query("UPDATE itg_channels SET enabled = 0 WHERE id = ?")
+        .bind(*channel.id)
+        .execute(&state.pool)
+        .await
+        .unwrap();
+    sup.wake();
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    let h = sup
+        .health_snapshot()
+        .into_iter()
+        .find(|h| h.channel_id == channel.id.0)
+        .expect("health retained");
+    assert_eq!(h.state, "stopped", "disabled → stopped");
+
+    sup.shutdown().await;
+}
+
+#[tokio::test]
+async fn integration_ws_stream_slack_mode() {
+    use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
+    use futures::{SinkExt, StreamExt};
+    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+
+    // Mock Slack gateway: handshake (subscribe echo) → notification →
+    // expect ack frame → drop connection → on reconnect resend notification.
+    static CONN_COUNT: AtomicU64 = AtomicU64::new(0);
+    static SAW_SUBSCRIBE: AtomicBool = AtomicBool::new(false);
+    static ACK_RECEIVED: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+
+    async fn gateway(ws: WebSocket) {
+        let n = CONN_COUNT.fetch_add(1, Ordering::SeqCst);
+        let (mut sender, mut receiver) = ws.split();
+        // First connection sends the notification immediately after subscribe;
+        // reconnects re-verify subscribe then send another notification.
+        let payload = format!(
+            r#"{{"jsonrpc":"2.0","method":"events","params":{{"envelope_id":"ev-{n}","payload":{{"id":"ws-{n}","text":"hello ws"}}}}}}"#
+        );
+        loop {
+            tokio::select! {
+                frame = receiver.next() => {
+                    let Some(Ok(msg)) = frame else { break };
+                    if let Message::Text(text) = msg {
+                        let t = text.as_str().to_string();
+                        if t.contains("\"method\"") {
+                            SAW_SUBSCRIBE.store(true, Ordering::SeqCst);
+                            let _ = sender.send(Message::Text(
+                                r#"{"jsonrpc":"2.0","id":1,"result":{"ok":true}}"#.into(),
+                            )).await;
+                            let _ = sender.send(Message::Text(payload.clone().into())).await;
+                        } else if t.contains("\"result\"") {
+                            ACK_RECEIVED.lock().unwrap().push(t);
+                            // After first ack, drop the connection to force
+                            // supervisor reconnect + resubscribe.
+                            if n == 0 { break; }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        let app = axum::Router::new().route(
+            "/gateway",
+            axum::routing::get(|ws: WebSocketUpgrade| async move { ws.on_upgrade(gateway) }),
+        );
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let (mut app, state) = test_app().await;
+    let plane = state.integration.clone().unwrap();
+
+    let toml = r#"
+[content_type]
+name = "Ingress Note"
+singular = "ingress_note"
+plural = "ingress_notes"
+table = "ingress_notes"
+
+[fields.external_id]
+type = "text"
+
+[fields.body]
+type = "text"
+"#;
+    let schema =
+        raisfast::content_type::schema::ContentTypeSchema::parse_from_str(toml).unwrap();
+    let repo = raisfast::content_type::repository::ContentRepository::new(state.pool.clone());
+    repo.migrate(&schema, &state.protocol_registry).await.unwrap();
+    state
+        .content_type_registry
+        .register(
+            schema,
+            &state.config.rule_engine,
+            &state.config.builtins.reserved_route_segments(),
+            &state.protocol_registry.names(),
+            &state.protocol_registry,
+        )
+        .unwrap();
+
+    let channel = raisfast::integration::ItgChannel {
+        id: raisfast::utils::id::new_snowflake_id(),
+        tenant_id: "default".into(),
+        channel_key: "ws-ch".into(),
+        provider: "slack-socket-mode".into(),
+        display_name: "WS".into(),
+        mode: "stream".into(),
+        transport: "ws".into(),
+        framing: "json-rpc".into(),
+        codec: "json".into(),
+        endpoint: Some(format!("ws://{addr}/gateway")),
+        verify_kind: "none".into(),
+        verify_config: None,
+        credentials: None,
+        mapping: Some(json!({"external_id": "$.id", "payload": {"body": "$.text"}})),
+        normalizer_plugin: None,
+        pull_semantics: None,
+        pull_config: None,
+        stream_config: Some(json!({
+            "heartbeat_secs": 5,
+            "subscribe": [{"method": "connections.open", "params": {}}],
+            "notification_method": "events",
+            "payload_path": "$.payload",
+            "reply_id_path": "$.envelope_id"
+        })),
+        ack_kind: "rpc-reply".into(),
+        redelivery_max: 5,
+        backpressure: None,
+        target_type: "ingress_note".into(),
+        route_extra: None,
+        status: "idle".into(),
+        last_error: None,
+        lease_owner: None,
+        enabled: true,
+        version: 1,
+        shadow: false,
+        created_at: raisfast::utils::tz::now_utc(),
+        updated_at: raisfast::utils::tz::now_utc(),
+    };
+    raisfast::integration::channel::model::insert(&state.pool, &channel)
+        .await
+        .unwrap();
+    let sup = plane.ensure_supervisor();
+    sup.wake();
+    let _ = &mut app;
+
+    // First connection: notification routed + ack frame sent back.
+    let mut routed1 = false;
+    for _ in 0..80 {
+        let n: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM ingress_notes WHERE external_id = 'ws-0'",
+        )
+        .fetch_one(&state.pool)
+        .await
+        .unwrap();
+        if n == 1 {
+            routed1 = true;
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    if !routed1 {
+        let health: Vec<String> = sup
+            .health_snapshot()
+            .iter()
+            .map(|h| format!("{:?}", h))
+            .collect();
+        let receipts: Vec<(String, String)> =
+            sqlx::query_as("SELECT status, CAST(steps AS TEXT) FROM itg_receipts WHERE channel_id = ?")
+                .bind(*channel.id)
+                .fetch_all(&state.pool)
+                .await
+                .unwrap_or_default();
+        let acks = ACK_RECEIVED.lock().unwrap().clone();
+        // Direct pipeline replay of the exact frame to surface the error.
+        let probe = plane
+            .pipeline()
+            .run_stream_frame(
+                &std::sync::Arc::new(channel.clone()),
+                br#"{"id":"probe-1","text":"probe"}"#.to_vec(),
+            )
+            .await;
+        let probe_receipts: Vec<(String, String)> =
+            sqlx::query_as("SELECT status, CAST(steps AS TEXT) FROM itg_receipts")
+                .fetch_all(&state.pool)
+                .await
+                .unwrap_or_default();
+        panic!(
+            "not routed. health={health:?} receipts={receipts:?} probe={:?} probe_receipts={probe_receipts:?} acks={acks:?}",
+            probe
+        );
+    }
+    assert!(routed1, "first notification routed to CT");
+    assert!(SAW_SUBSCRIBE.load(Ordering::SeqCst), "subscribe handshake seen");
+
+    // Ack frame received by the gateway (envelope_id echoed).
+    let ack_seen = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            let acks = ACK_RECEIVED.lock().unwrap().clone();
+            if acks.iter().any(|a| a.contains("ev-0")) {
+                return true;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+    })
+    .await
+    .unwrap_or(false);
+    assert!(ack_seen, "ack-by-reply frame sent on the same connection");
+
+    // Reconnect (gateway dropped conn after first ack): resubscribe + second
+    // notification (ws-1) routed — supervisor self-healed with backoff.
+    let mut routed2 = false;
+    for _ in 0..100 {
+        let n: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM ingress_notes WHERE external_id = 'ws-1'",
+        )
+        .fetch_one(&state.pool)
+        .await
+        .unwrap();
+        if n == 1 {
+            routed2 = true;
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    assert!(routed2, "reconnected + resubscribed + second notification routed");
+    assert!(CONN_COUNT.load(Ordering::SeqCst) >= 2, "at least two connections");
+
+    sup.shutdown().await;
+}
+
+#[tokio::test]
+async fn integration_tcp_listen_line_framing() {
+    let (mut app, state) = test_app().await;
+    let _ = &mut app;
+    let plane = state.integration.clone().unwrap();
+
+    // Pre-bind a port then release it ( Supervisor's connector will rebind).
+    let probe = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = probe.local_addr().unwrap();
+    drop(probe);
+
+    let toml = r#"
+[content_type]
+name = "Ingress Note"
+singular = "ingress_note"
+plural = "ingress_notes"
+table = "ingress_notes"
+
+[fields.external_id]
+type = "text"
+
+[fields.body]
+type = "text"
+"#;
+    let schema =
+        raisfast::content_type::schema::ContentTypeSchema::parse_from_str(toml).unwrap();
+    let repo = raisfast::content_type::repository::ContentRepository::new(state.pool.clone());
+    repo.migrate(&schema, &state.protocol_registry).await.unwrap();
+    state
+        .content_type_registry
+        .register(
+            schema,
+            &state.config.rule_engine,
+            &state.config.builtins.reserved_route_segments(),
+            &state.protocol_registry.names(),
+            &state.protocol_registry,
+        )
+        .unwrap();
+
+    let channel = raisfast::integration::ItgChannel {
+        id: raisfast::utils::id::new_snowflake_id(),
+        tenant_id: "default".into(),
+        channel_key: "tcp-ch".into(),
+        provider: "generic-tcp".into(),
+        display_name: "TCP".into(),
+        mode: "listen".into(),
+        transport: "tcp".into(),
+        framing: "raw".into(),
+        codec: "json".into(),
+        endpoint: Some(addr.to_string()),
+        verify_kind: "none".into(),
+        verify_config: None,
+        credentials: None,
+        mapping: Some(json!({"external_id": "$.id", "payload": {"body": "$.text"}})),
+        normalizer_plugin: None,
+        pull_semantics: None,
+        pull_config: None,
+        stream_config: Some(json!({"framing": "line"})),
+        ack_kind: "none".into(),
+        redelivery_max: 5,
+        backpressure: None,
+        target_type: "ingress_note".into(),
+        route_extra: None,
+        status: "idle".into(),
+        last_error: None,
+        lease_owner: None,
+        enabled: true,
+        version: 1,
+        shadow: false,
+        created_at: raisfast::utils::tz::now_utc(),
+        updated_at: raisfast::utils::tz::now_utc(),
+    };
+    raisfast::integration::channel::model::insert(&state.pool, &channel)
+        .await
+        .unwrap();
+    let sup = plane.ensure_supervisor();
+    sup.wake();
+
+    // Wait for the listener to bind.
+    let mut connected = false;
+    for _ in 0..50 {
+        if tokio::net::TcpStream::connect(addr).await.is_ok() {
+            connected = true;
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    assert!(connected, "listener came up");
+
+    // Two clients, three frames total (line framing).
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let mut c1 = tokio::net::TcpStream::connect(addr).await.unwrap();
+    let mut banner = Vec::new();
+    let _ = c1.read(&mut banner).await; // welcome banner (may race, ignore)
+    c1.write_all(br#"{"id":"tcp-1","text":"first"}"#).await.unwrap();
+    c1.write_all(b"\n").await.unwrap();
+    c1.write_all(br#"{"id":"tcp-2","text":"second"}"#).await.unwrap();
+    c1.write_all(b"\n").await.unwrap();
+
+    let mut c2 = tokio::net::TcpStream::connect(addr).await.unwrap();
+    c2.write_all(br#"{"id":"tcp-3","text":"third"}"#).await.unwrap();
+    c2.write_all(b"\n").await.unwrap();
+    drop(c1);
+    drop(c2);
+
+    let mut routed = 0;
+    for _ in 0..60 {
+        routed = sqlx::query_scalar("SELECT COUNT(*) FROM ingress_notes")
+            .fetch_one(&state.pool)
+            .await
+            .unwrap();
+        if routed == 3 {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    assert_eq!(routed, 3, "all line frames routed");
+
+    let receipts: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM itg_receipts WHERE channel_id = ?")
+            .bind(*channel.id)
+            .fetch_one(&state.pool)
+            .await
+            .unwrap();
+    assert_eq!(receipts, 3);
+
+    sup.shutdown().await;
+}
+
+#[tokio::test]
+async fn integration_telemetry_sampling() {
+    let (mut app, state) = test_app().await;
+    let plane = state.integration.as_ref().unwrap();
+
+    let toml = r#"
+[content_type]
+name = "Ingress Note"
+singular = "ingress_note"
+plural = "ingress_notes"
+table = "ingress_notes"
+
+[fields.external_id]
+type = "text"
+
+[fields.body]
+type = "text"
+"#;
+    let schema =
+        raisfast::content_type::schema::ContentTypeSchema::parse_from_str(toml).unwrap();
+    let repo = raisfast::content_type::repository::ContentRepository::new(state.pool.clone());
+    repo.migrate(&schema, &state.protocol_registry).await.unwrap();
+    state
+        .content_type_registry
+        .register(
+            schema,
+            &state.config.rule_engine,
+            &state.config.builtins.reserved_route_segments(),
+            &state.protocol_registry.names(),
+            &state.protocol_registry,
+        )
+        .unwrap();
+
+    let make_channel = |key: &str, rate: i64| raisfast::integration::ItgChannel {
+        id: raisfast::utils::id::new_snowflake_id(),
+        tenant_id: "default".into(),
+        channel_key: key.into(),
+        provider: "generic-hmac".into(),
+        display_name: key.into(),
+        mode: "push".into(),
+        transport: "http1".into(),
+        framing: "raw".into(),
+        codec: "json".into(),
+        endpoint: None,
+        verify_kind: "challenge".into(),
+        verify_config: None,
+        credentials: None,
+        mapping: Some(json!({
+            "external_id": "$.id",
+            "kind": "const:Telemetry",
+            "payload": {"body": "$.v"}
+        })),
+        normalizer_plugin: None,
+        pull_semantics: None,
+        pull_config: None,
+        stream_config: None,
+        ack_kind: "http-200".into(),
+        redelivery_max: 5,
+        backpressure: Some(json!({"sample_rate": rate})),
+        target_type: "ingress_note".into(),
+        route_extra: None,
+        status: "idle".into(),
+        last_error: None,
+        lease_owner: None,
+        enabled: true,
+        version: 1,
+        shadow: false,
+        created_at: raisfast::utils::tz::now_utc(),
+        updated_at: raisfast::utils::tz::now_utc(),
+    };
+
+    let keep_all = make_channel("sample-keep", 100);
+    let drop_all = make_channel("sample-drop", 0);
+    for ch in [&keep_all, &drop_all] {
+        raisfast::integration::channel::model::insert(&state.pool, ch)
+            .await
+            .unwrap();
+    }
+    plane.channels().refresh().await.unwrap();
+
+    let (status, _) = send(
+        &mut app,
+        post_json("/api/v1/ingress/sample-keep", json!({"id": "t-keep", "v": "x"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, _) = send(
+        &mut app,
+        post_json("/api/v1/ingress/sample-drop", json!({"id": "t-drop", "v": 2})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "sampled-out still acks 200");
+
+    let mut keep_rows: i64 = 0;
+    for _ in 0..40 {
+        keep_rows = sqlx::query_scalar("SELECT COUNT(*) FROM itg_receipts WHERE channel_id = ?")
+            .bind(*keep_all.id)
+            .fetch_one(&state.pool)
+            .await
+            .unwrap();
+        if keep_rows == 1 {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    let drop_rows: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM itg_receipts WHERE channel_id = ?")
+            .bind(*drop_all.id)
+            .fetch_one(&state.pool)
+            .await
+            .unwrap();
+    assert_eq!(keep_rows, 1, "rate 100 keeps everything");
+    assert_eq!(drop_rows, 0, "rate 0 drops before any DB write");
+}
+
+#[tokio::test]
+async fn integration_telemetry_batch_pipeline() {
+    let (mut app, state) = test_app().await;
+    let plane = state.integration.as_ref().unwrap();
+
+    let toml = r#"
+[content_type]
+name = "Ingress Note"
+singular = "ingress_note"
+plural = "ingress_notes"
+table = "ingress_notes"
+
+[fields.external_id]
+type = "text"
+
+[fields.body]
+type = "text"
+"#;
+    let schema =
+        raisfast::content_type::schema::ContentTypeSchema::parse_from_str(toml).unwrap();
+    let repo = raisfast::content_type::repository::ContentRepository::new(state.pool.clone());
+    repo.migrate(&schema, &state.protocol_registry).await.unwrap();
+    state
+        .content_type_registry
+        .register(
+            schema,
+            &state.config.rule_engine,
+            &state.config.builtins.reserved_route_segments(),
+            &state.protocol_registry.names(),
+            &state.protocol_registry,
+        )
+        .unwrap();
+
+    // Telemetry channel (batch path) + Message channel (single-tx path).
+    let mk = |key: &str, kind: &str| raisfast::integration::ItgChannel {
+        id: raisfast::utils::id::new_snowflake_id(),
+        tenant_id: "default".into(),
+        channel_key: key.into(),
+        provider: "generic-hmac".into(),
+        display_name: key.into(),
+        mode: "push".into(),
+        transport: "http1".into(),
+        framing: "raw".into(),
+        codec: "json".into(),
+        endpoint: None,
+        verify_kind: "challenge".into(),
+        verify_config: None,
+        credentials: None,
+        mapping: Some(json!({
+            "external_id": "$.id",
+            "kind": kind,
+            "payload": {"body": "$.v"}
+        })),
+        normalizer_plugin: None,
+        pull_semantics: None,
+        pull_config: None,
+        stream_config: None,
+        ack_kind: "http-200".into(),
+        redelivery_max: 5,
+        backpressure: None,
+        target_type: "ingress_note".into(),
+        route_extra: None,
+        status: "idle".into(),
+        last_error: None,
+        lease_owner: None,
+        enabled: true,
+        version: 1,
+        shadow: false,
+        created_at: raisfast::utils::tz::now_utc(),
+        updated_at: raisfast::utils::tz::now_utc(),
+    };
+    let mut tele = mk("batch-tele", "const:Telemetry");
+    tele.backpressure = Some(json!({"per_second": 200})); // burst-friendly limit
+    let msg = mk("batch-msg", "const:Message");
+    for ch in [&tele, &msg] {
+        raisfast::integration::channel::model::insert(&state.pool, ch)
+            .await
+            .unwrap();
+    }
+    plane.channels().refresh().await.unwrap();
+
+    // ── Window flush: 5 telemetry items land as one batch ─────────────
+    for i in 0..5 {
+        let (status, _) = send(
+            &mut app,
+            post_json(
+                "/api/v1/ingress/batch-tele",
+                json!({"id": format!("bt-{i}"), "v": i.to_string()}),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "batched accept = 200");
+    }
+    // Message interleaved (single-tx path must not wait for the batch).
+    let (status, _) = send(
+        &mut app,
+        post_json("/api/v1/ingress/batch-msg", json!({"id": "bm-1", "v": "m"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    let mut tele_rows = 0;
+    for _ in 0..50 {
+        tele_rows = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM ingress_notes WHERE external_id LIKE 'bt-%'",
+        )
+        .fetch_one(&state.pool)
+        .await
+        .unwrap();
+        if tele_rows == 5 {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    assert_eq!(tele_rows, 5, "window flush landed all telemetry");
+    let msg_rows: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM ingress_notes WHERE external_id = 'bm-1'")
+            .fetch_one(&state.pool)
+            .await
+            .unwrap();
+    assert_eq!(msg_rows, 1, "message unaffected by batch path");
+
+    // Batch steps marker present.
+    let steps: String = sqlx::query_scalar(
+        "SELECT CAST(steps AS TEXT) FROM itg_receipts WHERE external_id = 'bt-0'",
+    )
+    .fetch_one(&state.pool)
+    .await
+    .unwrap();
+    assert!(steps.contains("\"batch\""), "batch steps marker: {steps}");
+
+    // ── Size trigger: 100+ items flush immediately-ish ────────────────
+    // Bulk wave via direct pipeline calls (the HTTP path is rate-limited by
+    // the global limiter in tests — burst behavior is the batcher's concern).
+    let tele_arc = std::sync::Arc::new(tele.clone());
+    for i in 0..120 {
+        let body = format!(r#"{{"id":"bs-{i}","v":"{i}"}}"#);
+        let outcome = plane
+            .pipeline()
+            .run_stream_frame(&tele_arc, body.into_bytes())
+            .await;
+        assert!(matches!(
+            outcome.ack,
+            raisfast::integration::pipeline::AckAction::Http { status: 200, .. }
+        ));
+    }
+    let mut big = 0;
+    for _ in 0..80 {
+        big = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM ingress_notes WHERE external_id LIKE 'bs-%'",
+        )
+        .fetch_one(&state.pool)
+        .await
+        .unwrap();
+        if big == 120 {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    assert_eq!(big, 120, "size-trigger flushed the bulk wave");
+
+    // No losses: receipts count == sent count for the channel.
+    let receipts: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM itg_receipts WHERE channel_id = ?")
+            .bind(*tele.id)
+            .fetch_one(&state.pool)
+            .await
+            .unwrap();
+    assert_eq!(receipts, 125, "5 + 120 = 125 receipts, zero loss");
+
+    // Duplicate within batch semantics: repost one telemetry id → no new row.
+    let _ = send(
+        &mut app,
+        post_json("/api/v1/ingress/batch-tele", json!({"id": "bt-0", "v": 999})),
+    )
+    .await;
+    tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+    let dup: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM ingress_notes WHERE external_id = 'bt-0'")
+            .fetch_one(&state.pool)
+            .await
+            .unwrap();
+    assert_eq!(dup, 1, "duplicate telemetry absorbed");
+}
+
+#[tokio::test]
+async fn integration_sse_stream_and_health_api() {
+    let (mut app, state) = test_app().await;
+    let _ = create_admin(&state.pool).await;
+    let (status, body) = send(
+        &mut app,
+        post_json(
+            "/api/v1/auth/login",
+            json!({ "email": ADMIN_EMAIL.with(|c| c.borrow().clone()), "password": "AdminPass123!" }),
+        ),
+    )
+    .await;
+    assert!(status.is_success(), "admin login failed: {status} {body:?}");
+    let token = body["data"]["access_token"].as_str().unwrap().to_string();
+
+    // Target CT + telemetry channel (batch stats source) + message channel.
+    let toml = r#"
+[content_type]
+name = "Ingress Note"
+singular = "ingress_note"
+plural = "ingress_notes"
+table = "ingress_notes"
+
+[fields.external_id]
+type = "text"
+
+[fields.body]
+type = "text"
+"#;
+    let schema =
+        raisfast::content_type::schema::ContentTypeSchema::parse_from_str(toml).unwrap();
+    let repo = raisfast::content_type::repository::ContentRepository::new(state.pool.clone());
+    repo.migrate(&schema, &state.protocol_registry).await.unwrap();
+    state
+        .content_type_registry
+        .register(
+            schema,
+            &state.config.rule_engine,
+            &state.config.builtins.reserved_route_segments(),
+            &state.protocol_registry.names(),
+            &state.protocol_registry,
+        )
+        .unwrap();
+
+    let mk = |key: &str, kind: &str| raisfast::integration::ItgChannel {
+        id: raisfast::utils::id::new_snowflake_id(),
+        tenant_id: "default".into(),
+        channel_key: key.into(),
+        provider: "generic-hmac".into(),
+        display_name: key.into(),
+        mode: "push".into(),
+        transport: "http1".into(),
+        framing: "raw".into(),
+        codec: "json".into(),
+        endpoint: None,
+        verify_kind: "challenge".into(),
+        verify_config: None,
+        credentials: None,
+        mapping: Some(json!({
+            "external_id": "$.id",
+            "kind": kind,
+            "payload": {"body": "$.text"}
+        })),
+        normalizer_plugin: None,
+        pull_semantics: None,
+        pull_config: None,
+        stream_config: None,
+        ack_kind: "http-200".into(),
+        redelivery_max: 5,
+        backpressure: None,
+        target_type: "ingress_note".into(),
+        route_extra: None,
+        status: "idle".into(),
+        last_error: None,
+        lease_owner: None,
+        enabled: true,
+        version: 1,
+        shadow: false,
+        created_at: raisfast::utils::tz::now_utc(),
+        updated_at: raisfast::utils::tz::now_utc(),
+    };
+    let msg_ch = mk("sse-msg", "const:Message");
+    let tele_ch = mk("sse-tele", "const:Telemetry");
+    for ch in [&msg_ch, &tele_ch] {
+        raisfast::integration::channel::model::insert(&state.pool, ch)
+            .await
+            .unwrap();
+    }
+    state
+        .integration
+        .as_ref()
+        .unwrap()
+        .channels()
+        .refresh()
+        .await
+        .unwrap();
+
+    // ── SSE: subscribe with integration.* prefix filter ────────────────
+    let sse_req = Request::builder()
+        .uri("/api/v1/events?filter=ingress.*")
+        .body(Body::empty())
+        .unwrap();
+    let mut sse_app = app.clone();
+    let resp = tokio::time::timeout(std::time::Duration::from_secs(2), async move {
+        use tower::ServiceExt;
+        <axum::Router as tower::ServiceExt<Request<Body>>>::ready(&mut sse_app)
+            .await
+            .unwrap_or_else(|_| panic!("ready"));
+        sse_app.oneshot(sse_req).await
+    })
+    .await
+    .expect("sse headers")
+    .expect("sse response");
+    assert_eq!(resp.status(), StatusCode::OK);
+    let mut body_stream = resp.into_body().into_data_stream();
+
+    // Trigger: one message push (broadcasts integration ingress.received).
+    let (status, _) = send(
+        &mut app,
+        post_json("/api/v1/ingress/sse-msg", json!({"id": "sse-1", "text": "hi"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    // Read SSE frames until we see the ingress event (timeout 5s).
+    let mut seen = String::new();
+    let got = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        use futures::StreamExt;
+        while let Some(chunk) = body_stream.next().await {
+            let bytes = chunk.unwrap_or_default();
+            seen.push_str(&String::from_utf8_lossy(&bytes));
+            if seen.contains("ingress.received") {
+                return true;
+            }
+        }
+        false
+    })
+    .await
+    .unwrap_or(false);
+    assert!(got, "SSE delivered integration event, got: {seen}");
+
+    // ── Health API: aggregate + detail ─────────────────────────────────
+    let (status, body) = send(
+        &mut app,
+        Request::builder()
+            .uri("/api/v1/admin/integration/channels/health")
+            .header(header::AUTHORIZATION, format!("Bearer {token}"))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert!(status.is_success(), "health aggregate: {body:?}");
+    let cards = body["data"].as_array().unwrap();
+    assert!(cards.len() >= 2, "both channels present");
+    let tele_card = cards
+        .iter()
+        .find(|c| c["channel_key"] == "sse-tele")
+        .expect("tele card");
+    assert!(
+        tele_card.get("telemetry_batch").is_some(),
+        "batch key present (null until first telemetry)"
+    );
+
+    // Telemetry push → batch stats non-zero after flush.
+    let _ = send(
+        &mut app,
+        post_json("/api/v1/ingress/sse-tele", json!({"id": "st-1", "text": "t"})),
+    )
+    .await;
+    tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+
+    let (status, body) = send(
+        &mut app,
+        Request::builder()
+            .uri(format!("/api/v1/admin/integration/channels/{}/health", tele_ch.id))
+            .header(header::AUTHORIZATION, format!("Bearer {token}"))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert!(status.is_success(), "health detail: {body:?}");
+    assert_eq!(body["data"]["channel_key"], "sse-tele");
+    let submitted = body["data"]["telemetry_batch"]["submitted"]
+        .as_u64()
+        .unwrap_or(0);
+    assert!(submitted >= 1, "batch stats flowed into health: {body:?}");
 }

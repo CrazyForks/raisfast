@@ -256,6 +256,7 @@ mod tests {
             normalizer_plugin: None,
             pull_semantics: None,
             pull_config: None,
+            stream_config: None,
             ack_kind: "http-200".into(),
             redelivery_max: 5,
             backpressure: None,

@@ -5,6 +5,8 @@
 
 use serde_json::Value;
 
+pub mod jsonrpc;
+
 use crate::errors::app_error::AppError;
 
 /// Decode a request body into the structured value handed to the mapper.
@@ -15,7 +17,10 @@ use crate::errors::app_error::AppError;
 /// - `BadRequest` for malformed JSON bodies
 pub fn decode(framing: &str, codec: &str, body: &[u8]) -> Result<Value, AppError> {
     match (framing, codec) {
-        ("raw", "json") => {
+        // `json-rpc` bodies reach the pipeline already disassembled by the
+        // connector (notifications carry the extracted payload) — decode as
+        // plain JSON.
+        ("raw" | "json-rpc", "json") => {
             if body.is_empty() {
                 return Ok(Value::Null);
             }
@@ -23,7 +28,7 @@ pub fn decode(framing: &str, codec: &str, body: &[u8]) -> Result<Value, AppError
                 AppError::BadRequest(format!("malformed JSON body: {e}"))
             })
         }
-        ("raw", _) => Err(AppError::BadRequest(format!(
+        ("raw" | "json-rpc", _) => Err(AppError::BadRequest(format!(
             "codec '{codec}' not supported in this phase — use 'json' or a normalizer plugin"
         ))),
         (other, _) => Err(AppError::BadRequest(format!(
@@ -55,8 +60,16 @@ mod tests {
 
     #[test]
     fn unsupported_framing_guides_to_plugin() {
-        let err = decode("json-rpc", "json", b"{}").expect_err("unsupported");
+        let err = decode("grpc", "protobuf", b"{}").expect_err("unsupported");
         let msg = err.to_string();
         assert!(msg.contains("normalizer plugin"), "guidance present: {msg}");
+    }
+
+    #[test]
+    fn json_rpc_body_decodes_as_payload_json() {
+        // Connectors disassemble json-rpc frames; the pipeline receives the
+        // extracted payload and decodes it as plain JSON.
+        let v = decode("json-rpc", "json", br#"{"id":9}"#).expect("decode");
+        assert_eq!(v["id"], 9);
     }
 }

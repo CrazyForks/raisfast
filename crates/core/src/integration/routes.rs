@@ -219,6 +219,10 @@ pub async fn push(
                 None => (code, "").into_response(),
             }
         }
+        // HTTP ingress never produces these; stream connectors consume them.
+        AckAction::RpcReply { .. } | AckAction::None => {
+            (StatusCode::INTERNAL_SERVER_ERROR, "unexpected ack kind").into_response()
+        }
     }
 }
 
@@ -256,7 +260,9 @@ pub fn routes(
     let r = crate::reg_route!(r, registry, false, "/admin/integration/receipts/{id}/trace", get, crate::integration::admin::get_trace, "integration", "admin/integration");
     let r = crate::reg_route!(r, registry, false, "/admin/integration/channels", get, crate::integration::admin::list_channels, "integration", "admin/integration");
     let r = crate::reg_route!(r, registry, false, "/admin/integration/channels", post, crate::integration::admin::create_channel, "integration", "admin/integration");
+    let r = crate::reg_route!(r, registry, false, "/admin/integration/channels/health", get, crate::integration::admin::channels_health, "integration", "admin/integration");
     let r = crate::reg_route!(r, registry, false, "/admin/integration/channels/{id}", get, crate::integration::admin::get_channel, "integration", "admin/integration");
+    let r = crate::reg_route!(r, registry, false, "/admin/integration/channels/{id}/health", get, crate::integration::admin::channel_health, "integration", "admin/integration");
     let r = crate::reg_route!(r, registry, false, "/admin/integration/channels/{id}", put, crate::integration::admin::update_channel, "integration", "admin/integration");
     let r = crate::reg_route!(r, registry, false, "/admin/integration/channels/{id}", delete, crate::integration::admin::delete_channel, "integration", "admin/integration");
     let r = crate::reg_route!(r, registry, false, "/admin/integration/channels/{id}/test-mapping", post, crate::integration::admin::test_mapping, "integration", "admin/integration");

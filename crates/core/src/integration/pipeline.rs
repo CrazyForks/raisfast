@@ -19,7 +19,7 @@ use crate::db::pool::DbConnection;
 use crate::errors::app_error::{AppError, AppResult};
 use crate::event::{Event, EventEmitter};
 use crate::integration::channel::ItgChannel;
-use crate::integration::envelope::InboundEnvelope;
+use crate::integration::envelope::{InboundEnvelope, InboundKind};
 use crate::integration::framing;
 use crate::integration::mapping::{self, MappingPlan, Normalized};
 use crate::integration::receipt;
@@ -35,6 +35,12 @@ use crate::utils::tz::Timestamp;
 pub enum AckAction {
     /// Push mode: HTTP status + optional body.
     Http { status: u16, body: Option<String> },
+    /// Stream mode with JSON-RPC ack-by-reply (Slack Socket Mode): send the
+    /// result frame back on the SAME connection (§5.3).
+    RpcReply { envelope_id: String },
+    /// No wire-level ack (fire-and-forget / pull / puback handled by the
+    /// connector itself after the pipeline completes).
+    None,
 }
 
 /// Terminal outcome of one pipeline pass.
@@ -75,6 +81,8 @@ pub enum RetryResult {
 pub struct Pipeline {
     pool: crate::db::Pool,
     storage_root: String,
+    /// Telemetry batch buffers + stats (§6.3 吞吐分级).
+    pub(crate) batcher: crate::integration::batch::TelemetryBatcher,
     repo: ContentRepository,
     registry: Arc<ContentTypeRegistry>,
     emitter: EventEmitter,
@@ -99,6 +107,7 @@ impl Pipeline {
             repo: ContentRepository::new(pool.clone()),
             pool,
             storage_root,
+            batcher: crate::integration::batch::TelemetryBatcher::new(),
             registry,
             emitter,
             vault,
@@ -181,6 +190,23 @@ impl Pipeline {
         .await
     }
 
+    /// Stream/listen entry: run the pipeline for one connector-delivered
+    /// frame. Verification is `none` (trust was established at connect time
+    /// via credentials); the connector interprets the returned [`AckAction`].
+    pub async fn run_stream_frame(
+        &self,
+        channel: &Arc<ItgChannel>,
+        body: Vec<u8>,
+    ) -> PipelineOutcome {
+        let req = crate::integration::verify::InboundHttpRequest {
+            method: "POST".into(),
+            query: String::new(),
+            headers: Vec::new(),
+            body,
+        };
+        self.run_push(channel, &req).await
+    }
+
     async fn run_push_traced(
         &self,
         channel: &Arc<ItgChannel>,
@@ -244,6 +270,66 @@ impl Pipeline {
                 retry_scheduled: None,
             };
         };
+
+        // ── Telemetry sampling (§10.3): drop before any DB write ──────
+        if normalized.kind == InboundKind::Telemetry && !sample_hit(channel.sample_rate()) {
+            timeline.push(StepEntry::done("sampled", 0, "dropped-by-sample-rate"));
+            tracing::debug!(
+                trace_id = receipt_id,
+                channel = %channel.channel_key,
+                "telemetry dropped by sample_rate"
+            );
+            return PipelineOutcome {
+                ack: AckAction::Http { status: 200, body: None },
+                receipt_id,
+                duplicate: false,
+                delivered: false,
+                retry_scheduled: None,
+            };
+        }
+
+        // ── Telemetry batch path (§6.3): buffer, flush as one transaction ──
+        if normalized.kind == InboundKind::Telemetry {
+            let mut target_data = normalized.payload.clone();
+            if let Value::Object(obj) = &mut target_data {
+                obj.insert(
+                    "external_id".into(),
+                    Value::String(normalized.external_id.clone()),
+                );
+            }
+            let snapshot = InboundEnvelope {
+                receipt_id: SnowflakeId::new(receipt_id),
+                channel_id: channel.id,
+                provider: channel.provider.clone(),
+                external_id: normalized.external_id.clone(),
+                sender: normalized.sender.clone(),
+                recipient: None,
+                kind: InboundKind::Telemetry,
+                payload: normalized.payload.clone(),
+                raw_ref: None, // batch path skips per-item raw archive
+                connection: None,
+                ingested_at: now,
+                received_at: now,
+            };
+            let item = crate::integration::batch::BatchItem {
+                receipt_id,
+                external_id: normalized.external_id.clone(),
+                hash: receipt::payload_hash(&req.body),
+                envelope: serde_json::to_value(&snapshot).unwrap_or(Value::Null),
+                target_data,
+                target_type: channel.target_type.clone(),
+                tenant_id: channel.tenant_id.clone(),
+                received_at: now,
+            };
+            self.batcher.submit(channel.id.0, item);
+            return PipelineOutcome {
+                ack: AckAction::Http { status: 200, body: None },
+                receipt_id,
+                duplicate: false,
+                delivered: false, // batched, not yet routed
+                retry_scheduled: None,
+            };
+        }
 
         // ── Raw archive (pre-tx; file IO stays outside the write lock) ──
         let raw_ref = match self.archive_raw(channel, receipt_id, &req.body).await {
@@ -853,6 +939,107 @@ impl Pipeline {
         }
     }
 
+    /// Flush one drained batch in a single transaction (§6.3): INSERT IGNORE
+    /// receipts + CT writes + delivered marks — one commit for N items.
+    pub(crate) async fn flush_batch_items(
+        &self,
+        channel_id: i64,
+        items: Vec<crate::integration::batch::BatchItem>,
+    ) -> Result<(usize, usize), AppError> {
+        let n = items.len();
+        if n == 0 {
+            return Ok((0, 0));
+        }
+        let target_type = items[0].target_type.clone();
+        let tenant_id = items[0].tenant_id.clone();
+        let ct = self
+            .registry
+            .get(&target_type)
+            .or_else(|| self.registry.get(&target_type.replace('_', "-")))
+            .ok_or_else(|| {
+                AppError::BadRequest(format!("target content type '{target_type}' not found"))
+            })?;
+        let save_ctx = SaveContext {
+            user_id: None,
+            user_int_id: None,
+            user_role: None,
+            tenant_id: Some(tenant_id.clone()),
+        };
+        let now = crate::utils::tz::now_utc();
+        let steps = Value::Array(vec![serde_json::json!({"step": "batch"})]);
+
+        let mut delivered = 0_usize;
+        crate::in_transaction!(&self.pool, tx, {
+            for item in &items {
+                let inserted = receipt::insert_ignore_tx(
+                    &mut tx,
+                    SnowflakeId::new(item.receipt_id),
+                    SnowflakeId::new(channel_id),
+                    &item.external_id,
+                    "telemetry",
+                    &item.hash,
+                    item.received_at,
+                )
+                .await?;
+                if inserted.is_none() {
+                    continue; // duplicate absorbed — no CT write, no delivered mark
+                }
+                let created = self
+                    .repo
+                    .tx_insert(
+                        &mut tx,
+                        &ct,
+                        item.target_data.clone(),
+                        Some(&tenant_id),
+                        &save_ctx,
+                    )
+                    .await?;
+                let target_id = created
+                    .get("id")
+                    .and_then(Value::as_i64)
+                    .map(SnowflakeId::new);
+                receipt::mark_delivered_tx(
+                    &mut tx,
+                    SnowflakeId::new(item.receipt_id),
+                    &item.envelope,
+                    &steps,
+                    target_id,
+                    now,
+                )
+                .await?;
+                delivered += 1;
+            }
+            Ok::<(), AppError>(())
+        })?;
+        Ok((delivered, n))
+    }
+
+    /// Spawn the batch flusher (window/size trigger scanner). Holds only a
+    /// `Weak` self-reference so the task dies with the pipeline.
+    pub fn spawn_batch_flusher(self: &std::sync::Arc<Self>) {
+        let weak = std::sync::Arc::downgrade(self);
+        tokio::spawn(async move {
+            let mut tick = tokio::time::interval(std::time::Duration::from_millis(50));
+            loop {
+                tick.tick().await;
+                let Some(pipeline) = weak.upgrade() else {
+                    break;
+                };
+                let ready = pipeline.batcher.drain_ready();
+                for (channel_id, items) in ready {
+                    let n = items.len() as u64;
+                    match pipeline.flush_batch_items(channel_id, items).await {
+                        Ok(_) => pipeline.batcher.record_flush(channel_id, n),
+                        Err(err) => {
+                            tracing::error!(channel_id, error = %err, "telemetry batch flush failed");
+                            pipeline.batcher.record_flush_error(channel_id, &err.to_string());
+                        }
+                    }
+                }
+            }
+        });
+    }
+
     /// Public wrapper so the `ingress.retry` job handler can reschedule.
     pub async fn schedule_retry_public(&self, trace_id: i64, attempt: i64) {
         self.schedule_retry_job(trace_id, attempt).await;
@@ -1146,6 +1333,22 @@ impl Pipeline {
             Ok(())
         })
     }
+}
+
+/// Percentage dice roll: true = keep this telemetry envelope.
+fn sample_hit(rate_percent: u64) -> bool {
+    if rate_percent >= 100 {
+        return true;
+    }
+    if rate_percent == 0 {
+        return false;
+    }
+    let mut buf = [0u8; 2];
+    if getrandom::fill(&mut buf).is_err() {
+        return true; // fail-open on entropy errors: keep the data
+    }
+    let roll = u16::from_le_bytes(buf) % 100;
+    (roll as u64) < rate_percent
 }
 
 /// Append a retry/redelivery pass summary onto the stored first-pass timeline.

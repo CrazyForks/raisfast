@@ -4,6 +4,13 @@
 
 pub mod http_pull;
 
+#[cfg(feature = "integration-stream")]
+pub mod mqtt_client;
+#[cfg(feature = "integration-stream")]
+pub mod tcp_listen;
+#[cfg(feature = "integration-stream")]
+pub mod ws_client;
+
 /// One pull execution summary (admin/job-log facing).
 #[derive(Debug, Clone, Copy, Default, serde::Serialize)]
 pub struct PullSummary {

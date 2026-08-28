@@ -39,6 +39,14 @@ pub fn event_type_name(event: &Event) -> Cow<'static, str> {
     event.display_name()
 }
 
+struct ActiveGuard(&'static std::sync::atomic::AtomicU64);
+
+impl Drop for ActiveGuard {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
 /// SSE event subscription endpoint
 ///
 /// - **Method/Path:** `GET /api/v1/events`
@@ -50,6 +58,18 @@ pub async fn subscribe(
     State(state): State<crate::AppState>,
     Query(query): Query<SubscribeQuery>,
 ) -> crate::errors::app_error::AppResult<Sse<impl Stream<Item = Result<SseEvent, Infallible>>>> {
+    // Connection cap (§10.2): refuse beyond MAX_SSE_CLIENTS concurrent streams.
+    static ACTIVE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    const MAX_SSE_CLIENTS: u64 = 64;
+    let current = ACTIVE.load(std::sync::atomic::Ordering::Relaxed);
+    if current >= MAX_SSE_CLIENTS {
+        return Err(crate::errors::app_error::AppError::TooManyRequests(
+            "SSE connection cap reached".into(),
+        ));
+    }
+    ACTIVE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let guard = ActiveGuard(&ACTIVE);
+
     let rx = state.eventbus.subscribe();
     let filter_types: Vec<String> = query
         .filter
@@ -65,9 +85,26 @@ pub async fn subscribe(
             }
         };
 
-        let type_name = event_type_name(arc_event.as_ref());
+        // `Event::Custom` surfaces its inner event_type as the SSE event name
+        // (e.g. `ingress.received`, `integration.channel_state`) so filters
+        // like `integration.*` work; other events keep their display name.
+        let custom_type = match arc_event.as_ref() {
+            Event::Custom { event_type, .. } => Some(event_type.clone()),
+            _ => None,
+        };
+        let type_name = custom_type
+            .clone()
+            .map(std::borrow::Cow::Owned)
+            .unwrap_or_else(|| event_type_name(arc_event.as_ref()));
 
-        if !filter_types.is_empty() && !filter_types.iter().any(|f| f == type_name.as_ref()) {
+        if !filter_types.is_empty()
+            && !filter_types.iter().any(|f| {
+                f == type_name.as_ref()
+                    || (custom_type.is_some() && f == "Custom")
+                    || f.strip_suffix('*')
+                        .is_some_and(|prefix| type_name.starts_with(prefix))
+            })
+        {
             return None;
         }
 
@@ -84,6 +121,11 @@ pub async fn subscribe(
         Some(Ok(sse_event))
     });
 
+    let stream = stream.map(move |item| {
+        let _hold = &guard;
+        item
+    });
+    // Guard released when the stream is dropped (client disconnect).
     Ok(Sse::new(stream).keep_alive(
         KeepAlive::new()
             .interval(std::time::Duration::from_secs(30))

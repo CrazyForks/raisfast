@@ -36,6 +36,7 @@ pub struct CreateChannelRequest {
     pub mapping: Option<Value>,
     pub pull_semantics: Option<String>,
     pub pull_config: Option<Value>,
+    pub stream_config: Option<Value>,
     #[serde(default = "default_redelivery_max")]
     pub redelivery_max: i64,
     pub backpressure: Option<Value>,
@@ -62,6 +63,7 @@ pub struct UpdateChannelRequest {
     pub credentials: Option<Value>,
     pub mapping: Option<Value>,
     pub pull_config: Option<Value>,
+    pub stream_config: Option<Value>,
     pub redelivery_max: Option<i64>,
     pub backpressure: Option<Value>,
     pub route_extra: Option<Value>,
@@ -88,24 +90,36 @@ fn channel_to_json(ch: &ItgChannel) -> Value {
 /// subset). Rejects meaningless or not-yet-supported combinations at save
 /// time instead of runtime.
 fn validate_stack(req: &CreateChannelRequest) -> Result<(), AppError> {
-    let supported_modes = ["push", "pull"];
-    if !supported_modes.contains(&req.mode.as_str()) {
+    const MODE_TRANSPORTS: &[(&str, &[&str])] = &[
+        ("push", &["http1", "http2"]),
+        ("pull", &["http1", "http2"]),
+        ("stream", &["ws", "mqtt"]),
+        ("listen", &["tcp"]),
+    ];
+    let allowed = MODE_TRANSPORTS
+        .iter()
+        .find(|(m, _)| *m == req.mode)
+        .map(|(_, ts)| *ts);
+    let Some(allowed) = allowed else {
         return Err(AppError::BadRequest(format!(
-            "mode '{}' not supported yet (push | pull) — stream/listen arrive in P2",
+            "mode '{}' not supported (push | pull | stream | listen)",
             req.mode
         )));
-    }
-    let supported_transports = ["http1", "http2"];
-    if !supported_transports.contains(&req.transport.as_str()) {
+    };
+    if !allowed.contains(&req.transport.as_str()) {
         return Err(AppError::BadRequest(format!(
-            "transport '{}' not supported in this phase — ws/mqtt/imap/smtp/sftp arrive later",
-            req.transport
+            "mode '{}' allows transports {:?} — got '{}'",
+            req.mode, allowed, req.transport
         )));
     }
-    if req.framing != "raw" || req.codec != "json" {
+    let framing_ok = match (req.framing.as_str(), req.codec.as_str()) {
+        ("raw", "json") => true,
+        ("json-rpc", "json") if req.mode == "stream" && req.transport == "ws" => true,
+        _ => false,
+    };
+    if !framing_ok {
         return Err(AppError::BadRequest(
-            "framing 'raw' + codec 'json' only in this phase — json-rpc/grpc/soap/mime later"
-                .into(),
+            "framing+codec must be raw+json (or json-rpc+json on ws stream)".into(),
         ));
     }
     let supported_verify = ["hmac-sha256", "token", "challenge", "none"];
@@ -118,6 +132,23 @@ fn validate_stack(req: &CreateChannelRequest) -> Result<(), AppError> {
     if req.channel_key.contains('/') || req.channel_key.is_empty() {
         return Err(AppError::BadRequest(
             "channel_key must be a non-empty path segment (no '/')".into(),
+        ));
+    }
+    if req.mode == "stream" {
+        if req.endpoint.as_deref().unwrap_or("").is_empty() {
+            return Err(AppError::BadRequest(
+                "stream requires a ws:// or mqtts:// endpoint".into(),
+            ));
+        }
+        if req.stream_config.is_none() {
+            return Err(AppError::BadRequest(
+                "stream requires stream_config (subscribe/heartbeat/topics)".into(),
+            ));
+        }
+    }
+    if req.mode == "listen" && req.endpoint.as_deref().unwrap_or("").is_empty() {
+        return Err(AppError::BadRequest(
+            "listen requires a host:port bind endpoint".into(),
         ));
     }
     if req.mode == "pull" {
@@ -226,6 +257,7 @@ pub async fn create_channel(
         normalizer_plugin: None,
         pull_semantics: req.pull_semantics.clone(),
         pull_config: req.pull_config.clone(),
+        stream_config: req.stream_config.clone(),
         ack_kind: if req.mode == "pull" {
             "none".to_string()
         } else {
@@ -246,6 +278,7 @@ pub async fn create_channel(
     };
     channel::model::insert(&state.pool, &ch).await?;
     plane.channels().refresh().await?;
+    plane.wake_supervisor();
     Ok(ApiResponse::success(channel_to_json(&ch)))
 }
 
@@ -283,6 +316,9 @@ pub async fn update_channel(
     if let Some(pull_config) = &req.pull_config {
         ch.pull_config = Some(pull_config.clone());
     }
+    if let Some(stream_config) = &req.stream_config {
+        ch.stream_config = Some(stream_config.clone());
+    }
     if let Some(max) = req.redelivery_max {
         ch.redelivery_max = max;
     }
@@ -311,6 +347,7 @@ pub async fn update_channel(
             "credentials" => ch.credentials.as_deref(),
             "mapping" => ch.mapping.as_ref(),
             "pull_config" => ch.pull_config.as_ref(),
+            "stream_config" => ch.stream_config.as_ref(),
             "redelivery_max" => ch.redelivery_max,
             "backpressure" => ch.backpressure.as_ref(),
             "route_extra" => ch.route_extra.as_ref(),
@@ -321,6 +358,7 @@ pub async fn update_channel(
     )?;
     AppError::expect_affected(&result, "itg_channel")?;
     plane.channels().refresh().await?;
+    plane.wake_supervisor();
     Ok(ApiResponse::success(channel_to_json(&ch)))
 }
 
@@ -335,6 +373,7 @@ pub async fn delete_channel(
     channel::model::delete_by_id(&state.pool, id).await?;
     if let Some(plane) = state.integration.as_ref() {
         plane.channels().refresh().await?;
+        plane.wake_supervisor();
     }
     Ok(ApiResponse::success(()))
 }
@@ -427,6 +466,68 @@ pub async fn test_connection(
         "reachable": true,
         "status": resp.status().as_u16(),
     })))
+}
+
+// ── Health (P2-M5: supervisor metrics + batch stats + DB status) ─────
+
+fn health_body(
+    ch: &ItgChannel,
+    sup: Option<&crate::integration::supervisor::ChannelHealth>,
+    batch: Option<&crate::integration::batch::BatchStats>,
+) -> Value {
+    json!({
+        "channel_id": ch.id, "channel_key": ch.channel_key,
+        "mode": ch.mode, "transport": ch.transport,
+        "enabled": ch.enabled, "status": ch.status,
+        "last_error": ch.last_error,
+        "supervisor": sup,
+        "telemetry_batch": batch,
+    })
+}
+
+/// GET /admin/integration/channels/health — aggregate health cards.
+pub async fn channels_health(
+    auth: AuthUser,
+    State(state): State<AppState>,
+) -> AppResult<ApiResponse<Vec<Value>>> {
+    auth.ensure_admin()?;
+    auth.ensure_scope("integration", TokenAction::Read)?;
+    let plane = state
+        .integration
+        .as_ref()
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("integration plane disabled")))?;
+    let channels = channel::model::find_all(&state.pool).await?;
+    let sup = plane.supervisor().map(|s| s.health_snapshot());
+    let sup_map: std::collections::HashMap<i64, _> = sup
+        .map(|v| v.into_iter().map(|h| (h.channel_id, h)).collect())
+        .unwrap_or_default();
+    let batch_map = plane.telemetry_batch_stats();
+    let cards: Vec<Value> = channels
+        .iter()
+        .map(|ch| health_body(ch, sup_map.get(&ch.id.0), batch_map.get(&ch.id.0)))
+        .collect();
+    Ok(ApiResponse::success(cards))
+}
+
+/// GET /admin/integration/channels/{id}/health — single channel detail.
+pub async fn channel_health(
+    auth: AuthUser,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> AppResult<ApiResponse<Value>> {
+    auth.ensure_admin()?;
+    auth.ensure_scope("integration", TokenAction::Read)?;
+    let id = crate::types::snowflake_id::parse_id(&id)?;
+    let ch = channel::model::find_by_id(&state.pool, id).await?;
+    let plane = state
+        .integration
+        .as_ref()
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("integration plane disabled")))?;
+    let sup = plane
+        .supervisor()
+        .and_then(|s| s.health_snapshot().into_iter().find(|h| h.channel_id == id.0));
+    let batch = plane.telemetry_batch_stats().get(&id.0).cloned();
+    Ok(ApiResponse::success(health_body(&ch, sup.as_ref(), batch.as_ref())))
 }
 
 // ── Receipts & trace ─────────────────────────────────────────────────

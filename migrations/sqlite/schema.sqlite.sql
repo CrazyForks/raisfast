@@ -1124,6 +1124,7 @@ CREATE TABLE IF NOT EXISTS itg_channels (
     normalizer_plugin TEXT,
     pull_semantics TEXT,
     pull_config TEXT,
+    stream_config TEXT,
     ack_kind TEXT NOT NULL DEFAULT 'http-200',
     redelivery_max INTEGER NOT NULL DEFAULT 5,
     backpressure TEXT,

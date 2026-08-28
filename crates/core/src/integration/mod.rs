@@ -16,6 +16,7 @@
 //! - [`trace`] — `TRACE_CTX` task-local + step-timeline recorder
 
 pub mod admin;
+pub mod batch;
 pub mod channel;
 pub mod connector;
 pub mod cursor;
@@ -25,6 +26,7 @@ pub mod mapping;
 pub mod pipeline;
 pub mod receipt;
 pub mod routes;
+pub mod supervisor;
 pub mod trace;
 pub mod vault;
 pub mod verify;
@@ -64,6 +66,7 @@ use crate::db::Pool;
 ///
 /// Built once at startup ([`IntegrationPlane::init`]) and shared across handlers.
 pub struct IntegrationPlane {
+    supervisor: std::sync::OnceLock<std::sync::Arc<supervisor::IngressSupervisor>>,
     pool: crate::db::Pool,
     alert_emitter: crate::event::EventEmitter,
     config: IntegrationConfig,
@@ -99,10 +102,12 @@ impl IntegrationPlane {
             pool,
             storage_root,
             registry,
-            emitter,
+            emitter.clone(),
             vault.clone(),
         ));
+        pipeline.spawn_batch_flusher();
         Ok(Self {
+            supervisor: std::sync::OnceLock::new(),
             pool: pool_handle,
             alert_emitter,
             config,
@@ -147,6 +152,35 @@ impl IntegrationPlane {
     #[must_use]
     pub fn limiter(&self) -> &routes::IngressRateLimiter {
         &self.limiter
+    }
+
+    /// Install + start the supervisor (once, at server startup).
+    #[must_use]
+    pub fn ensure_supervisor(
+        self: &std::sync::Arc<Self>,
+    ) -> std::sync::Arc<supervisor::IngressSupervisor> {
+        self.supervisor
+            .get_or_init(|| supervisor::IngressSupervisor::start(std::sync::Arc::clone(self)))
+            .clone()
+    }
+
+    /// Supervisor handle, if started.
+    #[must_use]
+    pub fn supervisor(&self) -> Option<std::sync::Arc<supervisor::IngressSupervisor>> {
+        self.supervisor.get().cloned()
+    }
+
+    /// Telemetry batch stats (health API source).
+    #[must_use]
+    pub fn telemetry_batch_stats(&self) -> std::collections::HashMap<i64, crate::integration::batch::BatchStats> {
+        self.pipeline.batcher.stats_snapshot()
+    }
+
+    /// Wake the supervisor after admin channel writes (hot enable/disable).
+    pub fn wake_supervisor(&self) {
+        if let Some(sup) = self.supervisor() {
+            sup.wake();
+        }
     }
 
     /// Emit an `integration.alert` event (observability alerts, §10.2).

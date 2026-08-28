@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO itg_channels (id, channel_key, provider, display_name, mode, transport, framing, codec, endpoint, verify_kind, verify_config, credentials, mapping, normalizer_plugin, pull_semantics, pull_config, stream_config, ack_kind, redelivery_max, backpressure, target_type, route_extra, status, enabled, version, shadow, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 28
+    },
+    "nullable": []
+  },
+  "hash": "383a74c2e356e3d249908ac4158934cc64ea7a2a3cdb72a3b0a1dcf9a07cf69c"
+}

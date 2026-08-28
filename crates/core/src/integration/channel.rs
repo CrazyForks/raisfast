@@ -55,6 +55,8 @@ pub struct ItgChannel {
     pub pull_semantics: Option<String>,
     /// Pull connector template: list_path / id_field / param / page_size (§5.3).
     pub pull_config: Option<Value>,
+    /// Stream/listen connector template: subscribe calls, heartbeat, framing.
+    pub stream_config: Option<Value>,
     /// http-200 | puback | rpc-reply | grpc-status | smtp-2xx | none
     pub ack_kind: String,
     pub redelivery_max: i64,
@@ -91,6 +93,18 @@ impl ItgChannel {
             .and_then(|r| r.get("retry_mode"))
             .and_then(Value::as_str)
             == Some("external")
+    }
+
+    /// Telemetry sampling rate in percent, 0-100 (backpressure.sample_rate,
+    /// §10.3). 100 (default) keeps everything.
+    #[must_use]
+    pub fn sample_rate(&self) -> u64 {
+        self.backpressure
+            .as_ref()
+            .and_then(|b| b.get("sample_rate"))
+            .and_then(Value::as_u64)
+            .unwrap_or(100)
+            .min(100)
     }
 
     /// `archive-strict` (route_extra): archiving failures fail the pipeline
@@ -148,6 +162,7 @@ pub mod model {
                 "normalizer_plugin" => ch.normalizer_plugin.as_deref(),
                 "pull_semantics" => ch.pull_semantics.as_deref(),
                 "pull_config" => ch.pull_config.as_ref(),
+                "stream_config" => ch.stream_config.as_ref(),
                 "ack_kind" => &ch.ack_kind,
                 "redelivery_max" => ch.redelivery_max,
                 "backpressure" => ch.backpressure.as_ref(),
@@ -191,9 +206,9 @@ pub mod model {
     pub async fn find_all(pool: &crate::db::Pool) -> AppResult<Vec<ItgChannel>> {
         const CHANNEL_COLS: &str = "id, tenant_id, channel_key, provider, display_name, mode, \
              transport, framing, codec, endpoint, verify_kind, verify_config, credentials, \
-             mapping, normalizer_plugin, pull_semantics, pull_config, ack_kind, \
-             redelivery_max, backpressure, target_type, route_extra, status, last_error, \
-             lease_owner, enabled, version, shadow, created_at, updated_at";
+             mapping, normalizer_plugin, pull_semantics, pull_config, stream_config, \
+             ack_kind, redelivery_max, backpressure, target_type, route_extra, status, \
+             last_error, lease_owner, enabled, version, shadow, created_at, updated_at";
         let sql = format!("SELECT {CHANNEL_COLS} FROM itg_channels");
         let rows: Vec<ItgChannel> =
             sqlx::query_as::<crate::db::pool::Db, ItgChannel>(crate::db::safe_sql(&sql))
@@ -312,6 +327,7 @@ mod tests {
             normalizer_plugin: None,
             pull_semantics: None,
             pull_config: None,
+            stream_config: None,
             ack_kind: "http-200".into(),
             redelivery_max: 5,
             backpressure: None,

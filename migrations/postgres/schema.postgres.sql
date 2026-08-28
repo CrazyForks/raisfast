@@ -1118,6 +1118,7 @@ CREATE TABLE IF NOT EXISTS itg_channels (
     normalizer_plugin TEXT,
     pull_semantics TEXT,
     pull_config JSONB,
+    stream_config JSONB,
     ack_kind TEXT NOT NULL DEFAULT 'http-200',
     redelivery_max BIGINT NOT NULL DEFAULT 5,
     backpressure JSONB,
