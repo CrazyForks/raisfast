@@ -43,6 +43,12 @@ struct AutoreplyConfig {
     failure_status: String,
     conversation_table: String,
     contact_table: String,
+    /// Request body style: `messages` (default, `{query, messages, system}` —
+    /// Dify-ish) or `openai` (`{model, messages:[{role,content}...]}` —
+    /// GLM/OpenAI-compatible chat completions).
+    input_style: String,
+    /// Model id for `openai` style bodies (`glm-4-flash`, …).
+    model: Option<String>,
 }
 
 fn cfg_str(cfg: &serde_json::Map<String, Value>, key: &str) -> Option<String> {
@@ -87,6 +93,8 @@ impl AutoreplyConfig {
                 .and_then(Value::as_str)
                 .unwrap_or("sc_contact")
                 .to_string(),
+            input_style: cfg_str(cfg, "input_style").unwrap_or_else(|| "messages".into()),
+            model: cfg_str(cfg, "model"),
         })
     }
 }
@@ -120,10 +128,9 @@ async fn find_rows(
 pub struct SupportAutoreplyHandler;
 
 fn id_of(row: &Value) -> Option<i64> {
-    row.get("id").and_then(|v| {
-        v.as_i64()
-            .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
-    })
+    // CT rows carry ids as encoded base62 strings when ID_ENCODING is on —
+    // plain `as_i64`/`parse` both fail there.
+    crate::types::snowflake_id::parse_id_value(row.get("id")?)
 }
 
 fn body_of(row: &Value) -> String {
@@ -384,13 +391,13 @@ impl JobHandler for SupportAutoreplyHandler {
         }
 
         // ── LLM call via the egress plane (trace follows the receipt) ───
-        let mut input = serde_json::json!({
-            "query": user_text,
-            "messages": history,
-        });
-        if let Some(system) = &cfg.system_prompt {
-            input["system"] = Value::String(system.clone());
-        }
+        let input = build_llm_input(
+            &cfg.input_style,
+            cfg.model.as_deref(),
+            cfg.system_prompt.as_deref(),
+            history,
+            &user_text,
+        );
         let llm = plane
             .call_api_traced(trace_id, cfg.client.clone(), cfg.op.clone(), input)
             .await;
@@ -464,6 +471,41 @@ impl JobHandler for SupportAutoreplyHandler {
     }
 }
 
+/// Build the LLM request body for the configured style.
+///
+/// - `messages` (default): `{query, messages, system}` — chat-workflow APIs
+/// - `openai`: `{model, messages: [system?, ...history]}` — GLM / OpenAI
+///   compatible chat completions
+fn build_llm_input(
+    style: &str,
+    model: Option<&str>,
+    system: Option<&str>,
+    history: Vec<Value>,
+    query: &str,
+) -> Value {
+    match style {
+        "openai" => {
+            let mut messages = Vec::new();
+            if let Some(sys) = system {
+                messages.push(serde_json::json!({"role": "system", "content": sys}));
+            }
+            messages.extend(history);
+            let mut body = serde_json::json!({"messages": messages});
+            if let Some(model) = model {
+                body["model"] = Value::String(model.to_string());
+            }
+            body
+        }
+        _ => {
+            let mut input = serde_json::json!({"query": query, "messages": history});
+            if let Some(system) = system {
+                input["system"] = Value::String(system.to_string());
+            }
+            input
+        }
+    }
+}
+
 /// Pull the reply text out of the egress output: `output_field` dot-path
 /// (`output.text`) or the whole output when it is a scalar.
 fn extract_reply(output: &Value, output_field: Option<&str>) -> String {
@@ -487,6 +529,40 @@ fn extract_reply(output: &Value, output_field: Option<&str>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn llm_input_openai_style() {
+        // The handler guarantees history ends with the latest user message.
+        let history = vec![
+            serde_json::json!({"role": "user", "content": "hi"}),
+            serde_json::json!({"role": "assistant", "content": "hello"}),
+            serde_json::json!({"role": "user", "content": "继续"}),
+        ];
+        let body = build_llm_input(
+            "openai",
+            Some("glm-4-flash"),
+            Some("你是客服"),
+            history,
+            "继续",
+        );
+        assert_eq!(body["model"], "glm-4-flash");
+        let msgs = body["messages"].as_array().unwrap();
+        assert_eq!(msgs.len(), 4);
+        assert_eq!(msgs[0]["role"], "system");
+        assert_eq!(msgs[1]["content"], "hi");
+        assert_eq!(msgs[2]["role"], "assistant");
+        assert_eq!(msgs[3]["content"], "继续");
+    }
+
+    #[test]
+    fn llm_input_default_messages_style() {
+        let history = vec![serde_json::json!({"role": "user", "content": "hi"})];
+        let body = build_llm_input("messages", None, Some("你是客服"), history, "hi");
+        assert_eq!(body["query"], "hi");
+        assert_eq!(body["system"], "你是客服");
+        assert_eq!(body["messages"].as_array().unwrap().len(), 1);
+        assert!(body.get("model").is_none());
+    }
 
     #[test]
     fn extract_reply_paths_and_fallbacks() {

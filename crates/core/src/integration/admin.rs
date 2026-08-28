@@ -546,19 +546,24 @@ pub struct ReceiptListParams {
     pub status: Option<String>,
     #[serde(default)]
     pub trace_id: Option<String>,
-    #[serde(flatten)]
-    pub pagination: PaginationParams,
+    // NOTE: not `#[serde(flatten)] PaginationParams` — flatten feeds serde a
+    // string-only map and numeric query params (`page_size=3`) stop parsing.
+    #[serde(default = "crate::utils::pagination::default_page")]
+    pub page: i64,
+    #[serde(default = "crate::utils::pagination::default_page_size")]
+    pub page_size: i64,
 }
 
 /// GET /admin/integration/receipts — papsed, filtered.
 pub async fn list_receipts(
     auth: AuthUser,
     State(state): State<AppState>,
-    Query(mut params): Query<ReceiptListParams>,
+    Query(params): Query<ReceiptListParams>,
 ) -> AppResult<ApiResponse<Value>> {
     auth.ensure_admin()?;
     auth.ensure_scope("integration", TokenAction::Read)?;
-    params.pagination.sanitize();
+    let mut pagination = PaginationParams::from_options(Some(params.page), Some(params.page_size));
+    pagination.sanitize();
 
     // Typed binds: PG rejects `bigint = text` on loose string binds, so ids
     // bind as i64 and status as text — collected in SQL order.
@@ -613,8 +618,8 @@ pub async fn list_receipts(
         q.fetch_one(&state.pool).await?
     };
 
-    let page = params.pagination.page.max(1);
-    let page_size = params.pagination.page_size;
+    let page = pagination.page.max(1);
+    let page_size = pagination.page_size;
     let offset = (page - 1) * page_size;
     let page_sql = format!("{base} ORDER BY id DESC LIMIT {page_size} OFFSET {offset}");
     // Timestamps decode as `Timestamp` (PG TIMESTAMPTZ rejects String decode).

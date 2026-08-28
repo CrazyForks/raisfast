@@ -236,15 +236,33 @@ pub fn serialize_id_as_string<S: serde::Serializer>(
 ///
 /// When `ID_ENCODING=true`, decrypts the base62 string.
 /// Otherwise parses a plain numeric string.
+/// Parse an id from an untyped JSON value: number, plain-digit string or
+/// encoded string (when ID_ENCODING is on). None on anything else.
+#[must_use]
+pub fn parse_id_value(v: &serde_json::Value) -> Option<i64> {
+    match v {
+        serde_json::Value::Number(n) => n.as_i64(),
+        serde_json::Value::String(s) => parse_id(s).ok().map(|id| id.0),
+        _ => None,
+    }
+}
+
 pub fn parse_id(id: &str) -> Result<SnowflakeId, crate::errors::app_error::AppError> {
+    // Plain digits are accepted even when encoding is on: internal callers
+    // (job payloads, DB-derived strings) legitimately carry raw ids. Encoded
+    // ids always contain at least one non-digit base62 char, so the two
+    // forms never genuinely collide.
+    if let Ok(raw) = id.parse::<i64>() {
+        return Ok(SnowflakeId(raw));
+    }
     if *ID_ENCODING_ENABLED {
         decode_id(id)
             .map(SnowflakeId)
             .ok_or_else(|| crate::errors::app_error::AppError::BadRequest("invalid id".into()))
     } else {
-        id.parse::<i64>()
-            .map(SnowflakeId)
-            .map_err(|e| crate::errors::app_error::AppError::BadRequest(format!("invalid id: {e}")))
+        Err(crate::errors::app_error::AppError::BadRequest(
+            "invalid id".into(),
+        ))
     }
 }
 

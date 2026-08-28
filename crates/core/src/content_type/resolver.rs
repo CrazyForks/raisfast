@@ -15,8 +15,8 @@ use super::schema::{ContentTypeSchema, FieldType, RelationType};
 use crate::constants::COL_ID;
 
 fn extract_id_i64(v: &Value) -> Option<i64> {
-    v.as_i64()
-        .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
+    // Encoded-string ids decode via parse_id_value (ID_ENCODING aware).
+    crate::types::snowflake_id::parse_id_value(v)
 }
 use crate::db::DbDriver;
 use crate::db::Pool;
@@ -95,7 +95,8 @@ async fn resolve_many_to_one_batch(
             continue;
         };
         let Some(fk_val) = obj.get(&fk) else { continue };
-        let Some(fk_id) = fk_val.as_i64() else {
+        // FK columns are encoded like ids when ID_ENCODING is on.
+        let Some(fk_id) = crate::types::snowflake_id::parse_id_value(fk_val) else {
             continue;
         };
         if fk_id > 0 {
@@ -158,7 +159,8 @@ async fn resolve_many_to_one_batch(
             continue;
         };
         let Some(fk_val) = obj.get(&fk) else { continue };
-        let Some(fk_id) = fk_val.as_i64() else {
+        // FK columns are encoded like ids when ID_ENCODING is on.
+        let Some(fk_id) = crate::types::snowflake_id::parse_id_value(fk_val) else {
             continue;
         };
         if fk_id == 0 {

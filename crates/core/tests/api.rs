@@ -2989,10 +2989,7 @@ type = "text"
     assert!(status.is_success(), "receipts list: {body:?}");
     let items = body["data"]["items"].as_array().unwrap();
     assert_eq!(items.len(), 1, "filtered list");
-    let trace_id: i64 = items[0]["id"]
-        .as_str()
-        .and_then(|s| s.parse().ok())
-        .unwrap();
+    let trace_id: i64 = raisfast::types::snowflake_id::parse_id_value(&items[0]["id"]).unwrap();
 
     // Detail: envelope + steps timeline.
     let (status, body) = send(
@@ -4676,7 +4673,7 @@ type = "text"
     let egress = body["data"]["egress"].as_array().unwrap();
     assert!(
         egress.iter().any(|r| r["client_key"] == "adm-llm"
-            && r["trace_id"].as_str() == Some(&receipt_id.to_string())),
+            && raisfast::types::snowflake_id::parse_id_value(&r["trace_id"]) == Some(receipt_id)),
         "egress joined into trace: {body:?}"
     );
     assert_eq!(body["data"]["status"], "delivered", "push routed: {body:?}");
@@ -5097,8 +5094,15 @@ async fn integration_autoreply_end_to_end() {
         .json()
         .await
         .unwrap();
+    // The mock's capture list is process-global (parallel tests share it) —
+    // locate THIS test's round-2 request by its user message.
     let bodies = seen["bodies"].as_array().unwrap();
-    let last = bodies.last().unwrap().as_str().unwrap_or("{}");
+    let last = bodies
+        .iter()
+        .rev()
+        .map(|b| b.as_str().unwrap_or("{}"))
+        .find(|b| b.contains("还在吗"))
+        .unwrap_or("{}");
     let prompt: Value = serde_json::from_str(last).unwrap();
     let messages = prompt["messages"].as_array().unwrap();
     assert_eq!(messages.len(), 2, "context_window truncates: {prompt}");

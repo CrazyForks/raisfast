@@ -1,0 +1,41 @@
+[content_type]
+name = "Message"
+singular = "sc_message"
+plural = "sc_messages"
+table = "sc_messages"
+implements = [
+    "ownable",
+    "timestampable",
+]
+
+[fields.conversation_id]
+type = "bigint"
+
+[fields.role]
+type = "text"
+
+[fields.body]
+type = "text"
+
+[fields.external_id]
+type = "text"
+
+[api.list]
+access = "authed"
+cache = false
+
+[api.get]
+access = "authed"
+cache = false
+
+[api.create]
+access = "authed"
+cache = false
+
+[api.update]
+access = "owner"
+cache = false
+
+[api.delete]
+access = "admin"
+cache = false

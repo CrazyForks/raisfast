@@ -1,0 +1,35 @@
+[content_type]
+name = "Contact"
+singular = "sc_contact"
+plural = "sc_contacts"
+table = "sc_contacts"
+implements = [
+    "ownable",
+    "timestampable",
+]
+
+[fields.channel]
+type = "text"
+
+[fields.sender]
+type = "text"
+
+[api.list]
+access = "authed"
+cache = false
+
+[api.get]
+access = "authed"
+cache = false
+
+[api.create]
+access = "authed"
+cache = false
+
+[api.update]
+access = "owner"
+cache = false
+
+[api.delete]
+access = "admin"
+cache = false

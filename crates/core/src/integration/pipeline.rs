@@ -536,7 +536,7 @@ impl Pipeline {
 
         Ok(created
             .get("id")
-            .and_then(Value::as_i64)
+            .and_then(crate::types::snowflake_id::parse_id_value)
             .map(SnowflakeId::new))
     }
 
@@ -1073,7 +1073,7 @@ impl Pipeline {
                     .await?;
                 let target_id = created
                     .get("id")
-                    .and_then(Value::as_i64)
+                    .and_then(crate::types::snowflake_id::parse_id_value)
                     .map(SnowflakeId::new);
                 receipt::mark_delivered_tx(
                     &mut tx,
@@ -1383,7 +1383,7 @@ impl Pipeline {
                         .await?;
                     let target_id = created
                         .get("id")
-                        .and_then(Value::as_i64)
+                        .and_then(crate::types::snowflake_id::parse_id_value)
                         .map(SnowflakeId::new);
                     receipt::mark_delivered_tx(
                         &mut tx,

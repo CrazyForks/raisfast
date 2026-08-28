@@ -785,7 +785,7 @@ immutable = true
             )
             .await
             .unwrap();
-        let id: i64 = created["id"].as_str().unwrap().parse().unwrap();
+        let id: i64 = crate::types::snowflake_id::parse_id_value(&created["id"]).unwrap();
 
         let result = validate_update(&pool, &ct, SnowflakeId(id), &json!({"secret": "new"})).await;
         assert!(result.is_err());
@@ -814,7 +814,7 @@ immutable = true
             )
             .await
             .unwrap();
-        let id: i64 = created["id"].as_str().unwrap().parse().unwrap();
+        let id: i64 = crate::types::snowflake_id::parse_id_value(&created["id"]).unwrap();
 
         let result = validate_update(
             &pool,

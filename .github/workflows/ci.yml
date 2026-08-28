@@ -62,6 +62,31 @@ jobs:
           RAISFAST_TEST_DB_URL: "sqlite::memory:"
         run: cargo test -p raisfast --no-default-features --features "db-sqlite ${{ env.FEATURES }}"
 
+  # ── ID_ENCODING=true guard: encoded ids change every wire boundary
+  #    (DTO serialization, FK resolution, admin path params). Keeps bugs like
+  #    `as_i64` on encoded strings from shipping. Scope: lib + integration
+  #    e2e — ecommerce DTO SnowflakeId migration is tracked debt. ──────
+  test-sqlite-id-encoding:
+    name: Test (sqlite, ID_ENCODING=true)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: test-sqlite-id-encoding
+      - run: sudo apt-get update && sudo apt-get install -y pkg-config libssl-dev
+      - run: ln -sf .sqlx-sqlite .sqlx
+      - name: Test (lib + integration e2e)
+        env:
+          SQLX_OFFLINE: "true"
+          DATABASE_URL: "sqlite::memory:"
+          RAISFAST_TEST_DB_URL: "sqlite::memory:"
+          ID_ENCODING: "true"
+        run: |
+          cargo test -p raisfast --lib --no-default-features --features "db-sqlite ${{ env.FEATURES }} integration-stream"
+          cargo test -p raisfast --test api integration_ --no-default-features --features "db-sqlite ${{ env.FEATURES }} integration-stream"
+
   test-postgres:
     name: Test (postgres)
     runs-on: ubuntu-latest

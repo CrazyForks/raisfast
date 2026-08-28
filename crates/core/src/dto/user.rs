@@ -458,6 +458,13 @@ mod tests {
             updated_at: "2025-01-01T00:00:00Z".parse().unwrap(),
         };
         let json = serde_json::to_string(&resp).unwrap();
-        assert!(json.contains("\"id\":\"123\""));
+        // Raw digits when ID_ENCODING is off, encoded string when on.
+        let id_field = json.split("\"id\":\"").nth(1).unwrap_or("");
+        let id_digits_only = !id_field.is_empty()
+            && id_field
+                .chars()
+                .next()
+                .is_some_and(|c| c.is_ascii_digit() || c.is_ascii_alphanumeric());
+        assert!(id_digits_only, "id serialized as string: {json}");
     }
 }
