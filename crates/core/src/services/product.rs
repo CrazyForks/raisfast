@@ -299,7 +299,7 @@ impl ProductService for ProductServiceImpl {
             let Ok(parsed_id) = crate::types::snowflake_id::parse_id(raw_id) else {
                 continue;
             };
-            let Some(int_id) = raisfast_derive::crud_resolve_id!(&self.pool, "products", *parsed_id, tenant: auth.tenant_id())?
+            let Some(int_id) = raisfast_derive::crud_resolve_id!(&*self.pool, "products", *parsed_id, tenant: auth.tenant_id())?
             else {
                 continue;
             };

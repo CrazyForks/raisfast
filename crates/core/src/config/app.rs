@@ -173,6 +173,8 @@ pub struct AppConfig {
     #[serde(default)]
     pub mcp: McpConfig,
     #[serde(default)]
+    pub integration: IntegrationConfig,
+    #[serde(default)]
     pub oauth: crate::config::oauth::OAuthConfig,
     #[serde(default = "default_true")]
     pub registration_email_enabled: bool,
@@ -555,6 +557,71 @@ impl McpConfig {
 
 fn default_mcp_local_tenant() -> String {
     crate::constants::DEFAULT_TENANT.to_string()
+}
+
+/// Integration Plane configuration.
+///
+/// | Env | Type | Default | Description |
+/// |-----|------|---------|-------------|
+/// | `INTEGRATION_ENABLED` | bool | `true` | Master switch for the integration plane |
+/// | `INTEGRATION_VAULT_KEY` | String | (empty) | Master key for credential encryption (any length; SHA-256 stretched to AES-256). Empty = vault sealed: credential writes are rejected |
+/// | `INTEGRATION_INGRESS_BODY_LIMIT` | usize | `1048576` | Max inbound request body size (bytes) |
+/// | `INTEGRATION_RECEIPTS_RETENTION_DAYS` | u64 | `90` | Receipt retention before archiving/cleanup |
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IntegrationConfig {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// Master key material for the credential vault. Never logged or exposed via API.
+    #[serde(default, skip_serializing)]
+    pub vault_key: Option<String>,
+    /// Max inbound push request body size in bytes (per-channel override possible).
+    #[serde(default = "default_ingress_body_limit")]
+    pub ingress_body_limit: usize,
+    /// Receipts older than this (and delivered/dead) are archived then cleaned.
+    #[serde(default = "default_receipts_retention_days")]
+    pub receipts_retention_days: u64,
+}
+
+impl Default for IntegrationConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            vault_key: None,
+            ingress_body_limit: default_ingress_body_limit(),
+            receipts_retention_days: default_receipts_retention_days(),
+        }
+    }
+}
+
+impl IntegrationConfig {
+    pub fn from_env() -> Self {
+        let defaults = Self::default();
+        Self {
+            enabled: env::var("INTEGRATION_ENABLED")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(true),
+            vault_key: env::var("INTEGRATION_VAULT_KEY")
+                .ok()
+                .filter(|s| !s.is_empty()),
+            ingress_body_limit: env::var("INTEGRATION_INGRESS_BODY_LIMIT")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(defaults.ingress_body_limit),
+            receipts_retention_days: env::var("INTEGRATION_RECEIPTS_RETENTION_DAYS")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(defaults.receipts_retention_days),
+        }
+    }
+}
+
+fn default_ingress_body_limit() -> usize {
+    1_048_576
+}
+
+fn default_receipts_retention_days() -> u64 {
+    90
 }
 
 fn default_mcp_max_result_chars() -> usize {
@@ -1090,6 +1157,7 @@ impl AppConfig {
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(false),
             mcp: McpConfig::from_env(),
+            integration: IntegrationConfig::from_env(),
             oauth: crate::config::oauth::OAuthConfig::from_env(),
             registration_email_enabled: env::var("REGISTRATION_EMAIL_ENABLED")
                 .ok()
@@ -1263,6 +1331,7 @@ impl AppConfig {
             graphql_enabled: false,
             websocket_enabled: false,
             mcp: McpConfig::default(),
+            integration: IntegrationConfig::default(),
             oauth: crate::config::oauth::OAuthConfig {
                 enabled: false,
                 redirect_url: "http://localhost:3000/auth/callback".into(),

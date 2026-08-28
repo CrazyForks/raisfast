@@ -834,14 +834,44 @@ impl ContentRepository {
     pub async fn create(
         &self,
         ct: &ContentTypeSchema,
-        mut data: Value,
+        data: Value,
         tenant_id: Option<&str>,
-        _save_ctx: &SaveContext,
+        save_ctx: &SaveContext,
     ) -> Result<Value, AppError> {
         let _guard = crate::db::connection::acquire_write().await;
         let mut tx = self.pool.begin().await?;
 
-        super::validation::validate_create_tx(&self.pool, ct, &data).await?;
+        let result = self
+            .tx_insert(&mut tx, ct, data, tenant_id, save_ctx)
+            .await?;
+
+        tx.commit()
+            .await
+            .map_err(|e| AppError::Internal(anyhow::Error::from(e).context("commit failed")))?;
+        Ok(result)
+    }
+
+    /// Transaction-participating insert: the caller owns the transaction (and the
+    /// write lock, e.g. via `in_transaction!`) — validation, relation resolution,
+    /// row insert, junction writes and the echo SELECT all run on the caller's
+    /// connection, so this composes atomically with external bookkeeping (the
+    /// integration plane pipeline writes CT rows alongside its receipt in one tx).
+    ///
+    /// Unlike [`Self::create`], this never begins/commits a transaction.
+    ///
+    /// # Errors
+    ///
+    /// Returns `AppError` on validation failure or SQL error; the caller decides
+    /// whether to roll back the enclosing transaction.
+    pub async fn tx_insert(
+        &self,
+        tx: &mut crate::db::pool::DbConnection,
+        ct: &ContentTypeSchema,
+        mut data: Value,
+        tenant_id: Option<&str>,
+        _save_ctx: &SaveContext,
+    ) -> Result<Value, AppError> {
+        super::validation::validate_create_conn(&mut *tx, ct, &data).await?;
         let new_id = crate::utils::id::new_id();
 
         let obj = data
@@ -936,7 +966,7 @@ impl ContentRepository {
                     // column uses its default)
                 } else {
                     let parsed_id = crate::types::snowflake_id::parse_id(&target_id)?;
-                    let int_id = find_existing_id(&self.pool, target_table, parsed_id)
+                    let int_id = find_existing_id_conn(&mut *tx, target_table, parsed_id)
                         .await?
                         .ok_or_else(|| {
                             AppError::BadRequest(format!(
@@ -1028,7 +1058,7 @@ impl ContentRepository {
             }
             let parsed_ids: Vec<i64> = ids.iter().filter_map(|s| s.parse().ok()).collect();
             let int_ids =
-                raisfast_derive::crud_resolve_ids!(&self.pool, target_table, &parsed_ids)?;
+                raisfast_derive::crud_resolve_ids!(&mut *tx, target_table, &parsed_ids)?;
             for target_int_id in int_ids {
                 let jsql = crate::db::Driver::insert_ignore_sql(
                     through_table,
@@ -1061,7 +1091,7 @@ impl ContentRepository {
             }
             let parsed_ids: Vec<i64> = ids.iter().filter_map(|s| s.parse().ok()).collect();
             let int_ids =
-                raisfast_derive::crud_resolve_ids!(&self.pool, target_table, &parsed_ids)?;
+                raisfast_derive::crud_resolve_ids!(&mut *tx, target_table, &parsed_ids)?;
             let usql = format!(
                 "UPDATE {target_table} SET {fk_col} = {} WHERE {COL_ID} = {}",
                 crate::db::Driver::ph(1),
@@ -1076,10 +1106,6 @@ impl ContentRepository {
             }
         }
 
-        tx.commit()
-            .await
-            .map_err(|e| AppError::Internal(anyhow::Error::from(e).context("commit failed")))?;
-
         let columns = ct.column_names(None, true);
         let select_cols = columns.join(", ");
         let sql = format!(
@@ -1089,7 +1115,7 @@ impl ContentRepository {
         );
         let row = sqlx::query(crate::db::safe_sql(&sql))
             .bind(new_id)
-            .fetch_optional(&self.pool)
+            .fetch_optional(&mut *tx)
             .await?;
 
         let id_cols = ct.id_column_set();
@@ -1372,7 +1398,7 @@ impl ContentRepository {
             }
             let parsed_ids: Vec<i64> = ids.iter().filter_map(|s| s.parse().ok()).collect();
             let int_ids =
-                raisfast_derive::crud_resolve_ids!(&self.pool, target_table, &parsed_ids)?;
+                raisfast_derive::crud_resolve_ids!(&mut *tx, target_table, &parsed_ids)?;
             for target_int_id in int_ids {
                 let jsql = crate::db::Driver::insert_ignore_sql(
                     through_table,
@@ -1417,7 +1443,7 @@ impl ContentRepository {
             }
             let parsed_ids: Vec<i64> = ids.iter().filter_map(|s| s.parse().ok()).collect();
             let int_ids =
-                raisfast_derive::crud_resolve_ids!(&self.pool, target_table, &parsed_ids)?;
+                raisfast_derive::crud_resolve_ids!(&mut *tx, target_table, &parsed_ids)?;
             let usql = format!(
                 "UPDATE {target_table} SET {fk_col} = {} WHERE {COL_ID} = {}",
                 crate::db::Driver::ph(1),
@@ -2249,6 +2275,16 @@ pub(crate) async fn find_existing_id(
     id: SnowflakeId,
 ) -> Result<Option<i64>, AppError> {
     Ok(raisfast_derive::crud_resolve_id!(pool, target_table, *id)?)
+}
+
+/// Connection variant of [`find_existing_id`] — runs on a caller-owned
+/// connection (pool or in-flight transaction).
+pub(crate) async fn find_existing_id_conn(
+    conn: &mut crate::db::pool::DbConnection,
+    target_table: &str,
+    id: SnowflakeId,
+) -> Result<Option<i64>, AppError> {
+    Ok(raisfast_derive::crud_resolve_id!(&mut *conn, target_table, *id)?)
 }
 
 /// Generate SQL and column index for querying table column names

@@ -1049,6 +1049,73 @@ CREATE TABLE IF NOT EXISTS shipping_templates (
 );
 
 -- ============================================================
+-- Integration Plane (P1): itg_channels / itg_channel_cursors / itg_receipts
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS itg_channels (
+    id BIGINT PRIMARY KEY,
+    tenant_id VARCHAR(36) NOT NULL DEFAULT 'default',
+    channel_key VARCHAR(255) NOT NULL,
+    provider VARCHAR(100) NOT NULL,
+    display_name VARCHAR(255) NOT NULL,
+    mode VARCHAR(20) NOT NULL,
+    transport VARCHAR(20) NOT NULL,
+    framing VARCHAR(20) NOT NULL,
+    codec VARCHAR(20) NOT NULL,
+    endpoint VARCHAR(500),
+    verify_kind VARCHAR(100) NOT NULL,
+    verify_config JSON,
+    credentials TEXT,
+    mapping JSON,
+    normalizer_plugin VARCHAR(255),
+    pull_semantics VARCHAR(20),
+    pull_config JSON,
+    ack_kind VARCHAR(20) NOT NULL DEFAULT 'http-200',
+    redelivery_max INT NOT NULL DEFAULT 5,
+    backpressure JSON,
+    target_type VARCHAR(255) NOT NULL,
+    route_extra JSON,
+    status VARCHAR(20) NOT NULL DEFAULT 'idle',
+    last_error TEXT,
+    lease_owner VARCHAR(100),
+    enabled BOOLEAN NOT NULL DEFAULT 1,
+    version BIGINT NOT NULL DEFAULT 1,
+    shadow BOOLEAN NOT NULL DEFAULT 0,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uq_itg_channels_tenant_key_version (tenant_id, channel_key, version),
+    INDEX idx_itg_channels_tenant (tenant_id),
+    INDEX idx_itg_channels_status (status)
+);
+
+-- Cursor store: one row per pull channel; advanced by conditional update
+CREATE TABLE IF NOT EXISTS itg_channel_cursors (
+    channel_id BIGINT PRIMARY KEY,
+    cursor_value JSON NOT NULL,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS itg_receipts (
+    id BIGINT PRIMARY KEY,
+    channel_id BIGINT NOT NULL,
+    external_id VARCHAR(255) NOT NULL,
+    kind VARCHAR(30) NOT NULL,
+    payload_hash VARCHAR(128) NOT NULL,
+    raw_ref VARCHAR(500),
+    status VARCHAR(20) NOT NULL DEFAULT 'received',
+    attempts INT NOT NULL DEFAULT 0,
+    next_retry_at DATETIME NULL,
+    envelope JSON,
+    steps JSON,
+    target_id BIGINT,
+    received_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    delivered_at DATETIME NULL,
+    UNIQUE KEY uq_itg_receipts_channel_external (channel_id, external_id),
+    INDEX idx_itg_receipts_channel_status (channel_id, status),
+    INDEX idx_itg_receipts_retry (status, next_retry_at)
+);
+
+-- ============================================================
 -- Seed data
 -- ============================================================
 

@@ -31,6 +31,7 @@ pub mod event;
 pub mod eventbus;
 pub mod graphql;
 pub mod handlers;
+pub mod integration;
 #[cfg(feature = "mcp")]
 pub mod mcp;
 pub mod middleware;
@@ -136,6 +137,7 @@ pub struct AppState {
     pub tenant: Arc<TenantService>,
     pub audit: Arc<AuditService>,
     pub webhook: Arc<WebhookService>,
+    pub integration: Option<Arc<integration::IntegrationPlane>>,
     pub workflow: Arc<WorkflowService>,
     pub storage: Arc<dyn Storage>,
     pub cache: Arc<dyn CacheStore>,
@@ -250,6 +252,22 @@ pub async fn build_app_state(
     .await;
 
     let emitter = crate::event::EventEmitter::new(eventbus.clone(), &plugin_manager);
+    let integration_plane = if config.integration.enabled {
+        let plane = Arc::new(
+            integration::IntegrationPlane::init(
+                pool.clone(),
+                config.integration.clone(),
+                config.storage_root_dir.clone(),
+                ct_registry.clone(),
+                emitter.clone(),
+            )
+            .await?,
+        );
+        integration::set_shared_plane(plane.clone());
+        Some(plane)
+    } else {
+        None
+    };
 
     let order_service: Arc<dyn crate::services::order::OrderService> =
         Arc::new(crate::services::order::OrderServiceImpl::new(
@@ -364,6 +382,7 @@ pub async fn build_app_state(
         tenant: tenant_service,
         audit: audit_service,
         webhook: webhook_service.clone(),
+        integration: integration_plane,
         workflow: Arc::new(WorkflowService::new(pool.clone())),
         storage,
         cache: cache.clone(),

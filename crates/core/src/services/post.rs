@@ -126,7 +126,7 @@ impl PostService for PostServiceImpl {
 
         let category_id = match req.category_id {
             Some(cid) => {
-                raisfast_derive::crud_resolve_id!(&self.pool, "categories", *cid, tenant: auth.tenant_id())?
+                raisfast_derive::crud_resolve_id!(&*self.pool, "categories", *cid, tenant: auth.tenant_id())?
             }
             None => None,
         };
@@ -149,7 +149,7 @@ impl PostService for PostServiceImpl {
                 let mut resolved = Vec::new();
                 for raw_id in ids {
                     let parsed = crate::types::snowflake_id::parse_id(raw_id)?;
-                    if let Some(int_id) = raisfast_derive::crud_resolve_id!(&self.pool, "tags", *parsed, tenant: auth.tenant_id())?
+                    if let Some(int_id) = raisfast_derive::crud_resolve_id!(&*self.pool, "tags", *parsed, tenant: auth.tenant_id())?
                     {
                         resolved.push(int_id);
                     }
@@ -324,7 +324,7 @@ impl PostService for PostServiceImpl {
             let Ok(parsed_id) = crate::types::snowflake_id::parse_id(raw_id) else {
                 continue;
             };
-            let Some(int_id) = raisfast_derive::crud_resolve_id!(&self.pool, "posts", *parsed_id, tenant: auth.tenant_id())?
+            let Some(int_id) = raisfast_derive::crud_resolve_id!(&*self.pool, "posts", *parsed_id, tenant: auth.tenant_id())?
             else {
                 continue;
             };
@@ -449,7 +449,7 @@ impl PostServiceImpl {
 
         let category_id = match req.category_id {
             Some(cid) => {
-                raisfast_derive::crud_resolve_id!(&self.pool, "categories", *cid, tenant: auth.tenant_id())?
+                raisfast_derive::crud_resolve_id!(&*self.pool, "categories", *cid, tenant: auth.tenant_id())?
             }
             None => None,
         };
@@ -458,7 +458,7 @@ impl PostServiceImpl {
                 let mut resolved = Vec::new();
                 for raw_id in ids {
                     let parsed = crate::types::snowflake_id::parse_id(raw_id)?;
-                    if let Some(int_id) = raisfast_derive::crud_resolve_id!(&self.pool, "tags", *parsed, tenant: auth.tenant_id())?
+                    if let Some(int_id) = raisfast_derive::crud_resolve_id!(&*self.pool, "tags", *parsed, tenant: auth.tenant_id())?
                     {
                         resolved.push(int_id);
                     }

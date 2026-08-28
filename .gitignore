@@ -27,3 +27,5 @@ dev-docs/
 fly.toml
 
 /3rd/
+
+crates/core/target/

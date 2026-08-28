@@ -38,11 +38,26 @@ pub async fn validate_create_tx(
     do_validate_create(pool, ct, data).await
 }
 
-async fn do_validate_create(
-    pool: &Pool,
+/// Validate create data on a caller-owned connection (pool or in-flight transaction).
+///
+/// Unique checks run inside the caller's transaction — used by transaction-participating
+/// inserts (e.g. the integration plane pipeline writing CT rows alongside its receipt
+/// bookkeeping in one atomic unit).
+pub async fn validate_create_conn<'e, E>(conn: E, ct: &ContentTypeSchema, data: &Value) -> Result<(), AppError>
+where
+    E: sqlx::Executor<'e, Database = crate::db::pool::Db>,
+{
+    do_validate_create(conn, ct, data).await
+}
+
+async fn do_validate_create<'e, E>(
+    conn: E,
     ct: &ContentTypeSchema,
     data: &Value,
-) -> Result<(), AppError> {
+) -> Result<(), AppError>
+where
+    E: sqlx::Executor<'e, Database = crate::db::pool::Db>,
+{
     let obj = data
         .as_object()
         .ok_or_else(|| AppError::BadRequest("request body must be a JSON object".into()))?;
@@ -180,7 +195,7 @@ async fn do_validate_create(
         }
     }
 
-    check_unique_fields(pool, ct, obj, None, &mut errors).await?;
+    check_unique_fields(conn, ct, obj, None, &mut errors).await?;
 
     finish_validation(errors)
 }
@@ -205,12 +220,15 @@ pub async fn validate_update_tx(
     do_validate_update(pool, ct, id, data).await
 }
 
-async fn do_validate_update(
-    pool: &Pool,
+async fn do_validate_update<'e, E>(
+    conn: E,
     ct: &ContentTypeSchema,
     id: SnowflakeId,
     data: &Value,
-) -> Result<(), AppError> {
+) -> Result<(), AppError>
+where
+    E: sqlx::Executor<'e, Database = crate::db::pool::Db>,
+{
     let obj = data
         .as_object()
         .ok_or_else(|| AppError::BadRequest("request body must be a JSON object".into()))?;
@@ -349,19 +367,31 @@ async fn do_validate_update(
         }
     }
 
-    check_unique_fields(pool, ct, obj, Some(*id), &mut errors).await?;
+    check_unique_fields(conn, ct, obj, Some(*id), &mut errors).await?;
 
     finish_validation(errors)
 }
 
-async fn check_unique_fields(
-    pool: &Pool,
+async fn check_unique_fields<'e, E>(
+    conn: E,
     ct: &ContentTypeSchema,
     obj: &serde_json::Map<String, Value>,
     exclude_id: Option<i64>,
     errors: &mut Vec<String>,
-) -> Result<(), AppError> {
-    let mut sql_builder = String::new();
+) -> Result<(), AppError>
+where
+    E: sqlx::Executor<'e, Database = crate::db::pool::Db>,
+{
+    // Collect all unique checks first, then execute them as ONE `UNION ALL`
+    // round trip — a single consumption of the executor (so the same generic
+    // works for both `&Pool` and a caller-owned `&mut DbConnection` inside a
+    // transaction) and fewer round trips than the previous per-field queries.
+    struct UniqueCheck {
+        field: String,
+        sql: String,
+        val: String,
+    }
+    let mut checks: Vec<UniqueCheck> = Vec::new();
     for field in &ct.fields {
         if !field.unique || field.field_type == FieldType::Blob {
             continue;
@@ -372,44 +402,82 @@ async fn check_unique_fields(
         if is_empty_value(val) {
             continue;
         }
-
-        let val_str = value_to_db_string(val);
-        sql_builder.clear();
-        if exclude_id.is_some() {
-            sql_builder = format!(
-                "SELECT COUNT(*) as cnt FROM {} WHERE {} = {} AND {COL_ID} != {}",
+        let sql = if exclude_id.is_some() {
+            format!(
+                "SELECT COUNT(*) FROM {} WHERE {} = {} AND {COL_ID} != {}",
                 ct.table,
                 field.name,
                 crate::db::Driver::ph(1),
                 crate::db::Driver::ph(2)
-            );
+            )
         } else {
-            sql_builder = format!(
-                "SELECT COUNT(*) as cnt FROM {} WHERE {} = {}",
+            format!(
+                "SELECT COUNT(*) FROM {} WHERE {} = {}",
                 ct.table,
                 field.name,
                 crate::db::Driver::ph(1)
-            );
-        }
-        let sql = &sql_builder;
+            )
+        };
+        checks.push(UniqueCheck {
+            field: field.name.clone(),
+            sql,
+            val: value_to_db_string(val),
+        });
+    }
+    if checks.is_empty() {
+        return Ok(());
+    }
 
-        let row = if let Some(id) = exclude_id {
-            sqlx::query(crate::db::safe_sql(sql))
-                .bind(&val_str)
-                .bind(id)
-                .fetch_one(pool)
-                .await
+    // UNION ALL requires matching placeholders per segment; renumber on PG.
+    let mut segments: Vec<String> = Vec::with_capacity(checks.len());
+    let mut bind_vals: Vec<String> = Vec::new();
+    let mut bind_exclude: Vec<bool> = Vec::new();
+    let mut idx = 1usize;
+    for check in &checks {
+        let seg = if exclude_id.is_some() {
+            let s = check
+                .sql
+                .replace(&crate::db::Driver::ph(1), &crate::db::Driver::ph(idx));
+            let with_id =
+                s.replace(&crate::db::Driver::ph(2), &crate::db::Driver::ph(idx + 1));
+            idx += 2;
+            bind_exclude.push(true);
+            with_id
         } else {
-            sqlx::query(crate::db::safe_sql(sql))
-                .bind(&val_str)
-                .fetch_one(pool)
-                .await
+            let s = check
+                .sql
+                .replace(&crate::db::Driver::ph(1), &crate::db::Driver::ph(idx));
+            idx += 1;
+            bind_exclude.push(false);
+            s
+        };
+        bind_vals.push(check.val.clone());
+        segments.push(seg);
+    }
+
+    let sql = segments.join(" UNION ALL ");
+    let mut query = sqlx::query(crate::db::safe_sql(&sql));
+    for (i, val) in bind_vals.iter().enumerate() {
+        query = query.bind(val);
+        if bind_exclude[i] {
+            // SAFETY-FREE: exclude_id is Some(_) whenever bind_exclude[i] is true
+            if let Some(id) = exclude_id {
+                query = query.bind(id);
+            }
         }
+    }
+    let rows = query
+        .fetch_all(conn)
+        .await
         .map_err(|e| AppError::Internal(anyhow::anyhow!("unique check failed: {e}")))?;
 
-        let count: i64 = row.try_get("cnt").unwrap_or(0);
+    for (i, row) in rows.iter().enumerate() {
+        let count: i64 = row.try_get(0).unwrap_or(0);
         if count > 0 {
-            errors.push(format!("field '{}': value already exists", field.name));
+            errors.push(format!(
+                "field '{}': value already exists",
+                checks[i].field
+            ));
         }
     }
     Ok(())

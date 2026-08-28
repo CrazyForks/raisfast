@@ -1097,6 +1097,75 @@ CREATE INDEX IF NOT EXISTS idx_shipping_templates_tenant ON shipping_templates(t
 CREATE INDEX IF NOT EXISTS idx_shipping_templates_status ON shipping_templates(status);
 
 -- ============================================================
+-- Integration Plane (P1): itg_channels / itg_channel_cursors / itg_receipts
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS itg_channels (
+    id BIGINT PRIMARY KEY,
+    tenant_id TEXT NOT NULL DEFAULT 'default',
+    channel_key TEXT NOT NULL,
+    provider TEXT NOT NULL,
+    display_name TEXT NOT NULL,
+    mode TEXT NOT NULL,
+    transport TEXT NOT NULL,
+    framing TEXT NOT NULL,
+    codec TEXT NOT NULL,
+    endpoint TEXT,
+    verify_kind TEXT NOT NULL,
+    verify_config JSONB,
+    credentials TEXT,
+    mapping JSONB,
+    normalizer_plugin TEXT,
+    pull_semantics TEXT,
+    pull_config JSONB,
+    ack_kind TEXT NOT NULL DEFAULT 'http-200',
+    redelivery_max BIGINT NOT NULL DEFAULT 5,
+    backpressure JSONB,
+    target_type TEXT NOT NULL,
+    route_extra JSONB,
+    status TEXT NOT NULL DEFAULT 'idle',
+    last_error TEXT,
+    lease_owner TEXT,
+    enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    version BIGINT NOT NULL DEFAULT 1,
+    shadow BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW(),
+    UNIQUE (tenant_id, channel_key, version)
+);
+
+CREATE INDEX IF NOT EXISTS idx_itg_channels_tenant ON itg_channels(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_itg_channels_status ON itg_channels(status);
+
+-- Cursor store: one row per pull channel; advanced by conditional update
+CREATE TABLE IF NOT EXISTS itg_channel_cursors (
+    channel_id BIGINT PRIMARY KEY,
+    cursor_value JSONB NOT NULL,
+    updated_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS itg_receipts (
+    id BIGINT PRIMARY KEY,
+    channel_id BIGINT NOT NULL,
+    external_id TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    payload_hash TEXT NOT NULL,
+    raw_ref TEXT,
+    status TEXT NOT NULL DEFAULT 'received',
+    attempts BIGINT NOT NULL DEFAULT 0,
+    next_retry_at TIMESTAMPTZ(0),
+    envelope JSONB,
+    steps JSONB,
+    target_id BIGINT,
+    received_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW(),
+    delivered_at TIMESTAMPTZ(0),
+    UNIQUE (channel_id, external_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_itg_receipts_channel_status ON itg_receipts(channel_id, status);
+CREATE INDEX IF NOT EXISTS idx_itg_receipts_retry ON itg_receipts(status, next_retry_at);
+
+-- ============================================================
 -- Seed data
 -- ============================================================
 

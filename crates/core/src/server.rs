@@ -244,7 +244,8 @@ async fn build_app(
         .merge(tenant::routes(&mut registry, config))
         .merge(crate::handlers::audit::routes(&mut registry, config))
         .merge(crate::webhook::handler::routes(&mut registry, config))
-        .merge(crate::content_type::handler::routes(&mut registry, config));
+        .merge(crate::content_type::handler::routes(&mut registry, config))
+        .merge(crate::integration::routes::routes(&mut registry, config));
 
     if config.builtins.workflow {
         api_v1 = api_v1.merge(workflow::handler::routes(&mut registry, config));

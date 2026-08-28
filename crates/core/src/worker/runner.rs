@@ -157,6 +157,7 @@ impl WorkerRunner {
         } else {
             tracing::warn!("no handler for job type '{job_type}', marking dead");
             self.queue.dead(&job.id, "no handler registered").await?;
+            self.trace_flip(job, false, "no handler registered".to_string()).await;
             self.writeback_cron_log(job, Err("no handler registered".to_string()))
                 .await;
             return Ok(());
@@ -167,6 +168,7 @@ impl WorkerRunner {
         match result {
             Ok(()) => {
                 self.queue.complete(&job.id).await?;
+                self.trace_flip(job, true, elapsed_ms.to_string()).await;
                 self.writeback_cron_log(job, Ok(elapsed_ms)).await;
             }
             Err(e) => {
@@ -177,6 +179,7 @@ impl WorkerRunner {
                 } else {
                     self.queue.fail(&job.id, &err_msg).await?;
                 }
+                self.trace_flip(job, false, err_msg.clone()).await;
                 self.writeback_cron_log(
                     job,
                     Err(format!(
@@ -187,6 +190,27 @@ impl WorkerRunner {
             }
         }
         Ok(())
+    }
+
+    /// Integration-plane trace writeback: flip the receipt's pending
+    /// `job:{type}` placeholder to its terminal state (§10.7). No-op for
+    /// jobs without a `trace_id` payload.
+    async fn trace_flip(&self, job: &super::QueuedJob, ok: bool, detail: String) {
+        if let crate::worker::Job::Custom { job_type, payload } = &job.job
+            && let Some(trace_id) = payload.get("trace_id").and_then(|v| v.as_i64())
+        {
+            let res = crate::integration::receipt::flip_pending_step(
+                &self.pool,
+                crate::types::snowflake_id::SnowflakeId::new(trace_id),
+                job_type,
+                ok,
+                &detail,
+            )
+            .await;
+            if let Err(err) = res {
+                tracing::warn!(trace_id, job_type, error = %err, "trace flip failed");
+            }
+        }
     }
 
     /// Write back the real execution outcome to `cron_execution_log`.

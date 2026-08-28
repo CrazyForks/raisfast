@@ -1379,13 +1379,12 @@ fn expand_resolve_id(input: TokenStream) -> TokenStream {
                 } else {
                     let __qi_table = format!(#qi_fmt_lit, __table);
                     let __id: i64 = #id;
-                    let __pool: &crate::db::Pool = #pool;
                     let mut __ph_idx: usize = 2;
                     #tenant_sql
                     let __sql = format!("SELECT {} FROM {} WHERE {} = {}{}", #qi_id_lit, __qi_table, #qi_id_lit, #ph1_lit, __tenant_sql);
                     let mut __q = sqlx::query_scalar::<crate::db::pool::Db, i64>(crate::db::safe_sql(&__sql)).bind(__id);
                     #tenant_bind
-                    __q.fetch_optional(__pool).await
+                    __q.fetch_optional(#pool).await
                 }
             }
         };
@@ -1399,11 +1398,10 @@ fn expand_resolve_id(input: TokenStream) -> TokenStream {
                 } else {
                     let __qi_table = format!(#qi_fmt_lit, __table);
                     let __id: i64 = #id;
-                    let __pool: &crate::db::Pool = #pool;
                     let __sql = format!("SELECT {} FROM {} WHERE {} = {}", #qi_id_lit, __qi_table, #qi_id_lit, #ph1_lit);
                     sqlx::query_scalar::<crate::db::pool::Db, i64>(crate::db::safe_sql(&__sql))
                         .bind(__id)
-                        .fetch_optional(__pool)
+                        .fetch_optional(#pool)
                         .await
                 }
             }

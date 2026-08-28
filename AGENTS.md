@@ -176,6 +176,10 @@ The project supports SQLite, PostgreSQL, and MySQL simultaneously. SQLite's "eve
 - Public items require `///` doc comments.
 - Handler → Service → Model layering enforced.
 
+## External References
+
+- **Chatwoot (local docker deployment):** `/Users/chriszhong/work/www/service-robot/chatwoot-docker` — when the user mentions the Chatwoot project, look here.
+
 ## Frontend Rules
 
 - **Always use official shadcn (Base UI) components first. Never hand-build components with the same name as shadcn.**

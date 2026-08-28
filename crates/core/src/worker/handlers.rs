@@ -61,6 +61,9 @@ macro_rules! register_cron_handler {
 
 pub mod cache;
 pub mod cron_ping;
+pub mod ingress_retry;
+pub mod ingress_pull;
+pub mod ingress_orphan_scan;
 pub mod db_backup;
 pub mod email;
 pub mod email_verification;

@@ -10,9 +10,10 @@
 //! ```
 
 use axum::body::Body;
+use axum::extract::Query;
 use axum::http::{Request, StatusCode, header};
 use axum::middleware::{from_fn, from_fn_with_state};
-use axum::routing::{delete, get, post as http_post, put};
+use axum::routing::{delete, get, post, post as http_post, put};
 use http_body_util::BodyExt;
 use raisfast::AppState;
 use raisfast::DbDriver;
@@ -81,6 +82,7 @@ async fn build_test_app(pool: raisfast::db::Pool) -> (axum::Router, AppState) {
     let config = Arc::new(test_config());
     let emitter =
         raisfast::event::EventEmitter::eventbus_only(raisfast::eventbus::EventBus::new(256));
+    let content_registry = Arc::new(raisfast::content_type::ContentTypeRegistry::new());
     let state = AppState {
         pool: pool.clone(),
         config: config.clone(),
@@ -169,8 +171,8 @@ async fn build_test_app(pool: raisfast::db::Pool) -> (axum::Router, AppState) {
             pool.clone(),
         ))),
         search: Arc::new(NoopSearchEngine),
-        content_type_registry: Arc::new(raisfast::content_type::ContentTypeRegistry::new()),
-        emitter,
+        content_type_registry: content_registry.clone(),
+        emitter: emitter.clone(),
         protocol_registry: Arc::new({
             let mut reg = raisfast::protocols::ProtocolRegistry::new();
             reg.register(raisfast::protocols::ownable::OwnableProtocol);
@@ -189,6 +191,17 @@ async fn build_test_app(pool: raisfast::db::Pool) -> (axum::Router, AppState) {
         ))),
         audit: Arc::new(raisfast::services::audit::AuditService::new(pool.clone())),
         webhook: Arc::new(raisfast::webhook::WebhookService::new(pool.clone())),
+        integration: Some(Arc::new(
+            raisfast::integration::IntegrationPlane::init(
+                pool.clone(),
+                config.integration.clone(),
+                config.storage_root_dir.clone(),
+                content_registry.clone(),
+                emitter.clone(),
+            )
+            .await
+            .expect("integration plane init"),
+        )),
         workflow: Arc::new(raisfast::workflow::WorkflowService::new(pool.clone())),
         storage: raisfast::storage::create_storage(&config).expect("failed to create storage"),
         cache: Arc::new(raisfast::cache::MemoryCache::new()),
@@ -551,6 +564,38 @@ async fn build_test_app(pool: raisfast::db::Pool) -> (axum::Router, AppState) {
             &mut ct_route_registry,
             &config,
         ))
+        .route(
+            "/ingress/{channel_key}",
+            get(raisfast::integration::routes::challenge)
+                .post(raisfast::integration::routes::push),
+        )
+        .route(
+            "/admin/integration/channels",
+            get(raisfast::integration::admin::list_channels)
+                .post(raisfast::integration::admin::create_channel),
+        )
+        .route(
+            "/admin/integration/channels/{id}",
+            get(raisfast::integration::admin::get_channel)
+                .put(raisfast::integration::admin::update_channel)
+                .delete(raisfast::integration::admin::delete_channel),
+        )
+        .route(
+            "/admin/integration/channels/{id}/test-mapping",
+            post(raisfast::integration::admin::test_mapping),
+        )
+        .route(
+            "/admin/integration/receipts",
+            get(raisfast::integration::admin::list_receipts),
+        )
+        .route(
+            "/admin/integration/receipts/{id}",
+            get(raisfast::integration::admin::get_receipt),
+        )
+        .route(
+            "/admin/integration/receipts/{id}/trace",
+            get(raisfast::integration::admin::get_trace),
+        )
         .layer(from_fn_with_state(
             state.clone(),
             raisfast::middleware::permission_guard::permission_guard,
@@ -1787,4 +1832,1108 @@ async fn cms_content_type_api_config_update() {
     assert_eq!(body["data"]["api"]["create"]["access"], "admin");
 
     let _ = std::fs::remove_file(&db_path);
+}
+
+// ── Integration Plane: push pipeline end-to-end ─────────────────────
+
+#[tokio::test]
+async fn integration_ingress_push_end_to_end() {
+    let (mut app, state) = test_app().await;
+
+    // 1. Target content type (table created via migrate + registered).
+    let toml = r#"
+[content_type]
+name = "Ingress Note"
+singular = "ingress_note"
+plural = "ingress_notes"
+table = "ingress_notes"
+
+[fields.external_id]
+type = "text"
+
+[fields.body]
+type = "text"
+"#;
+    let schema =
+        raisfast::content_type::schema::ContentTypeSchema::parse_from_str(toml).unwrap();
+    let repo = raisfast::content_type::repository::ContentRepository::new(state.pool.clone());
+    repo.migrate(&schema, &state.protocol_registry).await.unwrap();
+    state
+        .content_type_registry
+        .register(
+            schema,
+            &state.config.rule_engine,
+            &state.config.builtins.reserved_route_segments(),
+            &state.protocol_registry.names(),
+            &state.protocol_registry,
+        )
+        .unwrap();
+
+    // 2. Channel (challenge verify: guards GET only; POST passes verify).
+    let plane = state.integration.as_ref().unwrap();
+    let channel = raisfast::integration::ItgChannel {
+        id: raisfast::utils::id::new_snowflake_id(),
+        tenant_id: "default".into(),
+        channel_key: "e2e-notes".into(),
+        provider: "generic-hmac".into(),
+        display_name: "E2E".into(),
+        mode: "push".into(),
+        transport: "http1".into(),
+        framing: "raw".into(),
+        codec: "json".into(),
+        endpoint: None,
+        verify_kind: "challenge".into(),
+        verify_config: None,
+        credentials: None,
+        mapping: Some(json!({
+            "external_id": "$.id",
+            "kind": "const:Message",
+            "payload": { "body": "$.text" }
+        })),
+        normalizer_plugin: None,
+        pull_semantics: None,
+        pull_config: None,
+        ack_kind: "http-200".into(),
+        redelivery_max: 5,
+        backpressure: None,
+        target_type: "ingress_note".into(),
+        route_extra: Some(json!({ "jobs": [ { "job_type": "ingress.e2e.noop" } ] })),
+        status: "idle".into(),
+        last_error: None,
+        lease_owner: None,
+        enabled: true,
+        version: 1,
+        shadow: false,
+        created_at: raisfast::utils::tz::now_utc(),
+        updated_at: raisfast::utils::tz::now_utc(),
+    };
+    raisfast::integration::channel::model::insert(&state.pool, &channel)
+        .await
+        .unwrap();
+    plane.channels().refresh().await.unwrap();
+
+    // 3. First push → delivered (receipt + CT row + steps + pending job slot).
+    let body = json!({"id": "m-001", "text": "hello plane"});
+    let (status, _) = send(
+        &mut app,
+        post_json("/api/v1/ingress/e2e-notes", body.clone()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "first push should be acked 200");
+
+    let receipts: Vec<(i64, String, Option<String>)> =
+        sqlx::query_as("SELECT id, status, steps FROM itg_receipts WHERE channel_id = ?")
+            .bind(*channel.id)
+            .fetch_all(&state.pool)
+            .await
+            .unwrap();
+    assert_eq!(receipts.len(), 1, "exactly one receipt");
+    assert_eq!(receipts[0].1, "delivered");
+    let steps: Value =
+        serde_json::from_str(receipts[0].2.as_deref().unwrap_or("[]")).unwrap_or(Value::Null);
+    let names: Vec<&str> = steps
+        .as_array()
+        .map(|a| a.iter().filter_map(|s| s["step"].as_str()).collect())
+        .unwrap_or_default();
+    for expected in ["verify", "normalize", "dedup", "route", "ack"] {
+        assert!(names.contains(&expected), "steps missing '{expected}': {names:?}");
+    }
+    assert!(
+        names.iter().any(|n| n.starts_with("job:")),
+        "pending job placeholder present: {names:?}"
+    );
+
+    let ct_row: Option<(i64, String, String)> =
+        sqlx::query_as("SELECT id, external_id, body FROM ingress_notes WHERE external_id = ?")
+            .bind("m-001")
+            .fetch_optional(&state.pool)
+            .await
+            .unwrap();
+    let ct_row = ct_row.expect("CT row written");
+    assert_eq!(ct_row.2, "hello plane");
+    assert_eq!(ct_row.1, "m-001");
+
+    // 4. Repost the same body → duplicate, no second receipt/CT row.
+    let (status, _) = send(
+        &mut app,
+        post_json("/api/v1/ingress/e2e-notes", body),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "duplicate must also be acked 200");
+
+    let count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM itg_receipts WHERE channel_id = ?")
+            .bind(*channel.id)
+            .fetch_one(&state.pool)
+            .await
+            .unwrap();
+    assert_eq!(count, 1, "dedup keeps exactly one receipt");
+
+    let ct_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM ingress_notes WHERE external_id = ?")
+            .bind("m-001")
+            .fetch_one(&state.pool)
+            .await
+            .unwrap();
+    assert_eq!(ct_count, 1, "dedup keeps exactly one CT row");
+
+    // 5. GET challenge echo handshake.
+    let req = Request::builder()
+        .method("GET")
+        .uri("/api/v1/ingress/e2e-notes?echostr=handshake-42")
+        .body(Body::empty())
+        .unwrap();
+    let (status, _) = send(&mut app, req).await;
+    assert_eq!(status, StatusCode::OK, "challenge handshake echoes 200");
+
+    // 6. Unknown channel → 404.
+    let (status, _) = send(
+        &mut app,
+        post_json("/api/v1/ingress/no-such-channel", json!({"id": "x"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn integration_internal_retry_roundtrip() {
+    let (mut app, state) = test_app().await;
+
+    // Target CT whose required field is NEVER provided by the mapping →
+    // route fails validation → internal retry state machine kicks in.
+    let toml = r#"
+[content_type]
+name = "Retry Note"
+singular = "retry_note"
+plural = "retry_notes"
+table = "retry_notes"
+
+[fields.external_id]
+type = "text"
+
+[fields.mandatory]
+type = "text"
+required = true
+"#;
+    let schema =
+        raisfast::content_type::schema::ContentTypeSchema::parse_from_str(toml).unwrap();
+    let repo = raisfast::content_type::repository::ContentRepository::new(state.pool.clone());
+    repo.migrate(&schema, &state.protocol_registry).await.unwrap();
+    state
+        .content_type_registry
+        .register(
+            schema,
+            &state.config.rule_engine,
+            &state.config.builtins.reserved_route_segments(),
+            &state.protocol_registry.names(),
+            &state.protocol_registry,
+        )
+        .unwrap();
+
+    let plane = state.integration.as_ref().unwrap();
+    let channel = raisfast::integration::ItgChannel {
+        id: raisfast::utils::id::new_snowflake_id(),
+        tenant_id: "default".into(),
+        channel_key: "retry-ch".into(),
+        provider: "generic-hmac".into(),
+        display_name: "Retry".into(),
+        mode: "push".into(),
+        transport: "http1".into(),
+        framing: "raw".into(),
+        codec: "json".into(),
+        endpoint: None,
+        verify_kind: "challenge".into(),
+        verify_config: None,
+        credentials: None,
+        mapping: Some(json!({
+            "external_id": "$.id",
+            "payload": { "external_id": "$.id" }   // mandatory 缺失 → route 校验失败
+        })),
+        normalizer_plugin: None,
+        pull_semantics: None,
+        pull_config: None,
+        ack_kind: "http-200".into(),
+        redelivery_max: 2,
+        backpressure: None,
+        target_type: "retry_note".into(),
+        route_extra: None,
+        status: "idle".into(),
+        last_error: None,
+        lease_owner: None,
+        enabled: true,
+        version: 1,
+        shadow: false,
+        created_at: raisfast::utils::tz::now_utc(),
+        updated_at: raisfast::utils::tz::now_utc(),
+    };
+    raisfast::integration::channel::model::insert(&state.pool, &channel)
+        .await
+        .unwrap();
+    plane.channels().refresh().await.unwrap();
+    raisfast::integration::set_shared_plane(state.integration.clone().unwrap());
+
+    // 1. First push → route fails (missing required) → retrying, ack 200.
+    let (status, _) = send(
+        &mut app,
+        post_json("/api/v1/ingress/retry-ch", json!({"id": "r-1"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "internal mode acks 200 on failure");
+
+    let row: (String, i64) =
+        sqlx::query_as("SELECT status, attempts FROM itg_receipts WHERE channel_id = ?")
+            .bind(*channel.id)
+            .fetch_one(&state.pool)
+            .await
+            .unwrap();
+    assert_eq!(row.0, "retrying", "first failure → retrying");
+    assert_eq!(row.1, 1, "attempts = 1");
+    let trace_id: i64 =
+        sqlx::query_scalar("SELECT id FROM itg_receipts WHERE channel_id = ?")
+            .bind(*channel.id)
+            .fetch_one(&state.pool)
+            .await
+            .unwrap();
+
+    // 2. Simulate the retry job: still failing → attempts=2, still retrying.
+    let pipeline = plane.pipeline();
+    let res = pipeline.run_retry(trace_id).await.unwrap();
+    assert_eq!(res, raisfast::integration::pipeline::RetryResult::Rescheduled);
+    let row: (String, i64) =
+        sqlx::query_as("SELECT status, attempts FROM itg_receipts WHERE id = ?")
+            .bind(trace_id)
+            .fetch_one(&state.pool)
+            .await
+            .unwrap();
+    assert_eq!((row.0.as_str(), row.1), ("retrying", 2));
+
+    // 3. Retry again → exceeds redelivery_max=2 → dead + steps record.
+    let res = pipeline.run_retry(trace_id).await.unwrap();
+    assert_eq!(res, raisfast::integration::pipeline::RetryResult::Dead);
+    let status_str: String =
+        sqlx::query_scalar("SELECT status FROM itg_receipts WHERE id = ?")
+            .bind(trace_id)
+            .fetch_one(&state.pool)
+            .await
+            .unwrap();
+    assert_eq!(status_str, "dead");
+}
+
+#[tokio::test]
+async fn integration_retry_recovers_when_target_appears() {
+    let (mut app, state) = test_app().await;
+    let plane = state.integration.as_ref().unwrap();
+
+    // Channel targeting a CT that does not exist yet → route fails.
+    let channel = raisfast::integration::ItgChannel {
+        id: raisfast::utils::id::new_snowflake_id(),
+        tenant_id: "default".into(),
+        channel_key: "recover-ch".into(),
+        provider: "generic-hmac".into(),
+        display_name: "Recover".into(),
+        mode: "push".into(),
+        transport: "http1".into(),
+        framing: "raw".into(),
+        codec: "json".into(),
+        endpoint: None,
+        verify_kind: "challenge".into(),
+        verify_config: None,
+        credentials: None,
+        mapping: Some(json!({"external_id": "$.id", "payload": {"body": "$.text"}})),
+        normalizer_plugin: None,
+        pull_semantics: None,
+        pull_config: None,
+        ack_kind: "http-200".into(),
+        redelivery_max: 5,
+        backpressure: None,
+        target_type: "recover_note".into(),
+        route_extra: None,
+        status: "idle".into(),
+        last_error: None,
+        lease_owner: None,
+        enabled: true,
+        version: 1,
+        shadow: false,
+        created_at: raisfast::utils::tz::now_utc(),
+        updated_at: raisfast::utils::tz::now_utc(),
+    };
+    raisfast::integration::channel::model::insert(&state.pool, &channel)
+        .await
+        .unwrap();
+    plane.channels().refresh().await.unwrap();
+
+    let (status, _) = send(
+        &mut app,
+        post_json("/api/v1/ingress/recover-ch", json!({"id": "rc-1", "text": "later"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let trace_id: i64 =
+        sqlx::query_scalar("SELECT id FROM itg_receipts WHERE channel_id = ?")
+            .bind(*channel.id)
+            .fetch_one(&state.pool)
+            .await
+            .unwrap();
+
+    // Target CT appears → retry succeeds → delivered + CT row + steps merged.
+    let toml = r#"
+[content_type]
+name = "Recover Note"
+singular = "recover_note"
+plural = "recover_notes"
+table = "recover_notes"
+
+[fields.external_id]
+type = "text"
+
+[fields.body]
+type = "text"
+"#;
+    let schema =
+        raisfast::content_type::schema::ContentTypeSchema::parse_from_str(toml).unwrap();
+    let repo = raisfast::content_type::repository::ContentRepository::new(state.pool.clone());
+    repo.migrate(&schema, &state.protocol_registry).await.unwrap();
+    state
+        .content_type_registry
+        .register(
+            schema,
+            &state.config.rule_engine,
+            &state.config.builtins.reserved_route_segments(),
+            &state.protocol_registry.names(),
+            &state.protocol_registry,
+        )
+        .unwrap();
+
+    let res = plane.pipeline().run_retry(trace_id).await.unwrap();
+    assert_eq!(res, raisfast::integration::pipeline::RetryResult::Delivered);
+    let status_str: String =
+        sqlx::query_scalar("SELECT status FROM itg_receipts WHERE id = ?")
+            .bind(trace_id)
+            .fetch_one(&state.pool)
+            .await
+            .unwrap();
+    assert_eq!(status_str, "delivered");
+
+    let body: String =
+        sqlx::query_scalar("SELECT body FROM recover_notes WHERE external_id = ?")
+            .bind("rc-1")
+            .fetch_one(&state.pool)
+            .await
+            .unwrap();
+    assert_eq!(body, "later");
+
+    // Normalize ran exactly once (snapshot determinism): no counter available,
+    // but envelope snapshot must equal the first pass payload.
+    let env: String =
+        sqlx::query_scalar("SELECT CAST(envelope AS TEXT) FROM itg_receipts WHERE id = ?")
+            .bind(trace_id)
+            .fetch_one(&state.pool)
+            .await
+            .unwrap();
+    assert!(env.contains("rc-1"), "snapshot persisted");
+}
+
+#[tokio::test]
+async fn integration_pending_flip_and_append_step() {
+    let (mut app, state) = test_app().await;
+    let plane = state.integration.as_ref().unwrap();
+
+    let channel = raisfast::integration::ItgChannel {
+        id: raisfast::utils::id::new_snowflake_id(),
+        tenant_id: "default".into(),
+        channel_key: "flip-ch".into(),
+        provider: "generic-hmac".into(),
+        display_name: "Flip".into(),
+        mode: "push".into(),
+        transport: "http1".into(),
+        framing: "raw".into(),
+        codec: "json".into(),
+        endpoint: None,
+        verify_kind: "challenge".into(),
+        verify_config: None,
+        credentials: None,
+        mapping: Some(json!({"external_id": "$.id", "payload": {"body": "$.text"}})),
+        normalizer_plugin: None,
+        pull_semantics: None,
+        pull_config: None,
+        ack_kind: "http-200".into(),
+        redelivery_max: 5,
+        backpressure: None,
+        target_type: "ingress_note".into(),
+        route_extra: Some(json!({"jobs": [{"job_type": "flip.echo"}]})),
+        status: "idle".into(),
+        last_error: None,
+        lease_owner: None,
+        enabled: true,
+        version: 1,
+        shadow: false,
+        created_at: raisfast::utils::tz::now_utc(),
+        updated_at: raisfast::utils::tz::now_utc(),
+    };
+    raisfast::integration::channel::model::insert(&state.pool, &channel)
+        .await
+        .unwrap();
+    plane.channels().refresh().await.unwrap();
+
+    let toml = r#"
+[content_type]
+name = "Ingress Note"
+singular = "ingress_note"
+plural = "ingress_notes"
+table = "ingress_notes"
+
+[fields.external_id]
+type = "text"
+
+[fields.body]
+type = "text"
+"#;
+    let schema =
+        raisfast::content_type::schema::ContentTypeSchema::parse_from_str(toml).unwrap();
+    let repo = raisfast::content_type::repository::ContentRepository::new(state.pool.clone());
+    repo.migrate(&schema, &state.protocol_registry).await.unwrap();
+    state
+        .content_type_registry
+        .register(
+            schema,
+            &state.config.rule_engine,
+            &state.config.builtins.reserved_route_segments(),
+            &state.protocol_registry.names(),
+            &state.protocol_registry,
+        )
+        .unwrap();
+
+    let (status, _) = send(
+        &mut app,
+        post_json("/api/v1/ingress/flip-ch", json!({"id": "f-1", "text": "x"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let trace_id: i64 =
+        sqlx::query_scalar("SELECT id FROM itg_receipts WHERE channel_id = ?")
+            .bind(*channel.id)
+            .fetch_one(&state.pool)
+            .await
+            .unwrap();
+
+    // Pending placeholder exists.
+    let steps: String =
+        sqlx::query_scalar("SELECT CAST(steps AS TEXT) FROM itg_receipts WHERE id = ?")
+            .bind(trace_id)
+            .fetch_one(&state.pool)
+            .await
+            .unwrap();
+    assert!(steps.contains("\"job:flip.echo\"") && steps.contains("\"pending\""));
+
+    // Flip to terminal + append a manual entry.
+    use raisfast::types::snowflake_id::SnowflakeId;
+    raisfast::integration::receipt::flip_pending_step(
+        &state.pool,
+        SnowflakeId::new(trace_id),
+        "flip.echo",
+        true,
+        "done in 3ms",
+    )
+    .await
+    .unwrap();
+    raisfast::integration::receipt::append_step(
+        &state.pool,
+        SnowflakeId::new(trace_id),
+        &serde_json::json!({"step": "egress:test.op#1", "status": "ok", "ms": 5}),
+    )
+    .await
+    .unwrap();
+
+    let steps: String =
+        sqlx::query_scalar("SELECT CAST(steps AS TEXT) FROM itg_receipts WHERE id = ?")
+            .bind(trace_id)
+            .fetch_one(&state.pool)
+            .await
+            .unwrap();
+    let parsed: Value = serde_json::from_str(&steps).unwrap();
+    let arr = parsed.as_array().unwrap();
+    let flip = arr
+        .iter()
+        .find(|s| s["step"] == "job:flip.echo")
+        .expect("flip entry");
+    assert_eq!(flip["status"], "ok");
+    assert_eq!(flip["detail"], "done in 3ms");
+    assert!(arr.iter().any(|s| s["step"] == "egress:test.op#1"));
+}
+
+#[tokio::test]
+async fn integration_http_pull_cursor_increments() {
+    use std::sync::Mutex;
+    // Mock upstream: GET /items?since_id=&limit= → ids > since_id, asc, capped.
+    static ITEMS: Mutex<Vec<i64>> = Mutex::new(Vec::new());
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    async fn mock_items(
+        Query(q): Query<std::collections::HashMap<String, String>>,
+    ) -> axum::Json<Value> {
+        let since: i64 = q.get("since_id").and_then(|s| s.parse().ok()).unwrap_or(0);
+        let limit: usize = q.get("limit").and_then(|s| s.parse().ok()).unwrap_or(50);
+        let items: Vec<Value> = ITEMS
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|id| **id > since)
+            .take(limit)
+            .map(|id| json!({"id": id.to_string(), "text": format!("msg-{id}")}))
+            .collect();
+        axum::Json(json!({"items": items}))
+    }
+
+    tokio::spawn(async move {
+        let app = axum::Router::new().route("/items", get(mock_items));
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let (mut app, state) = test_app().await;
+    let _ = &mut app; // keep harness consistent
+    let plane = state.integration.as_ref().unwrap();
+
+    // Target CT.
+    let toml = r#"
+[content_type]
+name = "Ingress Note"
+singular = "ingress_note"
+plural = "ingress_notes"
+table = "ingress_notes"
+
+[fields.external_id]
+type = "text"
+
+[fields.body]
+type = "text"
+"#;
+    let schema =
+        raisfast::content_type::schema::ContentTypeSchema::parse_from_str(toml).unwrap();
+    let repo = raisfast::content_type::repository::ContentRepository::new(state.pool.clone());
+    repo.migrate(&schema, &state.protocol_registry).await.unwrap();
+    state
+        .content_type_registry
+        .register(
+            schema,
+            &state.config.rule_engine,
+            &state.config.builtins.reserved_route_segments(),
+            &state.protocol_registry.names(),
+            &state.protocol_registry,
+        )
+        .unwrap();
+
+    // Pull channel.
+    let channel = raisfast::integration::ItgChannel {
+        id: raisfast::utils::id::new_snowflake_id(),
+        tenant_id: "default".into(),
+        channel_key: "pull-ch".into(),
+        provider: "generic-rest".into(),
+        display_name: "Pull".into(),
+        mode: "pull".into(),
+        transport: "http1".into(),
+        framing: "raw".into(),
+        codec: "json".into(),
+        endpoint: Some(format!("http://{addr}/items")),
+        verify_kind: "none".into(),
+        verify_config: None,
+        credentials: None,
+        mapping: Some(json!({"external_id": "$.id", "payload": {"body": "$.text"}})),
+        normalizer_plugin: None,
+        pull_semantics: Some("cursor".into()),
+        pull_config: Some(json!({
+            "list_path": "$.items", "id_field": "id",
+            "param": "since_id", "page_size": 2, "max_pages": 10
+        })),
+        ack_kind: "none".into(),
+        redelivery_max: 5,
+        backpressure: None,
+        target_type: "ingress_note".into(),
+        route_extra: None,
+        status: "idle".into(),
+        last_error: None,
+        lease_owner: None,
+        enabled: true,
+        version: 1,
+        shadow: false,
+        created_at: raisfast::utils::tz::now_utc(),
+        updated_at: raisfast::utils::tz::now_utc(),
+    };
+    raisfast::integration::channel::model::insert(&state.pool, &channel)
+        .await
+        .unwrap();
+    plane.channels().refresh().await.unwrap();
+
+    // ── Run 1: three items across two pages ────────────────────────────
+    ITEMS.lock().unwrap().extend([1, 2, 3]);
+    let s = raisfast::integration::connector::http_pull::run(
+        &state.pool,
+        plane.pipeline(),
+        &channel,
+        None,
+    )
+    .await
+    .unwrap();
+    assert_eq!((s.fetched, s.delivered, s.duplicates, s.failed), (3, 3, 0, 0));
+    assert_eq!(s.pages, 2, "page_size=2 → two pages");
+
+    let cursor: String = sqlx::query_scalar(
+        "SELECT CAST(cursor_value AS TEXT) FROM itg_channel_cursors WHERE channel_id = ?",
+    )
+    .bind(*channel.id)
+    .fetch_one(&state.pool)
+    .await
+    .unwrap();
+    assert!(cursor.contains("\"since_id\":\"3\""), "cursor at last id: {cursor}");
+
+    let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM ingress_notes")
+        .fetch_one(&state.pool)
+        .await
+        .unwrap();
+    assert_eq!(n, 3);
+
+    // ── Run 2: incremental (two new items only) ────────────────────────
+    ITEMS.lock().unwrap().extend([4, 5]);
+    let s = raisfast::integration::connector::http_pull::run(
+        &state.pool,
+        plane.pipeline(),
+        &channel,
+        None,
+    )
+    .await
+    .unwrap();
+    assert_eq!((s.fetched, s.delivered, s.duplicates), (2, 2, 0));
+
+    // ── Run 3: no new items → empty fetch ──────────────────────────────
+    let s = raisfast::integration::connector::http_pull::run(
+        &state.pool,
+        plane.pipeline(),
+        &channel,
+        None,
+    )
+    .await
+    .unwrap();
+    assert_eq!(s.fetched, 0);
+
+    // ── Run 4: cursor rewind (simulate lost advance) → duplicates absorbed,
+    //    no duplicate CT rows —— 不重不漏 ───────────────────────────────
+    sqlx::query("UPDATE itg_channel_cursors SET cursor_value = ? WHERE channel_id = ?")
+        .bind(json!({"since_id": "2"}))
+        .bind(*channel.id)
+        .execute(&state.pool)
+        .await
+        .unwrap();
+    let s = raisfast::integration::connector::http_pull::run(
+        &state.pool,
+        plane.pipeline(),
+        &channel,
+        None,
+    )
+    .await
+    .unwrap();
+    assert_eq!(s.fetched, 3);
+    assert_eq!(s.duplicates, 3, "rewind re-fetches are all duplicates");
+    assert_eq!(s.delivered, 0);
+
+    let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM ingress_notes")
+        .fetch_one(&state.pool)
+        .await
+        .unwrap();
+    assert_eq!(n, 5, "still exactly five CT rows");
+    let receipts: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM itg_receipts WHERE channel_id = ?")
+            .bind(*channel.id)
+            .fetch_one(&state.pool)
+            .await
+            .unwrap();
+    assert_eq!(receipts, 5, "five receipts, no duplicates rows");
+}
+
+#[tokio::test]
+async fn integration_raw_archive_and_replay() {
+    let (mut app, state) = test_app().await;
+    let plane = state.integration.as_ref().unwrap();
+
+    // Target CT (external_id association present → replay-capable).
+    let toml = r#"
+[content_type]
+name = "Ingress Note"
+singular = "ingress_note"
+plural = "ingress_notes"
+table = "ingress_notes"
+
+[fields.external_id]
+type = "text"
+unique = true
+
+[fields.body]
+type = "text"
+"#;
+    let schema =
+        raisfast::content_type::schema::ContentTypeSchema::parse_from_str(toml).unwrap();
+    let repo = raisfast::content_type::repository::ContentRepository::new(state.pool.clone());
+    repo.migrate(&schema, &state.protocol_registry).await.unwrap();
+    state
+        .content_type_registry
+        .register(
+            schema,
+            &state.config.rule_engine,
+            &state.config.builtins.reserved_route_segments(),
+            &state.protocol_registry.names(),
+            &state.protocol_registry,
+        )
+        .unwrap();
+
+    let channel = raisfast::integration::ItgChannel {
+        id: raisfast::utils::id::new_snowflake_id(),
+        tenant_id: "default".into(),
+        channel_key: "archive-ch".into(),
+        provider: "generic-hmac".into(),
+        display_name: "Archive".into(),
+        mode: "push".into(),
+        transport: "http1".into(),
+        framing: "raw".into(),
+        codec: "json".into(),
+        endpoint: None,
+        verify_kind: "challenge".into(),
+        verify_config: None,
+        credentials: None,
+        mapping: Some(json!({"external_id": "$.id", "payload": {"body": "$.text"}})),
+        normalizer_plugin: None,
+        pull_semantics: None,
+        pull_config: None,
+        ack_kind: "http-200".into(),
+        redelivery_max: 5,
+        backpressure: None,
+        target_type: "ingress_note".into(),
+        route_extra: None,
+        status: "idle".into(),
+        last_error: None,
+        lease_owner: None,
+        enabled: true,
+        version: 1,
+        shadow: false,
+        created_at: raisfast::utils::tz::now_utc(),
+        updated_at: raisfast::utils::tz::now_utc(),
+    };
+    raisfast::integration::channel::model::insert(&state.pool, &channel)
+        .await
+        .unwrap();
+    plane.channels().refresh().await.unwrap();
+
+    // ── Push → raw archived + raw_ref in snapshot ──────────────────────
+    let (status, _) = send(
+        &mut app,
+        post_json("/api/v1/ingress/archive-ch", json!({"id": "a-1", "text": "original"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (trace_id, env_json): (i64, String) =
+        sqlx::query_as("SELECT id, CAST(envelope AS TEXT) FROM itg_receipts WHERE channel_id = ?")
+            .bind(*channel.id)
+            .fetch_one(&state.pool)
+            .await
+            .unwrap();
+    let env: Value = serde_json::from_str(&env_json).unwrap();
+    let raw_ref = env["raw_ref"].as_str().expect("raw_ref set").to_string();
+    assert!(raw_ref.contains("integration/raw"), "path: {raw_ref}");
+    assert!(
+        tokio::fs::metadata(&raw_ref).await.is_ok(),
+        "raw file exists at {raw_ref}"
+    );
+    let raw = tokio::fs::read(&raw_ref).await.unwrap();
+    assert_eq!(raw, br#"{"id":"a-1","text":"original"}"#);
+
+    // ── Corrupt the target row, then replay (upsert) ───────────────────
+    sqlx::query("UPDATE ingress_notes SET body = 'stale' WHERE external_id = ?")
+        .bind("a-1")
+        .execute(&state.pool)
+        .await
+        .unwrap();
+
+    use raisfast::types::snowflake_id::SnowflakeId;
+    let outcome = plane
+        .pipeline()
+        .run_replay(SnowflakeId::new(trace_id), false)
+        .await
+        .unwrap();
+    match outcome {
+        raisfast::integration::pipeline::ReplayOutcome::Upserted { target_id } => {
+            assert!(target_id.is_some(), "existing row updated");
+        }
+        _ => panic!("expected Upserted"),
+    }
+
+    let body: String =
+        sqlx::query_scalar("SELECT body FROM ingress_notes WHERE external_id = ?")
+            .bind("a-1")
+            .fetch_one(&state.pool)
+            .await
+            .unwrap();
+    assert_eq!(body, "original", "replay restored the snapshot payload");
+
+    let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM ingress_notes")
+        .fetch_one(&state.pool)
+        .await
+        .unwrap();
+    assert_eq!(n, 1, "upsert does not duplicate rows");
+
+    // steps: original timeline intact + replay#N appended.
+    let steps: String =
+        sqlx::query_scalar("SELECT CAST(steps AS TEXT) FROM itg_receipts WHERE id = ?")
+            .bind(trace_id)
+            .fetch_one(&state.pool)
+            .await
+            .unwrap();
+    let parsed: Value = serde_json::from_str(&steps).unwrap();
+    let arr = parsed.as_array().unwrap();
+    assert!(
+        arr.iter().any(|s| s["step"].as_str().unwrap_or("").starts_with("replay#")),
+        "replay appended: {steps}"
+    );
+    assert!(
+        arr.iter().any(|s| s["step"] == "verify"),
+        "original timeline preserved"
+    );
+
+    // ── Dry-run: report only, zero writes ──────────────────────────────
+    let outcome = plane
+        .pipeline()
+        .run_replay(SnowflakeId::new(trace_id), true)
+        .await
+        .unwrap();
+    match outcome {
+        raisfast::integration::pipeline::ReplayOutcome::DryRun { report } => {
+            assert_eq!(report["external_id"], "a-1");
+            assert!(report["would_write"]["body"] == "original", "report carries snapshot payload");
+        }
+        _ => panic!("expected DryRun"),
+    }
+    let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM ingress_notes")
+        .fetch_one(&state.pool)
+        .await
+        .unwrap();
+    assert_eq!(n, 1, "dry-run wrote nothing");
+}
+
+#[tokio::test]
+async fn integration_admin_channels_and_receipts_api() {
+    let (mut app, state) = test_app().await;
+    let _ = create_admin(&state.pool).await;
+    let (status, body) = send(
+        &mut app,
+        post_json(
+            "/api/v1/auth/login",
+            json!({ "email": ADMIN_EMAIL.with(|c| c.borrow().clone()), "password": "AdminPass123!" }),
+        ),
+    )
+    .await;
+    assert!(status.is_success(), "admin login failed: {status} {body:?}");
+    let token = body["data"]["access_token"].as_str().unwrap().to_string();
+
+    // Target CT.
+    let toml = r#"
+[content_type]
+name = "Ingress Note"
+singular = "ingress_note"
+plural = "ingress_notes"
+table = "ingress_notes"
+
+[fields.external_id]
+type = "text"
+
+[fields.body]
+type = "text"
+"#;
+    let schema =
+        raisfast::content_type::schema::ContentTypeSchema::parse_from_str(toml).unwrap();
+    let repo = raisfast::content_type::repository::ContentRepository::new(state.pool.clone());
+    repo.migrate(&schema, &state.protocol_registry).await.unwrap();
+    state
+        .content_type_registry
+        .register(
+            schema,
+            &state.config.rule_engine,
+            &state.config.builtins.reserved_route_segments(),
+            &state.protocol_registry.names(),
+            &state.protocol_registry,
+        )
+        .unwrap();
+
+    // ── Create channel via admin API ────────────────────────────────
+    let create = json!({
+        "channel_key": "admin-ch",
+        "provider": "generic-hmac",
+        "mode": "push", "transport": "http1", "framing": "raw", "codec": "json",
+        "verify_kind": "challenge",
+        "mapping": {"external_id": "$.id", "payload": {"body": "$.text"}},
+        "target_type": "ingress_note",
+    });
+    let (status, body) = send(
+        &mut app,
+        post_json_auth("/api/v1/admin/integration/channels", create.clone(), &token),
+    )
+    .await;
+    assert!(status.is_success(), "create failed: {status} {body:?}");
+    let channel_id = body["data"]["id"].as_str().unwrap().to_string();
+    assert_eq!(body["data"]["has_credentials"], false);
+
+    // Duplicate active key rejected.
+    let (status, _) = send(
+        &mut app,
+        post_json_auth("/api/v1/admin/integration/channels", create, &token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "duplicate key rejected");
+
+    // Bad stack rejected.
+    let (status, _) = send(
+        &mut app,
+        post_json_auth(
+            "/api/v1/admin/integration/channels",
+            json!({
+                "channel_key": "bad-ch", "provider": "x",
+                "mode": "stream", "transport": "ws", "framing": "raw", "codec": "json",
+                "verify_kind": "none", "target_type": "ingress_note"
+            }),
+            &token,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "stream rejected in this phase");
+
+    // ── test-mapping preview (zero writes) ───────────────────────────
+    let (status, body) = send(
+        &mut app,
+        post_json_auth(
+            &format!("/api/v1/admin/integration/channels/{channel_id}/test-mapping"),
+            json!({"sample": r#"{"id":"t-1","text":"preview"}"#}),
+            &token,
+        ),
+    )
+    .await;
+    assert!(status.is_success(), "test-mapping failed: {body:?}");
+    assert_eq!(body["data"]["matched"], true);
+    assert_eq!(body["data"]["external_id"], "t-1");
+    assert_eq!(body["data"]["payload"]["body"], "preview");
+
+    // ── Push through the created channel, then query receipts ────────
+    let (status, _) = send(
+        &mut app,
+        post_json("/api/v1/ingress/admin-ch", json!({"id": "adm-1", "text": "via admin api"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "routed through admin-created channel");
+
+    let (status, body) = send(
+        &mut app,
+        Request::builder()
+            .method("GET")
+            .uri("/api/v1/admin/integration/receipts?status=delivered")
+            .header(header::AUTHORIZATION, format!("Bearer {token}"))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert!(status.is_success(), "receipts list: {body:?}");
+    let items = body["data"]["items"].as_array().unwrap();
+    assert_eq!(items.len(), 1, "filtered list");
+    let trace_id = items[0]["id"].as_i64().unwrap();
+
+    // Detail: envelope + steps timeline.
+    let (status, body) = send(
+        &mut app,
+        Request::builder()
+            .method("GET")
+            .uri(format!("/api/v1/admin/integration/receipts/{trace_id}"))
+            .header(header::AUTHORIZATION, format!("Bearer {token}"))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert!(status.is_success());
+    assert_eq!(body["data"]["external_id"], "adm-1");
+    assert!(body["data"]["steps"].is_array());
+
+    // Trace: first pass + no pending → complete.
+    let (status, body) = send(
+        &mut app,
+        Request::builder()
+            .method("GET")
+            .uri(format!("/api/v1/admin/integration/receipts/{trace_id}/trace"))
+            .header(header::AUTHORIZATION, format!("Bearer {token}"))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert!(status.is_success());
+    assert_eq!(body["data"]["complete"], true, "no pending jobs declared");
+    assert!(body["data"]["first_pass"].as_array().unwrap().len() >= 5);
+
+    // ── Update (mapping change) + delete ─────────────────────────────
+    let (status, _) = send(
+        &mut app,
+        Request::builder()
+            .method("PUT")
+            .uri(format!("/api/v1/admin/integration/channels/{channel_id}"))
+            .header(header::AUTHORIZATION, format!("Bearer {token}"))
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(
+                serde_json::to_string(&json!({"display_name": "Renamed"})).unwrap(),
+            ))
+            .unwrap(),
+    )
+    .await;
+    assert!(status.is_success(), "update failed");
+
+    let (status, body) = send(
+        &mut app,
+        Request::builder()
+            .method("GET")
+            .uri("/api/v1/admin/integration/channels")
+            .header(header::AUTHORIZATION, format!("Bearer {token}"))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert!(status.is_success());
+    let names: Vec<&str> = body["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c["display_name"].as_str().unwrap_or(""))
+        .collect();
+    assert!(names.contains(&"Renamed"));
+
+    let (status, _) = send(
+        &mut app,
+        Request::builder()
+            .method("DELETE")
+            .uri(format!("/api/v1/admin/integration/channels/{channel_id}"))
+            .header(header::AUTHORIZATION, format!("Bearer {token}"))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert!(status.is_success(), "delete failed");
+
+    // Ingress for the deleted channel → 404.
+    let (status, _) = send(
+        &mut app,
+        post_json("/api/v1/ingress/admin-ch", json!({"id": "adm-2"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "deleted channel no longer routes");
+
+    // Unauthenticated admin access → forbidden.
+    let (status, _) = send(
+        &mut app,
+        Request::builder()
+            .method("GET")
+            .uri("/api/v1/admin/integration/channels")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED, "anonymous blocked");
 }
