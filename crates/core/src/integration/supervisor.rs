@@ -20,14 +20,18 @@ use crate::integration::IntegrationPlane;
 use crate::integration::channel::{self, ItgChannel};
 
 /// In-memory health snapshot per channel (M5 health API source).
+#[cfg_attr(feature = "export-types", derive(ts_rs::TS))]
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct ChannelHealth {
+    #[cfg_attr(feature = "export-types", ts(type = "number"))]
     pub channel_id: i64,
     pub channel_key: String,
     /// connecting | connected | backoff | stopped | error
     pub state: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "export-types", ts(optional))]
     pub connected_at: Option<String>,
+    #[cfg_attr(feature = "export-types", ts(type = "number"))]
     pub reconnects: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_error: Option<String>,

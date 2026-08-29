@@ -27,13 +27,19 @@ pub struct BatchItem {
 }
 
 /// Per-channel batch statistics (health API source).
+#[cfg_attr(feature = "export-types", derive(ts_rs::TS))]
 #[derive(Debug, Clone, Default, serde::Serialize)]
 pub struct BatchStats {
+    #[cfg_attr(feature = "export-types", ts(type = "number"))]
     pub buffered: u64,
+    #[cfg_attr(feature = "export-types", ts(type = "number"))]
     pub flushed_items: u64,
+    #[cfg_attr(feature = "export-types", ts(type = "number"))]
     pub flush_batches: u64,
+    #[cfg_attr(feature = "export-types", ts(type = "number"))]
     pub dropped_overflow: u64,
     /// Total items ever submitted (diagnostics).
+    #[cfg_attr(feature = "export-types", ts(type = "number"))]
     pub submitted: u64,
     /// Last flush error (diagnostics; None when healthy).
     pub last_flush_error: Option<String>,

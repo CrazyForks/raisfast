@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO app_ct_refs (id, app_id, ct_table, schema_toml, version, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 6
+    },
+    "nullable": []
+  },
+  "hash": "541b3f1e23ba6b37069173a43792d500b59c4bda5e0d900f538d3bde7c6c159a"
+}

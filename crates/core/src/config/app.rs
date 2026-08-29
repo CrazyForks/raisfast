@@ -175,6 +175,8 @@ pub struct AppConfig {
     #[serde(default)]
     pub integration: IntegrationConfig,
     #[serde(default)]
+    pub apps: AppsConfig,
+    #[serde(default)]
     pub oauth: crate::config::oauth::OAuthConfig,
     #[serde(default = "default_true")]
     pub registration_email_enabled: bool,
@@ -599,6 +601,37 @@ impl Default for IntegrationConfig {
             receipts_retention_days: default_receipts_retention_days(),
             egress_timeout_secs: default_egress_timeout_secs(),
             egress_log_retention_days: default_egress_log_retention_days(),
+        }
+    }
+}
+
+/// App Bundle configuration (app-bundle.md).
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct AppsConfig {
+    /// Drain window for disable/uninstall: how long in-flight channel
+    /// envelopes may take to reach a terminal receipt state before the
+    /// remainder is dead-lettered (`drained:timeout`).
+    pub drain_window_secs: u64,
+}
+
+impl Default for AppsConfig {
+    fn default() -> Self {
+        Self {
+            drain_window_secs: 60,
+        }
+    }
+}
+
+impl AppsConfig {
+    #[must_use]
+    pub fn from_env() -> Self {
+        let defaults = Self::default();
+        Self {
+            drain_window_secs: std::env::var("RAISFAST_APP_DRAIN_WINDOW_SECS")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(defaults.drain_window_secs),
         }
     }
 }
@@ -1184,6 +1217,7 @@ impl AppConfig {
                 .unwrap_or(false),
             mcp: McpConfig::from_env(),
             integration: IntegrationConfig::from_env(),
+            apps: AppsConfig::from_env(),
             oauth: crate::config::oauth::OAuthConfig::from_env(),
             registration_email_enabled: env::var("REGISTRATION_EMAIL_ENABLED")
                 .ok()
@@ -1358,6 +1392,7 @@ impl AppConfig {
             websocket_enabled: false,
             mcp: McpConfig::default(),
             integration: IntegrationConfig::default(),
+            apps: AppsConfig::default(),
             oauth: crate::config::oauth::OAuthConfig {
                 enabled: false,
                 redirect_url: "http://localhost:3000/auth/callback".into(),

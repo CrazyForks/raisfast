@@ -5,87 +5,23 @@
 use crate::db::driver::DbDriver;
 use axum::Json;
 use serde::Deserialize;
-use serde_json::{Value, json};
+use serde_json::Value;
 
 use crate::AppState;
 use crate::errors::app_error::{AppError, AppResult};
 use crate::errors::response::ApiResponse;
 use crate::integration::channel::{self, ItgChannel};
+use crate::integration::dto::{
+    ApiClientResponse, ChannelHealthCard, ChannelResponse, CreateApiClientRequest,
+    CreateChannelRequest, EgressLogListResponse, ReceiptDetailResponse, ReceiptListResponse,
+    ReceiptSummaryResponse, TestCallRequest, TestCallResponse, TestConnectionResponse,
+    TestMappingRequest, TestMappingResponse, TraceResponse, UpdateApiClientRequest,
+    UpdateChannelRequest,
+};
 use crate::integration::receipt;
 use crate::integration::vault::Vault;
 use crate::middleware::auth::{AuthUser, TokenAction};
 use crate::utils::pagination::PaginationParams;
-
-// ── DTOs ─────────────────────────────────────────────────────────────
-
-#[derive(Deserialize)]
-pub struct CreateChannelRequest {
-    pub channel_key: String,
-    pub provider: String,
-    #[serde(default)]
-    pub display_name: String,
-    pub mode: String,
-    pub transport: String,
-    pub framing: String,
-    pub codec: String,
-    pub endpoint: Option<String>,
-    pub verify_kind: String,
-    pub verify_config: Option<Value>,
-    /// Plaintext credentials JSON — sealed into the vault on write.
-    pub credentials: Option<Value>,
-    pub mapping: Option<Value>,
-    pub pull_semantics: Option<String>,
-    pub pull_config: Option<Value>,
-    pub stream_config: Option<Value>,
-    #[serde(default = "default_redelivery_max")]
-    pub redelivery_max: i64,
-    pub backpressure: Option<Value>,
-    pub target_type: String,
-    pub route_extra: Option<Value>,
-    #[serde(default = "default_true")]
-    pub enabled: bool,
-}
-
-fn default_redelivery_max() -> i64 {
-    5
-}
-
-fn default_true() -> bool {
-    true
-}
-
-#[derive(Deserialize)]
-pub struct UpdateChannelRequest {
-    pub display_name: Option<String>,
-    pub endpoint: Option<String>,
-    /// Protocol switch (raw|json-rpc|dispatch|pb-frame) — changing the wire
-    /// protocol of a channel is a legit ops action.
-    pub framing: Option<String>,
-    pub verify_kind: Option<String>,
-    pub verify_config: Option<Value>,
-    pub credentials: Option<Value>,
-    pub mapping: Option<Value>,
-    pub pull_config: Option<Value>,
-    pub stream_config: Option<Value>,
-    pub redelivery_max: Option<i64>,
-    pub backpressure: Option<Value>,
-    pub route_extra: Option<Value>,
-    pub enabled: Option<bool>,
-}
-
-// ── Serialization (never leaks credentials) ──────────────────────────
-
-fn channel_to_json(ch: &ItgChannel) -> Value {
-    let mut v = serde_json::to_value(ch).unwrap_or(Value::Null);
-    if let Some(obj) = v.as_object_mut() {
-        obj.remove("credentials");
-        obj.insert(
-            "has_credentials".into(),
-            Value::Bool(ch.credentials.is_some()),
-        );
-    }
-    v
-}
 
 // ── Validation ───────────────────────────────────────────────────────
 
@@ -201,12 +137,12 @@ fn seal_credentials(
 pub async fn list_channels(
     auth: AuthUser,
     State(state): State<AppState>,
-) -> AppResult<ApiResponse<Vec<Value>>> {
+) -> AppResult<ApiResponse<Vec<ChannelResponse>>> {
     auth.ensure_admin()?;
     auth.ensure_scope("integration", TokenAction::Read)?;
     let rows = channel::model::find_all(&state.pool).await?;
     Ok(ApiResponse::success(
-        rows.iter().map(channel_to_json).collect(),
+        rows.iter().map(ChannelResponse::from).collect(),
     ))
 }
 
@@ -214,7 +150,7 @@ pub async fn create_channel(
     auth: AuthUser,
     State(state): State<AppState>,
     Json(req): Json<CreateChannelRequest>,
-) -> AppResult<ApiResponse<Value>> {
+) -> AppResult<ApiResponse<ChannelResponse>> {
     auth.ensure_admin()?;
     auth.ensure_scope("integration", TokenAction::Create)?;
     validate_stack(&req)?;
@@ -286,7 +222,7 @@ pub async fn create_channel(
     channel::model::insert(&state.pool, &ch).await?;
     plane.channels().refresh().await?;
     plane.wake_supervisor();
-    Ok(ApiResponse::success(channel_to_json(&ch)))
+    Ok(ApiResponse::success(ChannelResponse::from(&ch)))
 }
 
 pub async fn update_channel(
@@ -294,7 +230,7 @@ pub async fn update_channel(
     State(state): State<AppState>,
     Path(id): Path<String>,
     Json(req): Json<UpdateChannelRequest>,
-) -> AppResult<ApiResponse<Value>> {
+) -> AppResult<ApiResponse<ChannelResponse>> {
     auth.ensure_admin()?;
     auth.ensure_scope("integration", TokenAction::Update)?;
     let id = crate::types::snowflake_id::parse_id(&id)?;
@@ -370,7 +306,7 @@ pub async fn update_channel(
     AppError::expect_affected(&result, "itg_channel")?;
     plane.channels().refresh().await?;
     plane.wake_supervisor();
-    Ok(ApiResponse::success(channel_to_json(&ch)))
+    Ok(ApiResponse::success(ChannelResponse::from(&ch)))
 }
 
 pub async fn delete_channel(
@@ -394,21 +330,15 @@ pub async fn get_channel(
     auth: AuthUser,
     State(state): State<AppState>,
     Path(id): Path<String>,
-) -> AppResult<ApiResponse<Value>> {
+) -> AppResult<ApiResponse<ChannelResponse>> {
     auth.ensure_admin()?;
     auth.ensure_scope("integration", TokenAction::Read)?;
     let id = crate::types::snowflake_id::parse_id(&id)?;
     let ch = channel::model::find_by_id(&state.pool, id).await?;
-    Ok(ApiResponse::success(channel_to_json(&ch)))
+    Ok(ApiResponse::success(ChannelResponse::from(&ch)))
 }
 
 // ── Test endpoints ───────────────────────────────────────────────────
-
-#[derive(Deserialize)]
-pub struct TestMappingRequest {
-    /// Sample raw body (JSON text).
-    pub sample: String,
-}
 
 /// POST .../channels/{id}/test-mapping — compile + apply the channel's
 /// mapping against a sample body; returns the normalized preview. Zero writes.
@@ -417,7 +347,7 @@ pub async fn test_mapping(
     State(state): State<AppState>,
     Path(id): Path<String>,
     Json(req): Json<TestMappingRequest>,
-) -> AppResult<ApiResponse<Value>> {
+) -> AppResult<ApiResponse<TestMappingResponse>> {
     auth.ensure_admin()?;
     auth.ensure_scope("integration", TokenAction::Read)?;
     let id = crate::types::snowflake_id::parse_id(&id)?;
@@ -430,17 +360,25 @@ pub async fn test_mapping(
     };
     let plan = crate::integration::mapping::compile(mapping_def)?;
     let preview = plan.apply(&input)?;
-    let preview = match preview {
-        Some(n) => json!({
-            "matched": true,
-            "external_id": n.external_id,
-            "sender": n.sender,
-            "kind": n.kind.as_str(),
-            "payload": n.payload,
-        }),
-        None => json!({"matched": false, "reason": "when-condition not satisfied"}),
+    let resp = match preview {
+        Some(n) => TestMappingResponse {
+            matched: true,
+            external_id: Some(n.external_id),
+            sender: n.sender,
+            kind: Some(n.kind.as_str().to_string()),
+            payload: Some(n.payload),
+            reason: None,
+        },
+        None => TestMappingResponse {
+            matched: false,
+            external_id: None,
+            sender: None,
+            kind: None,
+            payload: None,
+            reason: Some("when-condition not satisfied".into()),
+        },
     };
-    Ok(ApiResponse::success(preview))
+    Ok(ApiResponse::success(resp))
 }
 
 /// POST .../channels/{id}/test-connection — pull channels fetch one page
@@ -449,16 +387,18 @@ pub async fn test_connection(
     auth: AuthUser,
     State(state): State<AppState>,
     Path(id): Path<String>,
-) -> AppResult<ApiResponse<Value>> {
+) -> AppResult<ApiResponse<TestConnectionResponse>> {
     auth.ensure_admin()?;
     auth.ensure_scope("integration", TokenAction::Read)?;
     let id = crate::types::snowflake_id::parse_id(&id)?;
     let ch = channel::model::find_by_id(&state.pool, id).await?;
     if ch.mode != "pull" {
-        return Ok(ApiResponse::success(json!({
-            "mode": ch.mode,
-            "note": "push channels verify on first delivery — no connection to test",
-        })));
+        return Ok(ApiResponse::success(TestConnectionResponse {
+            mode: ch.mode,
+            note: Some("push channels verify on first delivery — no connection to test".into()),
+            reachable: None,
+            status: None,
+        }));
     }
     let Some(endpoint) = ch.endpoint.as_deref() else {
         return Err(AppError::BadRequest("pull channel without endpoint".into()));
@@ -473,10 +413,12 @@ pub async fn test_connection(
         .send()
         .await
         .map_err(|e| AppError::Internal(anyhow::anyhow!("connection failed: {e}")))?;
-    Ok(ApiResponse::success(json!({
-        "reachable": true,
-        "status": resp.status().as_u16(),
-    })))
+    Ok(ApiResponse::success(TestConnectionResponse {
+        mode: ch.mode,
+        note: None,
+        reachable: Some(true),
+        status: Some(i64::from(resp.status().as_u16())),
+    }))
 }
 
 // ── Health (P2-M5: supervisor metrics + batch stats + DB status) ─────
@@ -485,22 +427,25 @@ fn health_body(
     ch: &ItgChannel,
     sup: Option<&crate::integration::supervisor::ChannelHealth>,
     batch: Option<&crate::integration::batch::BatchStats>,
-) -> Value {
-    json!({
-        "channel_id": ch.id, "channel_key": ch.channel_key,
-        "mode": ch.mode, "transport": ch.transport,
-        "enabled": ch.enabled, "status": ch.status,
-        "last_error": ch.last_error,
-        "supervisor": sup,
-        "telemetry_batch": batch,
-    })
+) -> ChannelHealthCard {
+    ChannelHealthCard {
+        channel_id: ch.id,
+        channel_key: ch.channel_key.clone(),
+        mode: ch.mode.clone(),
+        transport: ch.transport.clone(),
+        enabled: ch.enabled,
+        status: ch.status.clone(),
+        last_error: ch.last_error.clone(),
+        supervisor: sup.cloned(),
+        telemetry_batch: batch.cloned(),
+    }
 }
 
 /// GET /admin/integration/channels/health — aggregate health cards.
 pub async fn channels_health(
     auth: AuthUser,
     State(state): State<AppState>,
-) -> AppResult<ApiResponse<Vec<Value>>> {
+) -> AppResult<ApiResponse<Vec<ChannelHealthCard>>> {
     auth.ensure_admin()?;
     auth.ensure_scope("integration", TokenAction::Read)?;
     let plane = state
@@ -513,7 +458,7 @@ pub async fn channels_health(
         .map(|v| v.into_iter().map(|h| (h.channel_id, h)).collect())
         .unwrap_or_default();
     let batch_map = plane.telemetry_batch_stats();
-    let cards: Vec<Value> = channels
+    let cards: Vec<ChannelHealthCard> = channels
         .iter()
         .map(|ch| health_body(ch, sup_map.get(&ch.id.0), batch_map.get(&ch.id.0)))
         .collect();
@@ -525,7 +470,7 @@ pub async fn channel_health(
     auth: AuthUser,
     State(state): State<AppState>,
     Path(id): Path<String>,
-) -> AppResult<ApiResponse<Value>> {
+) -> AppResult<ApiResponse<ChannelHealthCard>> {
     auth.ensure_admin()?;
     auth.ensure_scope("integration", TokenAction::Read)?;
     let id = crate::types::snowflake_id::parse_id(&id)?;
@@ -570,7 +515,7 @@ pub async fn list_receipts(
     auth: AuthUser,
     State(state): State<AppState>,
     Query(params): Query<ReceiptListParams>,
-) -> AppResult<ApiResponse<Value>> {
+) -> AppResult<ApiResponse<ReceiptListResponse>> {
     auth.ensure_admin()?;
     auth.ensure_scope("integration", TokenAction::Read)?;
     let mut pagination = PaginationParams::from_options(Some(params.page), Some(params.page_size));
@@ -661,28 +606,28 @@ pub async fn list_receipts(
     }
     let rows = q.fetch_all(&state.pool).await?;
 
-    let items: Vec<Value> = rows
+    let items: Vec<ReceiptSummaryResponse> = rows
         .iter()
-        .map(|r| {
-            // Ids serialize as SnowflakeId (encoded on the wire when
-            // ID_ENCODING is on) so path params round-trip through parse_id.
-            json!({
-                "id": crate::types::snowflake_id::SnowflakeId(r.0),
-                "channel_id": crate::types::snowflake_id::SnowflakeId(r.1),
-                "external_id": r.2, "kind": r.3,
-                "status": r.4, "attempts": r.5, "next_retry_at": r.6,
-                "raw_ref": r.7,
-                "target_id": r.8.map(crate::types::snowflake_id::SnowflakeId),
-                "received_at": r.9, "delivered_at": r.10,
-            })
+        .map(|r| ReceiptSummaryResponse {
+            id: crate::types::snowflake_id::SnowflakeId(r.0),
+            channel_id: crate::types::snowflake_id::SnowflakeId(r.1),
+            external_id: r.2.clone(),
+            kind: r.3.clone(),
+            status: r.4.clone(),
+            attempts: r.5,
+            next_retry_at: r.6,
+            raw_ref: r.7.clone(),
+            target_id: r.8.map(crate::types::snowflake_id::SnowflakeId),
+            received_at: r.9,
+            delivered_at: r.10,
         })
         .collect();
-    Ok(ApiResponse::success(json!({
-        "items": items,
-        "total": count,
-        "page": page,
-        "page_size": page_size,
-    })))
+    Ok(ApiResponse::success(ReceiptListResponse {
+        items,
+        total: count,
+        page,
+        page_size,
+    }))
 }
 
 /// GET /admin/integration/receipts/{id} — full detail (envelope + timeline).
@@ -690,7 +635,7 @@ pub async fn get_receipt(
     auth: AuthUser,
     State(state): State<AppState>,
     Path(id): Path<String>,
-) -> AppResult<ApiResponse<Value>> {
+) -> AppResult<ApiResponse<ReceiptDetailResponse>> {
     auth.ensure_admin()?;
     auth.ensure_scope("integration", TokenAction::Read)?;
     let id = crate::types::snowflake_id::parse_id(&id)?;
@@ -700,18 +645,19 @@ pub async fn get_receipt(
     let channel = channel::model::find_by_id(&state.pool, row.channel_id)
         .await
         .ok();
-    Ok(ApiResponse::success(json!({
-        "id": row.id, "channel_id": row.channel_id,
-        "channel_key": channel.map(|c| c.channel_key),
-        "external_id": row.external_id,
-        "kind": row.kind,
-        "status": row.status,
-        "attempts": row.attempts,
-        "next_retry_at": row.next_retry_at,
-        "envelope": row.envelope,
-        "steps": row.steps,
-        "target_id": row.target_id,
-    })))
+    Ok(ApiResponse::success(ReceiptDetailResponse {
+        id: row.id,
+        channel_id: row.channel_id,
+        channel_key: channel.map(|c| c.channel_key),
+        external_id: row.external_id,
+        kind: row.kind,
+        status: row.status,
+        attempts: row.attempts,
+        next_retry_at: row.next_retry_at,
+        envelope: row.envelope,
+        steps: row.steps,
+        target_id: row.target_id,
+    }))
 }
 
 /// GET /admin/integration/receipts/{id}/trace — async chain embedded in the
@@ -721,7 +667,7 @@ pub async fn get_trace(
     auth: AuthUser,
     State(state): State<AppState>,
     Path(id): Path<String>,
-) -> AppResult<ApiResponse<Value>> {
+) -> AppResult<ApiResponse<TraceResponse>> {
     auth.ensure_admin()?;
     auth.ensure_scope("integration", TokenAction::Read)?;
     let id = crate::types::snowflake_id::parse_id(&id)?;
@@ -731,7 +677,7 @@ pub async fn get_trace(
     let steps = row.steps.clone().unwrap_or(Value::Array(Vec::new()));
     let arr = steps.as_array().cloned().unwrap_or_default();
 
-    let first_pass: Vec<&Value> = arr
+    let first_pass: Vec<Value> = arr
         .iter()
         .filter(|s| {
             s["step"].as_str().is_some_and(|n| {
@@ -747,8 +693,9 @@ pub async fn get_trace(
                 .contains(&n)
             })
         })
+        .cloned()
         .collect();
-    let async_chain: Vec<&Value> = arr
+    let async_chain: Vec<Value> = arr
         .iter()
         .filter(|s| {
             s["step"].as_str().is_some_and(|n| {
@@ -758,24 +705,24 @@ pub async fn get_trace(
                     || n.starts_with("retry#")
             })
         })
+        .cloned()
         .collect();
-    let pending: Vec<&Value> = async_chain
+    let pending_count = async_chain
         .iter()
-        .copied()
         .filter(|s| s["status"] == "pending")
-        .collect();
+        .count() as i64;
 
     let egress = crate::integration::egress::list_log(&state.pool, Some(id), None, 100).await?;
 
-    Ok(ApiResponse::success(json!({
-        "trace_id": row.id.0,
-        "status": row.status,
-        "first_pass": first_pass,
-        "async_chain": async_chain,
-        "pending_count": pending.len(),
-        "complete": pending.is_empty(),
-        "egress": egress,
-    })))
+    Ok(ApiResponse::success(TraceResponse {
+        trace_id: row.id,
+        status: row.status,
+        first_pass,
+        async_chain,
+        pending_count,
+        complete: pending_count == 0,
+        egress,
+    }))
 }
 
 // Imports used by handler signatures.
@@ -783,53 +730,15 @@ use axum::extract::{Path, Query, State};
 
 // ── API clients (L5 egress, MVP-M0) ──────────────────────────────────
 
-#[derive(Deserialize)]
-pub struct CreateApiClientRequest {
-    pub client_key: String,
-    #[serde(default)]
-    pub display_name: String,
-    pub base_url: String,
-    pub auth: Option<Value>,
-    /// Plaintext credentials JSON `{"secret": "..."}` — sealed on write.
-    pub credentials: Option<Value>,
-    pub rate_limit: Option<Value>,
-    pub ops: Option<Value>,
-    #[serde(default = "default_true")]
-    pub enabled: bool,
-}
-
-#[derive(Deserialize)]
-pub struct UpdateApiClientRequest {
-    pub display_name: Option<String>,
-    pub base_url: Option<String>,
-    pub auth: Option<Value>,
-    pub credentials: Option<Value>,
-    pub rate_limit: Option<Value>,
-    pub ops: Option<Value>,
-    pub enabled: Option<bool>,
-}
-
-fn api_client_to_json(c: &crate::integration::api_client::ItgApiClient) -> Value {
-    let mut v = serde_json::to_value(c).unwrap_or(Value::Null);
-    if let Some(obj) = v.as_object_mut() {
-        obj.remove("credentials");
-        obj.insert(
-            "has_credentials".into(),
-            Value::Bool(c.credentials.is_some()),
-        );
-    }
-    v
-}
-
 pub async fn list_api_clients(
     auth: AuthUser,
     State(state): State<AppState>,
-) -> AppResult<ApiResponse<Vec<Value>>> {
+) -> AppResult<ApiResponse<Vec<ApiClientResponse>>> {
     auth.ensure_admin()?;
     auth.ensure_scope("integration", TokenAction::Read)?;
     let rows = crate::integration::api_client::model::find_all(&state.pool).await?;
     Ok(ApiResponse::success(
-        rows.iter().map(api_client_to_json).collect(),
+        rows.iter().map(ApiClientResponse::from).collect(),
     ))
 }
 
@@ -837,7 +746,7 @@ pub async fn create_api_client(
     auth: AuthUser,
     State(state): State<AppState>,
     Json(req): Json<CreateApiClientRequest>,
-) -> AppResult<ApiResponse<Value>> {
+) -> AppResult<ApiResponse<ApiClientResponse>> {
     auth.ensure_admin()?;
     auth.ensure_scope("integration", TokenAction::Create)?;
     let plane = state
@@ -885,19 +794,19 @@ pub async fn create_api_client(
         updated_at: crate::utils::tz::now_utc(),
     };
     crate::integration::api_client::model::insert(&state.pool, &client).await?;
-    Ok(ApiResponse::success(api_client_to_json(&client)))
+    Ok(ApiResponse::success(ApiClientResponse::from(&client)))
 }
 
 pub async fn get_api_client(
     auth: AuthUser,
     State(state): State<AppState>,
     Path(id): Path<String>,
-) -> AppResult<ApiResponse<Value>> {
+) -> AppResult<ApiResponse<ApiClientResponse>> {
     auth.ensure_admin()?;
     auth.ensure_scope("integration", TokenAction::Read)?;
     let id = crate::types::snowflake_id::parse_id(&id)?;
     let client = crate::integration::api_client::model::find_by_id(&state.pool, id).await?;
-    Ok(ApiResponse::success(api_client_to_json(&client)))
+    Ok(ApiResponse::success(ApiClientResponse::from(&client)))
 }
 
 pub async fn update_api_client(
@@ -905,7 +814,7 @@ pub async fn update_api_client(
     State(state): State<AppState>,
     Path(id): Path<String>,
     Json(req): Json<UpdateApiClientRequest>,
-) -> AppResult<ApiResponse<Value>> {
+) -> AppResult<ApiResponse<ApiClientResponse>> {
     auth.ensure_admin()?;
     auth.ensure_scope("integration", TokenAction::Update)?;
     let id = crate::types::snowflake_id::parse_id(&id)?;
@@ -959,7 +868,7 @@ pub async fn update_api_client(
         where: ("id", id)
     )?;
     AppError::expect_affected(&result, "itg_api_client")?;
-    Ok(ApiResponse::success(api_client_to_json(&client)))
+    Ok(ApiResponse::success(ApiClientResponse::from(&client)))
 }
 
 pub async fn delete_api_client(
@@ -974,17 +883,6 @@ pub async fn delete_api_client(
     Ok(ApiResponse::success(()))
 }
 
-#[derive(Deserialize)]
-pub struct TestCallRequest {
-    pub op: String,
-    #[serde(default = "default_empty_object")]
-    pub input: Value,
-}
-
-fn default_empty_object() -> Value {
-    Value::Object(serde_json::Map::new())
-}
-
 /// POST .../api-clients/{id}/test-call — fire one op against the client's
 /// real endpoint; the call is logged like any egress (no trace).
 pub async fn test_call(
@@ -992,7 +890,7 @@ pub async fn test_call(
     State(state): State<AppState>,
     Path(id): Path<String>,
     Json(req): Json<TestCallRequest>,
-) -> AppResult<ApiResponse<Value>> {
+) -> AppResult<ApiResponse<TestCallResponse>> {
     auth.ensure_admin()?;
     auth.ensure_scope("integration", TokenAction::Read)?;
     let id = crate::types::snowflake_id::parse_id(&id)?;
@@ -1004,14 +902,14 @@ pub async fn test_call(
     let receipt = plane
         .call_api(client.client_key.clone(), req.op, req.input)
         .await?;
-    Ok(ApiResponse::success(json!({
-        "status": receipt.status,
-        "output": receipt.output,
-        "tokens_in": receipt.tokens_in,
-        "tokens_out": receipt.tokens_out,
-        "model": receipt.model,
-        "log_id": receipt.log_id.to_string(),
-    })))
+    Ok(ApiResponse::success(TestCallResponse {
+        status: receipt.status,
+        output: receipt.output,
+        tokens_in: receipt.tokens_in,
+        tokens_out: receipt.tokens_out,
+        model: receipt.model,
+        log_id: receipt.log_id,
+    }))
 }
 
 #[derive(Deserialize)]
@@ -1030,7 +928,7 @@ pub async fn list_egress_log(
     auth: AuthUser,
     State(state): State<AppState>,
     Query(params): Query<EgressLogParams>,
-) -> AppResult<ApiResponse<Value>> {
+) -> AppResult<ApiResponse<EgressLogListResponse>> {
     auth.ensure_admin()?;
     auth.ensure_scope("integration", TokenAction::Read)?;
     let trace_id = match &params.trace_id {
@@ -1045,8 +943,9 @@ pub async fn list_egress_log(
         limit,
     )
     .await?;
-    Ok(ApiResponse::success(json!({
-        "items": rows,
-        "count": rows.len(),
-    })))
+    let count = rows.len() as i64;
+    Ok(ApiResponse::success(EgressLogListResponse {
+        items: rows,
+        count,
+    }))
 }

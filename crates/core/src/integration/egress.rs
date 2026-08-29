@@ -70,6 +70,7 @@ pub struct EgressReceipt {
 }
 
 /// Egress log row (admin list view).
+#[cfg_attr(feature = "export-types", derive(ts_rs::TS))]
 #[derive(Debug, Clone, serde::Serialize, sqlx::FromRow)]
 pub struct EgressLogRow {
     pub id: SnowflakeId,
@@ -77,9 +78,13 @@ pub struct EgressLogRow {
     pub client_key: String,
     pub op: String,
     pub status: String,
+    #[cfg_attr(feature = "export-types", ts(type = "number"))]
     pub http_status: Option<i64>,
+    #[cfg_attr(feature = "export-types", ts(type = "number"))]
     pub latency_ms: i64,
+    #[cfg_attr(feature = "export-types", ts(type = "number"))]
     pub tokens_in: Option<i64>,
+    #[cfg_attr(feature = "export-types", ts(type = "number"))]
     pub tokens_out: Option<i64>,
     pub model: Option<String>,
     pub error: Option<String>,

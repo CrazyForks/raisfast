@@ -11,6 +11,7 @@ use crate::AppState;
 use crate::errors::app_error::{AppError, AppResult};
 use crate::errors::response::ApiResponse;
 use crate::integration::channel::ItgChannel;
+use crate::integration::dto::ReplayResponse;
 use crate::integration::pipeline::{AckAction, ReplayOutcome};
 use crate::integration::verify::{InboundHttpRequest, VerifyOutcome};
 use crate::middleware::auth::{AuthUser, TokenAction};
@@ -26,7 +27,7 @@ pub async fn replay(
     State(state): State<AppState>,
     Path(id): Path<String>,
     axum::Json(body): axum::Json<serde_json::Value>,
-) -> AppResult<ApiResponse<serde_json::Value>> {
+) -> AppResult<ApiResponse<ReplayResponse>> {
     auth.ensure_admin()?;
     auth.ensure_scope("integration", TokenAction::Update)?;
     let Some(plane) = state.integration.as_ref() else {
@@ -43,16 +44,18 @@ pub async fn replay(
 
     let outcome = plane.pipeline().run_replay(trace_id, dry_run).await?;
     let data = match outcome {
-        ReplayOutcome::Upserted { target_id } => serde_json::json!({
-            "replayed": true,
-            "mode": "upsert",
-            "target_id": target_id.map(|t| t.to_string()),
-        }),
-        ReplayOutcome::DryRun { report } => serde_json::json!({
-            "replayed": false,
-            "mode": "dry-run",
-            "report": report,
-        }),
+        ReplayOutcome::Upserted { target_id } => ReplayResponse {
+            replayed: true,
+            mode: "upsert".into(),
+            target_id,
+            report: None,
+        },
+        ReplayOutcome::DryRun { report } => ReplayResponse {
+            replayed: false,
+            mode: "dry-run".into(),
+            target_id: None,
+            report: Some(report),
+        },
     };
     Ok(ApiResponse::success(data))
 }

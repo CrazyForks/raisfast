@@ -1216,6 +1216,51 @@ CREATE INDEX IF NOT EXISTS idx_itg_egress_log_trace ON itg_egress_log(trace_id);
 CREATE INDEX IF NOT EXISTS idx_itg_egress_log_client_time ON itg_egress_log(client_key, created_at);
 
 -- ============================================================
+-- App Bundle (M2): apps / app_ct_refs / app_licenses
+-- ============================================================
+
+-- Installed app registry + lifecycle state machine (app-bundle.md §3.2)
+CREATE TABLE IF NOT EXISTS apps (
+    id INTEGER PRIMARY KEY,
+    app_id TEXT NOT NULL,
+    version TEXT NOT NULL,
+    status TEXT NOT NULL,
+    source TEXT NOT NULL DEFAULT 'upload',
+    source_ref TEXT,
+    signature_ok BOOLEAN NOT NULL DEFAULT 1,
+    install_log TEXT,
+    last_error TEXT,
+    tenant_scope TEXT NOT NULL DEFAULT 'global',
+    options TEXT,
+    installed_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    UNIQUE (app_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_apps_status ON apps(status);
+
+-- Materialized CT definitions owned by apps (app-bundle.md §6.3)
+CREATE TABLE IF NOT EXISTS app_ct_refs (
+    id INTEGER PRIMARY KEY,
+    app_id TEXT NOT NULL,
+    ct_table TEXT NOT NULL,
+    schema_toml TEXT NOT NULL,
+    version TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    UNIQUE (app_id, ct_table)
+);
+
+-- Per-tenant licenses for global apps (app-bundle.md §9)
+CREATE TABLE IF NOT EXISTS app_licenses (
+    id INTEGER PRIMARY KEY,
+    app_id TEXT NOT NULL,
+    tenant_id TEXT NOT NULL,
+    granted_by INTEGER,
+    granted_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    UNIQUE (app_id, tenant_id)
+);
+
+-- ============================================================
 -- Seed data
 -- ============================================================
 

@@ -18,6 +18,7 @@ mod macros;
 pub mod export_type;
 
 pub mod app;
+pub mod apps;
 pub mod cache;
 pub mod commands;
 pub mod config;
@@ -97,7 +98,7 @@ use workflow::WorkflowService;
 
 pub use cache::CacheStore;
 
-rust_i18n::i18n!("locales", fallback = "en");
+rust_i18n::i18n!("../../locales", fallback = "en");
 
 /// Application global shared state
 ///
@@ -138,6 +139,7 @@ pub struct AppState {
     pub audit: Arc<AuditService>,
     pub webhook: Arc<WebhookService>,
     pub integration: Option<Arc<integration::IntegrationPlane>>,
+    pub apps: Arc<apps::AppRegistry>,
     pub workflow: Arc<WorkflowService>,
     pub storage: Arc<dyn Storage>,
     pub cache: Arc<dyn CacheStore>,
@@ -242,6 +244,19 @@ pub async fn build_app_state(
         &protocol_names,
         &protocol_registry,
     )?);
+
+    // App Bundle: kill -9 self-heal + replay app CTs from `app_ct_refs`
+    // BEFORE the protected-table snapshot and the migrate loop (three-source
+    // rebuild: builtins → directory scan (above) → DB app CTs).
+    let apps_registry = crate::apps::AppRegistry::init(
+        pool.clone(),
+        Arc::new(config.clone()),
+        ct_registry.clone(),
+        protocol_registry.clone(),
+    )
+    .await?;
+    crate::apps::set_shared(apps_registry.clone());
+
     let ct_tables: Vec<String> = ct_registry
         .all()
         .iter()
@@ -288,6 +303,12 @@ pub async fn build_app_state(
     } else {
         None
     };
+
+    // App Bundle late attach: reconcile plugin state with app status
+    // (non-enabled apps unload the plugins load_all picked up from disk).
+    apps_registry
+        .attach(plugin_manager.clone(), integration_plane.clone())
+        .await?;
 
     let order_service: Arc<dyn crate::services::order::OrderService> =
         Arc::new(crate::services::order::OrderServiceImpl::new(
@@ -403,6 +424,7 @@ pub async fn build_app_state(
         audit: audit_service,
         webhook: webhook_service.clone(),
         integration: integration_plane,
+        apps: apps_registry,
         workflow: Arc::new(WorkflowService::new(pool.clone())),
         storage,
         cache: cache.clone(),

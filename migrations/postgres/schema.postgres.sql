@@ -1210,6 +1210,51 @@ CREATE INDEX IF NOT EXISTS idx_itg_egress_log_trace ON itg_egress_log(trace_id);
 CREATE INDEX IF NOT EXISTS idx_itg_egress_log_client_time ON itg_egress_log(client_key, created_at);
 
 -- ============================================================
+-- App Bundle (M2): apps / app_ct_refs / app_licenses
+-- ============================================================
+
+-- Installed app registry + lifecycle state machine (app-bundle.md §3.2)
+CREATE TABLE IF NOT EXISTS apps (
+    id BIGINT PRIMARY KEY,
+    app_id TEXT NOT NULL,             -- manifest id (kebab-case), immutable
+    version TEXT NOT NULL,            -- installed version (semver)
+    status TEXT NOT NULL,             -- installing|installed|enabled|disabled|uninstalling|rolled_back
+    source TEXT NOT NULL DEFAULT 'upload',  -- upload | market | directory
+    source_ref TEXT,
+    signature_ok BOOLEAN NOT NULL DEFAULT TRUE,
+    install_log JSONB,                -- compensation log (§4.2), persisted per step
+    last_error TEXT,
+    tenant_scope TEXT NOT NULL DEFAULT 'global', -- global | per-tenant
+    options JSONB,                    -- install-time wizard choices (keep_data, ...)
+    installed_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW(),
+    UNIQUE (app_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_apps_status ON apps(status);
+
+-- Materialized CT definitions owned by apps (app-bundle.md §6.3)
+CREATE TABLE IF NOT EXISTS app_ct_refs (
+    id BIGINT PRIMARY KEY,
+    app_id TEXT NOT NULL,
+    ct_table TEXT NOT NULL,
+    schema_toml TEXT NOT NULL,        -- authoritative CT definition shipped by the app
+    version TEXT NOT NULL,            -- app version at materialization time
+    created_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW(),
+    UNIQUE (app_id, ct_table)
+);
+
+-- Per-tenant licenses for global apps (app-bundle.md §9)
+CREATE TABLE IF NOT EXISTS app_licenses (
+    id BIGINT PRIMARY KEY,
+    app_id TEXT NOT NULL,
+    tenant_id TEXT NOT NULL,
+    granted_by BIGINT,
+    granted_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW(),
+    UNIQUE (app_id, tenant_id)
+);
+
+-- ============================================================
 -- Seed data
 -- ============================================================
 

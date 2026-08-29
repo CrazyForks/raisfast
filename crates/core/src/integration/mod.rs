@@ -24,6 +24,7 @@ pub mod batch;
 pub mod channel;
 pub mod connector;
 pub mod cursor;
+pub mod dto;
 pub mod egress;
 pub mod envelope;
 pub mod framing;

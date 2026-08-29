@@ -1158,6 +1158,50 @@ CREATE TABLE IF NOT EXISTS itg_egress_log (
 );
 
 -- ============================================================
+-- App Bundle (M2): apps / app_ct_refs / app_licenses
+-- ============================================================
+
+-- Installed app registry + lifecycle state machine (app-bundle.md §3.2)
+CREATE TABLE IF NOT EXISTS apps (
+    id BIGINT PRIMARY KEY,
+    app_id VARCHAR(255) NOT NULL,
+    version VARCHAR(64) NOT NULL,
+    status VARCHAR(32) NOT NULL,
+    source VARCHAR(32) NOT NULL DEFAULT 'upload',
+    source_ref VARCHAR(500) NULL,
+    signature_ok BOOLEAN NOT NULL DEFAULT 1,
+    install_log JSON,
+    last_error TEXT,
+    tenant_scope VARCHAR(32) NOT NULL DEFAULT 'global',
+    options JSON,
+    installed_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uq_apps_app_id (app_id),
+    INDEX idx_apps_status (status)
+);
+
+-- Materialized CT definitions owned by apps (app-bundle.md §6.3)
+CREATE TABLE IF NOT EXISTS app_ct_refs (
+    id BIGINT PRIMARY KEY,
+    app_id VARCHAR(255) NOT NULL,
+    ct_table VARCHAR(255) NOT NULL,
+    schema_toml MEDIUMTEXT NOT NULL,
+    version VARCHAR(64) NOT NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY uq_app_ct_refs_app_table (app_id, ct_table)
+);
+
+-- Per-tenant licenses for global apps (app-bundle.md §9)
+CREATE TABLE IF NOT EXISTS app_licenses (
+    id BIGINT PRIMARY KEY,
+    app_id VARCHAR(255) NOT NULL,
+    tenant_id VARCHAR(36) NOT NULL,
+    granted_by BIGINT NULL,
+    granted_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY uq_app_licenses_app_tenant (app_id, tenant_id)
+);
+
+-- ============================================================
 -- Seed data
 -- ============================================================
 

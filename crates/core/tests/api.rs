@@ -55,6 +55,8 @@ pub(crate) fn test_config() -> AppConfig {
     cfg.base_url = "http://localhost:9000".into();
     // Vault key so integration credential sealing works in tests.
     cfg.integration.vault_key = Some("test-vault-secret".into());
+    // Short app-bundle drain window so drain tests don't wait 60s.
+    cfg.apps.drain_window_secs = 1;
     let mut key_bytes = [0u8; 32];
     getrandom::fill(&mut key_bytes).unwrap();
     cfg.app_key = Some(base64::Engine::encode(
@@ -85,11 +87,26 @@ async fn build_test_app(pool: raisfast::db::Pool) -> (axum::Router, AppState) {
     let shared_bus = raisfast::eventbus::EventBus::new(256);
     let emitter = raisfast::event::EventEmitter::eventbus_only(shared_bus.clone());
     let content_registry = Arc::new(raisfast::content_type::ContentTypeRegistry::new());
+    let test_plugins = PluginManager::new(config.clone()).await;
+    let test_protocols = Arc::new({
+        let mut reg = raisfast::protocols::ProtocolRegistry::new();
+        reg.register(raisfast::protocols::ownable::OwnableProtocol);
+        reg.register(raisfast::protocols::timestampable::TimestampableProtocol);
+        reg
+    });
+    let apps_registry = raisfast::apps::AppRegistry::init(
+        pool.clone(),
+        config.clone(),
+        content_registry.clone(),
+        test_protocols.clone(),
+    )
+    .await
+    .expect("app registry init");
     let state = AppState {
         pool: pool.clone(),
         config: config.clone(),
         jwt_decoding_key: jsonwebtoken::DecodingKey::from_secret(config.jwt_secret.as_bytes()),
-        plugins: PluginManager::new(config.clone()).await,
+        plugins: test_plugins.clone(),
         eventbus: shared_bus.clone(),
         post_service: {
             Arc::new(raisfast::services::post::PostServiceImpl::new(
@@ -175,12 +192,7 @@ async fn build_test_app(pool: raisfast::db::Pool) -> (axum::Router, AppState) {
         search: Arc::new(NoopSearchEngine),
         content_type_registry: content_registry.clone(),
         emitter: emitter.clone(),
-        protocol_registry: Arc::new({
-            let mut reg = raisfast::protocols::ProtocolRegistry::new();
-            reg.register(raisfast::protocols::ownable::OwnableProtocol);
-            reg.register(raisfast::protocols::timestampable::TimestampableProtocol);
-            reg
-        }),
+        protocol_registry: test_protocols.clone(),
         options: Arc::new(
             raisfast::services::options::OptionsService::new(Arc::new(pool.clone()), false).await,
         ),
@@ -204,6 +216,7 @@ async fn build_test_app(pool: raisfast::db::Pool) -> (axum::Router, AppState) {
             .await
             .expect("integration plane init"),
         )),
+        apps: apps_registry.clone(),
         workflow: Arc::new(raisfast::workflow::WorkflowService::new(pool.clone())),
         storage: raisfast::storage::create_storage(&config).expect("failed to create storage"),
         cache: Arc::new(raisfast::cache::MemoryCache::new()),
@@ -220,6 +233,11 @@ async fn build_test_app(pool: raisfast::db::Pool) -> (axum::Router, AppState) {
         services: raisfast::app::ServiceRegistry::new(),
         handler_registry: Arc::new(raisfast::worker::JobHandlerRegistry::new()),
     };
+    apps_registry
+        .attach(state.plugins.clone(), state.integration.clone())
+        .await
+        .expect("app registry attach");
+
     let max_upload = state.config.max_upload_size;
 
     let mut ct_route_registry = raisfast::server::RouteRegistry::default();
@@ -624,6 +642,26 @@ async fn build_test_app(pool: raisfast::db::Pool) -> (axum::Router, AppState) {
             "/admin/integration/egress-log",
             get(raisfast::integration::admin::list_egress_log),
         )
+        // ── App Bundle ──
+        .route("/admin/apps", get(raisfast::apps::admin::list_apps))
+        .route("/admin/apps/{app_id}", get(raisfast::apps::admin::get_app))
+        .route(
+            "/admin/apps/install-preview",
+            post(raisfast::apps::admin::install_preview),
+        )
+        .route("/admin/apps/install", post(raisfast::apps::admin::install))
+        .route(
+            "/admin/apps/{app_id}/enable",
+            post(raisfast::apps::admin::enable_app),
+        )
+        .route(
+            "/admin/apps/{app_id}/disable",
+            post(raisfast::apps::admin::disable_app),
+        )
+        .route(
+            "/admin/apps/{app_id}/uninstall",
+            post(raisfast::apps::admin::uninstall_app),
+        )
         .layer(from_fn_with_state(
             state.clone(),
             raisfast::middleware::permission_guard::permission_guard,
@@ -893,6 +931,8 @@ pub(crate) async fn create_published_post(app: &mut axum::Router, token: &str) -
 
 #[path = "api/api_token.rs"]
 mod api_token;
+#[path = "api/apps.rs"]
+mod apps;
 #[path = "api/audit.rs"]
 mod audit;
 #[path = "api/auth.rs"]

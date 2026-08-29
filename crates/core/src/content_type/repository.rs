@@ -25,7 +25,7 @@ use sqlx::Row;
 ///
 /// Variants are selected to match each column's SQL type so binds pass
 /// PostgreSQL's strict type checking (SQLite/MySQL are lenient).
-enum BindValue {
+pub(crate) enum BindValue {
     Text(String),
     Int(i64),
     Int32(i32),
@@ -100,7 +100,7 @@ fn detect_blob_mimetype(bytes: &[u8]) -> String {
 }
 
 impl BindValue {
-    fn bind<'q, DB: sqlx::Database>(
+    pub(crate) fn bind<'q, DB: sqlx::Database>(
         self,
         query: sqlx::query::Query<'q, DB, <DB as sqlx::Database>::Arguments>,
     ) -> sqlx::query::Query<'q, DB, <DB as sqlx::Database>::Arguments>
@@ -164,7 +164,7 @@ fn parse_naive_time(s: &str) -> Option<chrono::NaiveTime> {
 }
 
 /// Build the bind value for a content-type field according to its declared type.
-fn field_bind(field_type: &FieldType, raw: &serde_json::Value) -> BindValue {
+pub(crate) fn field_bind(field_type: &FieldType, raw: &serde_json::Value) -> BindValue {
     let s = value_to_string(raw);
     let s = s.trim();
     if s.is_empty() {

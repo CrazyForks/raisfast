@@ -735,9 +735,16 @@ impl ContentTypeSchema {
         if group.is_empty() {
             return Ok(String::new());
         }
-        if !group.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+        // Alphanumeric + `_` + `-` (kebab). Hyphens are required by App
+        // Bundle CTs whose group is the app id (`chatwoot-lite`); groups only
+        // appear in registry keys and URL path segments where `-` is safe.
+        if !group
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+        {
             return Err(AppError::Internal(anyhow::anyhow!(
-                "group '{group}' contains invalid characters (only alphanumeric and underscore allowed)"
+                "group '{group}' contains invalid characters (only alphanumeric, underscore and \
+                 hyphen allowed)"
             )));
         }
         Ok(group.to_string())

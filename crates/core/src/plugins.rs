@@ -405,32 +405,28 @@ impl PluginManager {
             }
 
             let manifest_path = entry.path().join("manifest.toml");
-            if !manifest_path.exists() {
+            if manifest_path.exists() {
+                collect_manifest(&manifest_path, &mut manifests, &self.config.plugin_disabled);
                 continue;
             }
 
-            let content = match std::fs::read_to_string(&manifest_path) {
-                Ok(c) => c,
-                Err(e) => {
-                    tracing::error!("failed to read {}: {e}", manifest_path.display());
-                    continue;
+            // Nested one level: app-bundle plugins materialize under
+            // `{plugin_dir}/{app_id}/{name}/manifest.toml`.
+            if let Ok(sub) = std::fs::read_dir(entry.path()) {
+                for sub_entry in sub.flatten() {
+                    if !sub_entry.file_type().is_ok_and(|ft| ft.is_dir()) {
+                        continue;
+                    }
+                    let sub_manifest = sub_entry.path().join("manifest.toml");
+                    if sub_manifest.exists() {
+                        collect_manifest(
+                            &sub_manifest,
+                            &mut manifests,
+                            &self.config.plugin_disabled,
+                        );
+                    }
                 }
-            };
-
-            let manifest: PluginManifest = match toml::from_str(&content) {
-                Ok(m) => m,
-                Err(e) => {
-                    tracing::error!("failed to parse {}: {e}", manifest_path.display());
-                    continue;
-                }
-            };
-
-            if self.config.plugin_disabled.contains(&manifest.plugin.id) {
-                tracing::info!("plugin {} is disabled, skipping", manifest.plugin.id);
-                continue;
             }
-
-            manifests.push((manifest_path, manifest));
         }
 
         let sorted_ids = topological_sort(
@@ -1881,6 +1877,34 @@ fn extract_route_params(path: &str, pattern: &str) -> serde_json::Map<String, se
         }
     }
     params
+}
+
+/// Read + parse one plugin manifest, honoring the disabled list; push into
+/// the load set on success (read/parse failures are logged, never fatal).
+fn collect_manifest(
+    manifest_path: &Path,
+    manifests: &mut Vec<(PathBuf, PluginManifest)>,
+    disabled: &[String],
+) {
+    let content = match std::fs::read_to_string(manifest_path) {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::error!("failed to read {}: {e}", manifest_path.display());
+            return;
+        }
+    };
+    let manifest: PluginManifest = match toml::from_str(&content) {
+        Ok(m) => m,
+        Err(e) => {
+            tracing::error!("failed to parse {}: {e}", manifest_path.display());
+            return;
+        }
+    };
+    if disabled.contains(&manifest.plugin.id) {
+        tracing::info!("plugin {} is disabled, skipping", manifest.plugin.id);
+        return;
+    }
+    manifests.push((manifest_path.to_path_buf(), manifest));
 }
 
 /// Topological sort: determine load order based on dependencies field

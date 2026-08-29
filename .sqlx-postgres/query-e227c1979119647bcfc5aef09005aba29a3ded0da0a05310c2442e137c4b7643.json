@@ -1,0 +1,26 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO \"apps\" (\"id\", \"app_id\", \"version\", \"status\", \"source\", \"source_ref\", \"signature_ok\", \"install_log\", \"last_error\", \"tenant_scope\", \"options\", \"installed_at\", \"updated_at\") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Bool",
+        "Jsonb",
+        "Text",
+        "Text",
+        "Jsonb",
+        "Timestamptz",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "e227c1979119647bcfc5aef09005aba29a3ded0da0a05310c2442e137c4b7643"
+}

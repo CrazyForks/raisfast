@@ -139,6 +139,16 @@ pub enum AppAction {
         #[arg(short, long)]
         url: Option<String>,
     },
+    /// Pack an app bundle directory into a `.rafapp` (validated +
+    /// hash-manifested zip)
+    Pack {
+        /// Bundle directory containing app.toml (default: current dir)
+        #[arg(long, default_value = ".")]
+        dir: String,
+        /// Output file (default: {app_id}-{version}.rafapp in the dir)
+        #[arg(short, long)]
+        output: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -282,6 +292,17 @@ pub enum McpAction {
 
 fn lerp(a: u8, b: u8, t: f32) -> u8 {
     (a as f32 + (b as f32 - a as f32) * t) as u8
+}
+
+/// Default pack output: `{app_id}-{version}.rafapp` next to the bundle dir.
+fn default_pack_output(dir: &std::path::Path) -> anyhow::Result<std::path::PathBuf> {
+    let content = std::fs::read_to_string(dir.join("app.toml"))?;
+    let manifest: raisfast::apps::manifest::AppBundleManifest =
+        toml::from_str(&content).map_err(|e| anyhow::anyhow!("app.toml parse error: {e}"))?;
+    Ok(dir.join(format!(
+        "{}-{}.rafapp",
+        manifest.app.id, manifest.app.version
+    )))
 }
 
 fn gradient_rgb(t: f32) -> (u8, u8, u8) {
@@ -429,6 +450,16 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
                 template,
                 url,
             } => app_cmd::create_new(name, template, url.as_deref()).await,
+            AppAction::Pack { dir, output } => {
+                let dir_path = std::path::PathBuf::from(dir);
+                let out = match output {
+                    Some(o) => std::path::PathBuf::from(o),
+                    None => default_pack_output(&dir_path)?,
+                };
+                let count = raisfast::apps::pack::pack(&dir_path, &out)?;
+                println!("✓ packed {} file(s) → {}", count, out.display());
+                Ok(())
+            }
         };
     }
 
