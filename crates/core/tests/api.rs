@@ -5818,3 +5818,294 @@ type = "text"
     );
     let _ = &SAW_TICKET;
 }
+
+// ── Integration Plane M1.5: verification layer (github-hmac + wechat-aes) ──
+
+#[tokio::test]
+async fn integration_push_github_hmac_shape() {
+    let (mut app, state) = test_app().await;
+    let plane = state.integration.as_ref().unwrap();
+
+    let toml = r#"
+[content_type]
+name = "Ingress Note"
+singular = "ingress_note"
+plural = "ingress_notes"
+table = "ingress_notes"
+
+[fields.external_id]
+type = "text"
+
+[fields.body]
+type = "text"
+"#;
+    let schema = raisfast::content_type::schema::ContentTypeSchema::parse_from_str(toml).unwrap();
+    let repo = raisfast::content_type::repository::ContentRepository::new(state.pool.clone());
+    repo.migrate(&schema, &state.protocol_registry)
+        .await
+        .unwrap();
+    state
+        .content_type_registry
+        .register(
+            schema,
+            &state.config.rule_engine,
+            &state.config.builtins.reserved_route_segments(),
+            &state.protocol_registry.names(),
+            &state.protocol_registry,
+        )
+        .unwrap();
+
+    let creds = plane
+        .vault()
+        .unwrap()
+        .seal(r#"{"secret":"gh-secret"}"#)
+        .unwrap();
+    let channel = raisfast::integration::ItgChannel {
+        id: raisfast::utils::id::new_snowflake_id(),
+        tenant_id: "default".into(),
+        channel_key: "gh-ch".into(),
+        provider: "github".into(),
+        display_name: "GH".into(),
+        mode: "push".into(),
+        transport: "http1".into(),
+        framing: "raw".into(),
+        codec: "json".into(),
+        endpoint: None,
+        verify_kind: "hmac-sha256".into(),
+        verify_config: Some(json!({
+            "header": "x-hub-signature-256",
+            "scheme": "sha256=",       // GitHub prefix shape
+            "encoding": "hex"
+        })),
+        credentials: Some(creds),
+        mapping: Some(json!({
+            "external_id": "$.delivery",
+            "payload": {"body": "$.action"}
+        })),
+        normalizer_plugin: None,
+        pull_semantics: None,
+        pull_config: None,
+        stream_config: None,
+        ack_kind: "http-200".into(),
+        redelivery_max: 5,
+        backpressure: None,
+        target_type: "ingress_note".into(),
+        route_extra: None,
+        status: "idle".into(),
+        last_error: None,
+        lease_owner: None,
+        enabled: true,
+        version: 1,
+        shadow: false,
+        created_at: raisfast::utils::tz::now_utc(),
+        updated_at: raisfast::utils::tz::now_utc(),
+    };
+    raisfast::integration::channel::model::insert(&state.pool, &channel)
+        .await
+        .unwrap();
+    plane.channels().refresh().await.unwrap();
+
+    // Sign like GitHub: sha256=<hex> over the raw body.
+    use hmac::{Hmac, KeyInit, Mac};
+    type HmacSha256 = Hmac<sha2::Sha256>;
+    let body = br#"{"delivery":"d-1","action":"opened"}"#;
+    let mut mac = HmacSha256::new_from_slice(b"gh-secret").unwrap();
+    mac.update(body);
+    let sig = format!("sha256={}", hex::encode(mac.finalize().into_bytes()));
+
+    let (status, _) = send(
+        &mut app,
+        Request::builder()
+            .method("POST")
+            .uri("/api/v1/ingress/gh-ch")
+            .header(header::CONTENT_TYPE, "application/json")
+            .header("x-hub-signature-256", sig)
+            .body(Body::from(body.to_vec()))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "valid github-shape signature");
+
+    // Tampered → 401.
+    let (status, _) = send(
+        &mut app,
+        Request::builder()
+            .method("POST")
+            .uri("/api/v1/ingress/gh-ch")
+            .header(header::CONTENT_TYPE, "application/json")
+            .header("x-hub-signature-256", "sha256=deadbeef")
+            .body(Body::from(body.to_vec()))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+
+    let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM ingress_notes WHERE external_id = 'd-1'")
+        .fetch_one(&state.pool)
+        .await
+        .unwrap();
+    assert_eq!(n, 1, "github event routed exactly once");
+}
+
+#[tokio::test]
+async fn integration_push_wechat_aes_full_pipe() {
+    use aes::cipher::{BlockEncryptMut, KeyIvInit, block_padding::Pkcs7};
+    use base64::Engine;
+    type Aes256CbcEnc = cbc::Encryptor<aes::Aes256>;
+
+    let (mut app, state) = test_app().await;
+    let plane = state.integration.as_ref().unwrap();
+
+    let toml = r#"
+[content_type]
+name = "Ingress Note"
+singular = "ingress_note"
+plural = "ingress_notes"
+table = "ingress_notes"
+
+[fields.external_id]
+type = "text"
+
+[fields.body]
+type = "text"
+"#;
+    let schema = raisfast::content_type::schema::ContentTypeSchema::parse_from_str(toml).unwrap();
+    let repo = raisfast::content_type::repository::ContentRepository::new(state.pool.clone());
+    repo.migrate(&schema, &state.protocol_registry)
+        .await
+        .unwrap();
+    state
+        .content_type_registry
+        .register(
+            schema,
+            &state.config.rule_engine,
+            &state.config.builtins.reserved_route_segments(),
+            &state.protocol_registry.names(),
+            &state.protocol_registry,
+        )
+        .unwrap();
+
+    const KEY: &[u8; 32] = &[
+        0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24,
+        25, 26, 27, 28, 29, 30, 31,
+    ];
+    let aes43 = base64::engine::general_purpose::STANDARD
+        .encode(KEY)
+        .trim_end_matches('=')
+        .to_string();
+    let encrypt = |msg: &str| -> String {
+        let mut plain = vec![0u8; 16];
+        plain.extend_from_slice(&(msg.len() as u32).to_be_bytes());
+        plain.extend_from_slice(msg.as_bytes());
+        plain.extend_from_slice(b"corpid_x");
+        base64::engine::general_purpose::STANDARD.encode(
+            Aes256CbcEnc::new(KEY.into(), KEY[..16].into()).encrypt_padded_vec_mut::<Pkcs7>(&plain),
+        )
+    };
+    let sign = |encrypt: &str| -> String {
+        use sha1::Digest;
+        let mut parts = [
+            "tok123".to_string(),
+            "1700000000".into(),
+            "n1".into(),
+            encrypt.to_string(),
+        ];
+        parts.sort();
+        let mut h = sha1::Sha1::new();
+        h.update(parts.join("").as_bytes());
+        hex::encode(h.finalize())
+    };
+
+    let creds = plane
+        .vault()
+        .unwrap()
+        .seal(&format!(
+            r#"{{"token":"tok123","encoding_aes_key":"{aes43}"}}"#
+        ))
+        .unwrap();
+    let channel = raisfast::integration::ItgChannel {
+        id: raisfast::utils::id::new_snowflake_id(),
+        tenant_id: "default".into(),
+        channel_key: "wecom-ch".into(),
+        provider: "wechat-work".into(),
+        display_name: "WeCom".into(),
+        mode: "push".into(),
+        transport: "http1".into(),
+        framing: "raw".into(),
+        codec: "json".into(),
+        endpoint: None,
+        verify_kind: "wechat-aes".into(),
+        verify_config: None,
+        credentials: Some(creds),
+        mapping: Some(json!({
+            "external_id": "$.MsgId",
+            "payload": {"body": "$.Content"}
+        })),
+        normalizer_plugin: None,
+        pull_semantics: None,
+        pull_config: None,
+        stream_config: None,
+        ack_kind: "http-200".into(),
+        redelivery_max: 5,
+        backpressure: None,
+        target_type: "ingress_note".into(),
+        route_extra: None,
+        status: "idle".into(),
+        last_error: None,
+        lease_owner: None,
+        enabled: true,
+        version: 1,
+        shadow: false,
+        created_at: raisfast::utils::tz::now_utc(),
+        updated_at: raisfast::utils::tz::now_utc(),
+    };
+    raisfast::integration::channel::model::insert(&state.pool, &channel)
+        .await
+        .unwrap();
+    plane.channels().refresh().await.unwrap();
+
+    // The decrypted plaintext is WeCom's XML event.
+    let plain = r#"{"MsgId":"wx-1","Content":"你好企业微信"}"#;
+    let cipher = encrypt(plain);
+    let sig = sign(&cipher);
+    let body = format!(r#"<xml><Encrypt>{cipher}</Encrypt></xml>"#);
+
+    let (status, resp_body) = send_raw(
+        &mut app,
+        Request::builder()
+            .method("POST")
+            .uri(format!(
+                "/api/v1/ingress/wecom-ch?msg_signature={sig}&timestamp=1700000000&nonce=n1"
+            ))
+            .header(header::CONTENT_TYPE, "text/xml")
+            .body(Body::from(body.into_bytes()))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "decrypted and routed: {resp_body:?}"
+    );
+
+    let row: String =
+        sqlx::query_scalar("SELECT body FROM ingress_notes WHERE external_id = 'wx-1'")
+            .fetch_one(&state.pool)
+            .await
+            .unwrap();
+    assert_eq!(row, "你好企业微信", "plaintext content routed");
+
+    // GET challenge: echostr decrypt-then-echo.
+    let echo_cipher = encrypt("ECHO-PLAIN-9527");
+    let sig = sign(&echo_cipher);
+    let (status, raw) = send_raw(
+        &mut app,
+        Request::builder()
+            .uri(format!("/api/v1/ingress/wecom-ch?msg_signature={sig}&timestamp=1700000000&nonce=n1&echostr={echo_cipher}"))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(String::from_utf8_lossy(&raw), "ECHO-PLAIN-9527");
+}

@@ -46,6 +46,9 @@ impl InboundHttpRequest {
 pub enum VerifyOutcome {
     /// Trust established.
     Ok,
+    /// Trust established AND the body was transformed by the verifier
+    /// (e.g. wechat-aes decryption) — the pipeline must use this body.
+    OkDecrypted(Vec<u8>),
     /// Challenge verifier: respond with this echo body and 200 (GET verify flows).
     ChallengeEcho(String),
     /// Trust rejected — respond with status + reason, never 2xx.
@@ -117,6 +120,7 @@ pub fn verify(
         "hmac-sha256" => verify_hmac(&config, channel, vault, req),
         "token" => verify_token(&config, channel, vault, req),
         "challenge" => verify_challenge(&config, req),
+        "wechat-aes" => verify_wechat_aes(&config, channel, vault, req),
         "none" => VerifyOutcome::Ok,
         other => reject(500, &format!("unsupported verify_kind '{other}'")),
     }
@@ -175,7 +179,18 @@ fn verify_hmac(
         .map_err(|_| reject(500, "hmac init"))
         .unwrap_or_else(|_| unreachable!("HMAC accepts any key size"));
     mac.update(&req.body);
-    match hex::decode(sig_hex) {
+    use base64::Engine;
+    let expected: Result<Vec<u8>, String> = match cfg_str(config, "encoding", "hex").as_str() {
+        "hex" => hex::decode(sig_hex).map_err(|e| e.to_string()),
+        "base64" => base64::engine::general_purpose::STANDARD
+            .decode(sig_hex)
+            .map_err(|e| e.to_string()),
+        "base64url" => base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .decode(sig_hex)
+            .map_err(|e| e.to_string()),
+        other => return reject(500, &format!("unsupported encoding '{other}'")),
+    };
+    match expected {
         Ok(expected) => {
             // `verify_slice` is constant-time.
             if mac.verify_slice(&expected).is_ok() {
@@ -184,7 +199,7 @@ fn verify_hmac(
                 reject(401, "signature mismatch")
             }
         }
-        Err(_) => reject(401, "signature not valid hex"),
+        Err(_) => reject(401, "signature not valid for the configured encoding"),
     }
 }
 
@@ -235,6 +250,137 @@ fn verify_challenge(config: &Value, req: &InboundHttpRequest) -> VerifyOutcome {
         Some(echo) => VerifyOutcome::ChallengeEcho(echo.to_string()),
         None => reject(400, "missing echo parameter"),
     }
+}
+
+/// `wechat-aes`: WeChat Work / Official Account encrypted callbacks
+/// (WXBizMsgCrypt). Signature = SHA1 over the sorted
+/// (token, timestamp, nonce, encrypt) tuple; the payload is AES-256-CBC
+/// sealed with the EncodingAESKey. Decrypted plaintext replaces the body.
+///
+/// Config: none needed beyond `query_param` defaults; credentials carry
+/// `{"token": "...", "encoding_aes_key": "..."}`.
+///
+/// GET = URL verification (echo the decrypted `echostr`); POST = event.
+fn verify_wechat_aes(
+    _config: &Value,
+    channel: &ItgChannel,
+    vault: Option<&Vault>,
+    req: &InboundHttpRequest,
+) -> VerifyOutcome {
+    use aes::cipher::{BlockDecryptMut, KeyIvInit, block_padding::Pkcs7};
+    type Aes256CbcDec = cbc::Decryptor<aes::Aes256>;
+
+    let creds = match credentials_json(channel, vault) {
+        Ok(c) => c,
+        Err(e) => return e,
+    };
+    let (Some(token), Some(aes_key_b64)) = (
+        cred_str(&creds, "token"),
+        cred_str(&creds, "encoding_aes_key"),
+    ) else {
+        return reject(
+            500,
+            "wechat-aes requires credentials {\"token\": ..., \"encoding_aes_key\": ...}",
+        );
+    };
+
+    // Decode the EncodingAESKey (43 chars + "=" → 32 bytes).
+    let aes_key = {
+        use base64::Engine;
+        match base64::engine::general_purpose::STANDARD.decode(format!("{aes_key_b64}=")) {
+            Ok(k) if k.len() == 32 => k,
+            _ => return reject(500, "invalid encoding_aes_key"),
+        }
+    };
+    let iv = &aes_key[..16];
+
+    let decrypt = |cipher_text_b64: &str| -> Result<Vec<u8>, String> {
+        use base64::Engine;
+        let ct = base64::engine::general_purpose::STANDARD
+            .decode(cipher_text_b64)
+            .map_err(|e| format!("encrypt field not base64: {e}"))?;
+        if ct.is_empty() || ct.len() % 16 != 0 {
+            return Err("cipher length not AES block aligned".into());
+        }
+        let key_arr: &[u8; 32] = aes_key
+            .as_slice()
+            .try_into()
+            .map_err(|_| "key".to_string())?;
+        let iv_arr: &[u8; 16] = iv.try_into().map_err(|_| "iv".to_string())?;
+        let plain = Aes256CbcDec::new(key_arr.into(), iv_arr.into())
+            .decrypt_padded_vec_mut::<Pkcs7>(&ct)
+            .map_err(|e| format!("aes decrypt: {e}"))?;
+        // 16 random bytes | 4-byte BE msg_len | msg | receive_id
+        if plain.len() < 20 {
+            return Err("plaintext too short".into());
+        }
+        let msg_len = u32::from_be_bytes([plain[16], plain[17], plain[18], plain[19]]) as usize;
+        if plain.len() < 20 + msg_len {
+            return Err("plaintext length mismatch (wrong key?)".into());
+        }
+        Ok(plain[20..20 + msg_len].to_vec())
+    };
+    let check_signature = |encrypt: &str, sig: &str, ts: &str, nonce: &str| -> bool {
+        let mut parts = [
+            token.to_string(),
+            ts.to_string(),
+            nonce.to_string(),
+            encrypt.to_string(),
+        ];
+        parts.sort();
+        let digest = {
+            use sha1::Digest;
+            let mut h = sha1::Sha1::new();
+            h.update(parts.join("").as_bytes());
+            hex::encode(h.finalize())
+        };
+        constant_eq(digest.as_bytes(), sig.as_bytes())
+    };
+
+    let sig = req.query_param("msg_signature").unwrap_or_default();
+    let ts = req.query_param("timestamp").unwrap_or_default();
+    let nonce = req.query_param("nonce").unwrap_or_default();
+
+    if req.method == "GET" {
+        // URL verification: decrypt the echostr and echo the plaintext.
+        let Some(echo_cipher) = req.query_param("echostr") else {
+            return reject(400, "missing echostr");
+        };
+        if !check_signature(echo_cipher, sig, ts, nonce) {
+            return reject(401, "msg_signature mismatch");
+        }
+        return match decrypt(echo_cipher) {
+            Ok(plain) => VerifyOutcome::ChallengeEcho(String::from_utf8_lossy(&plain).to_string()),
+            Err(e) => reject(400, &format!("echostr decrypt: {e}")),
+        };
+    }
+
+    // POST: body is XML (or JSON) carrying {"Encrypt": ...} — extract without
+    // a full XML dependency.
+    let body = String::from_utf8_lossy(&req.body);
+    let encrypt = extract_field(&body, "Encrypt")
+        .or_else(|| extract_field(&body, "encrypt"))
+        .unwrap_or_default();
+    if encrypt.is_empty() {
+        return reject(400, "body has no Encrypt field");
+    }
+    if !check_signature(&encrypt, sig, ts, nonce) {
+        return reject(401, "msg_signature mismatch");
+    }
+    match decrypt(&encrypt) {
+        Ok(plain) => VerifyOutcome::OkDecrypted(plain),
+        Err(e) => reject(400, &format!("decrypt: {e}")),
+    }
+}
+
+/// Pull a `<Field>value</Field>`-style element out of an XML-ish body
+/// (good enough for the single-field envelopes these gateways send).
+fn extract_field(body: &str, field: &str) -> Option<String> {
+    let open = format!("<{field}>");
+    let close = format!("</{field}>");
+    let start = body.find(&open)? + open.len();
+    let end = body[start..].find(&close)? + start;
+    Some(body[start..end].to_string())
 }
 
 #[cfg(test)]
@@ -384,6 +530,116 @@ mod tests {
         assert!(matches!(
             verify(&ch, Some(&vault), &req),
             VerifyOutcome::Reject { .. }
+        ));
+    }
+
+    /// Test-side WXBizMsgCrypt encryptor: 16 random | BE len | msg | id.
+    fn wechat_encrypt(aes_key: &[u8; 32], msg: &str) -> String {
+        use aes::cipher::{BlockEncryptMut, KeyIvInit, block_padding::Pkcs7};
+        use base64::Engine;
+        type Aes256CbcEnc = cbc::Encryptor<aes::Aes256>;
+        let mut plain = vec![0u8; 16];
+        plain.extend_from_slice(&(msg.len() as u32).to_be_bytes());
+        plain.extend_from_slice(msg.as_bytes());
+        plain.extend_from_slice(b"corpid_test");
+        let ct = Aes256CbcEnc::new(aes_key.into(), aes_key[..16].into())
+            .encrypt_padded_vec_mut::<Pkcs7>(&plain);
+        base64::engine::general_purpose::STANDARD.encode(ct)
+    }
+
+    fn wechat_sign(token: &str, ts: &str, nonce: &str, encrypt: &str) -> String {
+        use sha1::Digest;
+        let mut parts = [token, ts, nonce, encrypt];
+        parts.sort();
+        let mut h = sha1::Sha1::new();
+        h.update(parts.join("").as_bytes());
+        hex::encode(h.finalize())
+    }
+
+    // Base64("AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=") → bytes 0..32.
+    const WECHAT_AES_KEY_43: &str = "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8";
+    const WECHAT_KEY: &[u8; 32] = &[
+        0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24,
+        25, 26, 27, 28, 29, 30, 31,
+    ];
+
+    fn wechat_channel(vault: &Vault) -> ItgChannel {
+        let creds = vault
+            .seal(&format!(
+                r#"{{"token":"tok123","encoding_aes_key":"{WECHAT_AES_KEY_43}"}}"#
+            ))
+            .expect("seal");
+        channel("wechat-aes", Value::Null, Some(creds))
+    }
+
+    #[test]
+    fn hmac_base64_encoding_ok() {
+        let vault = Vault::from_secret("test-key").expect("vault");
+        let creds = vault.seal(r#"{"secret":"s3cret"}"#).expect("seal");
+        let ch = channel(
+            "hmac-sha256",
+            serde_json::json!({"encoding": "base64", "scheme": ""}),
+            Some(creds),
+        );
+        use base64::Engine;
+        use hmac::{Hmac, KeyInit, Mac};
+        type HmacSha256 = Hmac<sha2::Sha256>;
+        let mut mac = HmacSha256::new_from_slice(b"s3cret").unwrap();
+        mac.update(b"{\"shopify\":true}");
+        let sig = base64::engine::general_purpose::STANDARD.encode(mac.finalize().into_bytes());
+        let req = request(b"{\"shopify\":true}", &[("x-signature", sig.as_str())]);
+        assert!(matches!(verify(&ch, Some(&vault), &req), VerifyOutcome::Ok));
+    }
+
+    #[test]
+    fn wechat_aes_post_decrypts_and_get_echoes() {
+        let vault = Vault::from_secret("k").expect("vault");
+        let ch = wechat_channel(&vault);
+
+        // POST: encrypted event → OkDecrypted(plaintext XML/JSON).
+        let plain_msg = r#"{"event":"message","content":"你好"}"#;
+        let encrypt = wechat_encrypt(WECHAT_KEY, plain_msg);
+        let sig = wechat_sign("tok123", "1700000000", "n1", &encrypt);
+        let body = format!(r#"<xml><Encrypt>{encrypt}</Encrypt></xml>"#);
+        let mut req = request(body.as_bytes(), &[]);
+        req.query = format!("msg_signature={sig}&timestamp=1700000000&nonce=n1");
+        match verify(&ch, Some(&vault), &req) {
+            VerifyOutcome::OkDecrypted(plain) => {
+                assert_eq!(String::from_utf8_lossy(&plain), plain_msg);
+            }
+            other => panic!("expected OkDecrypted, got {other:?}"),
+        }
+
+        // Tampered signature → reject.
+        let mut req = request(body.as_bytes(), &[]);
+        req.query = "msg_signature=deadbeef&timestamp=1700000000&nonce=n1".to_string();
+        assert!(matches!(
+            verify(&ch, Some(&vault), &req),
+            VerifyOutcome::Reject { status: 401, .. }
+        ));
+
+        // GET: echostr decrypt-then-echo.
+        let echo_plain = "RANDOM-ECHO-8421";
+        let echo_cipher = wechat_encrypt(WECHAT_KEY, echo_plain);
+        let sig = wechat_sign("tok123", "1700000000", "n1", &echo_cipher);
+        let mut req = request(b"", &[]);
+        req.method = "GET".into();
+        req.query =
+            format!("msg_signature={sig}&timestamp=1700000000&nonce=n1&echostr={echo_cipher}");
+        match verify(&ch, Some(&vault), &req) {
+            VerifyOutcome::ChallengeEcho(echo) => assert_eq!(echo, echo_plain),
+            other => panic!("expected echo, got {other:?}"),
+        }
+
+        // Wrong key → length mismatch error (no panic, clean 400).
+        let bad_cipher = wechat_encrypt(b"00000000000000000000000000000000", plain_msg);
+        let sig = wechat_sign("tok123", "1700000000", "n1", &bad_cipher);
+        let body = format!(r#"<xml><Encrypt>{bad_cipher}</Encrypt></xml>"#);
+        let mut req = request(body.as_bytes(), &[]);
+        req.query = format!("msg_signature={sig}&timestamp=1700000000&nonce=n1");
+        assert!(matches!(
+            verify(&ch, Some(&vault), &req),
+            VerifyOutcome::Reject { status: 400, .. }
         ));
     }
 

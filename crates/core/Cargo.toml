@@ -186,6 +186,9 @@ lettre = { version = "0.11", default-features = false, features = ["smtp-transpo
 tauri = { version = "2", features = ["devtools"], optional = true }
 
 aes-gcm = "0.11"
+aes = "0.8"
+cbc = { version = "0.1", features = ["block-padding", "alloc"] }
+cipher = { version = "0.4", features = ["block-padding"] }
 async-stripe = { version = "0.41", default-features = false, features = ["runtime-tokio-hyper-rustls-webpki", "webhook-events", "full"], optional = true }
 dashmap = "6"
 prost = { version = "0.13", features = ["derive"] }

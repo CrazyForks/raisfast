@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+- Integration Plane M1.5 — verification layer: `hmac-sha256` gains `encoding: hex|base64/base64url` (Shopify/GitHub/WhatsApp shapes); new `wechat-aes` verify kind (WeChat Work / Official Account encrypted callbacks: SHA1 composite signature + AES-256-CBC decrypt, plaintext replaces the pipeline body, GET echostr challenge); decrypted-verifier outcome wired through the push pipeline; push endpoint now forwards the query string (signature params live there)
+
 - TLS hardening: install the rustls `ring` CryptoProvider at startup — the dependency tree pulls both `ring` and `aws-lc-rs`, and the first real TLS handshake (wss egress) would panic without an explicit default
 - Integration Plane — `pb-frame` framing (pbbp2 protobuf envelope via prost: config-driven heartbeat / fragment reassembly / event dispatch / in-connection ack) and generic `pre_connect` (exchange a static endpoint for a dynamic WS URL over HTTP); reference deployment: Feishu long-connection bot (`dev-docs/integration/feishu-ws.md`)
 - Integration Plane — generic long-connection gateway support: `dispatch` framing (declarative protocol profile: handshake templates with `{{token}}`/grant vars, conn-ack validation, server-ping→client-pong heartbeat, matcher-based event dispatch), `oauth-cc` credentials (cached client-credentials tokens shared by inbound handshakes and outbound api-clients), mapping `as_json([$.path])` pipe for string-in-string JSON envelopes (Feishu/DingTalk-style IM content); connectors now unseal credentials via `ConnectionSink` instead of the process-wide handle

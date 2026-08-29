@@ -1,0 +1,35 @@
+[content_type]
+name = "Ingress Note"
+singular = "ingress_note"
+plural = "ingress_notes"
+table = "ingress_notes"
+implements = [
+    "ownable",
+    "timestampable",
+]
+
+[fields.external_id]
+type = "text"
+
+[fields.body]
+type = "text"
+
+[api.list]
+access = "authed"
+cache = false
+
+[api.get]
+access = "authed"
+cache = false
+
+[api.create]
+access = "authed"
+cache = false
+
+[api.update]
+access = "owner"
+cache = false
+
+[api.delete]
+access = "admin"
+cache = false

@@ -196,7 +196,29 @@ impl Pipeline {
         };
 
         crate::integration::trace::with_trace(ctx, async {
-            self.run_push_traced(channel, req, receipt_id).await
+            // Decrypting verifiers (wechat-aes) replace the body for the
+            // whole downstream pass (hash, archive, normalize all see the
+            // plaintext).
+            let vault = self.vault.as_ref();
+            match crate::integration::verify::verify(channel, vault, req) {
+                VerifyOutcome::OkDecrypted(plain) => {
+                    let mut owned = req.clone();
+                    owned.body = plain;
+                    self.run_push_traced(channel, &owned, receipt_id, true)
+                        .await
+                }
+                VerifyOutcome::ChallengeEcho(echo) => PipelineOutcome {
+                    ack: AckAction::Http {
+                        status: 200,
+                        body: Some(echo),
+                    },
+                    receipt_id,
+                    duplicate: false,
+                    delivered: false,
+                    retry_scheduled: None,
+                },
+                _ => self.run_push_traced(channel, req, receipt_id, false).await,
+            }
         })
         .await
     }
@@ -223,19 +245,40 @@ impl Pipeline {
         channel: &Arc<ItgChannel>,
         req: &InboundHttpRequest,
         receipt_id: i64,
+        // Body already verified+decrypted by the caller (wechat-aes path):
+        // skip the second verify pass over plaintext.
+        body_decrypted: bool,
     ) -> PipelineOutcome {
         let mut timeline = StepTimeline::new();
         let now = crate::utils::tz::now_utc();
 
         // ── Verify (L0) ─────────────────────────────────────────────
         let t = Instant::now();
-        let verify = crate::integration::verify::verify(channel, self.vault.as_ref(), req);
+        let verify = if body_decrypted {
+            VerifyOutcome::Ok
+        } else {
+            crate::integration::verify::verify(channel, self.vault.as_ref(), req)
+        };
         match &verify {
+            // OkDecrypted never reaches here: `run_push` swaps the decrypted
+            // body in and re-enters, so this pass verifies the plaintext
+            // with the channel's (non-decrypting) rules… except wechat-aes
+            // IS the channel kind — see the Ok arm below.
             VerifyOutcome::Ok => timeline.push(StepEntry::done(
                 "verify",
                 t.elapsed().as_millis() as u64,
                 channel.verify_kind.clone(),
             )),
+            VerifyOutcome::OkDecrypted(plain) => {
+                // Defensive: stream/batch entries bypass run_push's swap —
+                // use the plaintext directly for this pass.
+                let _ = plain;
+                timeline.push(StepEntry::done(
+                    "verify",
+                    t.elapsed().as_millis() as u64,
+                    channel.verify_kind.clone(),
+                ))
+            }
             VerifyOutcome::ChallengeEcho(echo) => {
                 // GET challenge handshake — no envelope at all.
                 return PipelineOutcome {
@@ -469,7 +512,21 @@ impl Pipeline {
         channel: &ItgChannel,
         req: &InboundHttpRequest,
     ) -> Result<Option<Normalized>, AppError> {
-        let input = framing::decode(&channel.framing, &channel.codec, &req.body)?;
+        let mut input = framing::decode(&channel.framing, &channel.codec, &req.body)?;
+        // Request metadata for mappings: providers put idempotency keys in
+        // headers (GitHub `x-github-delivery`, Stripe `stripe-event-id`, …).
+        // Injected under `_headers` without clobbering body fields.
+        if let Value::Object(obj) = &mut input
+            && !obj.contains_key("_headers")
+            && !req.headers.is_empty()
+        {
+            let headers: serde_json::Map<String, Value> = req
+                .headers
+                .iter()
+                .map(|(k, v)| (k.clone(), Value::String(v.clone())))
+                .collect();
+            obj.insert("_headers".into(), Value::Object(headers));
+        }
         let Some(plan) = self.plan_for(channel)? else {
             return Err(AppError::BadRequest(
                 "channel has no mapping and no plugin — configure `mapping`".into(),

@@ -155,7 +155,7 @@ pub async fn challenge(
     let vault = state.integration.as_ref().and_then(|p| p.vault());
     match crate::integration::verify::verify(&ch, vault, &req) {
         VerifyOutcome::ChallengeEcho(echo) => (StatusCode::OK, echo).into_response(),
-        VerifyOutcome::Ok => {
+        VerifyOutcome::Ok | VerifyOutcome::OkDecrypted(_) => {
             // Channel without a GET flow (e.g. hmac) — nothing to handshake.
             (StatusCode::METHOD_NOT_ALLOWED, "no GET flow").into_response()
         }
@@ -170,6 +170,7 @@ pub async fn challenge(
 pub async fn push(
     State(state): State<AppState>,
     Path(channel_key): Path<String>,
+    axum::extract::OriginalUri(uri): axum::extract::OriginalUri,
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
@@ -197,7 +198,9 @@ pub async fn push(
 
     let req = InboundHttpRequest {
         method: "POST".into(),
-        query: String::new(),
+        // Verifiers read signature params from the query (wechat-aes
+        // msg_signature/timestamp/nonce).
+        query: uri.query().unwrap_or_default().to_string(),
         headers: headers
             .iter()
             .filter_map(|(k, v)| {
