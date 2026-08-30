@@ -6,6 +6,8 @@
 use serde_json::Value;
 
 pub mod jsonrpc;
+#[cfg(feature = "integration-imap")]
+pub mod mime_email;
 
 use crate::errors::app_error::AppError;
 
@@ -30,6 +32,9 @@ pub fn decode(framing: &str, codec: &str, body: &[u8]) -> Result<Value, AppError
         ("raw" | "json-rpc" | "dispatch" | "pb-frame", _) => Err(AppError::BadRequest(format!(
             "codec '{codec}' not supported in this phase — use 'json' or a normalizer plugin"
         ))),
+        // RFC5322/MIME email (imap connector, integration.md §2).
+        #[cfg(feature = "integration-imap")]
+        ("mime", "email") => mime_email::decode(body),
         (other, _) => Err(AppError::BadRequest(format!(
             "framing '{other}' not supported in this phase — use 'raw' or a normalizer plugin"
         ))),

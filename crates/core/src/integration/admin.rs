@@ -31,6 +31,9 @@ use crate::utils::pagination::PaginationParams;
 fn validate_stack(req: &CreateChannelRequest) -> Result<(), AppError> {
     const MODE_TRANSPORTS: &[(&str, &[&str])] = &[
         ("push", &["http1", "http2"]),
+        #[cfg(feature = "integration-imap")]
+        ("pull", &["http1", "http2", "imap"]),
+        #[cfg(not(feature = "integration-imap"))]
         ("pull", &["http1", "http2"]),
         ("stream", &["ws", "mqtt"]),
         ("listen", &["tcp"]),
@@ -58,6 +61,9 @@ fn validate_stack(req: &CreateChannelRequest) -> Result<(), AppError> {
         ("dispatch", "json") if req.mode == "stream" && req.transport == "ws" => true,
         // Protobuf envelope frames (pbbp2 wire shape, config semantics).
         ("pb-frame", "json") if req.mode == "stream" && req.transport == "ws" => true,
+        // RFC5322/MIME email via the imap connector (integration.md §2).
+        #[cfg(feature = "integration-imap")]
+        ("mime", "email") if req.transport == "imap" => true,
         _ => false,
     };
     if !framing_ok {
@@ -95,6 +101,27 @@ fn validate_stack(req: &CreateChannelRequest) -> Result<(), AppError> {
         ));
     }
     if req.mode == "pull" {
+        if req.transport == "imap" {
+            // Mark-read semantics: the mailbox is the state — no local
+            // cursor, pull_config optional (folder/ssl/batch/idle defaults).
+            if req.pull_semantics.as_deref() != Some("mark-read") {
+                return Err(AppError::BadRequest(
+                    "imap pull requires pull_semantics = 'mark-read'".into(),
+                ));
+            }
+            if !req.endpoint.as_deref().unwrap_or("").starts_with("imap://")
+                && !req
+                    .endpoint
+                    .as_deref()
+                    .unwrap_or("")
+                    .starts_with("imaps://")
+            {
+                return Err(AppError::BadRequest(
+                    "imap pull requires an imap:// or imaps:// endpoint".into(),
+                ));
+            }
+            return validate_mapping_and_ok(req);
+        }
         if req.pull_semantics.as_deref() != Some("cursor") {
             return Err(AppError::BadRequest(
                 "pull requires pull_semantics = 'cursor' in this phase".into(),
@@ -111,6 +138,10 @@ fn validate_stack(req: &CreateChannelRequest) -> Result<(), AppError> {
             ));
         }
     }
+    validate_mapping_and_ok(req)
+}
+
+fn validate_mapping_and_ok(req: &CreateChannelRequest) -> Result<(), AppError> {
     if let Some(mapping) = &req.mapping {
         crate::integration::mapping::compile(mapping)?;
     }

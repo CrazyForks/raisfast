@@ -2570,7 +2570,7 @@ table = "settings"
 kind = "single"
 implements = ["ownable"]
 
-[fields.key]
+[fields.key_name]
 type = "text"
 "#,
         )

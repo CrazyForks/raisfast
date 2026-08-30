@@ -534,6 +534,13 @@ impl ContentTypeSchema {
                 None
             };
 
+            // Non-relation fields become SQL columns under their own name —
+            // reject reserved words up front (relations derive `{name}_id`
+            // columns, checked separately via their foreign_key).
+            if field_type != FieldType::Relation {
+                Self::validate_column_name(name, "field name")?;
+            }
+
             let media_config =
                 if field_type == FieldType::Media || field_type == FieldType::MediaSet {
                     Some(parse_media_config(field_toml))
@@ -713,6 +720,19 @@ impl ContentTypeSchema {
         Ok(name.to_string())
     }
 
+    /// Validate a name that becomes a SQL column: identifier rules plus the
+    /// SQL reserved-word list. Route-only names (singular/plural) go through
+    /// [`Self::validate_identifier`] instead.
+    fn validate_column_name(name: &str, label: &str) -> Result<String, AppError> {
+        let name = Self::validate_identifier(name, label)?;
+        if crate::db::driver::is_reserved_keyword(&name) {
+            return Err(AppError::Internal(anyhow::anyhow!(
+                "{label} '{name}' is a SQL reserved word — rename it (e.g. '{name}_addr' / 'sender')"
+            )));
+        }
+        Ok(name)
+    }
+
     /// Validate that the table name only contains safe characters to prevent SQL injection.
     fn validate_table_name(name: &str) -> Result<String, AppError> {
         let name = name.trim();
@@ -724,6 +744,11 @@ impl ContentTypeSchema {
         if !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
             return Err(AppError::Internal(anyhow::anyhow!(
                 "table name '{name}' contains invalid characters (only alphanumeric and underscore allowed)"
+            )));
+        }
+        if crate::db::driver::is_reserved_keyword(name) {
+            return Err(AppError::Internal(anyhow::anyhow!(
+                "table name '{name}' is a SQL reserved word — rename it"
             )));
         }
         Ok(name.to_string())
@@ -1331,14 +1356,19 @@ fn parse_relation_config(table: &toml::Table) -> Result<RelationConfig, AppError
         .get("foreign_key")
         .and_then(|v| v.as_str())
         .map(|raw_fk| {
-            crate::db::driver::sanitize_identifier(raw_fk).ok_or_else(|| {
+            let fk = crate::db::driver::sanitize_identifier(raw_fk).ok_or_else(|| {
                 AppError::Internal(anyhow::anyhow!(
                     "relation foreign_key '{raw_fk}' contains invalid characters"
                 ))
-            })
+            })?;
+            if crate::db::driver::is_reserved_keyword(fk) {
+                return Err(AppError::Internal(anyhow::anyhow!(
+                    "relation foreign_key '{fk}' is a SQL reserved word — rename it"
+                )));
+            }
+            Ok::<_, AppError>(fk.to_string())
         })
-        .transpose()?
-        .map(|s| s.to_string());
+        .transpose()?;
 
     let through = table
         .get("through")
@@ -2037,6 +2067,69 @@ type = "text"
 "#,
         );
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn validate_field_reserved_word_rejected() {
+        for bad in ["from", "order", "group", "FROM", "Table"] {
+            let result = ContentTypeSchema::parse_from_str(&format!(
+                r#"
+[content_type]
+name = "X"
+singular = "x"
+plural = "xs"
+table = "xs"
+
+[fields.{bad}]
+type = "text"
+"#
+            ));
+            let err = result.expect_err("reserved word rejected").to_string();
+            assert!(
+                err.contains("reserved"),
+                "guidance present for '{bad}': {err}"
+            );
+        }
+    }
+
+    #[test]
+    fn validate_table_name_reserved_word_rejected() {
+        let result = ContentTypeSchema::parse_from_str(
+            r#"
+[content_type]
+name = "X"
+singular = "x"
+plural = "xs"
+table = "from"
+
+[fields.a]
+type = "text"
+"#,
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn common_non_reserved_field_names_accepted() {
+        let result = ContentTypeSchema::parse_from_str(
+            r#"
+[content_type]
+name = "Ingress Email"
+singular = "ingress_email"
+plural = "ingress_emails"
+table = "ingress_emails"
+
+[fields.sender]
+type = "text"
+
+[fields.subject]
+type = "text"
+
+[fields.from_addr]
+type = "text"
+"#,
+        );
+        assert!(result.is_ok(), "{result:?}");
     }
 
     #[test]

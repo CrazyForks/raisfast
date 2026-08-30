@@ -584,64 +584,13 @@ async fn build_test_app(pool: raisfast::db::Pool) -> (axum::Router, AppState) {
             &mut ct_route_registry,
             &config,
         ))
-        .route(
-            "/ingress/{channel_key}",
-            get(raisfast::integration::routes::challenge).post(raisfast::integration::routes::push),
-        )
-        .route(
-            "/admin/integration/channels",
-            get(raisfast::integration::admin::list_channels)
-                .post(raisfast::integration::admin::create_channel),
-        )
-        .route(
-            "/admin/integration/channels/{id}",
-            get(raisfast::integration::admin::get_channel)
-                .put(raisfast::integration::admin::update_channel)
-                .delete(raisfast::integration::admin::delete_channel),
-        )
-        .route(
-            "/admin/integration/channels/{id}/test-mapping",
-            post(raisfast::integration::admin::test_mapping),
-        )
-        .route(
-            "/admin/integration/receipts",
-            get(raisfast::integration::admin::list_receipts),
-        )
-        .route(
-            "/admin/integration/receipts/{id}",
-            get(raisfast::integration::admin::get_receipt),
-        )
-        .route(
-            "/admin/integration/receipts/{id}/trace",
-            get(raisfast::integration::admin::get_trace),
-        )
-        .route(
-            "/admin/integration/channels/health",
-            get(raisfast::integration::admin::channels_health),
-        )
-        .route(
-            "/admin/integration/channels/{id}/health",
-            get(raisfast::integration::admin::channel_health),
-        )
-        .route(
-            "/admin/integration/api-clients",
-            get(raisfast::integration::admin::list_api_clients)
-                .post(raisfast::integration::admin::create_api_client),
-        )
-        .route(
-            "/admin/integration/api-clients/{id}",
-            get(raisfast::integration::admin::get_api_client)
-                .put(raisfast::integration::admin::update_api_client)
-                .delete(raisfast::integration::admin::delete_api_client),
-        )
-        .route(
-            "/admin/integration/api-clients/{id}/test-call",
-            post(raisfast::integration::admin::test_call),
-        )
-        .route(
-            "/admin/integration/egress-log",
-            get(raisfast::integration::admin::list_egress_log),
-        )
+        // Mount the REAL integration route table — a hand-written copy here
+        // drifted from `routes()` once before (PUT 405s in production while
+        // e2e stayed green because the harness registered its own routes).
+        .merge(raisfast::integration::routes::routes(
+            &mut ct_route_registry,
+            &config,
+        ))
         // ── App Bundle ──
         .route("/admin/apps", get(raisfast::apps::admin::list_apps))
         .route("/admin/apps/{app_id}", get(raisfast::apps::admin::get_app))
@@ -6148,4 +6097,300 @@ type = "text"
     .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(String::from_utf8_lossy(&raw), "ECHO-PLAIN-9527");
+}
+
+// ── imap pull connector (mark-read) — GreenMail contract test ────────
+
+/// Connect and check the server sends an IMAP4rev1 greeting line.
+#[cfg(feature = "integration-imap")]
+async fn imap_greeting_ok(port: u16) -> bool {
+    use tokio::io::AsyncReadExt;
+    let Ok(mut s) = tokio::net::TcpStream::connect(("127.0.0.1", port)).await else {
+        return false;
+    };
+    let mut buf = vec![0_u8; 128];
+    matches!(
+        tokio::time::timeout(std::time::Duration::from_secs(2), s.read(&mut buf)).await,
+        Ok(Ok(n)) if n > 0 && buf.starts_with(b"* OK")
+    )
+}
+
+/// Spin up a fresh GreenMail container with random host ports. Returns
+/// `(smtp_port, imap_port, container_name)` — the caller tears it down.
+/// Returns `None` when docker is unavailable — the test skips silently
+/// (contract coverage runs on dev machines / CI with docker).
+#[cfg(feature = "integration-imap")]
+async fn ensure_greenmail() -> Option<(u16, u16, String)> {
+    // Hygiene: drop leftovers from crashed runs of this test.
+    let stale = tokio::process::Command::new("docker")
+        .args(["ps", "-aq", "--filter", "name=raisfast-itg-greenmail"])
+        .output()
+        .await
+        .ok()?;
+    for name in String::from_utf8_lossy(&stale.stdout).split_whitespace() {
+        let _ = tokio::process::Command::new("docker")
+            .args(["rm", "-f", name])
+            .output()
+            .await;
+    }
+    let container = format!("raisfast-itg-greenmail-{}", std::process::id());
+    // Empty host ports (`127.0.0.1::3025`) → docker assigns random free
+    // ports, immune to collisions with lingering listeners.
+    let out = tokio::process::Command::new("docker")
+        .args([
+            "run",
+            "-d",
+            "--name",
+            &container,
+            "-p",
+            "127.0.0.1::3025",
+            "-p",
+            "127.0.0.1::3143",
+            "greenmail/standalone:2.0.0",
+        ])
+        .output()
+        .await
+        .map_err(|e| eprintln!("greenmail: docker unavailable ({e}) — skipping"))
+        .ok()?;
+    if !out.status.success() {
+        eprintln!(
+            "greenmail: docker run failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        return None;
+    }
+    async fn port_of(container: &str, inner: &str) -> Option<u16> {
+        let out = tokio::process::Command::new("docker")
+            .args(["port", container, inner])
+            .output()
+            .await
+            .ok()?;
+        let s = String::from_utf8_lossy(&out.stdout).to_string();
+        s.trim()
+            .rsplit(':')
+            .next()
+            .and_then(|p| p.parse::<u16>().ok())
+    }
+    let (Some(smtp_port), Some(imap_port)) = (
+        port_of(&container, "3025").await,
+        port_of(&container, "3143").await,
+    ) else {
+        eprintln!("greenmail: could not resolve published ports");
+        return None;
+    };
+    // Wait for the IMAP *greeting* — docker-proxy accepts TCP before the
+    // JVM service is actually ready (a bare connect would race the boot).
+    for _ in 0..40 {
+        if imap_greeting_ok(imap_port).await {
+            return Some((smtp_port, imap_port, container));
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    }
+    eprintln!("greenmail: imap never came up");
+    let _ = tokio::process::Command::new("docker")
+        .args(["rm", "-f", &container])
+        .output()
+        .await;
+    None
+}
+
+/// Minimal SMTP dialogue: deliver one RFC5322 message (GreenMail accepts
+/// unauthenticated sends).
+#[cfg(feature = "integration-imap")]
+async fn smtp_deliver(port: u16, raw_message: &str) {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    async fn drain(s: &mut tokio::net::TcpStream) {
+        let mut buf = vec![0_u8; 4096];
+        let _ = tokio::time::timeout(
+            std::time::Duration::from_millis(400),
+            AsyncReadExt::read(s, &mut buf),
+        )
+        .await;
+    }
+    let mut s = tokio::net::TcpStream::connect(("127.0.0.1", port))
+        .await
+        .expect("smtp connect");
+    drain(&mut s).await;
+    for line in ["EHLO raisfast-test", "MAIL FROM:<sender@example.com>"] {
+        s.write_all(format!("{line}\r\n").as_bytes()).await.unwrap();
+        drain(&mut s).await;
+    }
+    s.write_all(b"RCPT TO:<inbox@example.com>\r\n")
+        .await
+        .unwrap();
+    drain(&mut s).await;
+    s.write_all(b"DATA\r\n").await.unwrap();
+    drain(&mut s).await;
+    // Dot-stuff: lone dots are not expected in the fixtures.
+    s.write_all(raw_message.as_bytes()).await.unwrap();
+    s.write_all(b"\r\n.\r\n").await.unwrap();
+    drain(&mut s).await;
+    let _ = s.write_all(b"QUIT\r\n").await;
+}
+
+#[cfg(feature = "integration-imap")]
+#[tokio::test(flavor = "multi_thread")]
+async fn integration_imap_pull_mark_read_roundtrip() {
+    let Some((smtp_port, imap_port, container)) = ensure_greenmail().await else {
+        eprintln!("skipping: greenmail not available");
+        return;
+    };
+
+    let unique = raisfast::utils::id::new_snowflake_id().0;
+    smtp_deliver(
+        smtp_port,
+        &format!(
+            "Subject: first {unique}\r\nMessage-ID: <gm-1-{unique}@example.com>\r\n\
+             From: Sender <sender@example.com>\r\nTo: inbox@example.com\r\n\
+             Content-Type: text/plain; charset=utf-8\r\n\r\nhello one"
+        ),
+    )
+    .await;
+    smtp_deliver(
+        smtp_port,
+        &format!(
+            "Subject: second {unique}\r\nMessage-ID: <gm-2-{unique}@example.com>\r\n\
+             From: Sender <sender@example.com>\r\nTo: inbox@example.com\r\n\r\nhello two"
+        ),
+    )
+    .await;
+
+    let (mut app, state) = test_app().await;
+    let _ = &mut app;
+    let plane = state.integration.as_ref().unwrap();
+
+    // Target CT (subject lands in `body`).
+    let toml = r#"
+[content_type]
+name = "Ingress Note"
+singular = "ingress_note"
+plural = "ingress_notes"
+table = "ingress_notes"
+
+[fields.external_id]
+type = "text"
+
+[fields.body]
+type = "text"
+"#;
+    let schema = raisfast::content_type::schema::ContentTypeSchema::parse_from_str(toml).unwrap();
+    let repo = raisfast::content_type::repository::ContentRepository::new(state.pool.clone());
+    repo.migrate(&schema, &state.protocol_registry)
+        .await
+        .unwrap();
+    state
+        .content_type_registry
+        .register(
+            schema,
+            &state.config.rule_engine,
+            &state.config.builtins.reserved_route_segments(),
+            &state.protocol_registry.names(),
+            &state.protocol_registry,
+        )
+        .unwrap();
+
+    let channel = raisfast::integration::ItgChannel {
+        id: raisfast::utils::id::new_snowflake_id(),
+        tenant_id: "default".into(),
+        channel_key: format!("imap-ch-{unique}"),
+        provider: "imap".into(),
+        display_name: "IMAP".into(),
+        mode: "pull".into(),
+        transport: "imap".into(),
+        framing: "mime".into(),
+        codec: "email".into(),
+        endpoint: Some(format!("imap://127.0.0.1:{imap_port}")),
+        verify_kind: "none".into(),
+        verify_config: None,
+        credentials: None,
+        mapping: Some(json!({
+            "external_id": "$.message_id",
+            "sender": "$.from.address",
+            "payload": {"body": "$.subject"}
+        })),
+        normalizer_plugin: None,
+        pull_semantics: Some("mark-read".into()),
+        pull_config: Some(json!({"ssl": false, "folder": "INBOX", "batch": 10})),
+        stream_config: None,
+        ack_kind: "none".into(),
+        redelivery_max: 5,
+        backpressure: None,
+        target_type: "ingress_note".into(),
+        route_extra: None,
+        status: "idle".into(),
+        last_error: None,
+        lease_owner: None,
+        enabled: true,
+        version: 1,
+        shadow: false,
+        created_at: raisfast::utils::tz::now_utc(),
+        updated_at: raisfast::utils::tz::now_utc(),
+    };
+    raisfast::integration::channel::model::insert(&state.pool, &channel)
+        .await
+        .unwrap();
+    plane.channels().refresh().await.unwrap();
+
+    // ── Run 1: both messages fetched, decoded from MIME, routed, marked seen.
+    let s = raisfast::integration::connector::imap_pull::run(
+        plane.pipeline(),
+        &channel,
+        "inbox@example.com",
+        "any-password",
+    )
+    .await
+    .expect("imap pull run 1");
+    assert_eq!(
+        (s.fetched, s.delivered, s.duplicates, s.failed),
+        (2, 2, 0, 0),
+        "run 1 summary"
+    );
+
+    let bodies: Vec<String> =
+        sqlx::query_scalar("SELECT body FROM ingress_notes WHERE body LIKE ? ORDER BY id")
+            .bind(format!("%{unique}%"))
+            .fetch_all(&state.pool)
+            .await
+            .unwrap();
+    assert_eq!(bodies.len(), 2, "both mails routed: {bodies:?}");
+    // UID assignment order is not guaranteed to match delivery order.
+    assert!(
+        bodies.iter().any(|b| b.contains("first")) && bodies.iter().any(|b| b.contains("second")),
+        "subjects mapped to body: {bodies:?}"
+    );
+
+    // Sender mapping surfaced through the envelope → receipts.
+    let sender: Option<String> = sqlx::query_scalar(
+        "SELECT envelope->>'sender' FROM itg_receipts WHERE channel_id = ? LIMIT 1",
+    )
+    .bind(*channel.id)
+    .fetch_optional(&state.pool)
+    .await
+    .unwrap()
+    .flatten();
+    assert_eq!(
+        sender.as_deref(),
+        Some("sender@example.com"),
+        "mime from mapped"
+    );
+
+    // ── Run 2: mailbox fully seen — nothing new (mark-read is the cursor).
+    let s2 = raisfast::integration::connector::imap_pull::run(
+        plane.pipeline(),
+        &channel,
+        "inbox@example.com",
+        "any-password",
+    )
+    .await
+    .expect("imap pull run 2");
+    assert_eq!(
+        (s2.fetched, s2.delivered),
+        (0, 0),
+        "all messages marked seen"
+    );
+
+    let _ = tokio::process::Command::new("docker")
+        .args(["rm", "-f", &container])
+        .output()
+        .await;
 }

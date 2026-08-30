@@ -50,6 +50,38 @@ impl JobHandler for IngressPullHandler {
         if !channel.enabled || channel.shadow {
             return Ok(());
         }
+        #[cfg(feature = "integration-imap")]
+        if channel.transport == "imap" {
+            let (username, password) = crate::integration::connector::imap_pull::pull_credentials(
+                &channel,
+                plane.vault(),
+            )?;
+            let summary = crate::integration::connector::imap_pull::run(
+                plane.pipeline(),
+                &channel,
+                &username,
+                &password,
+            )
+            .await?;
+            tracing::info!(
+                channel_key,
+                fetched = summary.fetched,
+                delivered = summary.delivered,
+                duplicates = summary.duplicates,
+                failed = summary.failed,
+                rounds = summary.pages,
+                "ingress.pull (imap) run complete"
+            );
+            return Ok(());
+        }
+        #[cfg(not(feature = "integration-imap"))]
+        if channel.transport == "imap" {
+            tracing::warn!(
+                channel_key,
+                "ingress.pull: imap transport requires the 'integration-imap' feature — skipped"
+            );
+            return Ok(());
+        }
         let token = crate::integration::connector::http_pull::pull_token(&channel, plane.vault())?;
         let summary = crate::integration::connector::http_pull::run(
             plane.pool(),

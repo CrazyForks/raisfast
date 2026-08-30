@@ -27,6 +27,9 @@ plugin-all  = ["plugin-wasm", "plugin-js", "plugin-lua", "plugin-rhai"]
 # ── Integration plane stream connectors ─────────────────────────────
 integration-stream = ["tokio-tungstenite", "rumqttc"]
 
+# ── Integration plane IMAP (email inbound) ───────────────────────────
+integration-imap = ["async-imap", "mail-parser", "native-tls", "tokio-native-tls", "dep:tokio-util"]
+
 # ── Search engine ────────────────────────────────────────────────────
 search-tantivy = ["tantivy"]
 
@@ -114,6 +117,12 @@ rsa = { version = "0.9", features = ["pem", "sha2"], optional = true }
 x509-cert = { version = "0.3", optional = true }
 base64 = "0.23"
 
+# Integration IMAP (email inbound)
+async-imap = { version = "0.11", optional = true }
+mail-parser = { version = "0.11", optional = true }
+native-tls = { version = "0.2", optional = true }
+tokio-native-tls = { version = "0.3", optional = true }
+
 # Security
 argon2 = "0.5"
 getrandom = "0.4"
@@ -199,7 +208,7 @@ arc-swap = "1"
 hyper = { version = "1", optional = true }
 hyper-util = { version = "0.1", features = ["tokio", "client", "server", "http1"], optional = true }
 http-body-util = { version = "0.1", optional = true }
-tokio-util = { version = "0.7", features = ["rt"], optional = true }
+tokio-util = { version = "0.7", features = ["rt", "compat"], optional = true }
 
 # Tunnel client
 bore-cli = { version = "0.6", optional = true }

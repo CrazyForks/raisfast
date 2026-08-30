@@ -3,6 +3,8 @@
 //! M2 scope: `http-pull` with the generic REST `since_id` cursor template.
 
 pub mod http_pull;
+#[cfg(feature = "integration-imap")]
+pub mod imap_pull;
 
 #[cfg(feature = "integration-stream")]
 pub mod mqtt_client;

@@ -39,8 +39,8 @@ sqlx_cache := ".sqlx-" + db
 schema_file := if db == "sqlite" { "migrations/sqlite/schema.sqlite.sql" } else if db == "postgres" { "migrations/postgres/schema.postgres.sql" } else { "migrations/mysql/schema.mysql.sql" }
 
 # Feature flags derived from backend.
-features     := "db-" + db + " plugin-js plugin-rhai search-tantivy payment-all tunnel mcp cron-system integration-stream"
-features_csv := "db-" + db + ",plugin-js,plugin-rhai,search-tantivy,payment-all,tunnel,mcp,cron-system,integration-stream"
+features     := "db-" + db + " plugin-js plugin-rhai search-tantivy payment-all tunnel mcp cron-system integration-stream integration-imap"
+features_csv := "db-" + db + ",plugin-js,plugin-rhai,search-tantivy,payment-all,tunnel,mcp,cron-system,integration-stream,integration-imap"
 
 # Tests run in parallel on SQLite; PG/MySQL share a single test DB so they run
 # serially to avoid DDL/catalog races during concurrent schema apply.

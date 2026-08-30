@@ -231,16 +231,20 @@ pub async fn push(
     }
 }
 
-/// Route registration (public — no JWT; trust is L0 verification).
+/// Route registration (public ingress — no RESTful aliasing; admin routes
+/// follow the server's `api_restful` config like every other module).
 pub fn routes(
     registry: &mut crate::server::RouteRegistry,
-    _config: &crate::config::app::AppConfig,
+    config: &crate::config::app::AppConfig,
 ) -> axum::Router<AppState> {
+    // Admin surface: honor the server's API style so PUT/DELETE (restful)
+    // or POST /update //delete (compat) resolve as configured.
+    let admin = config.api_restful;
     let r = axum::Router::new();
     let r = crate::reg_route!(
         r,
         registry,
-        false, // ingress is machine-facing: no RESTful aliasing
+        false, // machine-facing ingress: canonical path only
         "/ingress/{channel_key}",
         get,
         challenge,
@@ -251,7 +255,7 @@ pub fn routes(
     let r = crate::reg_route!(
         r,
         registry,
-        false,
+        false, // machine-facing ingress: canonical path only
         "/ingress/{channel_key}",
         post,
         push,
@@ -262,7 +266,7 @@ pub fn routes(
     let r = crate::reg_route!(
         r,
         registry,
-        false,
+        admin,
         "/admin/integration/receipts/{id}/replay",
         post,
         replay,
@@ -272,7 +276,7 @@ pub fn routes(
     let r = crate::reg_route!(
         r,
         registry,
-        false,
+        admin,
         "/admin/integration/receipts",
         get,
         crate::integration::admin::list_receipts,
@@ -282,7 +286,7 @@ pub fn routes(
     let r = crate::reg_route!(
         r,
         registry,
-        false,
+        admin,
         "/admin/integration/receipts/{id}",
         get,
         crate::integration::admin::get_receipt,
@@ -292,7 +296,7 @@ pub fn routes(
     let r = crate::reg_route!(
         r,
         registry,
-        false,
+        admin,
         "/admin/integration/receipts/{id}/trace",
         get,
         crate::integration::admin::get_trace,
@@ -302,7 +306,7 @@ pub fn routes(
     let r = crate::reg_route!(
         r,
         registry,
-        false,
+        admin,
         "/admin/integration/channels",
         get,
         crate::integration::admin::list_channels,
@@ -312,7 +316,7 @@ pub fn routes(
     let r = crate::reg_route!(
         r,
         registry,
-        false,
+        admin,
         "/admin/integration/channels",
         post,
         crate::integration::admin::create_channel,
@@ -322,7 +326,7 @@ pub fn routes(
     let r = crate::reg_route!(
         r,
         registry,
-        false,
+        admin,
         "/admin/integration/channels/health",
         get,
         crate::integration::admin::channels_health,
@@ -332,7 +336,7 @@ pub fn routes(
     let r = crate::reg_route!(
         r,
         registry,
-        false,
+        admin,
         "/admin/integration/channels/{id}",
         get,
         crate::integration::admin::get_channel,
@@ -342,7 +346,7 @@ pub fn routes(
     let r = crate::reg_route!(
         r,
         registry,
-        false,
+        admin,
         "/admin/integration/channels/{id}/health",
         get,
         crate::integration::admin::channel_health,
@@ -352,7 +356,7 @@ pub fn routes(
     let r = crate::reg_route!(
         r,
         registry,
-        false,
+        admin,
         "/admin/integration/channels/{id}",
         put,
         crate::integration::admin::update_channel,
@@ -362,7 +366,7 @@ pub fn routes(
     let r = crate::reg_route!(
         r,
         registry,
-        false,
+        admin,
         "/admin/integration/channels/{id}",
         delete,
         crate::integration::admin::delete_channel,
@@ -372,7 +376,7 @@ pub fn routes(
     let r = crate::reg_route!(
         r,
         registry,
-        false,
+        admin,
         "/admin/integration/channels/{id}/test-mapping",
         post,
         crate::integration::admin::test_mapping,
@@ -382,7 +386,7 @@ pub fn routes(
     let r = crate::reg_route!(
         r,
         registry,
-        false,
+        admin,
         "/admin/integration/channels/{id}/test-connection",
         post,
         crate::integration::admin::test_connection,
@@ -392,7 +396,7 @@ pub fn routes(
     let r = crate::reg_route!(
         r,
         registry,
-        false,
+        admin,
         "/admin/integration/api-clients",
         get,
         crate::integration::admin::list_api_clients,
@@ -402,7 +406,7 @@ pub fn routes(
     let r = crate::reg_route!(
         r,
         registry,
-        false,
+        admin,
         "/admin/integration/api-clients",
         post,
         crate::integration::admin::create_api_client,
@@ -412,7 +416,7 @@ pub fn routes(
     let r = crate::reg_route!(
         r,
         registry,
-        false,
+        admin,
         "/admin/integration/api-clients/{id}",
         get,
         crate::integration::admin::get_api_client,
@@ -422,7 +426,7 @@ pub fn routes(
     let r = crate::reg_route!(
         r,
         registry,
-        false,
+        admin,
         "/admin/integration/api-clients/{id}",
         put,
         crate::integration::admin::update_api_client,
@@ -432,7 +436,7 @@ pub fn routes(
     let r = crate::reg_route!(
         r,
         registry,
-        false,
+        admin,
         "/admin/integration/api-clients/{id}",
         delete,
         crate::integration::admin::delete_api_client,
@@ -442,7 +446,7 @@ pub fn routes(
     let r = crate::reg_route!(
         r,
         registry,
-        false,
+        admin,
         "/admin/integration/api-clients/{id}/test-call",
         post,
         crate::integration::admin::test_call,
@@ -452,7 +456,7 @@ pub fn routes(
     crate::reg_route!(
         r,
         registry,
-        false,
+        admin,
         "/admin/integration/egress-log",
         get,
         crate::integration::admin::list_egress_log,

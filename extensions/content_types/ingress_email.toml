@@ -1,8 +1,8 @@
 [content_type]
-name = "Ingress Note"
-singular = "ingress_note"
-plural = "ingress_notes"
-table = "ingress_notes"
+name = "ingress_email"
+singular = "ingress_email"
+plural = "ingress_emails"
+table = "ingress_emails"
 implements = [
     "ownable",
     "timestampable",
@@ -10,17 +10,22 @@ implements = [
 
 [fields.external_id]
 type = "text"
+max_length = 255
 
 [fields.body]
 type = "text"
+max_length = 100000
 
 [fields.subject]
 type = "text"
 max_length = 255
 
-[fields.from]
+[fields.from_addr]
 type = "text"
 max_length = 255
+
+[fields.html_body]
+type = "richtext"
 
 [api.list]
 access = "authed"
