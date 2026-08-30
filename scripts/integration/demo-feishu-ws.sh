@@ -89,7 +89,7 @@ print(json.dumps({
     "sender":"$.event.sender.sender_id.open_id",
     "payload":{"body":"$.event.message.content | as_json($.text)"}
   },
-  "target_type":"sc_message",
+  "target_type":"chat/chat_messages",
   "stream_config":{
     "pre_connect":{
       "url":"https://open.feishu.cn/callback/ws/endpoint",

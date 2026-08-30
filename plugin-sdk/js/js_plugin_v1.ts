@@ -6,6 +6,24 @@
 
 declare const RaisFastHost: {
   log(level: string, msg: string): void;
+  httpGet(url: string): string;
+  httpPost(url: string, body: string): string;
+  callApi(clientKey: string, op: string, input: string): string;
+  ctFind(ct: string, query: string): string;
+  ctGet(ct: string, id: string): string | null;
+  ctCreate(ct: string, data: string): string;
+  ctUpdate(ct: string, id: string, data: string): string;
+  jobEnqueue(jobType: string, payload: string, opts: string): string;
+  getReceipt(traceId: string): string | null;
+  dbInsert(table: string, data: string, options: string): string;
+  dbFetchOne(table: string, where: string, options: string): string;
+  dbFetchAll(table: string, where: string, options: string): string;
+  dbUpdate(table: string, data: string, where: string, options: string): string;
+  dbDelete(table: string, where: string, options: string): string;
+  dbCount(table: string, where: string, options: string): string;
+  dbIncrement(table: string, columns: string, where: string, options: string): string;
+  dbSum(table: string, column: string, where: string, options: string): string;
+  dbGroupBy(table: string, options: string): string;
   getConfig(key: string): string | null;
   httpGet(url: string): string;
   httpPost(url: string, body: string): string;
@@ -166,6 +184,103 @@ export function extractJson(input: any, field?: string): any {
     }
     return val != null ? val : null;
   } catch { return null; }
+}
+
+
+export function callApi(clientKey: string, op: string, input: unknown): Record<string, unknown> {
+  const result = RaisFastHost.callApi(clientKey, op, JSON.stringify(input ?? {}));
+  return JSON.parse(result);
+}
+export function dbInsert(table: string, data: Record<string, unknown>, options?: Record<string, unknown>): { id?: string | number; rows_affected?: number; error?: string } {
+  const result = JSON.parse(RaisFastHost.dbInsert(table, JSON.stringify(data ?? {}), JSON.stringify(options ?? {})));
+  if (result.error) throw new Error(result.error);
+  return result;
+}
+export function dbFetchOne(table: string, where?: Record<string, unknown>, options?: Record<string, unknown>): Record<string, unknown> | null {
+  const result = JSON.parse(RaisFastHost.dbFetchOne(table, JSON.stringify(where ?? {}), JSON.stringify(options ?? {})));
+  if (result.error) throw new Error(result.error);
+  return result.row ?? null;
+}
+export function dbFetchAll(table: string, where?: Record<string, unknown>, options?: Record<string, unknown>): Array<Record<string, unknown>> {
+  const result = JSON.parse(RaisFastHost.dbFetchAll(table, JSON.stringify(where ?? {}), JSON.stringify(options ?? {})));
+  if (result.error) throw new Error(result.error);
+  return result.rows ?? [];
+}
+export function dbUpdate(table: string, data: Record<string, unknown>, where?: Record<string, unknown>, options?: Record<string, unknown>): { rows_affected?: number; error?: string } {
+  const result = JSON.parse(RaisFastHost.dbUpdate(table, JSON.stringify(data ?? {}), JSON.stringify(where ?? {}), JSON.stringify(options ?? {})));
+  if (result.error) throw new Error(result.error);
+  return result;
+}
+export function dbDelete(table: string, where?: Record<string, unknown>, options?: Record<string, unknown>): { rows_affected?: number; error?: string } {
+  const result = JSON.parse(RaisFastHost.dbDelete(table, JSON.stringify(where ?? {}), JSON.stringify(options ?? {})));
+  if (result.error) throw new Error(result.error);
+  return result;
+}
+export function dbCount(table: string, where?: Record<string, unknown>, options?: Record<string, unknown>): number {
+  const result = JSON.parse(RaisFastHost.dbCount(table, JSON.stringify(where ?? {}), JSON.stringify(options ?? {})));
+  if (result.error) throw new Error(result.error);
+  return result.count ?? 0;
+}
+export function dbIncrement(table: string, columns: Record<string, number>, where?: Record<string, unknown>, options?: Record<string, unknown>): { rows_affected?: number; error?: string } {
+  const result = JSON.parse(RaisFastHost.dbIncrement(table, JSON.stringify(columns ?? {}), JSON.stringify(where ?? {}), JSON.stringify(options ?? {})));
+  if (result.error) throw new Error(result.error);
+  return result;
+}
+export function dbSum(table: string, column: string, where?: Record<string, unknown>, options?: Record<string, unknown>): number {
+  const result = JSON.parse(RaisFastHost.dbSum(table, column, JSON.stringify(where ?? {}), JSON.stringify(options ?? {})));
+  if (result.error) throw new Error(result.error);
+  return result.sum ?? 0;
+}
+export function dbGroupBy(table: string, options?: Record<string, unknown>): Array<Record<string, unknown>> {
+  const result = JSON.parse(RaisFastHost.dbGroupBy(table, JSON.stringify(options ?? {})));
+  if (result.error) throw new Error(result.error);
+  return result.rows ?? [];
+}
+
+// ── Content-type host API (group-aware: 'group/plural', plural, table) ───
+export function ctFind(ct: string, query?: {
+    filters?: Array<{ field: string; op?: string; value: unknown }>;
+    page?: number;
+    page_size?: number;
+    sort?: string;
+}): { rows: Array<Record<string, unknown>>; total: number } {
+    const result = RaisFastHost.ctFind(ct, JSON.stringify(query ?? {}));
+    const parsed = JSON.parse(result);
+    if (parsed.error) throw new Error(parsed.error);
+    return parsed;
+}
+export function ctGet(ct: string, id: string | number): Record<string, unknown> | null {
+    const result = RaisFastHost.ctGet(ct, String(id));
+    if (result === null || result === "null") return null;
+    return JSON.parse(result);
+}
+export function ctCreate(ct: string, data: Record<string, unknown>): Record<string, unknown> {
+    const result = RaisFastHost.ctCreate(ct, JSON.stringify(data ?? {}));
+    const parsed = JSON.parse(result);
+    if (parsed && parsed.error) throw new Error(parsed.error);
+    return parsed;
+}
+export function ctUpdate(ct: string, id: string | number, data: Record<string, unknown>): Record<string, unknown> {
+    const result = RaisFastHost.ctUpdate(ct, String(id), JSON.stringify(data ?? {}));
+    const parsed = JSON.parse(result);
+    if (parsed && parsed.error) throw new Error(parsed.error);
+    return parsed;
+}
+// ── Job / integration host API ──────────────────────────────
+export function jobEnqueue(jobType: string, payload: Record<string, unknown>, opts?: {
+    max_attempts?: number;
+    delay_secs?: number;
+    delay_mins?: number;
+}): { ok?: boolean } {
+    const result = RaisFastHost.jobEnqueue(jobType, JSON.stringify(payload ?? {}), JSON.stringify(opts ?? {}));
+    const parsed = JSON.parse(result);
+    if (parsed.error) throw new Error(parsed.error);
+    return parsed;
+}
+export function getReceipt(traceId: string | number): Record<string, unknown> | null {
+    const result = RaisFastHost.getReceipt(String(traceId));
+    if (result === null || result === "null") return null;
+    return JSON.parse(result);
 }
 
 export function logInfo(msg: string): void { RaisFastHost.log("info", msg); }

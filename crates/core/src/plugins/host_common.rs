@@ -115,6 +115,63 @@ impl Clone for HostContext {
     }
 }
 
+/// Map a string filter op (host API surface) to `FilterOp` (`eq` default).
+fn parse_filter_op(op: &str) -> crate::content_type::repository::FilterOp {
+    use crate::content_type::repository::FilterOp;
+    match op {
+        "ne" => FilterOp::Ne,
+        "gt" => FilterOp::Gt,
+        "gte" => FilterOp::Gte,
+        "lt" => FilterOp::Lt,
+        "lte" => FilterOp::Lte,
+        "in" => FilterOp::In,
+        "nin" => FilterOp::Nin,
+        "contains" => FilterOp::Contains,
+        "like" => FilterOp::Like,
+        _ => FilterOp::Eq,
+    }
+}
+
+/// Render a repository error as a host-API JSON error string.
+fn ct_err(e: crate::errors::app_error::AppError) -> String {
+    format!(r#"{{"error":"{e}"}}"#)
+}
+
+/// Normalize a row for the plugin boundary:
+/// - BigInt fields → strings (snowflake ids exceed JS/Lua safe-integer range
+///   2^53 and lose precision as JSON numbers; input strings are coerced back
+///   by `field_bind`, so ids travel as strings both ways).
+/// - Json fields → parsed objects (some backends read JSON columns back as
+///   text; plugins should never have to double-`JSON.parse`).
+fn normalize_row_for_plugin(
+    ct: &crate::content_type::schema::ContentTypeSchema,
+    row: &mut serde_json::Value,
+) {
+    let Some(obj) = row.as_object_mut() else {
+        return;
+    };
+    for field in &ct.fields {
+        match field.field_type {
+            crate::content_type::schema::FieldType::BigInt => {
+                if let Some(v) = obj.get_mut(&field.name)
+                    && v.is_i64()
+                {
+                    *v = serde_json::Value::from(v.as_i64().unwrap_or_default().to_string());
+                }
+            }
+            crate::content_type::schema::FieldType::Json => {
+                if let Some(v) = obj.get_mut(&field.name)
+                    && let Some(s) = v.as_str()
+                    && let Ok(parsed) = serde_json::from_str::<serde_json::Value>(s)
+                {
+                    *v = parsed;
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
 impl HostContext {
     /// Create a new host context
     #[must_use]
@@ -349,14 +406,328 @@ impl HostContext {
         })
     }
 
-    /// Execute a read-only SQL query (returns a JSON array string).
+    // ── Content-type host API (`ct.*`) ────────────────────────────────
+    //
+    // Typed CRUD over the CT repository — the sanctioned way for plugins to
+    // touch app data (cross-DB portable, validated, tenant/ownable-aware),
+    // gated by `permissions.content-types`.
+
+    /// Resolve a CT by any accepted name form, group-aware:
     ///
-    /// `params_json` is a JSON array string, corresponding in order to the `host.ph(N)` placeholders in the SQL.
-    /// Example:
-    /// ```js
-    /// const sql = `SELECT * FROM tags WHERE id = ${host.ph(1)}`;
-    /// host.dbQuery(sql, JSON.stringify(["tag-1"]));
-    /// ```
+    /// - `singular` / `group/singular` (registry keys)
+    /// - `plural` / `group/plural` (`get_by_plural`; **grouped CTs must carry
+    ///   the `group/` prefix** — different groups may share a bare name)
+    /// - table name (globally unique escape hatch)
+    /// - every form also tried with `_`↔`-` normalized
+    ///
+    /// Permission is checked against the schema's bare plural name, so the
+    /// `content-types` permission list stays group-agnostic.
+    fn resolve_ct(
+        &self,
+        name: &str,
+    ) -> Result<std::sync::Arc<crate::content_type::schema::ContentTypeSchema>, String> {
+        let Some(registry) = &self.content_type_registry else {
+            return Err("no content type registry".into());
+        };
+        let hyphen = name.replace('_', "-");
+        let schema = registry
+            .get(name)
+            .or_else(|| registry.get(&hyphen))
+            .or_else(|| registry.get_by_plural(name))
+            .or_else(|| registry.get_by_plural(&hyphen))
+            .or_else(|| registry.get_by_table(name))
+            .ok_or_else(|| {
+                format!(
+                    "error: content type '{name}' not found (try 'group/plural' or the table name)"
+                )
+            })?;
+        if !PermissionChecker::is_ct_allowed(&self.permissions, &schema.plural) {
+            return Err(format!(
+                "[plugin:{}] ct access denied: {} not in content-types permissions",
+                self.runtime_label, schema.plural
+            ));
+        }
+        Ok(schema)
+    }
+
+    fn save_ctx(&self) -> crate::content_type::repository::SaveContext {
+        crate::content_type::repository::SaveContext {
+            user_id: None,
+            user_int_id: None,
+            user_role: None,
+            tenant_id: Some(crate::constants::DEFAULT_TENANT.to_string()),
+        }
+    }
+
+    /// Find CT rows (returns `{"rows": [...], "total": n}` or `{"error": ..}`).
+    ///
+    /// `query_json`: `{filters?: [{field, op?, value}], page?, page_size?, sort?}`
+    /// (op defaults to `eq`; same filter grammar as the CT REST API).
+    #[must_use]
+    pub fn ct_find(&self, ct_plural: &str, query_json: &str) -> String {
+        self.ct_run(ct_plural, async |ct, repo| {
+            let q: serde_json::Value = if query_json.trim().is_empty() {
+                serde_json::json!({})
+            } else {
+                serde_json::from_str(query_json)
+                    .map_err(|e| format!(r#"{{"error":"invalid query json: {e}"}}"#))?
+            };
+            let filters = q
+                .get("filters")
+                .and_then(|f| f.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|f| {
+                            let field = f.get("field")?.as_str()?.to_string();
+                            let value = f.get("value").cloned().unwrap_or(serde_json::Value::Null);
+                            let op = f
+                                .get("op")
+                                .and_then(|o| o.as_str())
+                                .map(str::to_string)
+                                .unwrap_or_else(|| "eq".into());
+                            Some(crate::content_type::repository::FieldFilter {
+                                field,
+                                op: parse_filter_op(&op),
+                                value,
+                            })
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            let query = crate::content_type::repository::ContentQuery {
+                page: q.get("page").and_then(|v| v.as_i64()).unwrap_or(1).max(1),
+                page_size: q
+                    .get("page_size")
+                    .and_then(|v| v.as_i64())
+                    .unwrap_or(20)
+                    .clamp(1, 100),
+                sort: q.get("sort").and_then(|v| v.as_str()).map(str::to_string),
+                filters,
+                search: None,
+                fields: None,
+                tenant_id: None,
+                include: None,
+                skip_total: false,
+                rule_where: None,
+                rule_params: Vec::new(),
+                max_page_size: 100,
+                include_private: true,
+                meta_filters: Vec::new(),
+            };
+            let (rows, total) = repo.find(&ct, query).await.map_err(ct_err)?;
+            let rows: Vec<serde_json::Value> = rows
+                .into_iter()
+                .map(|mut r| {
+                    normalize_row_for_plugin(&ct, &mut r);
+                    r
+                })
+                .collect();
+            let payload = serde_json::json!({"rows": rows, "total": total});
+            Ok(serde_json::to_string(&payload).unwrap_or_default())
+        })
+    }
+
+    /// Fetch one CT row by id (row JSON string, `null` when missing).
+    #[must_use]
+    pub fn ct_get(&self, ct_plural: &str, id: &str) -> String {
+        self.ct_run(ct_plural, async |ct, repo| {
+            let Ok(id) = crate::types::snowflake_id::parse_id(id) else {
+                return Err(r#"{"error":"invalid id"}"#.into());
+            };
+            let mut row = repo
+                .find_by_id(&ct, id, Some(crate::constants::DEFAULT_TENANT), true)
+                .await
+                .map_err(ct_err)?;
+            if let Some(r) = row.as_mut() {
+                normalize_row_for_plugin(&ct, r);
+            }
+            Ok(serde_json::to_string(&row).unwrap_or_else(|_| "null".into()))
+        })
+    }
+
+    /// Create a CT row (returns the created row JSON).
+    #[must_use]
+    pub fn ct_create(&self, ct_plural: &str, data_json: &str) -> String {
+        let save_ctx = self.save_ctx();
+        self.ct_run(ct_plural, async |ct, repo| {
+            let data: serde_json::Value = serde_json::from_str(data_json)
+                .map_err(|e| format!(r#"{{"error":"invalid data json: {e}"}}"#))?;
+            let mut created = repo
+                .create(&ct, data, Some(crate::constants::DEFAULT_TENANT), &save_ctx)
+                .await
+                .map_err(ct_err)?;
+            normalize_row_for_plugin(&ct, &mut created);
+            Ok(serde_json::to_string(&created).unwrap_or_default())
+        })
+    }
+
+    /// Update a CT row by id (returns the updated row JSON).
+    #[must_use]
+    pub fn ct_update(&self, ct_plural: &str, id: &str, data_json: &str) -> String {
+        let save_ctx = self.save_ctx();
+        self.ct_run(ct_plural, async |ct, repo| {
+            let Ok(id) = crate::types::snowflake_id::parse_id(id) else {
+                return Err(r#"{"error":"invalid id"}"#.into());
+            };
+            let data: serde_json::Value = serde_json::from_str(data_json)
+                .map_err(|e| format!(r#"{{"error":"invalid data json: {e}"}}"#))?;
+            let mut updated = repo
+                .update(
+                    &ct,
+                    id,
+                    data,
+                    Some(crate::constants::DEFAULT_TENANT),
+                    &save_ctx,
+                )
+                .await
+                .map_err(ct_err)?;
+            normalize_row_for_plugin(&ct, &mut updated);
+            Ok(serde_json::to_string(&updated).unwrap_or_default())
+        })
+    }
+
+    /// Permission + registry check, then run the async repo op on the runtime.
+    fn ct_run<F>(&self, ct_plural: &str, f: F) -> String
+    where
+        F: AsyncFnOnce(
+            std::sync::Arc<crate::content_type::schema::ContentTypeSchema>,
+            crate::content_type::repository::ContentRepository,
+        ) -> Result<String, String>,
+    {
+        let ct = match self.resolve_ct(ct_plural) {
+            Ok(ct) => ct,
+            Err(err) => {
+                tracing::error!("{err}");
+                return serde_json::json!({ "error": err }).to_string();
+            }
+        };
+        let Some(pool) = self.pool.clone() else {
+            return serde_json::json!({ "error": "no database access" }).to_string();
+        };
+        let repo = crate::content_type::repository::ContentRepository::new(pool);
+        let handle = tokio::runtime::Handle::current();
+        let fut = f(ct, repo);
+        tokio::task::block_in_place(|| match handle.block_on(fut) {
+            Ok(out) => out,
+            Err(err) => {
+                tracing::error!(
+                    "[plugin:{}] ct op {ct_plural} failed: {err}",
+                    self.runtime_label
+                );
+                // Always JSON so SDK wrappers can parse + surface the message.
+                serde_json::json!({ "error": err }).to_string()
+            }
+        })
+    }
+
+    // ── Job / integration host API ───────────────────────────────────
+
+    /// Enqueue a queue job (returns `{"ok": true}` or `{"error": ..}`).
+    ///
+    /// `opts_json`: `{max_attempts?: int, delay_mins?: int, delay_secs?: int}`
+    /// (gated by `permissions.jobs`).
+    #[must_use]
+    pub fn job_enqueue(&self, job_type: &str, payload_json: &str, opts_json: &str) -> String {
+        if !PermissionChecker::is_job_enqueuable(&self.permissions, job_type) {
+            return format!(
+                r#"{{"error":"job.enqueue denied: '{job_type}' not in jobs permissions"}}"#
+            );
+        }
+        let Some(pool) = self.pool.clone() else {
+            return r#"{"error":"no database access"}"#.into();
+        };
+        let payload: serde_json::Value = if payload_json.trim().is_empty() {
+            serde_json::json!({})
+        } else {
+            match serde_json::from_str(payload_json) {
+                Ok(v) => v,
+                Err(e) => return format!(r#"{{"error":"invalid payload json: {e}"}}"#),
+            }
+        };
+        let opts: serde_json::Value = if opts_json.trim().is_empty() {
+            serde_json::json!({})
+        } else {
+            serde_json::from_str(opts_json).unwrap_or_default()
+        };
+        let max_attempts = opts
+            .get("max_attempts")
+            .and_then(|v| v.as_u64())
+            .map(|v| v.clamp(1, u64::from(u32::MAX)) as u32);
+        let run_after = opts
+            .get("delay_secs")
+            .and_then(|v| v.as_i64())
+            .or_else(|| {
+                opts.get("delay_mins")
+                    .and_then(|v| v.as_i64())
+                    .map(|m| m * 60)
+            })
+            .filter(|s| *s > 0)
+            .map(|s| crate::utils::tz::now_utc() + chrono::Duration::seconds(s));
+        let new_job = crate::worker::NewJob {
+            job: crate::worker::Job::Custom {
+                job_type: job_type.to_string(),
+                payload,
+            },
+            max_attempts,
+            run_after,
+            cron_schedule_id: None,
+            cron_log_id: None,
+            priority: 0,
+            timeout_secs: None,
+            dedup_key: None,
+        };
+        let handle = tokio::runtime::Handle::current();
+        tokio::task::block_in_place(|| {
+            match handle.block_on(async {
+                let queue = crate::worker::DefaultJobQueue::new(pool);
+                crate::worker::JobQueue::enqueue(&queue, new_job).await
+            }) {
+                Ok(()) => r#"{"ok": true}"#.into(),
+                Err(e) => format!(r#"{{"error":"enqueue failed: {e}"}}"#),
+            }
+        })
+    }
+
+    /// Read an inbound receipt (with envelope snapshot) by trace id — the
+    /// deterministic fact source for message jobs. Gated by
+    /// `permissions.integration = ["receipts"]`.
+    #[must_use]
+    pub fn ingress_get_receipt(&self, trace_id: &str) -> String {
+        if !PermissionChecker::is_integration_allowed(&self.permissions, "receipts") {
+            return r#"{"error":"ingress.getReceipt denied: needs integration = ["receipts"]"}"#
+                .into();
+        }
+        let Some(pool) = self.pool.clone() else {
+            return r#"{"error":"no database access"}"#.into();
+        };
+        let Ok(id) = crate::types::snowflake_id::parse_id(trace_id) else {
+            return r#"{"error":"invalid trace_id"}"#.into();
+        };
+        let handle = tokio::runtime::Handle::current();
+        tokio::task::block_in_place(|| {
+            match handle.block_on(crate::integration::receipt::find_by_id(&pool, id)) {
+                Ok(Some(row)) => {
+                    let mut v = serde_json::to_value(&row).unwrap_or_default();
+                    if let Some(obj) = v.as_object_mut() {
+                        for key in ["id", "channel_id", "target_id"] {
+                            if let Some(field) = obj.get_mut(key)
+                                && field.is_i64()
+                            {
+                                *field = serde_json::Value::from(
+                                    field.as_i64().unwrap_or_default().to_string(),
+                                );
+                            }
+                        }
+                    }
+                    serde_json::to_string(&v).unwrap_or_default()
+                }
+                Ok(None) => "null".into(),
+                Err(e) => format!(r#"{{"error":"receipt lookup failed: {e}"}}"#),
+            }
+        })
+    }
+
+    /// Execute a read-only SQL query (returns a JSON array string).
     #[must_use]
     pub fn db_query(&self, sql: &str, params_json: &str) -> String {
         if !PermissionChecker::is_readonly_query(sql) {

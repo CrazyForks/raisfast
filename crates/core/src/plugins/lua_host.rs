@@ -22,11 +22,15 @@ pub fn register_host_functions(
     permissions: Permissions,
     pool: Option<Pool>,
     event_bus: Option<crate::eventbus::EventBus>,
+    content_registry: Option<std::sync::Arc<crate::content_type::ContentTypeRegistry>>,
 ) -> anyhow::Result<()> {
     let globals = lua.globals();
     let host = lua.create_table()?;
 
     let mut hc_inner = HostContext::new("lua", config, plugin_id, permissions, pool);
+    if let Some(registry) = content_registry {
+        hc_inner.set_content_type_registry(registry);
+    }
     if let Some(bus) = event_bus {
         hc_inner.set_event_bus(bus);
     }
@@ -106,6 +110,57 @@ pub fn register_host_functions(
         ))
     })?;
     host.set("dbExecute", db_execute_fn)?;
+
+    // ── Content-type host API (`ct.*`, group-aware names) ─────────────
+    let hc = host_ctx.clone();
+    let ct_find_fn = lua.create_function(move |lua, (ct, query): (String, String)| {
+        Ok(mlua::Value::String(
+            lua.create_string(hc.ct_find(&ct, &query))?,
+        ))
+    })?;
+    host.set("ctFind", ct_find_fn)?;
+
+    let hc = host_ctx.clone();
+    let ct_get_fn = lua.create_function(move |lua, (ct, id): (String, String)| {
+        Ok(mlua::Value::String(lua.create_string(hc.ct_get(&ct, &id))?))
+    })?;
+    host.set("ctGet", ct_get_fn)?;
+
+    let hc = host_ctx.clone();
+    let ct_create_fn = lua.create_function(move |lua, (ct, data): (String, String)| {
+        Ok(mlua::Value::String(
+            lua.create_string(hc.ct_create(&ct, &data))?,
+        ))
+    })?;
+    host.set("ctCreate", ct_create_fn)?;
+
+    let hc = host_ctx.clone();
+    let ct_update_fn =
+        lua.create_function(move |lua, (ct, id, data): (String, String, String)| {
+            Ok(mlua::Value::String(
+                lua.create_string(hc.ct_update(&ct, &id, &data))?,
+            ))
+        })?;
+    host.set("ctUpdate", ct_update_fn)?;
+
+    // ── Job / integration host API ───────────────────────────────────
+    let hc = host_ctx.clone();
+    let job_enqueue_fn = lua.create_function(
+        move |lua, (job_type, payload, opts): (String, String, String)| {
+            Ok(mlua::Value::String(lua.create_string(
+                hc.job_enqueue(&job_type, &payload, &opts),
+            )?))
+        },
+    )?;
+    host.set("jobEnqueue", job_enqueue_fn)?;
+
+    let hc = host_ctx.clone();
+    let get_receipt_fn = lua.create_function(move |lua, trace_id: String| {
+        Ok(mlua::Value::String(
+            lua.create_string(hc.ingress_get_receipt(&trace_id))?,
+        ))
+    })?;
+    host.set("getReceipt", get_receipt_fn)?;
 
     let hc = host_ctx.clone();
     let db_begin_fn = lua.create_function(move |lua, ()| {

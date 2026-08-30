@@ -543,13 +543,20 @@ impl Pipeline {
         envelope: &InboundEnvelope,
         timeline: &mut StepTimeline,
     ) -> Result<Option<SnowflakeId>, AppError> {
+        // Group-aware CT resolution: registry key (`singular` /
+        // `group/singular`), plural key (`plural` / `group/plural`), table
+        // name — each also tried with `_`↔`-` normalized.
+        let target = channel.target_type.replace('_', "-");
         let ct = self
             .registry
             .get(&channel.target_type)
-            .or_else(|| self.registry.get(&channel.target_type.replace('_', "-")))
+            .or_else(|| self.registry.get(&target))
+            .or_else(|| self.registry.get_by_plural(&channel.target_type))
+            .or_else(|| self.registry.get_by_plural(&target))
+            .or_else(|| self.registry.get_by_table(&channel.target_type))
             .ok_or_else(|| {
                 AppError::BadRequest(format!(
-                    "target content type '{}' not found (registry key)",
+                    "target content type '{}' not found (try 'group/plural' or the table name)",
                     channel.target_type
                 ))
             })?;
@@ -562,6 +569,11 @@ impl Pipeline {
                     "external_id".into(),
                     Value::String(envelope.external_id.clone()),
                 );
+            }
+            // Trace link: let app CTs (e.g. chat_message) correlate the routed
+            // row with its receipt without relying on mapping config.
+            if ct.get_field("receipt_id").is_some() && !obj.contains_key("receipt_id") {
+                obj.insert("receipt_id".into(), Value::from(envelope.receipt_id.0));
             }
         }
 
@@ -1086,10 +1098,14 @@ impl Pipeline {
         }
         let target_type = items[0].target_type.clone();
         let tenant_id = items[0].tenant_id.clone();
+        let target_hyphen = target_type.replace('_', "-");
         let ct = self
             .registry
             .get(&target_type)
-            .or_else(|| self.registry.get(&target_type.replace('_', "-")))
+            .or_else(|| self.registry.get(&target_hyphen))
+            .or_else(|| self.registry.get_by_plural(&target_type))
+            .or_else(|| self.registry.get_by_plural(&target_hyphen))
+            .or_else(|| self.registry.get_by_table(&target_type))
             .ok_or_else(|| {
                 AppError::BadRequest(format!("target content type '{target_type}' not found"))
             })?;
@@ -1229,7 +1245,10 @@ impl Pipeline {
                 };
                 let mut payload = job.get("payload").cloned().unwrap_or_else(|| json!({}));
                 if let Value::Object(obj) = &mut payload {
-                    obj.insert("trace_id".into(), json!(envelope.receipt_id.0));
+                    // String form: snowflake ids exceed JS-safe integers —
+                    // plugin job handlers must not lose precision (Rust
+                    // readers parse via `SnowflakeId::parse_id_value`).
+                    obj.insert("trace_id".into(), json!(envelope.receipt_id.0.to_string()));
                     obj.insert(
                         "channel_key".into(),
                         Value::String(channel.channel_key.clone()),
@@ -1241,7 +1260,7 @@ impl Pipeline {
                         payload,
                     },
                     // Declared per job (route_extra.jobs[].max_attempts) — e.g.
-                    // `support.autoreply` sets 1: LLM failures go to a human,
+                    // `chat.autoreply` sets 1: LLM failures go to a human,
                     // not back through the queue (mvp-plan M1 failure policy).
                     max_attempts: job
                         .get("max_attempts")

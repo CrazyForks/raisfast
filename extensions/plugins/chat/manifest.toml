@@ -1,0 +1,40 @@
+[plugin]
+id = "chat"
+name = "Chat — Support Inbox"
+version = "0.1.0"
+description = "Multi-channel support inbox: session merge (chat.ingress) + bot auto-reply (chat.autoreply). Bot is bind-per-inbox; no binding = human-only."
+author = "raisfast"
+license = "MIT"
+runtime = "js"
+language = "js"
+entry = "main.js"
+sdk_version = "v1"
+
+[permissions]
+max_memory_mb = 32
+timeout_ms = 15000
+# Typed CT access (group-aware; bare plural names in the permission list).
+content_types = [
+    "chat_inboxes",
+    "chat_bots",
+    "chat_contacts",
+    "chat_contact_identities",
+    "chat_conversations",
+    "chat_messages",
+]
+# Outbound LLM via declarative api-clients (named per bot config, e.g. "glm").
+egress = ["*"]
+# chat.ingress enqueues chat.autoreply (fallback mode uses delay_mins).
+jobs = ["chat.autoreply"]
+# Read inbound receipts (envelope snapshot = deterministic facts).
+integration = ["receipts"]
+
+[[jobs]]
+job_type = "chat.ingress"
+handler = "onIngress"
+description = "Post-route merge: identity -> conversation -> message link -> counters -> SSE -> bot gate"
+
+[[jobs]]
+job_type = "chat.autoreply"
+handler = "onAutoreply"
+description = "Bot LLM step: context window -> callApi -> assistant message -> SSE; first_line hands off after reply"

@@ -25,6 +25,7 @@ use sqlx::Row;
 ///
 /// Variants are selected to match each column's SQL type so binds pass
 /// PostgreSQL's strict type checking (SQLite/MySQL are lenient).
+#[derive(Debug)]
 pub(crate) enum BindValue {
     Text(String),
     Int(i64),
@@ -177,7 +178,13 @@ pub(crate) fn field_bind(field_type: &FieldType, raw: &serde_json::Value) -> Bin
         },
         FieldType::BigInt => match s.parse::<i64>() {
             Ok(v) => BindValue::Int(v),
-            Err(_) => BindValue::Null,
+            // Encoded base62 ids round-trip transparently (AGENTS wire
+            // contract: clients echo back whatever id string the API
+            // returned) — decode when ID_ENCODING is enabled.
+            Err(_) => match crate::types::snowflake_id::parse_id(s) {
+                Ok(id) => BindValue::Int(id.0),
+                Err(_) => BindValue::Null,
+            },
         },
         FieldType::Decimal | FieldType::Float => match s.parse::<f64>() {
             Ok(v) => BindValue::Float(v),
@@ -2164,6 +2171,26 @@ fn split_csv(v: &Value) -> Vec<String> {
     }
 }
 
+/// Normalize a filter value bound to an integer/bigint column: encoded
+/// base62 ids decode to their numeric form so `CAST($1 AS BIGINT)` stays
+/// valid (the wire contract lets clients echo back whatever id string the
+/// API returned — same leniency as `field_bind`).
+fn normalize_int_filter_value(v: &Value) -> Value {
+    match v {
+        Value::Number(_) => v.clone(),
+        Value::String(s) => {
+            if s.parse::<i64>().is_ok() {
+                v.clone()
+            } else if let Ok(id) = crate::types::snowflake_id::parse_id(s) {
+                Value::from(id.0)
+            } else {
+                v.clone()
+            }
+        }
+        _ => v.clone(),
+    }
+}
+
 /// Append the SQL clause for a single field filter to `where_clauses`.
 ///
 /// Values are always bound as parameters; `field` must already be validated
@@ -2210,8 +2237,20 @@ fn append_filter_clause(
                 })
                 .collect();
             where_clauses.push(format!("{field} {} ({})", f.op.sql_op(), phs.join(", ")));
+            let is_int_col = ct.get_field(field).is_some_and(|fs| {
+                matches!(
+                    fs.field_type,
+                    crate::content_type::schema::FieldType::Integer
+                        | crate::content_type::schema::FieldType::BigInt
+                )
+            }) || field == COL_ID;
             for v in values {
-                params.push(json!(v));
+                let bound = if is_int_col {
+                    normalize_int_filter_value(&Value::String(v.clone()))
+                } else {
+                    Value::String(v.clone())
+                };
+                params.push(bound);
             }
         }
         FilterOp::Between => {
@@ -2263,7 +2302,14 @@ fn append_filter_clause(
                 raw
             };
             where_clauses.push(format!("{field} {} {p}", f.op.sql_op()));
-            params.push(f.value.clone());
+            // Integer/bigint columns: decode encoded ids to numeric so the
+            // `CAST($1 AS BIGINT)` above stays valid on all backends.
+            let bound = if is_int_col {
+                normalize_int_filter_value(&f.value)
+            } else {
+                f.value.clone()
+            };
+            params.push(bound);
         }
     }
 }
@@ -2317,6 +2363,49 @@ pub(crate) fn fetch_columns_sql(table: &str) -> Result<(String, usize), AppError
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn field_bind_bigint_accepts_numeric_and_encoded_strings() {
+        assert!(matches!(
+            field_bind(&FieldType::BigInt, &serde_json::json!("42")),
+            BindValue::Int(42)
+        ));
+        let encoded = crate::types::snowflake_id::encode_id(12345);
+        match field_bind(&FieldType::BigInt, &serde_json::json!(encoded)) {
+            BindValue::Int(v) => assert_eq!(v, 12345),
+            other => panic!("expected decoded Int, got {other:?}"),
+        }
+        assert!(matches!(
+            field_bind(&FieldType::BigInt, &serde_json::json!("not-an-id")),
+            BindValue::Null
+        ));
+    }
+
+    #[test]
+    fn normalize_int_filter_value_decodes_encoded_ids() {
+        // Numeric string passes through.
+        assert_eq!(
+            normalize_int_filter_value(&serde_json::json!("42")),
+            serde_json::json!("42")
+        );
+        // Encoded base62 id decodes to numeric (only meaningful when
+        // ID_ENCODING is on; with it off `encode_id` yields plain digits).
+        let encoded = crate::types::snowflake_id::encode_id(987654);
+        let expected = if crate::types::snowflake_id::is_id_encoding_enabled() {
+            serde_json::json!(987654)
+        } else {
+            serde_json::json!("987654")
+        };
+        assert_eq!(
+            normalize_int_filter_value(&serde_json::json!(encoded)),
+            expected
+        );
+        // Garbage left untouched (will simply not match).
+        assert_eq!(
+            normalize_int_filter_value(&serde_json::json!("nope")),
+            serde_json::json!("nope")
+        );
+    }
 
     #[test]
     fn filter_op_from_suffix_all_ops() {

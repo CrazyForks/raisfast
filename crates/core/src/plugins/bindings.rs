@@ -5,6 +5,6 @@
 
 #[cfg(feature = "plugin-wasm")]
 wasmtime::component::bindgen!({
-    path: "plugin-wit/plugin.wit",
+    path: "../../plugin-wit/plugin.wit",
     world: "plugin-world",
 });

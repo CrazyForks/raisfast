@@ -1,0 +1,65 @@
+[content_type]
+name = "Bot"
+singular = "chat_bot"
+plural = "chat_bots"
+table = "chat_bots"
+group = "chat"
+description = "Chat bot: LLM auto-reply entity, enabled per-inbox by binding (default none)"
+implements = ["ownable", "timestampable"]
+
+[fields.name]
+type = "text"
+required = true
+max_length = 200
+label = "Bot name"
+
+[fields.description]
+type = "text"
+label = "Description"
+
+[fields.enabled]
+type = "boolean"
+default = true
+label = "Enabled"
+
+[fields.mode]
+type = "enum"
+enum_values = ["full", "first_line", "fallback"]
+default = "full"
+label = "Answer mode"
+
+[fields.autoreply]
+type = "json"
+label = "LLM params (client/op/system_prompt/model/context_window/...)"
+
+[fields.handoff]
+type = "json"
+label = "Handoff rules (keywords/llm_intent/visitor_request/fallback_wait_mins)"
+
+[fields.retrieve]
+type = "json"
+label = "RAG config (collection/top_k)"
+
+[[indexes]]
+fields = ["name"]
+unique = true
+
+[api.list]
+access = "authed"
+cache = false
+
+[api.get]
+access = "authed"
+cache = false
+
+[api.create]
+access = "admin"
+cache = false
+
+[api.update]
+access = "admin"
+cache = false
+
+[api.delete]
+access = "admin"
+cache = false

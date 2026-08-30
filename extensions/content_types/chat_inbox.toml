@@ -1,0 +1,86 @@
+[content_type]
+name = "Inbox"
+singular = "chat_inbox"
+plural = "chat_inboxes"
+table = "chat_inboxes"
+group = "chat"
+description = "Chat inbox: business profile bound to an integration channel"
+implements = ["ownable", "timestampable"]
+
+[fields.channel_id]
+type = "bigint"
+required = true
+label = "Integration channel id"
+
+[fields.name]
+type = "text"
+required = true
+max_length = 200
+label = "Inbox name"
+
+[fields.bot_id]
+type = "bigint"
+label = "Bound bot (null = human-only, the default)"
+
+[fields.greeting]
+type = "text"
+label = "Greeting message"
+
+[fields.egress]
+type = "json"
+label = "Reply dispatch template"
+
+[fields.auto_assignment]
+type = "boolean"
+default = false
+label = "Auto assignment"
+
+[fields.assign_config]
+type = "json"
+label = "Assignment config"
+
+[fields.working_hours_id]
+type = "bigint"
+label = "Working hours profile"
+
+[fields.sla_policy_id]
+type = "bigint"
+label = "SLA policy"
+
+[fields.reopen_enabled]
+type = "boolean"
+default = true
+label = "Reopen resolved on new message"
+
+[fields.csat_enabled]
+type = "boolean"
+default = false
+label = "CSAT survey on resolve"
+
+[fields.widget_theme]
+type = "json"
+label = "Widget theme"
+
+[[indexes]]
+fields = ["channel_id"]
+unique = true
+
+[api.list]
+access = "authed"
+cache = false
+
+[api.get]
+access = "authed"
+cache = false
+
+[api.create]
+access = "admin"
+cache = false
+
+[api.update]
+access = "admin"
+cache = false
+
+[api.delete]
+access = "admin"
+cache = false

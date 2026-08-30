@@ -17,6 +17,11 @@ pub struct PluginManifest {
     pub dependencies: HashMap<String, String>,
     #[serde(default)]
     pub cron: Vec<CronEntry>,
+    /// Queue job handlers the plugin provides (`[[jobs]]`): targeted dispatch
+    /// by `job_type` (unregistered job types fall back to the legacy
+    /// `on-cron-tick` broadcast).
+    #[serde(default)]
+    pub jobs: Vec<JobEntry>,
     /// Content type files declared by the plugin (added in Phase 10)
     #[serde(default)]
     pub content_types: Vec<ContentTypeRef>,
@@ -122,6 +127,20 @@ fn cron_default_true() -> bool {
     true
 }
 
+/// Queue job handler declaration (`[[jobs]]`).
+///
+/// `job_type` is globally unique across built-ins and plugins; on collision
+/// the first registration wins and later ones are skipped with a warning.
+#[derive(Debug, Clone, Deserialize)]
+pub struct JobEntry {
+    /// Queue job type this plugin answers (e.g. `chat.ingress`).
+    pub job_type: String,
+    /// Exported plugin function invoked with the job payload (JSON value).
+    pub handler: String,
+    #[serde(default)]
+    pub description: Option<String>,
+}
+
 fn deserialize_hooks<'de, D>(de: D) -> Result<HashMap<String, HookConfig>, D::Error>
 where
     D: serde::Deserializer<'de>,
@@ -192,6 +211,18 @@ pub struct Permissions {
     /// (empty = denied, `*` = all clients).
     #[serde(default)]
     pub egress: Vec<String>,
+    /// Content types (plural names) the plugin may touch via `ct.*` host
+    /// APIs (empty = denied, `*` = all).
+    #[serde(default)]
+    pub content_types: Vec<String>,
+    /// Job types the plugin may enqueue via `job.enqueue`
+    /// (empty = denied, `*` = any).
+    #[serde(default)]
+    pub jobs: Vec<String>,
+    /// Integration plane read capabilities (currently `receipts`: read
+    /// inbound receipts + envelope snapshots via `ingress.getReceipt`).
+    #[serde(default)]
+    pub integration: Vec<String>,
     pub max_memory_mb: Option<u32>,
     pub timeout_ms: Option<u64>,
 }

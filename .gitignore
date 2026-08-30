@@ -29,3 +29,5 @@ fly.toml
 /3rd/
 
 crates/core/target/
+
+apps/

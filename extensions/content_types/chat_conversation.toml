@@ -1,0 +1,126 @@
+[content_type]
+name = "Conversation"
+singular = "chat_conversation"
+plural = "chat_conversations"
+table = "chat_conversations"
+group = "chat"
+description = "Chat conversation: state machine open/pending/snoozed/resolved"
+implements = ["ownable", "timestampable"]
+
+[fields.contact_id]
+type = "bigint"
+required = true
+label = "Contact id"
+
+[fields.inbox_id]
+type = "bigint"
+label = "Inbox id"
+
+[fields.status]
+type = "enum"
+enum_values = ["open", "pending", "snoozed", "resolved"]
+default = "open"
+label = "Status"
+
+[fields.assignee_id]
+type = "bigint"
+label = "Assigned agent user id"
+
+[fields.team_id]
+type = "bigint"
+label = "Team id"
+
+[fields.priority]
+type = "enum"
+enum_values = ["low", "medium", "high", "urgent"]
+default = "medium"
+label = "Priority"
+
+[fields.labels]
+type = "json"
+label = "Label titles"
+
+[fields.snoozed_until]
+type = "datetime"
+label = "Snoozed until"
+
+[fields.last_message_at]
+type = "datetime"
+label = "Last message at"
+
+[fields.last_message_role]
+type = "text"
+label = "Last message role"
+
+[fields.unread_count]
+type = "integer"
+default = 0
+label = "Unread messages"
+
+[fields.visitor_last_seen_at]
+type = "datetime"
+label = "Visitor last seen"
+
+[fields.first_response_at]
+type = "datetime"
+label = "First response at"
+
+[fields.first_response_breached]
+type = "boolean"
+default = false
+label = "First response SLA breached"
+
+[fields.resolved_at]
+type = "datetime"
+label = "Resolved at"
+
+[fields.reopened_count]
+type = "integer"
+default = 0
+label = "Reopen count"
+
+[fields.bot_status]
+type = "enum"
+enum_values = ["active", "disabled"]
+default = "disabled"
+label = "Bot status (active = bot handling)"
+
+[fields.thread_key]
+type = "text"
+label = "Email thread merge key"
+
+[fields.csat_rating]
+type = "integer"
+label = "Latest CSAT rating"
+
+[[indexes]]
+fields = ["status", "last_message_at"]
+
+[[indexes]]
+fields = ["assignee_id", "status"]
+
+[[indexes]]
+fields = ["contact_id"]
+
+[[indexes]]
+fields = ["inbox_id", "status"]
+
+[api.list]
+access = "authed"
+cache = false
+
+[api.get]
+access = "authed"
+cache = false
+
+[api.create]
+access = "authed"
+cache = false
+
+[api.update]
+access = "owner"
+cache = false
+
+[api.delete]
+access = "admin"
+cache = false

@@ -1043,7 +1043,13 @@ impl AppConfig {
             cors_origins,
             tls_cert_path,
             tls_key_path,
-            plugin_dir: env::var("PLUGIN_DIR").ok().filter(|s| !s.is_empty()),
+            // Unset PLUGIN_DIR falls back to the serde default — the plugin
+            // directory convention must work without explicit configuration
+            // (`from_env` bypasses serde defaults, so mirror it by hand).
+            plugin_dir: env::var("PLUGIN_DIR")
+                .ok()
+                .filter(|s| !s.is_empty())
+                .or_else(default_plugin_dir),
             plugin_hot_reload: env::var("PLUGIN_HOT_RELOAD")
                 .ok()
                 .and_then(|v| v.parse().ok())

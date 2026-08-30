@@ -66,6 +66,30 @@ impl Host for Arc<HostContext> {
         (**self).db_rollback()
     }
 
+    fn ct_find(&mut self, ct: String, query: String) -> String {
+        (**self).ct_find(&ct, &query)
+    }
+
+    fn ct_get(&mut self, ct: String, id: String) -> String {
+        (**self).ct_get(&ct, &id)
+    }
+
+    fn ct_create(&mut self, ct: String, data: String) -> String {
+        (**self).ct_create(&ct, &data)
+    }
+
+    fn ct_update(&mut self, ct: String, id: String, data: String) -> String {
+        (**self).ct_update(&ct, &id, &data)
+    }
+
+    fn job_enqueue(&mut self, job_type: String, payload: String, opts: String) -> String {
+        (**self).job_enqueue(&job_type, &payload, &opts)
+    }
+
+    fn get_receipt(&mut self, trace_id: String) -> String {
+        (**self).ingress_get_receipt(&trace_id)
+    }
+
     fn vfs_read(&mut self, path: String) -> Option<String> {
         (**self).vfs_read(&path).ok()
     }

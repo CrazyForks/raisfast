@@ -193,6 +193,9 @@ pub struct PluginManager {
     #[cfg(feature = "plugin-rhai")]
     rhai_engine: RhaiEngine,
     plugins: RwLock<HashMap<String, LoadedPlugin>>,
+    /// Targeted job routes from manifest `[[jobs]]`: job_type → (plugin_id,
+    /// handler). Sync map: consulted by the worker dispatcher on every job.
+    job_routes: std::sync::RwLock<HashMap<String, (String, String)>>,
     route_index: DashMap<String, Vec<RouteIndexEntry>>,
     hook_index: DashMap<String, Vec<HookIndexEntry>>,
     config: Arc<AppConfig>,
@@ -267,6 +270,8 @@ pub struct PluginInfoResponse {
 pub struct PluginManagerOptions {
     pub pool: Option<Pool>,
     pub event_bus: Option<crate::eventbus::EventBus>,
+    /// Content-type registry for the `ct.*` host APIs (None = ct.* disabled).
+    pub content_registry: Option<Arc<crate::content_type::ContentTypeRegistry>>,
 }
 
 impl PluginManager {
@@ -279,6 +284,7 @@ impl PluginManager {
             PluginManagerOptions {
                 pool: None,
                 event_bus: None,
+                content_registry: None,
             },
         )
         .await
@@ -326,17 +332,33 @@ impl PluginManager {
         };
 
         #[cfg(feature = "plugin-js")]
-        let js_engine = JsEngine::new(&config, opts.pool.clone(), opts.event_bus.clone())
-            .await
-            .unwrap_or_else(|e| panic!("failed to create js engine: {e}"));
+        let js_engine = JsEngine::new(
+            &config,
+            opts.pool.clone(),
+            opts.event_bus.clone(),
+            opts.content_registry.clone(),
+        )
+        .await
+        .unwrap_or_else(|e| panic!("failed to create js engine: {e}"));
 
         #[cfg(feature = "plugin-lua")]
-        let lua_engine = LuaEngine::new(&config, opts.pool.clone(), opts.event_bus.clone())
-            .unwrap_or_else(|e| panic!("failed to create lua engine: {e}"));
+        let lua_engine = LuaEngine::new(
+            &config,
+            opts.pool.clone(),
+            opts.event_bus.clone(),
+            opts.content_registry.clone(),
+        )
+        .await
+        .unwrap_or_else(|e| panic!("failed to create lua engine: {e}"));
 
         #[cfg(feature = "plugin-rhai")]
-        let rhai_engine = RhaiEngine::new(&config, opts.pool.clone(), opts.event_bus.clone())
-            .unwrap_or_else(|e| panic!("failed to create rhai engine: {e}"));
+        let rhai_engine = RhaiEngine::new(
+            &config,
+            opts.pool.clone(),
+            opts.event_bus.clone(),
+            opts.content_registry.clone(),
+        )
+        .unwrap_or_else(|e| panic!("failed to create rhai engine: {e}"));
 
         let (reload_tx, reload_rx) = tokio::sync::mpsc::channel::<PathBuf>(32);
         let (event_tx, _) = tokio::sync::broadcast::channel::<Arc<PluginEvent>>(256);
@@ -351,6 +373,7 @@ impl PluginManager {
             #[cfg(feature = "plugin-rhai")]
             rhai_engine,
             plugins: RwLock::new(HashMap::new()),
+            job_routes: std::sync::RwLock::new(HashMap::new()),
             route_index: DashMap::new(),
             hook_index: DashMap::new(),
             config,
@@ -588,11 +611,16 @@ impl PluginManager {
             .get(&id)
             .map(|p| p.manifest.cron.clone())
             .unwrap_or_default();
+        let job_entries = plugins
+            .get(&id)
+            .map(|p| p.manifest.jobs.clone())
+            .unwrap_or_default();
         drop(plugins);
         self.rebuild_route_index();
         self.rebuild_hook_index();
 
         self.sync_crons_for_plugin(&id, &cron_entries).await;
+        self.sync_jobs_for_plugin(&id, &job_entries);
 
         self.emit_event(PluginEvent::PluginLoaded {
             id: id.clone(),
@@ -651,11 +679,16 @@ impl PluginManager {
             .get(&id)
             .map(|p| p.manifest.cron.clone())
             .unwrap_or_default();
+        let job_entries = plugins
+            .get(&id)
+            .map(|p| p.manifest.jobs.clone())
+            .unwrap_or_default();
         drop(plugins);
         self.rebuild_route_index();
         self.rebuild_hook_index();
 
         self.sync_crons_for_plugin(&id, &cron_entries).await;
+        self.sync_jobs_for_plugin(&id, &job_entries);
 
         self.emit_event(PluginEvent::PluginLoaded {
             id: id.clone(),
@@ -709,11 +742,16 @@ impl PluginManager {
             .get(&id)
             .map(|p| p.manifest.cron.clone())
             .unwrap_or_default();
+        let job_entries = plugins
+            .get(&id)
+            .map(|p| p.manifest.jobs.clone())
+            .unwrap_or_default();
         drop(plugins);
         self.rebuild_route_index();
         self.rebuild_hook_index();
 
         self.sync_crons_for_plugin(&id, &cron_entries).await;
+        self.sync_jobs_for_plugin(&id, &job_entries);
 
         self.emit_event(PluginEvent::PluginLoaded {
             id: id.clone(),
@@ -759,11 +797,16 @@ impl PluginManager {
             .get(&id)
             .map(|p| p.manifest.cron.clone())
             .unwrap_or_default();
+        let job_entries = plugins
+            .get(&id)
+            .map(|p| p.manifest.jobs.clone())
+            .unwrap_or_default();
         drop(plugins);
         self.rebuild_route_index();
         self.rebuild_hook_index();
 
         self.sync_crons_for_plugin(&id, &cron_entries).await;
+        self.sync_jobs_for_plugin(&id, &job_entries);
 
         self.emit_event(PluginEvent::PluginLoaded {
             id: id.clone(),
@@ -859,6 +902,7 @@ impl PluginManager {
             self.rebuild_hook_index();
             self.rebuild_hook_index();
             self.remove_crons_for_plugin(id).await;
+            self.remove_jobs_for_plugin(id);
             self.emit_event(PluginEvent::PluginUnloaded { id: id.to_string() });
         }
     }
@@ -954,6 +998,83 @@ impl PluginManager {
         {
             tracing::warn!("failed to sync crons for plugin {plugin_id}: {e}");
         }
+    }
+
+    /// Register manifest `[[jobs]]` routes (job_type → handler).
+    ///
+    /// Collisions with built-ins or previously-loaded plugins are skipped
+    /// with a warning — first registration wins.
+    fn sync_jobs_for_plugin(
+        &self,
+        plugin_id: &str,
+        entries: &[crate::plugins::manifest::JobEntry],
+    ) {
+        let Ok(mut routes) = self.job_routes.write() else {
+            return;
+        };
+        for entry in entries {
+            if routes.contains_key(&entry.job_type) {
+                tracing::warn!(
+                    "plugin {plugin_id}: job_type '{}' already registered by another plugin — skipped",
+                    entry.job_type
+                );
+                continue;
+            }
+            tracing::info!(
+                "plugin {plugin_id} answers job '{}' → {}",
+                entry.job_type,
+                entry.handler
+            );
+            routes.insert(
+                entry.job_type.clone(),
+                (plugin_id.to_string(), entry.handler.clone()),
+            );
+        }
+    }
+
+    /// Drop all job routes owned by a plugin (unload).
+    fn remove_jobs_for_plugin(&self, plugin_id: &str) {
+        if let Ok(mut routes) = self.job_routes.write() {
+            routes.retain(|_, (owner, _)| owner != plugin_id);
+        }
+    }
+
+    /// Resolve a job_type to its owning plugin + handler (`[[jobs]]` routes).
+    #[must_use]
+    pub fn resolve_job(&self, job_type: &str) -> Option<(String, String)> {
+        self.job_routes.read().ok()?.get(job_type).cloned()
+    }
+
+    /// Invoke a plugin job handler (targeted dispatch).
+    ///
+    /// Errors propagate so the worker retry/dead-letter machinery applies —
+    /// unlike the legacy `on-cron-tick` broadcast, job handlers participate
+    /// in at-least-once semantics.
+    pub async fn call_job(&self, job_type: &str, payload: &serde_json::Value) -> AppResult<()> {
+        let Some((plugin_id, handler)) = self.resolve_job(job_type) else {
+            return Err(AppError::NotFound(format!(
+                "plugin job '{job_type}' is no longer registered"
+            )));
+        };
+        let plugins = self.plugins.read().await;
+        let Some(plugin) = plugins.get(&plugin_id) else {
+            return Err(AppError::NotFound(format!(
+                "plugin '{plugin_id}' (job '{job_type}') is not loaded"
+            )));
+        };
+        let result = self.call_json_value(plugin, &handler, payload).await?;
+        if let Some(obj) = result.as_ref().and_then(|v| v.as_object())
+            && obj.get("__plugin_error").and_then(|v| v.as_bool()) == Some(true)
+        {
+            let msg = obj
+                .get("__message")
+                .and_then(|v| v.as_str())
+                .unwrap_or("plugin job failed");
+            return Err(AppError::Internal(anyhow::anyhow!(
+                "plugin job '{job_type}' ({plugin_id}.{handler}) failed: {msg}"
+            )));
+        }
+        Ok(())
     }
 
     /// Remove Cron schedules associated with a plugin
@@ -1742,13 +1863,18 @@ impl PluginManager {
     ///
     /// The plugin returns raw data; the framework wraps it as `{code, message, data}`.
     /// If the plugin returns `{__plugin_error: true, __status, __message}`, it is treated as an error.
-    async fn call_plugin_json(
+    /// Dispatch a handler call to the plugin's engine, JSON value in/out.
+    ///
+    /// Shared by plugin routes and targeted job dispatch; honors the engine
+    /// wall-clock timeout and the `__plugin_error` convention (interpreted by
+    /// callers).
+    async fn call_json_value(
         &self,
         plugin: &LoadedPlugin,
         handler: &str,
         input: &serde_json::Value,
-    ) -> Result<Option<axum::response::Response>, anyhow::Error> {
-        let result: Option<serde_json::Value> = match &plugin.instance {
+    ) -> Result<Option<serde_json::Value>, anyhow::Error> {
+        match &plugin.instance {
             #[cfg(feature = "plugin-wasm")]
             LoadedPluginInstance::Wasm(wasm) => {
                 let mut instance = wasm.acquire().await;
@@ -1765,29 +1891,39 @@ impl PluginManager {
                         timeout.as_millis()
                     ))
                 })
-                .map_err(|e| anyhow::anyhow!("{e}"))?
+                .map_err(|e| anyhow::anyhow!("{e}"))
             }
             #[cfg(feature = "plugin-js")]
             LoadedPluginInstance::Js(pid) => self
                 .js_engine
                 .call_filter::<serde_json::Value>(pid, handler, input)
                 .await
-                .map_err(|e| anyhow::anyhow!("{e}"))?,
+                .map_err(|e| anyhow::anyhow!("{e}")),
             #[cfg(feature = "plugin-lua")]
             LoadedPluginInstance::Lua(pid) => self
                 .lua_engine
                 .call_filter::<serde_json::Value>(pid, handler, input)
                 .await
-                .map_err(|e| anyhow::anyhow!("{e}"))?,
+                .map_err(|e| anyhow::anyhow!("{e}")),
             #[cfg(feature = "plugin-rhai")]
             LoadedPluginInstance::Rhai(pid) => self
                 .rhai_engine
                 .call_filter::<serde_json::Value>(pid, handler, input)
                 .await
-                .map_err(|e| anyhow::anyhow!("{e}"))?,
+                .map_err(|e| anyhow::anyhow!("{e}")),
             #[allow(unreachable_patterns)]
-            _ => None,
-        };
+            _ => Ok(None),
+        }
+    }
+
+    async fn call_plugin_json(
+        &self,
+        plugin: &LoadedPlugin,
+        handler: &str,
+        input: &serde_json::Value,
+    ) -> Result<Option<axum::response::Response>, anyhow::Error> {
+        let result: Option<serde_json::Value> =
+            self.call_json_value(plugin, handler, input).await?;
 
         match result {
             Some(result) => {
@@ -2799,6 +2935,7 @@ priority = 10
                 .map(|(k, v)| (k.to_string(), v.to_string()))
                 .collect(),
             cron: vec![],
+            jobs: vec![],
             content_types: vec![],
             routes: vec![],
             admin_pages: vec![],

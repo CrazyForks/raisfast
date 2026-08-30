@@ -1,0 +1,85 @@
+[content_type]
+name = "Message"
+singular = "chat_message"
+plural = "chat_messages"
+table = "chat_messages"
+group = "chat"
+description = "Chat message: user/assistant/agent/system/activity; conversation linked by chat.ingress"
+implements = ["ownable", "timestampable"]
+
+[fields.conversation_id]
+type = "bigint"
+label = "Conversation id (null until chat.ingress links)"
+
+[fields.role]
+type = "enum"
+enum_values = ["user", "assistant", "agent", "system", "activity"]
+default = "user"
+label = "Role"
+
+[fields.content_type]
+type = "enum"
+enum_values = ["text", "markdown", "image", "file", "audio", "video", "card", "activity_event"]
+default = "text"
+label = "Content type"
+
+[fields.body]
+type = "text"
+label = "Body"
+
+[fields.attachments]
+type = "json"
+label = "Attachments"
+
+[fields.private]
+type = "boolean"
+default = false
+label = "Private note (agents only)"
+
+[fields.status]
+type = "enum"
+enum_values = ["sent", "delivered", "read", "failed"]
+default = "sent"
+label = "Delivery status"
+
+[fields.external_id]
+type = "text"
+label = "Channel-side message id"
+
+[fields.receipt_id]
+type = "bigint"
+label = "Inbound receipt id (trace link)"
+
+[fields.sender_agent_id]
+type = "bigint"
+label = "Agent user id (role=agent)"
+
+[fields.client_id]
+type = "text"
+label = "Client idempotency key"
+
+[[indexes]]
+fields = ["conversation_id", "id"]
+
+[[indexes]]
+fields = ["receipt_id"]
+
+[api.list]
+access = "authed"
+cache = false
+
+[api.get]
+access = "authed"
+cache = false
+
+[api.create]
+access = "authed"
+cache = false
+
+[api.update]
+access = "owner"
+cache = false
+
+[api.delete]
+access = "admin"
+cache = false

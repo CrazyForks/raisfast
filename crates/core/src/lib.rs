@@ -282,6 +282,7 @@ pub async fn build_app_state(
         crate::plugins::PluginManagerOptions {
             pool: Some(pool.clone()),
             event_bus: Some(eventbus.clone()),
+            content_registry: Some(ct_registry.clone()),
         },
     )
     .await;

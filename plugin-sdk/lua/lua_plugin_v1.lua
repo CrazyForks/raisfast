@@ -142,6 +142,49 @@ function M.callApi(clientKey, op, input)
     return decoded
 end
 
+-- Content-type host API (group-aware: 'group/plural', plural, table name)
+function M.ctFind(ct, query)
+    local q = query == nil and "{}" or (type(query) == "string" and query or RaisFastHost.jsonEncode(query))
+    local decoded = RaisFastHost.jsonDecode(RaisFastHost.ctFind(ct, q))
+    if decoded.error then error(decoded.error) end
+    return decoded
+end
+
+function M.ctGet(ct, id)
+    local result = RaisFastHost.ctGet(ct, tostring(id))
+    if result == nil or result == "null" then return nil end
+    return RaisFastHost.jsonDecode(result)
+end
+
+function M.ctCreate(ct, data)
+    local dataStr = data == nil and "{}" or (type(data) == "string" and data or RaisFastHost.jsonEncode(data))
+    local decoded = RaisFastHost.jsonDecode(RaisFastHost.ctCreate(ct, dataStr))
+    if decoded and decoded.error then error(decoded.error) end
+    return decoded
+end
+
+function M.ctUpdate(ct, id, data)
+    local dataStr = data == nil and "{}" or (type(data) == "string" and data or RaisFastHost.jsonEncode(data))
+    local decoded = RaisFastHost.jsonDecode(RaisFastHost.ctUpdate(ct, tostring(id), dataStr))
+    if decoded and decoded.error then error(decoded.error) end
+    return decoded
+end
+
+-- Job / integration host API
+function M.jobEnqueue(jobType, payload, opts)
+    local p = payload == nil and "{}" or (type(payload) == "string" and payload or RaisFastHost.jsonEncode(payload))
+    local o = opts == nil and "{}" or (type(opts) == "string" and opts or RaisFastHost.jsonEncode(opts))
+    local decoded = RaisFastHost.jsonDecode(RaisFastHost.jobEnqueue(jobType, p, o))
+    if decoded.error then error(decoded.error) end
+    return decoded
+end
+
+function M.getReceipt(traceId)
+    local result = RaisFastHost.getReceipt(tostring(traceId))
+    if result == nil or result == "null" then return nil end
+    return RaisFastHost.jsonDecode(result)
+end
+
 function M.configGet(key) return RaisFastHost.getConfig(key) end
 
 function M.storeGet(key) return RaisFastHost.getData(key) end

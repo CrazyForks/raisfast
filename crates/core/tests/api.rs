@@ -4692,68 +4692,20 @@ type = "text"
         "deleted client still listed: {body:?}"
     );
 }
+// ── Chat app plugin: chat.ingress / chat.autoreply (targeted job dispatch) ──
 
-// ── Integration Plane M1: support.autoreply ──────────────────────
-
-/// Register the support CT trio (contact / conversation / message).
-async fn autoreply_schemas(state: &AppState) {
+/// Register the six chat CTs straight from the app's TOML files (single
+/// source of truth — same files the .rafapp will carry).
+async fn register_chat_cts(state: &AppState) {
     let tomls = [
-        (
-            "sc_contact",
-            r#"
-[content_type]
-name = "AR Contact"
-singular = "sc_contact"
-plural = "sc_contacts"
-table = "sc_contacts"
-
-[fields.channel]
-type = "text"
-
-[fields.sender]
-type = "text"
-"#,
-        ),
-        (
-            "sc_conversation",
-            r#"
-[content_type]
-name = "AR Conversation"
-singular = "sc_conversation"
-plural = "sc_conversations"
-table = "sc_conversations"
-
-[fields.contact_id]
-type = "bigint"
-
-[fields.status]
-type = "text"
-"#,
-        ),
-        (
-            "sc_message",
-            r#"
-[content_type]
-name = "AR Message"
-singular = "sc_message"
-plural = "sc_messages"
-table = "sc_messages"
-
-[fields.conversation_id]
-type = "bigint"
-
-[fields.role]
-type = "text"
-
-[fields.body]
-type = "text"
-
-[fields.external_id]
-type = "text"
-"#,
-        ),
+        include_str!("../../../extensions/content_types/chat_inbox.toml"),
+        include_str!("../../../extensions/content_types/chat_bot.toml"),
+        include_str!("../../../extensions/content_types/chat_contact.toml"),
+        include_str!("../../../extensions/content_types/chat_contact_identity.toml"),
+        include_str!("../../../extensions/content_types/chat_conversation.toml"),
+        include_str!("../../../extensions/content_types/chat_message.toml"),
     ];
-    for (_, toml) in tomls {
+    for toml in tomls {
         let schema =
             raisfast::content_type::schema::ContentTypeSchema::parse_from_str(toml).unwrap();
         let repo = raisfast::content_type::repository::ContentRepository::new(state.pool.clone());
@@ -4773,12 +4725,7 @@ type = "text"
     }
 }
 
-fn autoreply_channel(
-    key: &str,
-    client: &str,
-    op: &str,
-    window: i64,
-) -> raisfast::integration::ItgChannel {
+fn chat_channel(key: &str) -> raisfast::integration::ItgChannel {
     raisfast::integration::ItgChannel {
         id: raisfast::utils::id::new_snowflake_id(),
         tenant_id: "default".into(),
@@ -4805,16 +4752,9 @@ fn autoreply_channel(
         ack_kind: "http-200".into(),
         redelivery_max: 5,
         backpressure: None,
-        target_type: "sc_message".into(),
+        target_type: "chat/chat_messages".into(),
         route_extra: Some(json!({
-            "jobs": [{"job_type": "support.autoreply", "max_attempts": 1}],
-            "autoreply": {
-                "client": client,
-                "op": op,
-                "context_window": window,
-                "system_prompt": "你是客服",
-                "output_field": "text"
-            }
+            "jobs": [{"job_type": "chat.ingress", "max_attempts": 1}]
         })),
         status: "idle".into(),
         last_error: None,
@@ -4827,26 +4767,49 @@ fn autoreply_channel(
     }
 }
 
-#[tokio::test]
-async fn integration_autoreply_end_to_end() {
+#[tokio::test(flavor = "multi_thread")]
+async fn chat_plugin_jobs_end_to_end() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     tokio::spawn(egress_mock_api(listener));
 
     let (mut app, state) = test_app().await;
     let _ = &mut app;
-    autoreply_schemas(&state).await;
+    register_chat_cts(&state).await;
     let plane = state.integration.as_ref().unwrap();
-    // The handler reaches the plane via the process-wide handle.
+    // Plugin host APIs (callApi) reach the plane via the process-wide handle.
     raisfast::integration::set_shared(state.integration.clone().unwrap());
 
-    // LLM client (no auth) + channels (window = 2).
+    // Chat plugin loaded from the app's extensions dir — job routes registered
+    // from manifest [[jobs]].
+    let chat_manifest = format!(
+        "{}/../../extensions/plugins/chat/manifest.toml",
+        env!("CARGO_MANIFEST_DIR")
+    );
+    let plugins = raisfast::plugins::PluginManager::new_empty(
+        state.config.clone(),
+        raisfast::plugins::PluginManagerOptions {
+            pool: Some(state.pool.clone()),
+            event_bus: Some(state.eventbus.clone()),
+            content_registry: Some(state.content_type_registry.clone()),
+        },
+    )
+    .await;
+    plugins
+        .load_plugin_from_dir(std::path::Path::new(&chat_manifest))
+        .await
+        .unwrap();
+    assert_eq!(plugins.resolve_job("chat.ingress").unwrap().0, "chat");
+    assert_eq!(plugins.resolve_job("chat.autoreply").unwrap().0, "chat");
+    let dispatcher = raisfast::worker::PluginCronDispatcher::new(plugins.clone());
+
+    // Mock LLM api-client.
     let ops = json!({"chat": {"method": "POST", "path": "/v1/chat-messages",
                               "output": {"text": "$.answer"}}});
     let mut client = insert_egress_client(
         &state,
         plane,
-        "ar-llm",
+        "chat-llm",
         json!({"kind": "none"}),
         None,
         ops,
@@ -4865,20 +4828,30 @@ async fn integration_autoreply_end_to_end() {
     .await
     .unwrap();
 
-    let channel = autoreply_channel("ar-ch", "ar-llm", "chat", 2);
+    let channel = chat_channel("chat-ch");
+    let channel_id = *channel.id;
     raisfast::integration::channel::model::insert(&state.pool, &channel)
         .await
         .unwrap();
     plane.channels().refresh().await.unwrap();
 
-    // SSE fan-out: capture integration.message from the app's event bus.
     let mut rx = state.eventbus.subscribe();
 
-    // ── Round 1: first message from alice ─────────────────────────────
+    let dispatcher = &dispatcher;
+    let run_ingress = move |trace: i64| async move {
+        dispatcher
+            .dispatch(&raisfast::worker::Job::Custom {
+                job_type: "chat.ingress".into(),
+                payload: json!({"trace_id": trace.to_string(), "channel_key": "chat-ch"}),
+            })
+            .await
+    };
+
+    // ── Round 1: no inbox/bot binding → pure human path ────────────────
     let (status, _) = send(
         &mut app,
         post_json(
-            "/api/v1/ingress/ar-ch",
+            "/api/v1/ingress/chat-ch",
             json!({"id": "m1", "user": "alice", "text": "你好"}),
         ),
     )
@@ -4892,82 +4865,107 @@ async fn integration_autoreply_end_to_end() {
     .fetch_one(&state.pool)
     .await
     .unwrap();
+    run_ingress(trace1).await.unwrap();
 
-    let handler = raisfast::worker::handlers::support_autoreply::SupportAutoreplyHandler;
-    raisfast::worker::JobHandler::handle(
-        &handler,
-        &raisfast::worker::Job::Custom {
-            job_type: "support.autoreply".into(),
-            payload: json!({"trace_id": trace1, "channel_key": "ar-ch"}),
-        },
-    )
-    .await
-    .unwrap();
-
-    let contacts: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM sc_contacts WHERE sender = 'alice'")
-            .fetch_one(&state.pool)
-            .await
-            .unwrap();
-    assert_eq!(contacts, 1, "one contact (merged by sender)");
-    let conv1: i64 = sqlx::query_scalar(
-        "SELECT id FROM sc_conversations WHERE status = 'open' ORDER BY id DESC LIMIT 1",
+    let identities: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM chat_contact_identities WHERE channel = 'chat-ch' AND sender = 'alice'",
     )
     .fetch_one(&state.pool)
     .await
     .unwrap();
-
-    let user_msg: (i64,) =
-        sqlx::query_as("SELECT conversation_id FROM sc_messages WHERE external_id = 'm1'")
-            .fetch_one(&state.pool)
-            .await
-            .unwrap();
-    assert_eq!(user_msg.0, conv1, "user message linked to conversation");
-
-    let reply: String = sqlx::query_scalar(raisfast::db::safe_sql(&format!(
-        "SELECT body FROM sc_messages WHERE external_id = {}",
-        raisfast::db::Driver::ph(1)
-    )))
-    .bind(format!("reply-{trace1}"))
+    assert_eq!(identities, 1, "identity merged by (channel, sender)");
+    let (_conv1, conv1_status, conv1_bot): (i64, String, String) = sqlx::query_as(
+        "SELECT id, status, bot_status FROM chat_conversations ORDER BY id DESC LIMIT 1",
+    )
     .fetch_one(&state.pool)
     .await
     .unwrap();
-    assert_eq!(reply, "mock-reply", "assistant message stored");
+    assert_eq!(conv1_status, "open", "no bot bound → human queue");
+    assert_eq!(conv1_bot, "disabled", "no bot bound → bot disabled");
 
-    // egress_log trace 对账
-    let logs = raisfast::integration::egress::list_log(
-        &state.pool,
-        Some(raisfast::types::snowflake_id::SnowflakeId(trace1)),
-        None,
-        10,
+    let linked: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM chat_messages WHERE external_id = 'm1' AND conversation_id IS NOT NULL",
     )
+    .fetch_one(&state.pool)
     .await
     .unwrap();
-    assert_eq!(logs.len(), 1, "exactly one LLM call for trace: {logs:?}");
-    assert_eq!(logs[0].op, "chat");
+    assert_eq!(linked, 1, "pipeline-injected receipt_id lets ingress link");
 
-    // SSE integration.message 广播
-    let mut saw_message = false;
+    let autoreply_jobs: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM jobs WHERE job_type = 'chat.autoreply'")
+            .fetch_one(&state.pool)
+            .await
+            .unwrap();
+    assert_eq!(autoreply_jobs, 0, "human-only: no autoreply enqueued");
+
+    let mut saw_user_event = false;
     while let Ok(ev) = rx.try_recv() {
         if let raisfast::eventbus::Event::Custom {
             event_type, data, ..
         } = ev.as_ref()
-            && event_type == "integration.message"
+            && event_type == "chat.message.created"
         {
-            saw_message = true;
-            assert_eq!(data["role"], "assistant");
-            assert_eq!(data["body"], "mock-reply");
-            assert_eq!(data["conversation_id"].as_i64().unwrap_or(conv1), conv1);
+            saw_user_event = true;
+            assert_eq!(data["role"], "user");
         }
     }
-    assert!(saw_message, "integration.message broadcast");
+    assert!(saw_user_event, "chat.message.created (user) broadcast");
 
-    // ── Round 2: second message, same sender → same conversation ───────
+    // ── Round 2: create bot, bind inbox → bot handles (pending queue) ──
+    let now = raisfast::utils::tz::now_utc();
+    let bot_id = raisfast::utils::id::new_snowflake_id();
+    let inbox_id = raisfast::utils::id::new_snowflake_id();
+    sqlx::query(raisfast::db::safe_sql(&format!(
+        "INSERT INTO chat_bots (id, name, enabled, mode, autoreply, handoff, created_at, updated_at) \
+         VALUES ({}, {}, {}, {}, {}, {}, {}, {})",
+        raisfast::db::Driver::ph(1),
+        raisfast::db::Driver::ph(2),
+        raisfast::db::Driver::ph(3),
+        raisfast::db::Driver::ph(4),
+        raisfast::db::Driver::ph(5),
+        raisfast::db::Driver::ph(6),
+        raisfast::db::Driver::ph(7),
+        raisfast::db::Driver::ph(8)
+    )))
+    .bind(*bot_id)
+    .bind("helper")
+    .bind(true)
+    .bind("full")
+    .bind(json!({
+        "client": "chat-llm", "op": "chat", "context_window": 2,
+        "system_prompt": "你是客服", "output_field": "text"
+    }))
+    .bind(json!({"keywords": ["转人工"]}))
+    .bind(now)
+    .bind(now)
+    .execute(&state.pool)
+    .await
+    .unwrap();
+    sqlx::query(raisfast::db::safe_sql(&format!(
+        "INSERT INTO chat_inboxes (id, name, channel_id, bot_id, created_at, updated_at) \
+         VALUES ({}, {}, {}, {}, {}, {})",
+        raisfast::db::Driver::ph(1),
+        raisfast::db::Driver::ph(2),
+        raisfast::db::Driver::ph(3),
+        raisfast::db::Driver::ph(4),
+        raisfast::db::Driver::ph(5),
+        raisfast::db::Driver::ph(6)
+    )))
+    .bind(inbox_id.0)
+    .bind("Main")
+    .bind(channel_id)
+    .bind(bot_id.0)
+    .bind(now)
+    .bind(now)
+    .execute(&state.pool)
+    .await
+    .unwrap();
+
     let (status, _) = send(
         &mut app,
         post_json(
-            "/api/v1/ingress/ar-ch",
-            json!({"id": "m2", "user": "alice", "text": "还在吗"}),
+            "/api/v1/ingress/chat-ch",
+            json!({"id": "m2", "user": "bob", "text": "你好"}),
         ),
     )
     .await;
@@ -4980,36 +4978,204 @@ async fn integration_autoreply_end_to_end() {
     .fetch_one(&state.pool)
     .await
     .unwrap();
-    raisfast::worker::JobHandler::handle(
-        &handler,
-        &raisfast::worker::Job::Custom {
-            job_type: "support.autoreply".into(),
-            payload: json!({"trace_id": trace2, "channel_key": "ar-ch"}),
-        },
-    )
-    .await
-    .unwrap();
+    run_ingress(trace2).await.unwrap();
 
-    let conv2: i64 = sqlx::query_scalar(
-        "SELECT id FROM sc_conversations WHERE status = 'open' ORDER BY id DESC LIMIT 1",
+    let (conv2, conv2_status, conv2_bot): (i64, String, String) = sqlx::query_as(
+        "SELECT c.id, c.status, c.bot_status FROM chat_conversations c \
+         JOIN chat_contacts t ON c.contact_id = t.id \
+         JOIN chat_contact_identities i ON i.contact_id = t.id \
+         WHERE i.sender = 'bob' ORDER BY c.id DESC LIMIT 1",
     )
     .fetch_one(&state.pool)
     .await
     .unwrap();
-    assert_eq!(conv1, conv2, "same sender merges into one conversation");
-    let contacts: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM sc_contacts WHERE sender = 'alice'")
-            .fetch_one(&state.pool)
-            .await
-            .unwrap();
-    assert_eq!(contacts, 1, "still one contact");
+    assert_eq!(conv2_status, "pending", "bot handling → out of agent queue");
+    assert_eq!(conv2_bot, "active");
 
-    // ── Failure branch: LLM 500 → job fails, conversation → pending ────
+    // The enqueued autoreply job (targeted dispatch through the queue row).
+    let payload: String = sqlx::query_scalar(raisfast::db::safe_sql(&format!(
+        "SELECT payload FROM jobs WHERE job_type = 'chat.autoreply' AND payload LIKE {}",
+        raisfast::db::Driver::ph(1)
+    )))
+    .bind(format!("%\"trace_id\":\"{trace2}\"%"))
+    .fetch_one(&state.pool)
+    .await
+    .unwrap();
+    let job_payload: Value = serde_json::from_str(&payload).unwrap();
+    assert_eq!(
+        job_payload["conversation_id"]
+            .as_str()
+            .and_then(|v| v.parse::<i64>().ok()),
+        Some(conv2)
+    );
+    dispatcher
+        .dispatch(&raisfast::worker::Job::Custom {
+            job_type: "chat.autoreply".into(),
+            payload: job_payload,
+        })
+        .await
+        .unwrap();
+
+    let reply: String = sqlx::query_scalar(raisfast::db::safe_sql(&format!(
+        "SELECT body FROM chat_messages WHERE external_id = {}",
+        raisfast::db::Driver::ph(1)
+    )))
+    .bind(format!("reply-{trace2}"))
+    .fetch_one(&state.pool)
+    .await
+    .unwrap();
+    assert_eq!(reply, "mock-reply", "assistant message stored");
+
+    // egress trace reconciliation.
+    let logs = raisfast::integration::egress::list_log(
+        &state.pool,
+        Some(raisfast::types::snowflake_id::SnowflakeId(trace2)),
+        None,
+        10,
+    )
+    .await
+    .unwrap();
+    assert_eq!(logs.len(), 1, "exactly one LLM call for trace: {logs:?}");
+
+    let mut saw_reply = false;
+    while let Ok(ev) = rx.try_recv() {
+        if let raisfast::eventbus::Event::Custom {
+            event_type, data, ..
+        } = ev.as_ref()
+            && event_type == "integration.message"
+        {
+            saw_reply = true;
+            assert_eq!(data["role"], "assistant");
+            assert_eq!(data["body"], "mock-reply");
+        }
+    }
+    assert!(saw_reply, "integration.message broadcast");
+
+    // ── Round 3: same sender merges; context window = 2 ───────────────
+    let (status, _) = send(
+        &mut app,
+        post_json(
+            "/api/v1/ingress/chat-ch",
+            json!({"id": "m3", "user": "bob", "text": "还在吗"}),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let trace3: i64 = sqlx::query_scalar(raisfast::db::safe_sql(&format!(
+        "SELECT id FROM itg_receipts WHERE external_id = {}",
+        raisfast::db::Driver::ph(1)
+    )))
+    .bind("m3")
+    .fetch_one(&state.pool)
+    .await
+    .unwrap();
+    run_ingress(trace3).await.unwrap();
+    let (conv3,): (i64,) = sqlx::query_as(
+        "SELECT c.id FROM chat_conversations c \
+         JOIN chat_contact_identities i ON i.contact_id = c.contact_id \
+         WHERE i.sender = 'bob' ORDER BY c.id DESC LIMIT 1",
+    )
+    .fetch_one(&state.pool)
+    .await
+    .unwrap();
+    assert_eq!(conv2, conv3, "same sender merges into one conversation");
+    let payload: String = sqlx::query_scalar(raisfast::db::safe_sql(&format!(
+        "SELECT payload FROM jobs WHERE job_type = 'chat.autoreply' AND payload LIKE {}",
+        raisfast::db::Driver::ph(1)
+    )))
+    .bind(format!("%\"trace_id\":\"{trace3}\"%"))
+    .fetch_one(&state.pool)
+    .await
+    .unwrap();
+    dispatcher
+        .dispatch(&raisfast::worker::Job::Custom {
+            job_type: "chat.autoreply".into(),
+            payload: serde_json::from_str(&payload).unwrap(),
+        })
+        .await
+        .unwrap();
+
+    let seen: Value = reqwest::get(format!("http://{addr}/v1/seen"))
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let bodies = seen["bodies"].as_array().unwrap();
+    let last = bodies
+        .iter()
+        .rev()
+        .map(|b| b.as_str().unwrap_or("{}"))
+        .find(|b| b.contains("还在吗"))
+        .unwrap_or("{}");
+    let prompt: Value = serde_json::from_str(last).unwrap();
+    let messages = prompt["messages"].as_array().unwrap();
+    assert_eq!(messages.len(), 2, "context_window truncates: {prompt}");
+    assert_eq!(messages[0]["content"], "你好", "chronological order");
+    assert_eq!(messages[1]["content"], "还在吗");
+    assert_eq!(prompt["system"], "你是客服");
+
+    // ── Round 4: handoff keyword → human, no reply ────────────────────
+    let (status, _) = send(
+        &mut app,
+        post_json(
+            "/api/v1/ingress/chat-ch",
+            json!({"id": "m4", "user": "carol", "text": "转人工"}),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let trace4: i64 = sqlx::query_scalar(raisfast::db::safe_sql(&format!(
+        "SELECT id FROM itg_receipts WHERE external_id = {}",
+        raisfast::db::Driver::ph(1)
+    )))
+    .bind("m4")
+    .fetch_one(&state.pool)
+    .await
+    .unwrap();
+    run_ingress(trace4).await.unwrap();
+    let payload: String = sqlx::query_scalar(raisfast::db::safe_sql(&format!(
+        "SELECT payload FROM jobs WHERE job_type = 'chat.autoreply' AND payload LIKE {}",
+        raisfast::db::Driver::ph(1)
+    )))
+    .bind(format!("%\"trace_id\":\"{trace4}\"%"))
+    .fetch_one(&state.pool)
+    .await
+    .unwrap();
+    dispatcher
+        .dispatch(&raisfast::worker::Job::Custom {
+            job_type: "chat.autoreply".into(),
+            payload: serde_json::from_str(&payload).unwrap(),
+        })
+        .await
+        .unwrap();
+
+    let (carol_status, carol_bot): (String, String) = sqlx::query_as(
+        "SELECT c.status, c.bot_status FROM chat_conversations c \
+         JOIN chat_contact_identities i ON i.contact_id = c.contact_id \
+         WHERE i.sender = 'carol' ORDER BY c.id DESC LIMIT 1",
+    )
+    .fetch_one(&state.pool)
+    .await
+    .unwrap();
+    assert_eq!(carol_status, "open", "keyword handoff → agent queue");
+    assert_eq!(carol_bot, "disabled", "handoff disables the bot");
+    let carol_assistants: i64 = sqlx::query_scalar(raisfast::db::safe_sql(&format!(
+        "SELECT COUNT(*) FROM chat_messages WHERE role = 'assistant' AND external_id = {}",
+        raisfast::db::Driver::ph(1)
+    )))
+    .bind(format!("reply-{trace4}"))
+    .fetch_one(&state.pool)
+    .await
+    .unwrap();
+    assert_eq!(carol_assistants, 0, "no assistant reply on handoff");
+
+    // ── Round 5: LLM failure → job fails + human takeover ─────────────
     let ops = json!({"chat": {"method": "POST", "path": "/v1/fail"}});
     let mut fail_client = insert_egress_client(
         &state,
         plane,
-        "ar-fail",
+        "chat-fail",
         json!({"kind": "none"}),
         None,
         ops,
@@ -5027,17 +5193,63 @@ async fn integration_autoreply_end_to_end() {
     .execute(&state.pool)
     .await
     .unwrap();
-    let fail_channel = autoreply_channel("ar-fail-ch", "ar-fail", "chat", 10);
+
+    let fail_bot_id = raisfast::utils::id::new_snowflake_id();
+    let fail_inbox_id = raisfast::utils::id::new_snowflake_id();
+    sqlx::query(raisfast::db::safe_sql(&format!(
+        "INSERT INTO chat_bots (id, name, enabled, mode, autoreply, handoff, created_at, updated_at) \
+         VALUES ({}, {}, {}, {}, {}, {}, {}, {})",
+        raisfast::db::Driver::ph(1),
+        raisfast::db::Driver::ph(2),
+        raisfast::db::Driver::ph(3),
+        raisfast::db::Driver::ph(4),
+        raisfast::db::Driver::ph(5),
+        raisfast::db::Driver::ph(6),
+        raisfast::db::Driver::ph(7),
+        raisfast::db::Driver::ph(8)
+    )))
+    .bind(fail_bot_id.0)
+    .bind("broken")
+    .bind(true)
+    .bind("full")
+    .bind(json!({"client": "chat-fail", "op": "chat", "output_field": "text"}))
+    .bind(json!({}))
+    .bind(now)
+    .bind(now)
+    .execute(&state.pool)
+    .await
+    .unwrap();
+    let fail_channel = chat_channel("chat-fail-ch");
+    let fail_channel_id = *fail_channel.id;
     raisfast::integration::channel::model::insert(&state.pool, &fail_channel)
         .await
         .unwrap();
+    sqlx::query(raisfast::db::safe_sql(&format!(
+        "INSERT INTO chat_inboxes (id, name, channel_id, bot_id, created_at, updated_at) \
+         VALUES ({}, {}, {}, {}, {}, {})",
+        raisfast::db::Driver::ph(1),
+        raisfast::db::Driver::ph(2),
+        raisfast::db::Driver::ph(3),
+        raisfast::db::Driver::ph(4),
+        raisfast::db::Driver::ph(5),
+        raisfast::db::Driver::ph(6)
+    )))
+    .bind(fail_inbox_id.0)
+    .bind("Broken")
+    .bind(fail_channel_id)
+    .bind(fail_bot_id.0)
+    .bind(now)
+    .bind(now)
+    .execute(&state.pool)
+    .await
+    .unwrap();
     plane.channels().refresh().await.unwrap();
 
     let (status, _) = send(
         &mut app,
         post_json(
-            "/api/v1/ingress/ar-fail-ch",
-            json!({"id": "f1", "user": "bob", "text": "hi"}),
+            "/api/v1/ingress/chat-fail-ch",
+            json!({"id": "f1", "user": "dave", "text": "hi"}),
         ),
     )
     .await;
@@ -5050,54 +5262,41 @@ async fn integration_autoreply_end_to_end() {
     .fetch_one(&state.pool)
     .await
     .unwrap();
-    let res = raisfast::worker::JobHandler::handle(
-        &handler,
-        &raisfast::worker::Job::Custom {
-            job_type: "support.autoreply".into(),
-            payload: json!({"trace_id": fail_trace, "channel_key": "ar-fail-ch"}),
-        },
-    )
-    .await;
-    assert!(res.is_err(), "LLM failure fails the job");
-    let fail_conv_status: String = sqlx::query_scalar(
-        "SELECT status FROM sc_conversations c JOIN sc_contacts t ON c.contact_id = t.id \
-        WHERE t.sender = 'bob' ORDER BY c.id DESC LIMIT 1",
-    )
-    .fetch_one(&state.pool)
-    .await
-    .unwrap();
-    assert_eq!(fail_conv_status, "pending", "failure → human takeover");
-    let bob_assistants: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM sc_messages WHERE role = 'assistant' AND conversation_id IN \
-         (SELECT c.id FROM sc_conversations c JOIN sc_contacts t ON c.contact_id = t.id WHERE t.sender = 'bob')",
-    )
-    .fetch_one(&state.pool)
-    .await
-    .unwrap();
-    assert_eq!(bob_assistants, 0, "no assistant message on failure");
-
-    // ── Context window = 2: the LLM prompt only carries the last 2 ──────
-    let seen: Value = reqwest::get(format!("http://{addr}/v1/seen"))
-        .await
-        .unwrap()
-        .json()
+    dispatcher
+        .dispatch(&raisfast::worker::Job::Custom {
+            job_type: "chat.ingress".into(),
+            payload: json!({"trace_id": fail_trace.to_string(), "channel_key": "chat-fail-ch"}),
+        })
         .await
         .unwrap();
-    // The mock's capture list is process-global (parallel tests share it) —
-    // locate THIS test's round-2 request by its user message.
-    let bodies = seen["bodies"].as_array().unwrap();
-    let last = bodies
-        .iter()
-        .rev()
-        .map(|b| b.as_str().unwrap_or("{}"))
-        .find(|b| b.contains("还在吗"))
-        .unwrap_or("{}");
-    let prompt: Value = serde_json::from_str(last).unwrap();
-    let messages = prompt["messages"].as_array().unwrap();
-    assert_eq!(messages.len(), 2, "context_window truncates: {prompt}");
-    assert_eq!(messages[0]["content"], "你好", "chronological order");
-    assert_eq!(messages[1]["content"], "还在吗");
-    assert_eq!(prompt["system"], "你是客服");
+    let payload: String = sqlx::query_scalar(raisfast::db::safe_sql(&format!(
+        "SELECT payload FROM jobs WHERE job_type = 'chat.autoreply' AND payload LIKE {}",
+        raisfast::db::Driver::ph(1)
+    )))
+    .bind(format!("%\"trace_id\":\"{fail_trace}\"%"))
+    .fetch_one(&state.pool)
+    .await
+    .unwrap();
+    let res = dispatcher
+        .dispatch(&raisfast::worker::Job::Custom {
+            job_type: "chat.autoreply".into(),
+            payload: serde_json::from_str(&payload).unwrap(),
+        })
+        .await;
+    assert!(
+        res.is_err(),
+        "LLM failure fails the job (worker retries apply)"
+    );
+    let (dave_status, dave_bot): (String, String) = sqlx::query_as(
+        "SELECT c.status, c.bot_status FROM chat_conversations c \
+         JOIN chat_contact_identities i ON i.contact_id = c.contact_id \
+         WHERE i.sender = 'dave' ORDER BY c.id DESC LIMIT 1",
+    )
+    .fetch_one(&state.pool)
+    .await
+    .unwrap();
+    assert_eq!(dave_status, "open", "failure → human takeover");
+    assert_eq!(dave_bot, "disabled");
 }
 
 // ── Integration Plane: dispatch framing (generic discriminator-field WS) ──

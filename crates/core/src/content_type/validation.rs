@@ -516,7 +516,20 @@ fn check_type(ft: &FieldType, val: &Value) -> Result<(), String> {
             }
         }
         FieldType::Integer | FieldType::BigInt => {
-            if !val.is_i64() {
+            // Numeric strings are accepted (snowflake ids cross plugin/API
+            // boundaries as strings — JSON numbers lose precision beyond
+            // 2^53). Encoded base62 ids are accepted too for BigInt — the
+            // wire contract lets clients echo back whatever the API
+            // returned (ID_ENCODING). `field_bind` coerces on save/filter.
+            let numeric = val.is_i64() || val.is_u64();
+            let ok = numeric
+                || (val.is_string()
+                    && val.as_str().is_some_and(|s| {
+                        s.parse::<i64>().is_ok()
+                            || (*ft == FieldType::BigInt
+                                && crate::types::snowflake_id::parse_id(s).is_ok())
+                    }));
+            if !ok {
                 return Err("expected integer".into());
             }
         }
@@ -656,9 +669,12 @@ immutable = true
     }
 
     #[test]
-    fn check_type_integer_expects_number() {
+    fn check_type_integer_accepts_number_and_numeric_string() {
         assert!(check_type(&FieldType::Integer, &json!(42)).is_ok());
-        assert!(check_type(&FieldType::Integer, &json!("42")).is_err());
+        // Numeric strings are accepted: snowflake ids cross plugin/API
+        // boundaries as strings (JSON numbers lose precision beyond 2^53).
+        assert!(check_type(&FieldType::Integer, &json!("42")).is_ok());
+        assert!(check_type(&FieldType::Integer, &json!("NaN")).is_err());
     }
 
     fn test_protocol_registry() -> crate::protocols::ProtocolRegistry {
@@ -859,7 +875,8 @@ immutable = true
     #[test]
     fn check_type_bigint() {
         assert!(check_type(&FieldType::BigInt, &json!(42)).is_ok());
-        assert!(check_type(&FieldType::BigInt, &json!("42")).is_err());
+        assert!(check_type(&FieldType::BigInt, &json!("42")).is_ok());
+        assert!(check_type(&FieldType::BigInt, &json!("not-a-number")).is_err());
     }
 
     #[test]

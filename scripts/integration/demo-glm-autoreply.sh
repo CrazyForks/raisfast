@@ -3,7 +3,7 @@
 # 真实例子 1：智谱 GLM 自动回复（Real-world e2e demo）
 #
 # 链路: push(widget 渠道, token 验签) → 管道落库+入队 → worker 自动消费
-#       support.autoreply → GLM chat completions(真实 LLM) → assistant 落库
+#       chat.autoreply → GLM chat completions(真实 LLM) → assistant 落库
 #       + SSE integration.message → 全程 trace(receipts → egress_log tokens)
 #
 # 前置:
@@ -45,15 +45,15 @@ api() {
 req() { _RES=$(api "$@"); _CODE=$(echo "$_RES" | tail -1); _BODY=$(echo "$_RES" | sed '$d'); }
 
 sec "1/6 content types (幂等)"
-req POST /admin/content-types "{\"name\":\"Contact\",\"singular\":\"sc_contact\",\"plural\":\"sc_contacts\",\"table\":\"sc_contacts\",\"fields\":[{\"name\":\"channel\",\"field_type\":\"text\"},{\"name\":\"sender\",\"field_type\":\"text\"}]}"
+req POST /admin/content-types "{\"name\":\"Contact\",\"singular\":\"chat_contact\",\"plural\":\"chat_contacts\",\"table\":\"chat_contacts\",\"fields\":[{\"name\":\"channel\",\"field_type\":\"text\"},{\"name\":\"sender\",\"field_type\":\"text\"}]}"
 [ "$_CODE" = "200" ] || [ "$_CODE" = "201" ] || [ "$_CODE" = "409" ] \
-  && ok "sc_contact ready ($_CODE)" || die "sc_contact 创建失败: $_RES"
-req POST /admin/content-types "{\"name\":\"Conversation\",\"singular\":\"sc_conversation\",\"plural\":\"sc_conversations\",\"table\":\"sc_conversations\",\"fields\":[{\"name\":\"contact_id\",\"field_type\":\"big_int\"},{\"name\":\"status\",\"field_type\":\"text\"}]}"
+  && ok "chat_contact ready ($_CODE)" || die "chat_contact 创建失败: $_RES"
+req POST /admin/content-types "{\"name\":\"Conversation\",\"singular\":\"chat_conversation\",\"plural\":\"chat_conversations\",\"table\":\"chat_conversations\",\"fields\":[{\"name\":\"contact_id\",\"field_type\":\"big_int\"},{\"name\":\"status\",\"field_type\":\"text\"}]}"
 [ "$_CODE" = "200" ] || [ "$_CODE" = "201" ] || [ "$_CODE" = "409" ] \
-  && ok "sc_conversation ready ($_CODE)" || die "sc_conversation 创建失败: $_RES"
-req POST /admin/content-types "{\"name\":\"Message\",\"singular\":\"sc_message\",\"plural\":\"sc_messages\",\"table\":\"sc_messages\",\"fields\":[{\"name\":\"conversation_id\",\"field_type\":\"big_int\"},{\"name\":\"role\",\"field_type\":\"text\"},{\"name\":\"body\",\"field_type\":\"text\"},{\"name\":\"external_id\",\"field_type\":\"text\"}]}"
+  && ok "chat_conversation ready ($_CODE)" || die "chat_conversation 创建失败: $_RES"
+req POST /admin/content-types "{\"name\":\"Message\",\"singular\":\"chat_message\",\"plural\":\"chat_messages\",\"table\":\"chat_messages\",\"fields\":[{\"name\":\"conversation_id\",\"field_type\":\"big_int\"},{\"name\":\"role\",\"field_type\":\"text\"},{\"name\":\"body\",\"field_type\":\"text\"},{\"name\":\"external_id\",\"field_type\":\"text\"}]}"
 [ "$_CODE" = "200" ] || [ "$_CODE" = "201" ] || [ "$_CODE" = "409" ] \
-  && ok "sc_message ready ($_CODE)" || die "sc_message 创建失败: $_RES"
+  && ok "chat_message ready ($_CODE)" || die "chat_message 创建失败: $_RES"
 
 sec "2/6 api-client: glm (bearer, vault 密封)"
 # 幂等: 已存在则更新凭据
@@ -83,7 +83,7 @@ sec "4/6 widget 渠道 (token 验签 + autoreply)"
 WIDGET_TOKEN="widget-secret-$RUN"
 req GET "/admin/integration/channels"
 CH_ID=$(jget "$_BODY" "next((c[\"id\"] for c in d[\"data\"] if c[\"channel_key\"]==\"glm-widget\"), \"\")")
-CH_BODY="{\"provider\":\"widget\",\"mode\":\"push\",\"transport\":\"http1\",\"framing\":\"raw\",\"codec\":\"json\",\"verify_kind\":\"token\",\"verify_config\":{\"header\":\"x-widget-token\"},\"credentials\":{\"token\":\"$WIDGET_TOKEN\"},\"mapping\":{\"external_id\":\"\$.id\",\"sender\":\"\$.user\",\"payload\":{\"body\":\"\$.text\"}},\"target_type\":\"sc_message\",\"route_extra\":{\"jobs\":[{\"job_type\":\"support.autoreply\",\"max_attempts\":1}],\"autoreply\":{\"client\":\"glm\",\"op\":\"chat\",\"input_style\":\"openai\",\"model\":\"glm-4-flash\",\"system_prompt\":\"你是 RaisFast 的演示客服，用中文简短回答（一两句话）。\",\"context_window\":10,\"output_field\":\"text\"}}}"
+CH_BODY="{\"provider\":\"widget\",\"mode\":\"push\",\"transport\":\"http1\",\"framing\":\"raw\",\"codec\":\"json\",\"verify_kind\":\"token\",\"verify_config\":{\"header\":\"x-widget-token\"},\"credentials\":{\"token\":\"$WIDGET_TOKEN\"},\"mapping\":{\"external_id\":\"\$.id\",\"sender\":\"\$.user\",\"payload\":{\"body\":\"\$.text\"}},\"target_type\":\"chat/chat_messages\",\"route_extra\":{\"jobs\":[{\"job_type\":\"chat.ingress\",\"max_attempts\":1}]}}"
 if [ -n "$CH_ID" ]; then
   UPD_BODY=$(CH_BODY="$CH_BODY" WIDGET_TOKEN="$WIDGET_TOKEN" python3 -c 'import os,json;print(json.dumps({"credentials":{"token":os.environ["WIDGET_TOKEN"]},"route_extra":json.loads(os.environ["CH_BODY"])["route_extra"]}))')
   req POST "/admin/integration/channels/$CH_ID/update" "$UPD_BODY"
@@ -95,7 +95,27 @@ else
   [ "$_CODE" = "200" ] && [ -n "$CH_ID" ] && ok "glm-widget created" || die "渠道创建失败: $_RES"
 fi
 
-sec "5/6 push 两条真实消息 (worker 自动消费)"
+sec "5/6 机器人 + 收件箱绑定 (默认不绑定 = 纯人工；绑定后 chat.autoreply)"
+# chat_bot: LLM 参数在机器人实体上
+req POST /api/v1/cms/chat/chat_bots "{\"name\":\"glm-helper\",\"mode\":\"full\",\"enabled\":true,\"autoreply\":{\"client\":\"glm\",\"op\":\"chat\",\"input_style\":\"openai\",\"model\":\"glm-4-flash\",\"system_prompt\":\"你是 RaisFast 的演示客服，用中文简短回答（一两句话）。\",\"context_window\":10,\"output_field\":\"text\"},\"handoff\":{\"keywords\":[\"转人工\"]}}"
+BOT_ID=$(jget "$_BODY" 'd["data"]["id"]')
+if [ -z "$BOT_ID" ]; then
+  # 已存在（幂等重跑）：按名字取
+  req GET "/api/v1/cms/chat/chat_bots"
+  BOT_ID=$(jget "$_BODY" "next((r[\"id\"] for r in d[\"data\"][\"items\"] if r[\"name\"]==\"glm-helper\"), \"\")")
+fi
+[ -n "$BOT_ID" ] && ok "bot ready ($BOT_ID)" || die "chat_bot 创建失败: $_RES"
+
+# chat_inbox: 绑定渠道 + 机器人（bot_id 为空 = 纯人工）
+req GET /api/v1/cms/chat/chat_inboxes
+INBOX_ID=$(jget "$_BODY" "next((r[\"id\"] for r in d[\"data\"][\"items\"] if r.get(\"channel_id\")==int('$CH_ID')), \"\")" 2>/dev/null)
+if [ -z "$INBOX_ID" ]; then
+  req POST /api/v1/cms/chat/chat_inboxes "{\"name\":\"GLM 演示\",\"channel_id\":$CH_ID,\"bot_id\":$BOT_ID}"
+  INBOX_ID=$(jget "$_BODY" 'd["data"]["id"]')
+fi
+[ -n "$INBOX_ID" ] && ok "inbox bound ($INBOX_ID)" || die "chat_inbox 创建失败: $_RES"
+
+sec "6/6 push 两条真实消息 (worker 自动消费)"
 push() { # push <id> <text>
   curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE_URL/ingress/glm-widget" \
     -H 'Content-Type: application/json' -H "x-widget-token: $WIDGET_TOKEN" \
@@ -112,8 +132,8 @@ REPLY1=""; REPLY2=""
 for i in $(seq 1 30); do
   TRACE=$(sqlite3 "$DB_PATH" "SELECT id FROM itg_receipts WHERE external_id='demo-$RUN-1'" 2>/dev/null)
   TRACE2=$(sqlite3 "$DB_PATH" "SELECT id FROM itg_receipts WHERE external_id='demo-$RUN-2'" 2>/dev/null)
-  [ -n "$TRACE" ] && REPLY1=$(sqlite3 "$DB_PATH" "SELECT body FROM sc_messages WHERE external_id='reply-$TRACE'" 2>/dev/null)
-  [ -n "$TRACE2" ] && REPLY2=$(sqlite3 "$DB_PATH" "SELECT body FROM sc_messages WHERE external_id='reply-$TRACE2'" 2>/dev/null)
+  [ -n "$TRACE" ] && REPLY1=$(sqlite3 "$DB_PATH" "SELECT body FROM chat_messages WHERE external_id='reply-$TRACE'" 2>/dev/null)
+  [ -n "$TRACE2" ] && REPLY2=$(sqlite3 "$DB_PATH" "SELECT body FROM chat_messages WHERE external_id='reply-$TRACE2'" 2>/dev/null)
   if [ -n "$REPLY1" ] && [ -n "$REPLY2" ]; then break; fi
   sleep 1
 done
@@ -138,8 +158,8 @@ if [ -n "${TRACE:-}" ]; then
   EGRESS=$(jget "$_BODY" '",".join(f\"{r[\"op\"]}:{r[\"status\"]}:{r[\"tokens_in\"]}in/{r[\"tokens_out\"]}out\" for r in d[\"data\"][\"egress\"])')
   printf '  trace: %s\n  egress: %s\n' "$STEPS" "$EGRESS"
 fi
-CONV=$(sqlite3 "$DB_PATH" "SELECT COUNT(*) FROM sc_conversations" 2>/dev/null)
-CONTACT=$(sqlite3 "$DB_PATH" "SELECT COUNT(*) FROM sc_contacts WHERE sender='demo_user'" 2>/dev/null)
+CONV=$(sqlite3 "$DB_PATH" "SELECT COUNT(*) FROM chat_conversations" 2>/dev/null)
+CONTACT=$(sqlite3 "$DB_PATH" "SELECT COUNT(*) FROM chat_contacts WHERE sender='demo_user'" 2>/dev/null)
 printf '  会话: %s 个 / 联系人: %s 个 (同 sender 归并)\n' "${CONV:-?}" "${CONTACT:-?}"
 
 printf '\n\033[1m结果: %d passed, %d failed\033[0m\n' "$PASS" "$FAIL"

@@ -403,7 +403,7 @@ fn materialize_plugin(payload: &PluginPayload, dest: &Path, effective_id: &str) 
     let manifest_path = dest.join("manifest.toml");
     let content = std::fs::read_to_string(&manifest_path)
         .map_err(|e| AppError::Internal(anyhow::anyhow!("read plugin manifest: {e}")))?;
-    let mut doc: toml::Value = content
+    let mut doc: toml::Table = content
         .parse()
         .map_err(|e| AppError::Internal(anyhow::anyhow!("parse plugin manifest: {e}")))?;
     if let Some(plugin) = doc.get_mut("plugin").and_then(|p| p.as_table_mut()) {

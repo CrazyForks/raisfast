@@ -1,0 +1,54 @@
+[content_type]
+name = "Contact Identity"
+singular = "chat_contact_identity"
+plural = "chat_contact_identities"
+table = "chat_contact_identities"
+group = "chat"
+description = "Per-channel sender identity merged into a contact (unique per channel+sender)"
+implements = ["ownable", "timestampable"]
+
+[fields.contact_id]
+type = "bigint"
+required = true
+label = "Contact id"
+
+[fields.channel]
+type = "text"
+required = true
+label = "Channel key"
+
+[fields.sender]
+type = "text"
+required = true
+label = "Channel-side sender id"
+
+[fields.attrs]
+type = "json"
+label = "Channel-specific attributes"
+
+[[indexes]]
+fields = ["contact_id"]
+
+[[indexes]]
+fields = ["channel", "sender"]
+unique = true
+
+[api.list]
+access = "authed"
+cache = false
+
+[api.get]
+access = "authed"
+cache = false
+
+[api.create]
+access = "admin"
+cache = false
+
+[api.update]
+access = "admin"
+cache = false
+
+[api.delete]
+access = "admin"
+cache = false

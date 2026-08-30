@@ -83,6 +83,35 @@ impl PermissionChecker {
             .any(|pattern| pattern == "*" || pattern == client_key)
     }
 
+    /// Check if a content type (plural name) is in the `ct.*` whitelist.
+    ///
+    /// Empty = all `ct.*` host API use denied; `*` = all content types.
+    #[must_use]
+    pub fn is_ct_allowed(permissions: &Permissions, ct_plural: &str) -> bool {
+        permissions
+            .content_types
+            .iter()
+            .any(|pattern| pattern == "*" || pattern == ct_plural)
+    }
+
+    /// Check if a job type may be enqueued via `job.enqueue`.
+    #[must_use]
+    pub fn is_job_enqueuable(permissions: &Permissions, job_type: &str) -> bool {
+        permissions
+            .jobs
+            .iter()
+            .any(|pattern| pattern == "*" || pattern == job_type)
+    }
+
+    /// Check an integration-plane read capability (`receipts`).
+    #[must_use]
+    pub fn is_integration_allowed(permissions: &Permissions, capability: &str) -> bool {
+        permissions
+            .integration
+            .iter()
+            .any(|pattern| pattern == "*" || pattern == capability)
+    }
+
     /// Check if a table allows read-only access
     #[must_use]
     pub fn is_table_readable(permissions: &Permissions, table: &str) -> bool {
@@ -312,6 +341,9 @@ mod tests {
             database: database.into_iter().map(String::from).collect(),
             filesystem: vec![],
             egress: vec![],
+            content_types: vec![],
+            jobs: vec![],
+            integration: vec![],
             max_memory_mb: None,
             timeout_ms: None,
         }

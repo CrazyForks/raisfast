@@ -5,81 +5,17 @@ export const SDK_VERSION = "1.0.0";
 export function dbPh(idx) {
     return RaisFastHost.dbPh(idx);
 }
-export function dbQuery(sql, params) {
-    const result = RaisFastHost.dbQuery(sql, JSON.stringify(params ?? []));
+export function dbQuery(sql, params = []) {
+    const result = RaisFastHost.dbQuery(sql, JSON.stringify(params));
     if (!result)
         throw new Error("query returned no result");
     if (result.startsWith("error:"))
         throw new Error(result.slice(6));
     return JSON.parse(result);
 }
-export function dbExec(sql, params) {
-    const result = RaisFastHost.dbExecute(sql, JSON.stringify(params ?? []));
+export function dbExec(sql, params = []) {
+    const result = RaisFastHost.dbExecute(sql, JSON.stringify(params));
     return JSON.parse(result);
-}
-export function dbInsert(table, data, options) {
-    const dataStr = typeof data === "string" ? data : JSON.stringify(data);
-    const optStr = options == null ? "{}" : (typeof options === "string" ? options : JSON.stringify(options));
-    const result = JSON.parse(RaisFastHost.dbInsert(table, dataStr, optStr));
-    if (result.error) throw new Error(result.error);
-    return result;
-}
-export function dbFetchOne(table, where, options) {
-    const whereStr = where == null ? "{}" : (typeof where === "string" ? where : JSON.stringify(where));
-    const optStr = options == null ? "{}" : (typeof options === "string" ? options : JSON.stringify(options));
-    const result = JSON.parse(RaisFastHost.dbFetchOne(table, whereStr, optStr));
-    if (result.error) throw new Error(result.error);
-    return result.data;
-}
-export function dbFetchAll(table, where, options) {
-    const whereStr = where == null ? "{}" : (typeof where === "string" ? where : JSON.stringify(where));
-    const optStr = options == null ? "{}" : (typeof options === "string" ? options : JSON.stringify(options));
-    const result = JSON.parse(RaisFastHost.dbFetchAll(table, whereStr, optStr));
-    if (result.error) throw new Error(result.error);
-    return result;
-}
-export function dbUpdate(table, data, where, options) {
-    const dataStr = typeof data === "string" ? data : JSON.stringify(data);
-    const whereStr = where == null ? "{}" : (typeof where === "string" ? where : JSON.stringify(where));
-    const optStr = options == null ? "{}" : (typeof options === "string" ? options : JSON.stringify(options));
-    const result = JSON.parse(RaisFastHost.dbUpdate(table, dataStr, whereStr, optStr));
-    if (result.error) throw new Error(result.error);
-    return result;
-}
-export function dbDelete(table, where, options) {
-    const whereStr = where == null ? "{}" : (typeof where === "string" ? where : JSON.stringify(where));
-    const optStr = options == null ? "{}" : (typeof options === "string" ? options : JSON.stringify(options));
-    const result = JSON.parse(RaisFastHost.dbDelete(table, whereStr, optStr));
-    if (result.error) throw new Error(result.error);
-    return result;
-}
-export function dbCount(table, where, options) {
-    const whereStr = where == null ? "{}" : (typeof where === "string" ? where : JSON.stringify(where));
-    const optStr = options == null ? "{}" : (typeof options === "string" ? options : JSON.stringify(options));
-    const result = JSON.parse(RaisFastHost.dbCount(table, whereStr, optStr));
-    if (result.error) throw new Error(result.error);
-    return result.count;
-}
-export function dbIncrement(table, columns, where, options) {
-    const colStr = typeof columns === "string" ? columns : JSON.stringify(columns);
-    const whereStr = where == null ? "{}" : (typeof where === "string" ? where : JSON.stringify(where));
-    const optStr = options == null ? "{}" : (typeof options === "string" ? options : JSON.stringify(options));
-    const result = JSON.parse(RaisFastHost.dbIncrement(table, colStr, whereStr, optStr));
-    if (result.error) throw new Error(result.error);
-    return result;
-}
-export function dbSum(table, column, where, options) {
-    const whereStr = where == null ? "{}" : (typeof where === "string" ? where : JSON.stringify(where));
-    const optStr = options == null ? "{}" : (typeof options === "string" ? options : JSON.stringify(options));
-    const result = JSON.parse(RaisFastHost.dbSum(table, column, whereStr, optStr));
-    if (result.error) throw new Error(result.error);
-    return result.sum;
-}
-export function dbGroupBy(table, options) {
-    const optStr = options == null ? "{}" : (typeof options === "string" ? options : JSON.stringify(options));
-    const result = JSON.parse(RaisFastHost.dbGroupBy(table, optStr));
-    if (result.error) throw new Error(result.error);
-    return result;
 }
 export function dbBegin() {
     const result = JSON.parse(RaisFastHost.dbBegin());
@@ -115,13 +51,6 @@ export function httpPostJson(url, body) {
     if (!result)
         return null;
     return JSON.parse(result);
-}
-export function callApi(clientKey, op, input) {
-    const json = input == null ? "{}" : (typeof input === "string" ? input : JSON.stringify(input));
-    const result = JSON.parse(RaisFastHost.callApi(clientKey, op, json));
-    if (result.error)
-        throw new Error(result.error);
-    return result;
 }
 export function configGet(key) {
     return RaisFastHost.getConfig(key);
@@ -193,6 +122,106 @@ export function extractJson(input, field) {
     catch {
         return null;
     }
+}
+export function callApi(clientKey, op, input) {
+    const result = RaisFastHost.callApi(clientKey, op, JSON.stringify(input ?? {}));
+    return JSON.parse(result);
+}
+export function dbInsert(table, data, options) {
+    const result = JSON.parse(RaisFastHost.dbInsert(table, JSON.stringify(data ?? {}), JSON.stringify(options ?? {})));
+    if (result.error)
+        throw new Error(result.error);
+    return result;
+}
+export function dbFetchOne(table, where, options) {
+    const result = JSON.parse(RaisFastHost.dbFetchOne(table, JSON.stringify(where ?? {}), JSON.stringify(options ?? {})));
+    if (result.error)
+        throw new Error(result.error);
+    return result.row ?? null;
+}
+export function dbFetchAll(table, where, options) {
+    const result = JSON.parse(RaisFastHost.dbFetchAll(table, JSON.stringify(where ?? {}), JSON.stringify(options ?? {})));
+    if (result.error)
+        throw new Error(result.error);
+    return result.rows ?? [];
+}
+export function dbUpdate(table, data, where, options) {
+    const result = JSON.parse(RaisFastHost.dbUpdate(table, JSON.stringify(data ?? {}), JSON.stringify(where ?? {}), JSON.stringify(options ?? {})));
+    if (result.error)
+        throw new Error(result.error);
+    return result;
+}
+export function dbDelete(table, where, options) {
+    const result = JSON.parse(RaisFastHost.dbDelete(table, JSON.stringify(where ?? {}), JSON.stringify(options ?? {})));
+    if (result.error)
+        throw new Error(result.error);
+    return result;
+}
+export function dbCount(table, where, options) {
+    const result = JSON.parse(RaisFastHost.dbCount(table, JSON.stringify(where ?? {}), JSON.stringify(options ?? {})));
+    if (result.error)
+        throw new Error(result.error);
+    return result.count ?? 0;
+}
+export function dbIncrement(table, columns, where, options) {
+    const result = JSON.parse(RaisFastHost.dbIncrement(table, JSON.stringify(columns ?? {}), JSON.stringify(where ?? {}), JSON.stringify(options ?? {})));
+    if (result.error)
+        throw new Error(result.error);
+    return result;
+}
+export function dbSum(table, column, where, options) {
+    const result = JSON.parse(RaisFastHost.dbSum(table, column, JSON.stringify(where ?? {}), JSON.stringify(options ?? {})));
+    if (result.error)
+        throw new Error(result.error);
+    return result.sum ?? 0;
+}
+export function dbGroupBy(table, options) {
+    const result = JSON.parse(RaisFastHost.dbGroupBy(table, JSON.stringify(options ?? {})));
+    if (result.error)
+        throw new Error(result.error);
+    return result.rows ?? [];
+}
+// ── Content-type host API (group-aware: 'group/plural', plural, table) ───
+export function ctFind(ct, query) {
+    const result = RaisFastHost.ctFind(ct, JSON.stringify(query ?? {}));
+    const parsed = JSON.parse(result);
+    if (parsed.error)
+        throw new Error(parsed.error);
+    return parsed;
+}
+export function ctGet(ct, id) {
+    const result = RaisFastHost.ctGet(ct, String(id));
+    if (result === null || result === "null")
+        return null;
+    return JSON.parse(result);
+}
+export function ctCreate(ct, data) {
+    const result = RaisFastHost.ctCreate(ct, JSON.stringify(data ?? {}));
+    const parsed = JSON.parse(result);
+    if (parsed && parsed.error)
+        throw new Error(parsed.error);
+    return parsed;
+}
+export function ctUpdate(ct, id, data) {
+    const result = RaisFastHost.ctUpdate(ct, String(id), JSON.stringify(data ?? {}));
+    const parsed = JSON.parse(result);
+    if (parsed && parsed.error)
+        throw new Error(parsed.error);
+    return parsed;
+}
+// ── Job / integration host API ──────────────────────────────
+export function jobEnqueue(jobType, payload, opts) {
+    const result = RaisFastHost.jobEnqueue(jobType, JSON.stringify(payload ?? {}), JSON.stringify(opts ?? {}));
+    const parsed = JSON.parse(result);
+    if (parsed.error)
+        throw new Error(parsed.error);
+    return parsed;
+}
+export function getReceipt(traceId) {
+    const result = RaisFastHost.getReceipt(String(traceId));
+    if (result === null || result === "null")
+        return null;
+    return JSON.parse(result);
 }
 export function logInfo(msg) { RaisFastHost.log("info", msg); }
 export function logWarn(msg) { RaisFastHost.log("warn", msg); }

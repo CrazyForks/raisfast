@@ -63,7 +63,7 @@ print(json.dumps({
     "sender":"$.data | as_json($.senderStaffId)",
     "payload":{"body":"$.data | as_json($.text.content)"}
   },
-  "target_type":"sc_message",
+  "target_type":"chat/chat_messages",
   "stream_config":{
     "pre_connect":{
       "url":"https://api.dingtalk.com/v1.0/gateway/connections/open",

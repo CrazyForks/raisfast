@@ -58,6 +58,14 @@ interface host-api {
     db-begin: func() -> string;
     db-commit: func() -> string;
     db-rollback: func() -> string;
+    // Content-type host API (group-aware: 'group/plural', plural, or table name).
+    ct-find: func(ct: string, query: string) -> string;
+    ct-get: func(ct: string, id: string) -> string;
+    ct-create: func(ct: string, data: string) -> string;
+    ct-update: func(ct: string, id: string, data: string) -> string;
+    // Job / integration host API.
+    job-enqueue: func(job-type: string, payload: string, opts: string) -> string;
+    get-receipt: func(trace-id: string) -> string;
     vfs-read: func(path: string) -> option<string>;
     vfs-write: func(path: string, content: string) -> bool;
     vfs-delete: func(path: string) -> bool;

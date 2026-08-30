@@ -22,11 +22,15 @@ pub fn register_host_functions(
     permissions: Permissions,
     pool: Option<Pool>,
     event_bus: Option<crate::eventbus::EventBus>,
+    content_registry: Option<std::sync::Arc<crate::content_type::ContentTypeRegistry>>,
 ) -> rquickjs::Result<()> {
     let global = ctx.globals();
     let host = Object::new(ctx.clone())?;
 
     let mut hc_inner = HostContext::new("js", config, plugin_id, permissions, pool);
+    if let Some(registry) = content_registry {
+        hc_inner.set_content_type_registry(registry);
+    }
     if let Some(bus) = event_bus {
         hc_inner.set_event_bus(bus);
     }
@@ -88,6 +92,48 @@ pub fn register_host_functions(
         hc.db_query(&sql, &params)
     })?;
     host.set("dbQuery", db_query_fn)?;
+
+    // ── Content-type host API (`ct.*`, group-aware names) ─────────────
+    let hc = host_ctx.clone();
+    let ct_find_fn = Function::new(ctx.clone(), move |ct: String, query: String| -> String {
+        hc.ct_find(&ct, &query)
+    })?;
+    host.set("ctFind", ct_find_fn)?;
+
+    let hc = host_ctx.clone();
+    let ct_get_fn = Function::new(ctx.clone(), move |ct: String, id: String| -> String {
+        hc.ct_get(&ct, &id)
+    })?;
+    host.set("ctGet", ct_get_fn)?;
+
+    let hc = host_ctx.clone();
+    let ct_create_fn = Function::new(ctx.clone(), move |ct: String, data: String| -> String {
+        hc.ct_create(&ct, &data)
+    })?;
+    host.set("ctCreate", ct_create_fn)?;
+
+    let hc = host_ctx.clone();
+    let ct_update_fn = Function::new(
+        ctx.clone(),
+        move |ct: String, id: String, data: String| -> String { hc.ct_update(&ct, &id, &data) },
+    )?;
+    host.set("ctUpdate", ct_update_fn)?;
+
+    // ── Job / integration host API ───────────────────────────────────
+    let hc = host_ctx.clone();
+    let job_enqueue_fn = Function::new(
+        ctx.clone(),
+        move |job_type: String, payload: String, opts: String| -> String {
+            hc.job_enqueue(&job_type, &payload, &opts)
+        },
+    )?;
+    host.set("jobEnqueue", job_enqueue_fn)?;
+
+    let hc = host_ctx.clone();
+    let get_receipt_fn = Function::new(ctx.clone(), move |trace_id: String| -> String {
+        hc.ingress_get_receipt(&trace_id)
+    })?;
+    host.set("getReceipt", get_receipt_fn)?;
 
     let hc = host_ctx.clone();
     let db_execute_fn = Function::new(ctx.clone(), move |sql: String, params: String| -> String {
@@ -257,8 +303,16 @@ mod tests {
         let perms = Permissions::default();
 
         ctx.with(|ctx| {
-            register_host_functions(ctx.clone(), config, "test-plugin".into(), perms, None, None)
-                .unwrap();
+            register_host_functions(
+                ctx.clone(),
+                config,
+                "test-plugin".into(),
+                perms,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
 
             let global = ctx.globals();
             let host: Object = global.get(PLUGIN_HOST_GLOBAL).unwrap();
@@ -284,8 +338,16 @@ mod tests {
         };
 
         ctx.with(|ctx| {
-            register_host_functions(ctx.clone(), config, "test-plugin".into(), perms, None, None)
-                .unwrap();
+            register_host_functions(
+                ctx.clone(),
+                config,
+                "test-plugin".into(),
+                perms,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
 
             let global = ctx.globals();
             let host: Object = global.get(PLUGIN_HOST_GLOBAL).unwrap();
@@ -308,8 +370,16 @@ mod tests {
         let perms = Permissions::default();
 
         ctx.with(|ctx| {
-            register_host_functions(ctx.clone(), config, "test-plugin".into(), perms, None, None)
-                .unwrap();
+            register_host_functions(
+                ctx.clone(),
+                config,
+                "test-plugin".into(),
+                perms,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
 
             let global = ctx.globals();
             let host: Object = global.get(PLUGIN_HOST_GLOBAL).unwrap();
@@ -329,8 +399,16 @@ mod tests {
         let perms = Permissions::default();
 
         ctx.with(|ctx| {
-            register_host_functions(ctx.clone(), config, "test-plugin".into(), perms, None, None)
-                .unwrap();
+            register_host_functions(
+                ctx.clone(),
+                config,
+                "test-plugin".into(),
+                perms,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
 
             let global = ctx.globals();
             let host: Object = global.get(PLUGIN_HOST_GLOBAL).unwrap();
@@ -350,8 +428,16 @@ mod tests {
         let perms = Permissions::default();
 
         ctx.with(|ctx| {
-            register_host_functions(ctx.clone(), config, "test-plugin".into(), perms, None, None)
-                .unwrap();
+            register_host_functions(
+                ctx.clone(),
+                config,
+                "test-plugin".into(),
+                perms,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
 
             let global = ctx.globals();
             let host: Object = global.get(PLUGIN_HOST_GLOBAL).unwrap();
@@ -371,8 +457,16 @@ mod tests {
         let perms = Permissions::default();
 
         ctx.with(|ctx| {
-            register_host_functions(ctx.clone(), config, "test-plugin".into(), perms, None, None)
-                .unwrap();
+            register_host_functions(
+                ctx.clone(),
+                config,
+                "test-plugin".into(),
+                perms,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
 
             let global = ctx.globals();
             let host: Object = global.get(PLUGIN_HOST_GLOBAL).unwrap();
@@ -392,8 +486,16 @@ mod tests {
         let perms = Permissions::default();
 
         ctx.with(|ctx| {
-            register_host_functions(ctx.clone(), config, "test-plugin".into(), perms, None, None)
-                .unwrap();
+            register_host_functions(
+                ctx.clone(),
+                config,
+                "test-plugin".into(),
+                perms,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
 
             let global = ctx.globals();
             let host: Object = global.get(PLUGIN_HOST_GLOBAL).unwrap();
@@ -413,8 +515,16 @@ mod tests {
         let perms = Permissions::default();
 
         ctx.with(|ctx| {
-            register_host_functions(ctx.clone(), config, "test-plugin".into(), perms, None, None)
-                .unwrap();
+            register_host_functions(
+                ctx.clone(),
+                config,
+                "test-plugin".into(),
+                perms,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
 
             let global = ctx.globals();
             let host: Object = global.get(PLUGIN_HOST_GLOBAL).unwrap();
@@ -434,8 +544,16 @@ mod tests {
         let perms = Permissions::default();
 
         ctx.with(|ctx| {
-            register_host_functions(ctx.clone(), config, "test-plugin".into(), perms, None, None)
-                .unwrap();
+            register_host_functions(
+                ctx.clone(),
+                config,
+                "test-plugin".into(),
+                perms,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
 
             let global = ctx.globals();
             let host: Object = global.get(PLUGIN_HOST_GLOBAL).unwrap();
@@ -455,8 +573,16 @@ mod tests {
         let perms = Permissions::default();
 
         ctx.with(|ctx| {
-            register_host_functions(ctx.clone(), config, "test-plugin".into(), perms, None, None)
-                .unwrap();
+            register_host_functions(
+                ctx.clone(),
+                config,
+                "test-plugin".into(),
+                perms,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
 
             let global = ctx.globals();
             let host: Object = global.get(PLUGIN_HOST_GLOBAL).unwrap();

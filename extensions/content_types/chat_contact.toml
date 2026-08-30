@@ -1,0 +1,64 @@
+[content_type]
+name = "Contact"
+singular = "chat_contact"
+plural = "chat_contacts"
+table = "chat_contacts"
+group = "chat"
+description = "Chat contact: cross-channel person profile"
+implements = ["ownable", "timestampable"]
+
+[fields.name]
+type = "text"
+max_length = 200
+label = "Name"
+
+[fields.email]
+type = "text"
+label = "Email"
+
+[fields.phone]
+type = "text"
+label = "Phone"
+
+[fields.avatar_url]
+type = "text"
+label = "Avatar URL"
+
+[fields.custom_attrs]
+type = "json"
+label = "Custom attributes"
+
+[fields.merged_into]
+type = "bigint"
+label = "Merged into contact id"
+
+[fields.notes]
+type = "text"
+label = "Notes"
+
+[fields.last_seen_at]
+type = "datetime"
+label = "Last seen"
+
+[[indexes]]
+fields = ["email"]
+
+[api.list]
+access = "authed"
+cache = false
+
+[api.get]
+access = "authed"
+cache = false
+
+[api.create]
+access = "authed"
+cache = false
+
+[api.update]
+access = "owner"
+cache = false
+
+[api.delete]
+access = "admin"
+cache = false
