@@ -32,17 +32,49 @@ struct JsPluginEntry {
 
 // ── ESM Module Loader ────────────────────────────────────────────
 
+// Resolve an ESM import to a plugin-relative module path.
+//
+// The entry module is declared as `index.js` at the plugin root; relative
+// imports (`./x`, `../y`) must resolve against the *importing* module's
+// directory, not the plugin root. `base` is the importing module's name
+// (e.g. `index.js` or `services/ingress.js`), `name` is the raw specifier.
+// The returned string is what `PluginLoader::load` later joins to plugin_dir.
+fn resolve_module_path(base: &str, name: &str) -> String {
+    if !name.starts_with("./") && !name.starts_with("../") {
+        return name.to_string();
+    }
+    // Directory of the importing module ("" for the root entry "index.js").
+    let base_dir = base.rsplit_once('/').map(|(d, _)| d).unwrap_or("");
+    let mut parts: Vec<&str> = Vec::new();
+    for input in [base_dir, name] {
+        for part in input.split('/') {
+            match part {
+                "" | "." => {}
+                ".." => {
+                    parts.pop();
+                }
+                p => parts.push(p),
+            }
+        }
+    }
+    if parts.is_empty() {
+        "index.js".to_string()
+    } else {
+        parts.join("/")
+    }
+}
+
 struct PluginResolver;
 
 impl Resolver for PluginResolver {
     fn resolve<'js>(
         &mut self,
         _ctx: &Ctx<'js>,
-        _base: &str,
+        base: &str,
         name: &str,
         _attributes: Option<rquickjs::loader::ImportAttributes<'js>>,
     ) -> rquickjs::Result<String> {
-        Ok(name.to_string())
+        Ok(resolve_module_path(base, name))
     }
 }
 
@@ -69,7 +101,7 @@ impl rquickjs::loader::Loader for PluginLoader {
     ) -> rquickjs::Result<Module<'js>> {
         let source = match name {
             "sdk" => self.sdk_source.to_string(),
-            n if n.starts_with("./") || n.starts_with("../") => {
+            n => {
                 let path = self.plugin_dir.join(n);
                 let canonical = path.canonicalize().map_err(|e| {
                     rquickjs::Error::new_loading_message(name, &format!("path error: {e}"))
@@ -87,9 +119,6 @@ impl rquickjs::loader::Loader for PluginLoader {
                 std::fs::read_to_string(&canonical).map_err(|e| {
                     rquickjs::Error::new_loading_message(name, &format!("read error: {e}"))
                 })?
-            }
-            _ => {
-                return Err(rquickjs::Error::new_loading_message(name, "unknown module"));
             }
         };
         Module::declare(ctx.clone(), name, source)
@@ -111,6 +140,7 @@ pub struct JsEngine {
     pool: Option<Pool>,
     event_bus: Option<crate::eventbus::EventBus>,
     content_registry: Option<std::sync::Arc<crate::content_type::ContentTypeRegistry>>,
+    presence_store: Option<std::sync::Arc<dyn crate::presence::PresenceStore>>,
 }
 
 impl JsEngine {
@@ -119,6 +149,7 @@ impl JsEngine {
         pool: Option<Pool>,
         event_bus: Option<crate::eventbus::EventBus>,
         content_registry: Option<std::sync::Arc<crate::content_type::ContentTypeRegistry>>,
+        presence_store: Option<std::sync::Arc<dyn crate::presence::PresenceStore>>,
     ) -> anyhow::Result<Self> {
         let default_memory_limit_bytes = (config.plugin_max_memory_mb as usize) * 1024 * 1024;
 
@@ -130,6 +161,7 @@ impl JsEngine {
             pool,
             event_bus,
             content_registry,
+            presence_store,
         })
     }
 
@@ -137,6 +169,7 @@ impl JsEngine {
         &self,
         entry: &JsPluginEntry,
         plugin_id: &str,
+        auth: Option<crate::content_type::repository::SaveContext>,
     ) -> anyhow::Result<(AsyncRuntime, AsyncContext)> {
         let memory_limit = entry
             .permissions
@@ -160,6 +193,7 @@ impl JsEngine {
         let config = self.config.clone();
         let plugin_id_owned = plugin_id.to_string();
         let perms = entry.permissions.clone();
+        let auth_inner = auth.clone();
         ctx.with(|ctx| {
             super::js_host::register_host_functions(
                 ctx.clone(),
@@ -169,6 +203,8 @@ impl JsEngine {
                 self.pool.clone(),
                 self.event_bus.clone(),
                 self.content_registry.clone(),
+                self.presence_store.clone(),
+                auth_inner,
             )?;
 
             let module = Module::declare(ctx.clone(), "index.js", entry.code.clone())?;
@@ -211,7 +247,7 @@ impl JsEngine {
             sdk_source,
         };
 
-        let (runtime, ctx) = self.create_instance(&entry, id).await?;
+        let (runtime, ctx) = self.create_instance(&entry, id, None).await?;
         runtime.run_gc().await;
         drop(ctx);
         drop(runtime);
@@ -241,12 +277,13 @@ impl JsEngine {
         plugin_id: &str,
         func_name: &str,
         input: &T,
+        auth: Option<crate::content_type::repository::SaveContext>,
     ) -> anyhow::Result<Option<T>> {
         let Some(entry) = self.plugins.get(plugin_id) else {
             return Ok(None);
         };
 
-        let (runtime, ctx) = self.create_instance(&entry, plugin_id).await?;
+        let (runtime, ctx) = self.create_instance(&entry, plugin_id, auth).await?;
         let input_json = serde_json::to_string(input)?;
         let timeout = self.timeout_ms;
         let start = Instant::now();
@@ -312,7 +349,7 @@ impl JsEngine {
             return Ok(());
         };
 
-        let (runtime, ctx) = self.create_instance(&entry, plugin_id).await?;
+        let (runtime, ctx) = self.create_instance(&entry, plugin_id, None).await?;
         let data_json = serde_json::to_string(data)?;
         let timeout = self.timeout_ms;
         let start = Instant::now();
@@ -366,12 +403,13 @@ impl JsEngine {
         plugin_id: &str,
         func_name: &str,
         input: &str,
+        auth: Option<crate::content_type::repository::SaveContext>,
     ) -> anyhow::Result<Option<String>> {
         let Some(entry) = self.plugins.get(plugin_id) else {
             return Ok(None);
         };
 
-        let (runtime, ctx) = self.create_instance(&entry, plugin_id).await?;
+        let (runtime, ctx) = self.create_instance(&entry, plugin_id, auth).await?;
         let timeout = self.timeout_ms;
         let start = Instant::now();
         runtime
@@ -417,6 +455,19 @@ mod tests {
     use crate::config::app::AppConfig;
     use std::sync::Arc;
 
+    #[test]
+    fn resolve_module_path_handles_nested_relative_imports() {
+        // Root entry importing a sibling directory.
+        assert_eq!(resolve_module_path("index.js", "./services/ingress.js"), "services/ingress.js");
+        // Nested module importing back up to a shared lib dir.
+        assert_eq!(resolve_module_path("services/ingress.js", "../lib/ctx.js"), "lib/ctx.js");
+        assert_eq!(resolve_module_path("routes/conversations.js", "./contacts.js"), "routes/contacts.js");
+        // Non-relative specifiers pass through (sdk, bare names).
+        assert_eq!(resolve_module_path("index.js", "sdk"), "sdk");
+        // Traversal above the plugin root collapses (guard is in the loader).
+        assert_eq!(resolve_module_path("services/ingress.js", "../../etc/passwd"), "etc/passwd");
+    }
+
     fn test_config() -> Arc<AppConfig> {
         let mut config = AppConfig::test_defaults();
         config.plugin_max_memory_mb = 8;
@@ -426,13 +477,13 @@ mod tests {
 
     #[tokio::test]
     async fn js_engine_create() {
-        let engine = JsEngine::new(&test_config(), None, None, None).await;
+        let engine = JsEngine::new(&test_config(), None, None, None, None).await;
         assert!(engine.is_ok());
     }
 
     #[tokio::test]
     async fn js_engine_load_and_call_filter() {
-        let engine = JsEngine::new(&test_config(), None, None, None)
+        let engine = JsEngine::new(&test_config(), None, None, None, None)
             .await
             .unwrap();
 
@@ -450,7 +501,7 @@ export function on_post_creating(inputJson) {
 
         let input = serde_json::json!({"title": "hello", "content": "world"});
         let result: Option<serde_json::Value> = engine
-            .call_filter("test-filter", "on_post_creating", &input)
+            .call_filter("test-filter", "on_post_creating", &input, None)
             .await
             .unwrap();
 
@@ -462,11 +513,11 @@ export function on_post_creating(inputJson) {
 
     #[tokio::test]
     async fn js_engine_call_filter_missing_plugin() {
-        let engine = JsEngine::new(&test_config(), None, None, None)
+        let engine = JsEngine::new(&test_config(), None, None, None, None)
             .await
             .unwrap();
         let result: Option<serde_json::Value> = engine
-            .call_filter("nonexistent", "on_post_creating", &serde_json::json!({}))
+            .call_filter("nonexistent", "on_post_creating", &serde_json::json!({}), None)
             .await
             .unwrap();
         assert!(result.is_none());
@@ -474,7 +525,7 @@ export function on_post_creating(inputJson) {
 
     #[tokio::test]
     async fn js_engine_call_filter_missing_function() {
-        let engine = JsEngine::new(&test_config(), None, None, None)
+        let engine = JsEngine::new(&test_config(), None, None, None, None)
             .await
             .unwrap();
 
@@ -485,7 +536,7 @@ export function on_post_creating(inputJson) {
             .unwrap();
 
         let result: Option<serde_json::Value> = engine
-            .call_filter("test-nofunc", "on_post_creating", &serde_json::json!({}))
+            .call_filter("test-nofunc", "on_post_creating", &serde_json::json!({}), None)
             .await
             .unwrap();
         assert!(result.is_none());
@@ -493,7 +544,7 @@ export function on_post_creating(inputJson) {
 
     #[tokio::test]
     async fn js_engine_call_action() {
-        let engine = JsEngine::new(&test_config(), None, None, None)
+        let engine = JsEngine::new(&test_config(), None, None, None, None)
             .await
             .unwrap();
 
@@ -522,7 +573,7 @@ export function on_post_created(dataJson) {
 
     #[tokio::test]
     async fn js_engine_call_string_filter() {
-        let engine = JsEngine::new(&test_config(), None, None, None)
+        let engine = JsEngine::new(&test_config(), None, None, None, None)
             .await
             .unwrap();
 
@@ -541,6 +592,7 @@ export function filter_html(html) {
                 "test-strfilter",
                 "filter_html",
                 "<head><title>Test</title></head>",
+                None,
             )
             .await
             .unwrap();
@@ -551,7 +603,7 @@ export function filter_html(html) {
 
     #[tokio::test]
     async fn js_engine_unload_plugin() {
-        let engine = JsEngine::new(&test_config(), None, None, None)
+        let engine = JsEngine::new(&test_config(), None, None, None, None)
             .await
             .unwrap();
 
@@ -568,7 +620,7 @@ export function filter_html(html) {
 
     #[tokio::test]
     async fn js_engine_multiple_plugins() {
-        let engine = JsEngine::new(&test_config(), None, None, None)
+        let engine = JsEngine::new(&test_config(), None, None, None, None)
             .await
             .unwrap();
 
@@ -587,7 +639,7 @@ export function filter_html(html) {
 
     #[tokio::test]
     async fn js_engine_host_log_available() {
-        let engine = JsEngine::new(&test_config(), None, None, None)
+        let engine = JsEngine::new(&test_config(), None, None, None, None)
             .await
             .unwrap();
 
@@ -608,7 +660,7 @@ export function on_post_created(dataJson) {
 
     #[tokio::test]
     async fn js_engine_host_get_config_returns_value() {
-        let engine = JsEngine::new(&test_config(), None, None, None)
+        let engine = JsEngine::new(&test_config(), None, None, None, None)
             .await
             .unwrap();
 
@@ -649,7 +701,7 @@ export function on_post_created(dataJson) {
 
     #[tokio::test]
     async fn js_engine_syntax_error_fails_load() {
-        let engine = JsEngine::new(&test_config(), None, None, None)
+        let engine = JsEngine::new(&test_config(), None, None, None, None)
             .await
             .unwrap();
         let result = engine
@@ -662,7 +714,7 @@ export function on_post_created(dataJson) {
     async fn js_engine_timeout_interrupts_long_execution() {
         let mut config = (*test_config()).clone();
         config.plugin_default_timeout_ms = 100;
-        let engine = JsEngine::new(&Arc::new(config), None, None, None)
+        let engine = JsEngine::new(&Arc::new(config), None, None, None, None)
             .await
             .unwrap();
 
@@ -679,14 +731,14 @@ export function on_post_creating(inputJson) {
             .unwrap();
 
         let result: anyhow::Result<Option<serde_json::Value>> = engine
-            .call_filter("test-timeout", "on_post_creating", &serde_json::json!({}))
+            .call_filter("test-timeout", "on_post_creating", &serde_json::json!({}), None)
             .await;
         assert!(result.is_err());
     }
 
     #[tokio::test]
     async fn js_engine_filter_chain_multiple_plugins() {
-        let engine = JsEngine::new(&test_config(), None, None, None)
+        let engine = JsEngine::new(&test_config(), None, None, None, None)
             .await
             .unwrap();
 
@@ -709,7 +761,7 @@ export function on_post_creating(inputJson) {
 
         let input = serde_json::json!({"title": "test"});
         let result_a: Option<serde_json::Value> = engine
-            .call_filter("chain-a", "on_post_creating", &input)
+            .call_filter("chain-a", "on_post_creating", &input, None)
             .await
             .unwrap();
         assert!(result_a.is_some());
@@ -717,7 +769,7 @@ export function on_post_creating(inputJson) {
         assert_eq!(result_a["tags"], serde_json::json!(["a"]));
 
         let result_b: Option<serde_json::Value> = engine
-            .call_filter("chain-b", "on_post_creating", &result_a)
+            .call_filter("chain-b", "on_post_creating", &result_a, None)
             .await
             .unwrap();
         assert!(result_b.is_some());
@@ -726,7 +778,7 @@ export function on_post_creating(inputJson) {
 
     #[tokio::test]
     async fn js_engine_action_exception_does_not_crash() {
-        let engine = JsEngine::new(&test_config(), None, None, None)
+        let engine = JsEngine::new(&test_config(), None, None, None, None)
             .await
             .unwrap();
 
@@ -861,7 +913,7 @@ export function on_post_created(dataJson) {
 
     #[tokio::test]
     async fn js_per_request_state_isolation() {
-        let engine = JsEngine::new(&test_config(), None, None, None)
+        let engine = JsEngine::new(&test_config(), None, None, None, None)
             .await
             .unwrap();
 
@@ -880,13 +932,13 @@ export function on_post_creating(inputJson) {
             .unwrap();
 
         let r1: Option<serde_json::Value> = engine
-            .call_filter("test-isolation", "on_post_creating", &serde_json::json!({}))
+            .call_filter("test-isolation", "on_post_creating", &serde_json::json!({}), None)
             .await
             .unwrap();
         assert_eq!(r1.as_ref().unwrap()["counter"], 1);
 
         let r2: Option<serde_json::Value> = engine
-            .call_filter("test-isolation", "on_post_creating", &serde_json::json!({}))
+            .call_filter("test-isolation", "on_post_creating", &serde_json::json!({}), None)
             .await
             .unwrap();
         assert_eq!(
@@ -899,7 +951,7 @@ export function on_post_creating(inputJson) {
     #[tokio::test]
     async fn js_concurrent_calls_succeed() {
         let engine = Arc::new(
-            JsEngine::new(&test_config(), None, None, None)
+            JsEngine::new(&test_config(), None, None, None, None)
                 .await
                 .unwrap(),
         );
@@ -921,7 +973,7 @@ export function on_post_creating(inputJson) {
             let eng = Arc::clone(&engine);
             handles.push(tokio::spawn(async move {
                 let input = serde_json::json!({"idx": i});
-                eng.call_filter::<serde_json::Value>("test-concurrent", "on_post_creating", &input)
+                eng.call_filter::<serde_json::Value>("test-concurrent", "on_post_creating", &input, None)
                     .await
             }));
         }
@@ -938,7 +990,7 @@ export function on_post_creating(inputJson) {
 
     #[tokio::test]
     async fn js_call_after_unload_returns_none() {
-        let engine = JsEngine::new(&test_config(), None, None, None)
+        let engine = JsEngine::new(&test_config(), None, None, None, None)
             .await
             .unwrap();
         engine
@@ -952,7 +1004,7 @@ export function on_post_creating(inputJson) {
         engine.unload_plugin("test-gone").await;
 
         let result: Option<serde_json::Value> = engine
-            .call_filter("test-gone", "on_post_creating", &serde_json::json!({}))
+            .call_filter("test-gone", "on_post_creating", &serde_json::json!({}), None)
             .await
             .unwrap();
         assert!(result.is_none(), "call after unload should return None");
@@ -966,7 +1018,7 @@ export function on_post_creating(inputJson) {
         );
 
         let result = engine
-            .call_string_filter("test-gone", "on_post_creating", "hello")
+            .call_string_filter("test-gone", "on_post_creating", "hello", None)
             .await
             .unwrap();
         assert!(
@@ -977,7 +1029,7 @@ export function on_post_creating(inputJson) {
 
     #[tokio::test]
     async fn js_engine_filter_returns_undefined() {
-        let engine = JsEngine::new(&test_config(), None, None, None)
+        let engine = JsEngine::new(&test_config(), None, None, None, None)
             .await
             .unwrap();
 
@@ -996,6 +1048,7 @@ export function on_post_creating(inputJson) {
                 "test-undefined",
                 "on_post_creating",
                 &serde_json::json!({"title": "hello"}),
+            None,
             )
             .await;
         assert!(
@@ -1006,7 +1059,7 @@ export function on_post_creating(inputJson) {
 
     #[tokio::test]
     async fn js_engine_filter_exception_does_not_crash() {
-        let engine = JsEngine::new(&test_config(), None, None, None)
+        let engine = JsEngine::new(&test_config(), None, None, None, None)
             .await
             .unwrap();
 
@@ -1025,6 +1078,7 @@ export function on_post_creating(inputJson) {
                 "test-filter-throw",
                 "on_post_creating",
                 &serde_json::json!({}),
+                None,
             )
             .await;
         assert!(result.is_err());
@@ -1032,7 +1086,7 @@ export function on_post_creating(inputJson) {
 
     #[tokio::test]
     async fn js_engine_string_filter_exception_does_not_crash() {
-        let engine = JsEngine::new(&test_config(), None, None, None)
+        let engine = JsEngine::new(&test_config(), None, None, None, None)
             .await
             .unwrap();
 
@@ -1047,14 +1101,14 @@ export function render_markdown(content) {
             .unwrap();
 
         let result = engine
-            .call_string_filter("test-strfilter-throw", "render_markdown", "# hello")
+            .call_string_filter("test-strfilter-throw", "render_markdown", "# hello", None)
             .await;
         assert!(result.is_err());
     }
 
     #[tokio::test]
     async fn js_engine_string_filter_returns_empty_string() {
-        let engine = JsEngine::new(&test_config(), None, None, None)
+        let engine = JsEngine::new(&test_config(), None, None, None, None)
             .await
             .unwrap();
 
@@ -1069,7 +1123,7 @@ export function filter_html(html) {
             .unwrap();
 
         let result = engine
-            .call_string_filter("test-empty-str", "filter_html", "<html></html>")
+            .call_string_filter("test-empty-str", "filter_html", "<html></html>", None)
             .await
             .unwrap();
         assert_eq!(result.as_deref(), Some(""));
@@ -1077,7 +1131,7 @@ export function filter_html(html) {
 
     #[tokio::test]
     async fn js_engine_filter_modifies_multiple_fields() {
-        let engine = JsEngine::new(&test_config(), None, None, None)
+        let engine = JsEngine::new(&test_config(), None, None, None, None)
             .await
             .unwrap();
 
@@ -1103,7 +1157,7 @@ export function on_post_creating(inputJson) {
             "removable": "yes"
         });
         let result: Option<serde_json::Value> = engine
-            .call_filter("test-multi-field", "on_post_creating", &input)
+            .call_filter("test-multi-field", "on_post_creating", &input, None)
             .await
             .unwrap();
 
@@ -1121,7 +1175,7 @@ export function on_post_creating(inputJson) {
     async fn js_engine_memory_limit_enforced() {
         let mut config = (*test_config()).clone();
         config.plugin_max_memory_mb = 1;
-        let engine = JsEngine::new(&Arc::new(config), None, None, None)
+        let engine = JsEngine::new(&Arc::new(config), None, None, None, None)
             .await
             .unwrap();
 
@@ -1138,7 +1192,7 @@ export const noop = 1;
 
     #[tokio::test]
     async fn js_engine_reload_same_plugin() {
-        let engine = JsEngine::new(&test_config(), None, None, None)
+        let engine = JsEngine::new(&test_config(), None, None, None, None)
             .await
             .unwrap();
 
@@ -1155,7 +1209,7 @@ export function on_post_creating(inputJson) {
             .unwrap();
 
         let r1: Option<serde_json::Value> = engine
-            .call_filter("test-reload", "on_post_creating", &serde_json::json!({}))
+            .call_filter("test-reload", "on_post_creating", &serde_json::json!({}), None)
             .await
             .unwrap();
         assert_eq!(r1.as_ref().unwrap()["version"], 1);
@@ -1173,7 +1227,7 @@ export function on_post_creating(inputJson) {
             .unwrap();
 
         let r2: Option<serde_json::Value> = engine
-            .call_filter("test-reload", "on_post_creating", &serde_json::json!({}))
+            .call_filter("test-reload", "on_post_creating", &serde_json::json!({}), None)
             .await
             .unwrap();
         assert_eq!(r2.as_ref().unwrap()["version"], 2);
@@ -1181,7 +1235,7 @@ export function on_post_creating(inputJson) {
 
     #[tokio::test]
     async fn js_engine_filter_pass_through_when_no_return() {
-        let engine = JsEngine::new(&test_config(), None, None, None)
+        let engine = JsEngine::new(&test_config(), None, None, None, None)
             .await
             .unwrap();
 
@@ -1201,6 +1255,7 @@ export function on_post_creating(inputJson) {
                 "test-no-return",
                 "on_post_creating",
                 &serde_json::json!({"title": "x"}),
+                None,
             )
             .await;
         assert!(
@@ -1213,7 +1268,7 @@ export function on_post_creating(inputJson) {
     async fn js_engine_action_timeout_interrupts() {
         let mut config = (*test_config()).clone();
         config.plugin_default_timeout_ms = 100;
-        let engine = JsEngine::new(&Arc::new(config), None, None, None)
+        let engine = JsEngine::new(&Arc::new(config), None, None, None, None)
             .await
             .unwrap();
 
@@ -1242,7 +1297,7 @@ export function on_post_created(dataJson) {
     async fn js_engine_string_filter_timeout_interrupts() {
         let mut config = (*test_config()).clone();
         config.plugin_default_timeout_ms = 100;
-        let engine = JsEngine::new(&Arc::new(config), None, None, None)
+        let engine = JsEngine::new(&Arc::new(config), None, None, None, None)
             .await
             .unwrap();
 
@@ -1259,7 +1314,7 @@ export function render_markdown(content) {
             .unwrap();
 
         let result = engine
-            .call_string_filter("test-strfilter-timeout", "render_markdown", "# hello")
+            .call_string_filter("test-strfilter-timeout", "render_markdown", "# hello", None)
             .await;
         assert!(result.is_err());
     }

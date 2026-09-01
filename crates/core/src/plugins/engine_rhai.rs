@@ -37,6 +37,7 @@ pub struct RhaiEngine {
     pool: Option<Pool>,
     event_bus: Option<crate::eventbus::EventBus>,
     content_registry: Option<std::sync::Arc<crate::content_type::ContentTypeRegistry>>,
+    presence_store: Option<std::sync::Arc<dyn crate::presence::PresenceStore>>,
 }
 
 impl RhaiEngine {
@@ -45,6 +46,7 @@ impl RhaiEngine {
         pool: Option<Pool>,
         event_bus: Option<crate::eventbus::EventBus>,
         content_registry: Option<std::sync::Arc<crate::content_type::ContentTypeRegistry>>,
+        presence_store: Option<std::sync::Arc<dyn crate::presence::PresenceStore>>,
     ) -> anyhow::Result<Self> {
         Ok(Self {
             plugins: DashMap::new(),
@@ -52,6 +54,7 @@ impl RhaiEngine {
             pool,
             event_bus,
             content_registry,
+            presence_store,
         })
     }
 
@@ -81,7 +84,12 @@ impl RhaiEngine {
         Self::build_engine(timeout_ms)
     }
 
-    fn create_instance(&self, entry: &RhaiPluginEntry, plugin_id: &str) -> Engine {
+    fn create_instance(
+        &self,
+        entry: &RhaiPluginEntry,
+        plugin_id: &str,
+        auth: Option<crate::content_type::repository::SaveContext>,
+    ) -> Engine {
         let mut engine = self.create_base_engine();
         super::rhai_host::register_host_functions(
             &mut engine,
@@ -91,6 +99,8 @@ impl RhaiEngine {
             self.pool.clone(),
             self.event_bus.clone(),
             self.content_registry.clone(),
+            self.presence_store.clone(),
+            auth,
         );
         engine
     }
@@ -112,6 +122,8 @@ impl RhaiEngine {
             self.pool.clone(),
             self.event_bus.clone(),
             self.content_registry.clone(),
+            self.presence_store.clone(),
+            None,
         );
 
         let ast = engine
@@ -149,12 +161,13 @@ impl RhaiEngine {
         plugin_id: &str,
         func_name: &str,
         input: &T,
+        auth: Option<crate::content_type::repository::SaveContext>,
     ) -> anyhow::Result<Option<T>> {
         let Some(entry) = self.plugins.get(plugin_id) else {
             return Ok(None);
         };
 
-        let engine = self.create_instance(&entry, plugin_id);
+        let engine = self.create_instance(&entry, plugin_id, auth);
         let input_dynamic = rhai::serde::to_dynamic(input)?;
 
         let mut scope = Scope::new();
@@ -185,7 +198,7 @@ impl RhaiEngine {
             return Ok(());
         };
 
-        let engine = self.create_instance(&entry, plugin_id);
+        let engine = self.create_instance(&entry, plugin_id, None);
         let data_dynamic = rhai::serde::to_dynamic(data)?;
 
         let mut scope = Scope::new();
@@ -203,12 +216,13 @@ impl RhaiEngine {
         plugin_id: &str,
         func_name: &str,
         input: &str,
+        auth: Option<crate::content_type::repository::SaveContext>,
     ) -> anyhow::Result<Option<String>> {
         let Some(entry) = self.plugins.get(plugin_id) else {
             return Ok(None);
         };
 
-        let engine = self.create_instance(&entry, plugin_id);
+        let engine = self.create_instance(&entry, plugin_id, auth);
 
         let mut scope = Scope::new();
         let result: String =
@@ -244,13 +258,13 @@ mod tests {
 
     #[tokio::test]
     async fn rhai_engine_create() {
-        let engine = RhaiEngine::new(&test_config(), None, None, None);
+        let engine = RhaiEngine::new(&test_config(), None, None, None, None);
         assert!(engine.is_ok());
     }
 
     #[tokio::test]
     async fn rhai_engine_load_and_call_filter() {
-        let engine = RhaiEngine::new(&test_config(), None, None, None).unwrap();
+        let engine = RhaiEngine::new(&test_config(), None, None, None, None).unwrap();
 
         let code = r#"
 fn on_post_creating(input) {
@@ -265,7 +279,7 @@ fn on_post_creating(input) {
 
         let input = serde_json::json!({"title": "hello", "content": "world"});
         let result: Option<serde_json::Value> = engine
-            .call_filter("test-filter", "on_post_creating", &input)
+            .call_filter("test-filter", "on_post_creating", &input, None)
             .await
             .unwrap();
 
@@ -277,9 +291,9 @@ fn on_post_creating(input) {
 
     #[tokio::test]
     async fn rhai_engine_call_filter_missing_plugin() {
-        let engine = RhaiEngine::new(&test_config(), None, None, None).unwrap();
+        let engine = RhaiEngine::new(&test_config(), None, None, None, None).unwrap();
         let result: Option<serde_json::Value> = engine
-            .call_filter("nonexistent", "on_post_creating", &serde_json::json!({}))
+            .call_filter("nonexistent", "on_post_creating", &serde_json::json!({}), None)
             .await
             .unwrap();
         assert!(result.is_none());
@@ -287,7 +301,7 @@ fn on_post_creating(input) {
 
     #[tokio::test]
     async fn rhai_engine_call_filter_missing_function() {
-        let engine = RhaiEngine::new(&test_config(), None, None, None).unwrap();
+        let engine = RhaiEngine::new(&test_config(), None, None, None, None).unwrap();
 
         let code = "fn noop() { 42 }";
         engine
@@ -296,7 +310,7 @@ fn on_post_creating(input) {
             .unwrap();
 
         let result: Option<serde_json::Value> = engine
-            .call_filter("test-nofunc", "on_post_creating", &serde_json::json!({}))
+            .call_filter("test-nofunc", "on_post_creating", &serde_json::json!({}), None)
             .await
             .unwrap();
         assert!(result.is_none());
@@ -304,7 +318,7 @@ fn on_post_creating(input) {
 
     #[tokio::test]
     async fn rhai_engine_call_action() {
-        let engine = RhaiEngine::new(&test_config(), None, None, None).unwrap();
+        let engine = RhaiEngine::new(&test_config(), None, None, None, None).unwrap();
 
         let code = r#"
 fn on_post_created(data) {
@@ -328,7 +342,7 @@ fn on_post_created(data) {
 
     #[tokio::test]
     async fn rhai_engine_call_string_filter() {
-        let engine = RhaiEngine::new(&test_config(), None, None, None).unwrap();
+        let engine = RhaiEngine::new(&test_config(), None, None, None, None).unwrap();
 
         let code = r#"
 fn filter_html(html) {
@@ -345,6 +359,7 @@ fn filter_html(html) {
                 "test-strfilter",
                 "filter_html",
                 "<head><title>Test</title></head>",
+            None,
             )
             .await
             .unwrap();
@@ -355,7 +370,7 @@ fn filter_html(html) {
 
     #[tokio::test]
     async fn rhai_engine_unload_plugin() {
-        let engine = RhaiEngine::new(&test_config(), None, None, None).unwrap();
+        let engine = RhaiEngine::new(&test_config(), None, None, None, None).unwrap();
 
         let code = "fn noop() { 42 }";
         engine
@@ -370,7 +385,7 @@ fn filter_html(html) {
 
     #[tokio::test]
     async fn rhai_engine_multiple_plugins() {
-        let engine = RhaiEngine::new(&test_config(), None, None, None).unwrap();
+        let engine = RhaiEngine::new(&test_config(), None, None, None, None).unwrap();
 
         for i in 0..3 {
             let code = format!(r#"fn on_post_creating(m) {{ m.idx = {i}; m }}"#);
@@ -385,7 +400,7 @@ fn filter_html(html) {
 
     #[tokio::test]
     async fn rhai_engine_syntax_error_fails_load() {
-        let engine = RhaiEngine::new(&test_config(), None, None, None).unwrap();
+        let engine = RhaiEngine::new(&test_config(), None, None, None, None).unwrap();
         let result = engine
             .load_plugin_default("test-bad-syntax", "let !!!invalid!!!")
             .await;
@@ -394,7 +409,7 @@ fn filter_html(html) {
 
     #[tokio::test]
     async fn rhai_per_request_state_isolation() {
-        let engine = RhaiEngine::new(&test_config(), None, None, None).unwrap();
+        let engine = RhaiEngine::new(&test_config(), None, None, None, None).unwrap();
 
         let code = r#"
 fn on_post_creating(input) {
@@ -408,13 +423,13 @@ fn on_post_creating(input) {
             .unwrap();
 
         let r1: Option<serde_json::Value> = engine
-            .call_filter("test-isolation", "on_post_creating", &serde_json::json!({}))
+            .call_filter("test-isolation", "on_post_creating", &serde_json::json!({}), None)
             .await
             .unwrap();
         assert_eq!(r1.as_ref().unwrap()["counter"], 1);
 
         let r2: Option<serde_json::Value> = engine
-            .call_filter("test-isolation", "on_post_creating", &serde_json::json!({}))
+            .call_filter("test-isolation", "on_post_creating", &serde_json::json!({}), None)
             .await
             .unwrap();
         assert_eq!(
@@ -426,7 +441,7 @@ fn on_post_creating(input) {
 
     #[tokio::test]
     async fn rhai_concurrent_calls_succeed() {
-        let engine = Arc::new(RhaiEngine::new(&test_config(), None, None, None).unwrap());
+        let engine = Arc::new(RhaiEngine::new(&test_config(), None, None, None, None).unwrap());
 
         let code = r#"
 fn on_post_creating(input) {
@@ -444,7 +459,7 @@ fn on_post_creating(input) {
             let eng = Arc::clone(&engine);
             handles.push(tokio::spawn(async move {
                 let input = serde_json::json!({"idx": i});
-                eng.call_filter::<serde_json::Value>("test-concurrent", "on_post_creating", &input)
+                eng.call_filter::<serde_json::Value>("test-concurrent", "on_post_creating", &input, None)
                     .await
             }));
         }
@@ -461,7 +476,7 @@ fn on_post_creating(input) {
 
     #[tokio::test]
     async fn rhai_call_after_unload_returns_none() {
-        let engine = RhaiEngine::new(&test_config(), None, None, None).unwrap();
+        let engine = RhaiEngine::new(&test_config(), None, None, None, None).unwrap();
         engine
             .load_plugin_default("test-gone", r#"fn on_post_creating(m) { m }"#)
             .await
@@ -470,7 +485,7 @@ fn on_post_creating(input) {
         engine.unload_plugin("test-gone").await;
 
         let result: Option<serde_json::Value> = engine
-            .call_filter("test-gone", "on_post_creating", &serde_json::json!({}))
+            .call_filter("test-gone", "on_post_creating", &serde_json::json!({}), None)
             .await
             .unwrap();
         assert!(result.is_none(), "call after unload should return None");
@@ -484,7 +499,7 @@ fn on_post_creating(input) {
         );
 
         let result = engine
-            .call_string_filter("test-gone", "on_post_creating", "hello")
+            .call_string_filter("test-gone", "on_post_creating", "hello", None)
             .await
             .unwrap();
         assert!(
@@ -495,7 +510,7 @@ fn on_post_creating(input) {
 
     #[tokio::test]
     async fn rhai_engine_reload_same_plugin() {
-        let engine = RhaiEngine::new(&test_config(), None, None, None).unwrap();
+        let engine = RhaiEngine::new(&test_config(), None, None, None, None).unwrap();
 
         let code_v1 = r#"
 fn on_post_creating(input) {
@@ -509,7 +524,7 @@ fn on_post_creating(input) {
             .unwrap();
 
         let r1: Option<serde_json::Value> = engine
-            .call_filter("test-reload", "on_post_creating", &serde_json::json!({}))
+            .call_filter("test-reload", "on_post_creating", &serde_json::json!({}), None)
             .await
             .unwrap();
         assert_eq!(r1.as_ref().unwrap()["version"], 1);
@@ -526,7 +541,7 @@ fn on_post_creating(input) {
             .unwrap();
 
         let r2: Option<serde_json::Value> = engine
-            .call_filter("test-reload", "on_post_creating", &serde_json::json!({}))
+            .call_filter("test-reload", "on_post_creating", &serde_json::json!({}), None)
             .await
             .unwrap();
         assert_eq!(r2.as_ref().unwrap()["version"], 2);
@@ -534,7 +549,7 @@ fn on_post_creating(input) {
 
     #[tokio::test]
     async fn rhai_engine_filter_modifies_multiple_fields() {
-        let engine = RhaiEngine::new(&test_config(), None, None, None).unwrap();
+        let engine = RhaiEngine::new(&test_config(), None, None, None, None).unwrap();
 
         let code = r#"
 fn on_post_creating(input) {
@@ -557,7 +572,7 @@ fn on_post_creating(input) {
             "removable": "yes"
         });
         let result: Option<serde_json::Value> = engine
-            .call_filter("test-multi-field", "on_post_creating", &input)
+            .call_filter("test-multi-field", "on_post_creating", &input, None)
             .await
             .unwrap();
 
@@ -573,7 +588,7 @@ fn on_post_creating(input) {
 
     #[tokio::test]
     async fn rhai_engine_filter_exception_does_not_crash() {
-        let engine = RhaiEngine::new(&test_config(), None, None, None).unwrap();
+        let engine = RhaiEngine::new(&test_config(), None, None, None, None).unwrap();
 
         let code = r#"
 fn on_post_creating(input) {
@@ -590,6 +605,7 @@ fn on_post_creating(input) {
                 "test-filter-throw",
                 "on_post_creating",
                 &serde_json::json!({}),
+            None,
             )
             .await;
         assert!(result.is_err());
@@ -597,7 +613,7 @@ fn on_post_creating(input) {
 
     #[tokio::test]
     async fn rhai_engine_string_filter_returns_empty_string() {
-        let engine = RhaiEngine::new(&test_config(), None, None, None).unwrap();
+        let engine = RhaiEngine::new(&test_config(), None, None, None, None).unwrap();
 
         let code = r#"
 fn filter_html(html) {
@@ -610,7 +626,7 @@ fn filter_html(html) {
             .unwrap();
 
         let result = engine
-            .call_string_filter("test-empty-str", "filter_html", "<html></html>")
+            .call_string_filter("test-empty-str", "filter_html", "<html></html>", None)
             .await
             .unwrap();
         assert_eq!(result.as_deref(), Some(""));
@@ -618,7 +634,7 @@ fn filter_html(html) {
 
     #[tokio::test]
     async fn rhai_engine_filter_chain_multiple_plugins() {
-        let engine = RhaiEngine::new(&test_config(), None, None, None).unwrap();
+        let engine = RhaiEngine::new(&test_config(), None, None, None, None).unwrap();
 
         let code_a = r#"
 fn on_post_creating(input) {
@@ -637,7 +653,7 @@ fn on_post_creating(input) {
 
         let input = serde_json::json!({"title": "test"});
         let result_a: Option<serde_json::Value> = engine
-            .call_filter("chain-a", "on_post_creating", &input)
+            .call_filter("chain-a", "on_post_creating", &input, None)
             .await
             .unwrap();
         assert!(result_a.is_some());
@@ -645,7 +661,7 @@ fn on_post_creating(input) {
         assert_eq!(result_a["tags"], serde_json::json!(["a"]));
 
         let result_b: Option<serde_json::Value> = engine
-            .call_filter("chain-b", "on_post_creating", &result_a)
+            .call_filter("chain-b", "on_post_creating", &result_a, None)
             .await
             .unwrap();
         assert!(result_b.is_some());

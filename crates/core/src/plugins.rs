@@ -47,6 +47,63 @@ pub use manifest::{
 };
 pub use permissions::PermissionChecker;
 
+/// Build the per-call plugin auth context from the dispatcher input.
+///
+/// - Route calls carry the full identity in `input.auth`
+///   (`{user_id, role, roles, tenant_id}`) — user + tenant both injected.
+/// - Job calls carry only `input.payload.tenant_id` when resolvable
+///   (e.g. chat.ingress from a tenant-scoped channel) — user stays None
+///   (jobs are system behavior, not a person's action).
+///
+/// Returns `None` when neither is present (fallback = default tenant).
+pub(crate) fn plugin_auth_from_input(
+    input: &serde_json::Value,
+) -> Option<crate::content_type::repository::SaveContext> {
+    // Prefer full route auth.
+    if let Some(auth) = input.get("auth").and_then(|a| a.as_object()) {
+        let user_id_str = auth
+            .get("user_id")
+            .and_then(|v| v.as_str())
+            .map(str::to_string)
+            .or_else(|| {
+                auth.get("user_id")
+                    .and_then(|v| v.as_i64())
+                    .map(|i| i.to_string())
+            });
+        // user_id crosses the boundary as a digit string; parse it back to the
+        // int the ownable protocol needs for created_by/updated_by.
+        let user_int_id = user_id_str
+            .as_deref()
+            .and_then(|s| s.parse::<i64>().ok());
+        return Some(crate::content_type::repository::SaveContext {
+            user_id: user_id_str,
+            user_int_id,
+            user_role: auth
+                .get("role")
+                .and_then(|v| v.as_str())
+                .map(str::to_string),
+            tenant_id: auth
+                .get("tenant_id")
+                .and_then(|v| v.as_str())
+                .map(str::to_string),
+        });
+    }
+    // Job payload tenant (user stays None).
+    if let Some(tenant) = input
+        .get("payload")
+        .and_then(|p| p.get("tenant_id"))
+        .and_then(|v| v.as_str())
+    {
+        return Some(crate::content_type::repository::SaveContext {
+            user_id: None,
+            user_int_id: None,
+            user_role: None,
+            tenant_id: Some(tenant.to_string()),
+        });
+    }
+    None
+}
+
 #[cfg(feature = "export-types")]
 export_types!(
     PluginHealth,
@@ -275,6 +332,8 @@ pub struct PluginManagerOptions {
     pub event_bus: Option<crate::eventbus::EventBus>,
     /// Content-type registry for the `ct.*` host APIs (None = ct.* disabled).
     pub content_registry: Option<Arc<crate::content_type::ContentTypeRegistry>>,
+    /// Presence store for the `presence.*` host APIs (None = presence disabled).
+    pub presence_store: Option<Arc<dyn crate::presence::PresenceStore>>,
 }
 
 impl PluginManager {
@@ -288,6 +347,7 @@ impl PluginManager {
                 pool: None,
                 event_bus: None,
                 content_registry: None,
+                presence_store: None,
             },
         )
         .await
@@ -340,6 +400,7 @@ impl PluginManager {
             opts.pool.clone(),
             opts.event_bus.clone(),
             opts.content_registry.clone(),
+            opts.presence_store.clone(),
         )
         .await
         .unwrap_or_else(|e| panic!("failed to create js engine: {e}"));
@@ -350,6 +411,7 @@ impl PluginManager {
             opts.pool.clone(),
             opts.event_bus.clone(),
             opts.content_registry.clone(),
+            opts.presence_store.clone(),
         )
         .await
         .unwrap_or_else(|e| panic!("failed to create lua engine: {e}"));
@@ -360,6 +422,7 @@ impl PluginManager {
             opts.pool.clone(),
             opts.event_bus.clone(),
             opts.content_registry.clone(),
+            opts.presence_store.clone(),
         )
         .unwrap_or_else(|e| panic!("failed to create rhai engine: {e}"));
 
@@ -1308,19 +1371,19 @@ impl PluginManager {
                 #[cfg(feature = "plugin-js")]
                 LoadedPluginInstance::Js(pid) => self
                     .js_engine
-                    .call_filter(pid, func_name, &current)
+                    .call_filter(pid, func_name, &current, None)
                     .await
                     .map_err(|e| anyhow::anyhow!("{e}")),
                 #[cfg(feature = "plugin-lua")]
                 LoadedPluginInstance::Lua(pid) => self
                     .lua_engine
-                    .call_filter(pid, func_name, &current)
+                    .call_filter(pid, func_name, &current, None)
                     .await
                     .map_err(|e| anyhow::anyhow!("{e}")),
                 #[cfg(feature = "plugin-rhai")]
                 LoadedPluginInstance::Rhai(pid) => self
                     .rhai_engine
-                    .call_filter(pid, func_name, &current)
+                    .call_filter(pid, func_name, &current, None)
                     .await
                     .map_err(|e| anyhow::anyhow!("{e}")),
                 #[allow(unreachable_patterns)]
@@ -1507,19 +1570,19 @@ impl PluginManager {
                 #[cfg(feature = "plugin-js")]
                 LoadedPluginInstance::Js(pid) => self
                     .js_engine
-                    .call_string_filter(pid, func_name, content)
+                    .call_string_filter(pid, func_name, content, None)
                     .await
                     .map_err(|e| anyhow::anyhow!("{e}")),
                 #[cfg(feature = "plugin-lua")]
                 LoadedPluginInstance::Lua(pid) => self
                     .lua_engine
-                    .call_string_filter(pid, func_name, content)
+                    .call_string_filter(pid, func_name, content, None)
                     .await
                     .map_err(|e| anyhow::anyhow!("{e}")),
                 #[cfg(feature = "plugin-rhai")]
                 LoadedPluginInstance::Rhai(pid) => self
                     .rhai_engine
-                    .call_string_filter(pid, func_name, content)
+                    .call_string_filter(pid, func_name, content, None)
                     .await
                     .map_err(|e| anyhow::anyhow!("{e}")),
                 #[allow(unreachable_patterns)]
@@ -1915,7 +1978,9 @@ impl PluginManager {
         handler: &str,
         input: &serde_json::Value,
     ) -> Result<Option<serde_json::Value>, anyhow::Error> {
-        match &plugin.instance {
+        // Per-call auth context: routes carry full identity in input.auth;
+        // jobs carry only a tenant in payload.tenant_id (user stays None).
+        let auth_ctx = crate::plugins::plugin_auth_from_input(input);        match &plugin.instance {
             #[cfg(feature = "plugin-wasm")]
             LoadedPluginInstance::Wasm(wasm) => {
                 let mut instance = wasm.acquire().await;
@@ -1937,19 +2002,19 @@ impl PluginManager {
             #[cfg(feature = "plugin-js")]
             LoadedPluginInstance::Js(pid) => self
                 .js_engine
-                .call_filter::<serde_json::Value>(pid, handler, input)
+                .call_filter::<serde_json::Value>(pid, handler, input, auth_ctx.clone())
                 .await
                 .map_err(|e| anyhow::anyhow!("{e}")),
             #[cfg(feature = "plugin-lua")]
             LoadedPluginInstance::Lua(pid) => self
                 .lua_engine
-                .call_filter::<serde_json::Value>(pid, handler, input)
+                .call_filter::<serde_json::Value>(pid, handler, input, auth_ctx.clone())
                 .await
                 .map_err(|e| anyhow::anyhow!("{e}")),
             #[cfg(feature = "plugin-rhai")]
             LoadedPluginInstance::Rhai(pid) => self
                 .rhai_engine
-                .call_filter::<serde_json::Value>(pid, handler, input)
+                .call_filter::<serde_json::Value>(pid, handler, input, auth_ctx.clone())
                 .await
                 .map_err(|e| anyhow::anyhow!("{e}")),
             #[allow(unreachable_patterns)]

@@ -103,6 +103,7 @@ mod tests {
                 pool: None,
                 event_bus: None,
                 content_registry: None,
+                presence_store: None,
             },
         )
         .await;

@@ -5,7 +5,7 @@ plural = "chat_contacts"
 table = "chat_contacts"
 group = "chat"
 description = "Chat contact: cross-channel person profile"
-implements = ["ownable", "timestampable"]
+implements = ["ownable", "timestampable", "tenantable"]
 
 [fields.name]
 type = "text"

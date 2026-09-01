@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RaisFast Chat Widget — 集成测试页</title>
+<style>
+  :root {
+    --bg: #f5f6f8;
+    --card: #ffffff;
+    --border: #e2e5ea;
+    --text: #1a2233;
+    --muted: #667085;
+    --accent: #4f46e5;
+    --accent-weak: #eef2ff;
+    --code-bg: #0f172a;
+    --code-text: #e2e8f0;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+                 "Microsoft YaHei", sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.6;
+    padding: 40px 20px 120px;
+  }
+  .wrap { max-width: 880px; margin: 0 auto; }
+  h1 { font-size: 22px; margin-bottom: 6px; }
+  .sub { color: var(--muted); font-size: 14px; margin-bottom: 28px; }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 24px;
+    margin-bottom: 20px;
+  }
+  .card h2 { font-size: 15px; margin-bottom: 14px; display: flex; align-items: center; gap: 8px; }
+  .step { font-size: 12px; background: var(--accent); color: #fff; border-radius: 50%;
+           width: 18px; height: 18px; display: inline-flex; align-items: center;
+           justify-content: center; flex: none; }
+  label { display: block; font-size: 13px; color: var(--muted); margin: 10px 0 6px; }
+  input[type=text], select {
+    width: 100%; padding: 9px 12px; border: 1px solid var(--border);
+    border-radius: 8px; font-size: 14px; background: #fff; color: var(--text);
+  }
+  input[type=text]:focus, select:focus { outline: 2px solid var(--accent-weak); border-color: var(--accent); }
+  .row { display: flex; gap: 12px; flex-wrap: wrap; }
+  .row > div { flex: 1; min-width: 160px; }
+  .btn {
+    margin-top: 16px; padding: 10px 18px; border: none; border-radius: 8px;
+    font-size: 14px; font-weight: 600; cursor: pointer; background: var(--accent);
+    color: #fff; transition: opacity .15s;
+  }
+  .btn:hover { opacity: .9; }
+  .btn.ghost { background: #fff; color: var(--accent); border: 1px solid var(--accent); }
+  .hint { font-size: 12px; color: var(--muted); margin-top: 8px; }
+  pre {
+    background: var(--code-bg); color: var(--code-text); border-radius: 8px;
+    padding: 14px 16px; font-size: 12px; overflow-x: auto; margin-top: 10px;
+  }
+  pre .c { color: #94a3b8; }
+  .badge { display: inline-block; font-size: 11px; padding: 2px 8px; border-radius: 99px;
+           background: var(--accent-weak); color: var(--accent); margin-left: 8px; }
+  .tip { font-size: 12.5px; background: #fff7ed; border: 1px solid #fed7aa; color: #9a3412;
+         border-radius: 8px; padding: 10px 14px; margin-top: 14px; }
+  .status { font-size: 12px; color: var(--muted); margin-top: 10px; min-height: 18px; }
+  ol { margin-left: 20px; font-size: 14px; }
+  li { margin: 4px 0; }
+  code { background: var(--accent-weak); color: var(--accent); padding: 1px 6px;
+         border-radius: 4px; font-size: 12.5px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>RaisFast Chat Widget 集成测试页</h1>
+  <div class="sub">
+    网页内嵌客服组件的入口测试：填一个已配置的 widget 渠道，点“加载 Widget”，
+    右下角即出现悬浮气泡。所有消息走真实后端（widget JWT + SSE），可与工作台 / 机器人联动。
+  </div>
+
+  <!-- 第一步：配置 -->
+  <div class="card">
+    <h2><span class="step">1</span> 配置渠道<span class="badge">一次性</span></h2>
+    <ol>
+      <li>启动后端：<code>just dev</code></li>
+      <li>创建 widget 渠道 + 收件箱（可用下方 curl，或走 admin 界面）</li>
+      <li>创建机器人并绑定收件箱（可选；不绑定 = 纯人工）</li>
+    </ol>
+    <pre><span class="c"># 渠道：verify_kind=jwt-widget，落 chat_message，入站触发 chat.ingress</span>
+curl -s -X POST http://localhost:9898/api/v1/admin/integration/channels \
+  -H 'Authorization: Bearer &lt;ADMIN_TOKEN&gt;' \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "channel_key": "chat-widget-demo",
+    "provider": "widget",
+    "mode": "push",
+    "transport": "http1",
+    "framing": "raw",
+    "codec": "json",
+    "verify_kind": "jwt-widget",
+    "mapping": {
+      "external_id": "$.id",
+      "sender": "$.user",
+      "payload": { "body": "$.text" }
+    },
+    "target_type": "chat/chat_messages",
+    "route_extra": { "jobs": [{ "job_type": "chat.ingress", "max_attempts": 1 }] }
+  }'
+
+<span class="c"># 收件箱：channel_id 填上面渠道返回的 id；bot_id 为空 = 纯人工（安全默认）</span>
+curl -s -X POST http://localhost:9898/api/v1/admin/cms/chat/chat_inboxes \
+  -H 'Authorization: Bearer &lt;ADMIN_TOKEN&gt;' -H 'Content-Type: application/json' \
+  -d '{
+    "channel_id": &lt;CHANNEL_ID&gt;,
+    "name": "网站咨询",
+    "greeting": "您好，有什么可以帮您？",
+    "widget_theme": { "color": "#4f46e5", "position": "right" }
+  }'
+
+<span class="c"># 注：收件箱缺失时发消息会 404；渠道与收件箱都必须存在。</span></pre>
+  </div>
+
+  <!-- 第二步：选择渠道并加载 -->
+  <div class="card">
+    <h2><span class="step">2</span> 加载 Widget</h2>
+    <div class="row">
+      <div>
+        <label for="channel">渠道 key（data-channel）</label>
+        <input id="channel" type="text" value="chat-widget-demo" placeholder="chat-widget-demo" spellcheck="false">
+      </div>
+      <div>
+        <label for="color">主题色</label>
+        <input id="color" type="text" value="#4f46e5" placeholder="#4f46e5" spellcheck="false">
+      </div>
+    </div>
+    <div class="row">
+      <div>
+        <label for="position">气泡位置</label>
+        <select id="position">
+          <option value="right" selected>right（右下角）</option>
+          <option value="left">left（左下角）</option>
+        </select>
+      </div>
+      <div>
+        <label for="locale">语言</label>
+        <select id="locale">
+          <option value="zh" selected>中文</option>
+          <option value="en">English</option>
+        </select>
+      </div>
+    </div>
+    <div class="row">
+      <button class="btn" id="load">加载 Widget</button>
+      <button class="btn ghost" id="reset">重置会话（清 localStorage）</button>
+    </div>
+    <div class="status" id="status"></div>
+    <div class="hint">
+      切换渠道会换一套独立的 localStorage 会话（<code>raf.widget.{channel}.*</code>），互不串扰。
+    </div>
+  </div>
+
+  <!-- 第三步：验证 -->
+  <div class="card">
+    <h2><span class="step">3</span> 验证链路</h2>
+    <ol>
+      <li>点右下角气泡 → 问候语出现 → 发消息 <code>你好</code></li>
+      <li>若收件箱绑定机器人：机器人自动回复（SSE 实时回流）</li>
+      <li>若纯人工：消息进入工作台会话列表，坐席回复后实时收到</li>
+      <li>测试转人工：发送含机器人转人工关键词的消息（如 <code>转人工</code>）</li>
+      <li>断网重连 / 刷新页面：历史通过 <code>since</code> 增量恢复，零丢失</li>
+    </ol>
+    <div class="tip">
+      页面刷新后 Widget 的匿名身份（visitor_id）存于 localStorage，会归并到同一联系人的
+      同一会话。若要测试“新访客”，点“重置会话”再加载。
+    </div>
+  </div>
+</div>
+
+<script src="./widget-demo.js" defer></script>
+</body>
+</html>

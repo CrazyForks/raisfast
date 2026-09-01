@@ -5,7 +5,7 @@ plural = "chat_messages"
 table = "chat_messages"
 group = "chat"
 description = "Chat message: user/assistant/agent/system/activity; conversation linked by chat.ingress"
-implements = ["ownable", "timestampable"]
+implements = ["ownable", "timestampable", "tenantable"]
 
 [fields.conversation_id]
 type = "bigint"

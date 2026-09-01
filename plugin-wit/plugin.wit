@@ -71,6 +71,10 @@ interface host-api {
     verify-token: func(token: string) -> string;
     // ID utility: base62 (ID_ENCODING) → plain digit snowflake id.
     decode-id: func(id: string) -> string;
+    // Presence host API (business-agnostic "who is available", architecture §5.3).
+    presence-available: func(tenant: string) -> string;
+    presence-status: func(tenant: string, subject: string) -> string;
+    presence-report: func(tenant: string, subject: string, status: string) -> string;
     vfs-read: func(path: string) -> option<string>;
     vfs-write: func(path: string, content: string) -> bool;
     vfs-delete: func(path: string) -> bool;

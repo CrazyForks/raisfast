@@ -1,0 +1,52 @@
+[content_type]
+name = "AgentProfile"
+singular = "chat_agent_profile"
+plural = "chat_agent_profiles"
+table = "chat_agent_profiles"
+group = "chat"
+description = "Agent profile: persistent availability wish + capacity (max_open). Live presence lives in the kernel PresenceMap (architecture §5.3) — this CT stores the durable record only."
+implements = ["ownable", "timestampable", "tenantable"]
+
+[fields.user_id]
+type = "bigint"
+required = true
+label = "Platform user id"
+
+[fields.availability]
+type = "enum"
+enum_values = ["online", "busy", "away", "offline"]
+default = "online"
+label = "Manual availability wish (effective merge: manual wins over heartbeat)"
+
+[fields.max_open]
+type = "integer"
+default = 20
+label = "Max concurrent open conversations"
+
+[fields.team_ids]
+type = "json"
+label = "Team ids (denormalized; also maintained via chat_team_member)"
+
+[[indexes]]
+fields = ["user_id"]
+unique = true
+
+[api.list]
+access = "authed"
+cache = false
+
+[api.get]
+access = "authed"
+cache = false
+
+[api.create]
+access = "admin"
+cache = false
+
+[api.update]
+access = "authed"
+cache = false
+
+[api.delete]
+access = "admin"
+cache = false

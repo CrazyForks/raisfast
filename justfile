@@ -132,6 +132,12 @@ test-unit: _link-cache
 test-integration: _link-cache
     SQLX_OFFLINE=true ID_ENCODING=false DATABASE_URL={{db_url}} RAISFAST_TEST_DB_URL={{test_db_url}} cargo test -p raisfast --test api --no-default-features --features "{{features}}" {{test_threads}}
 
+# Run the chat plugin's JS unit tests (services logic against the sdk mock,
+# no kernel/DB). Tests live in extensions/plugins/chat/test/ (dev source only,
+# never packaged into the .rafapp bundle).
+test-chat-plugin:
+    npm test --prefix extensions/plugins/chat
+
 # ── Database ──────────────────────────────────────────────────────
 
 # Create database (if needed) and load schema
@@ -273,8 +279,8 @@ sqlite-check:
 
 # ── Full CI Pipeline ──────────────────────────────────────────────
 
-# CI: fmt → lint → test (ensure all checks pass)
-ci: fmt-check lint test
+# CI: fmt → lint → test (ensure all checks pass; includes chat plugin JS tests)
+ci: fmt-check lint test test-chat-plugin
 
 # One-shot: reset test DB → regenerate sqlx cache → run all tests
 test-all: test-db-init db-prepare test

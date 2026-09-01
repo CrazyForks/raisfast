@@ -18,6 +18,9 @@ declare const RaisFastHost: {
   issueToken(input: string): string;
   verifyToken(token: string): string | null;
   decodeId(id: string): string;
+  presenceAvailable(tenant: string): string;
+  presenceStatus(tenant: string, subject: string): string;
+  presenceReport(tenant: string, subject: string, status: string): string;
   dbInsert(table: string, data: string, options: string): string;
   dbFetchOne(table: string, where: string, options: string): string;
   dbFetchAll(table: string, where: string, options: string): string;
@@ -322,6 +325,32 @@ export function verifyToken(token: string): VerifiedToken | null {
  */
 export function decodeId(id: string | number): string {
     return RaisFastHost.decodeId(String(id));
+}
+
+/** Subjects currently available in a tenant (effective Online/Busy), as an
+ * array of digit-string ids (`presence = ["available"]` permission). */
+export function presenceAvailable(tenant: string): string[] {
+    const result = RaisFastHost.presenceAvailable(String(tenant));
+    const parsed = JSON.parse(result);
+    if (parsed?.error) throw new Error(parsed.error);
+    return parsed;
+}
+
+/** Effective presence status of one subject, e.g. "online"/"away"
+ * (`presence = ["status"]` permission). */
+export function presenceStatus(tenant: string, subject: string | number): string {
+    const result = RaisFastHost.presenceStatus(String(tenant), String(subject));
+    const parsed = JSON.parse(result);
+    if (parsed?.error) throw new Error(parsed.error);
+    return parsed;
+}
+
+/** Set a subject's manual availability wish (away/busy/offline; empty/clear
+ * clears it) (`presence = ["report"]` permission). */
+export function presenceReport(tenant: string, subject: string | number, status?: string): void {
+    const result = RaisFastHost.presenceReport(String(tenant), String(subject), String(status ?? ""));
+    const parsed = JSON.parse(result);
+    if (parsed?.error) throw new Error(parsed.error);
 }
 
 export function logInfo(msg: string): void { RaisFastHost.log("info", msg); }

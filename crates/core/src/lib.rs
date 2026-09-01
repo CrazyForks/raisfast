@@ -279,12 +279,16 @@ pub async fn build_app_state(
         }
     }
 
+    let presence_store: Arc<dyn crate::presence::PresenceStore> =
+        Arc::new(crate::presence::InMemoryPresenceStore::new());
+
     let plugin_manager = PluginManager::new_with_options(
         Arc::new(config.clone()),
         crate::plugins::PluginManagerOptions {
             pool: Some(pool.clone()),
             event_bus: Some(eventbus.clone()),
             content_registry: Some(ct_registry.clone()),
+            presence_store: Some(presence_store.clone()),
         },
     )
     .await;
@@ -379,8 +383,6 @@ pub async fn build_app_state(
     let tenant_service = Arc::new(TenantService::new(Arc::new(pool.clone())));
     let audit_service = Arc::new(crate::services::audit::AuditService::new(pool.clone()));
     let webhook_service = Arc::new(crate::webhook::WebhookService::new(pool.clone()));
-    let presence_store: Arc<dyn crate::presence::PresenceStore> =
-        Arc::new(crate::presence::InMemoryPresenceStore::new());
 
     let storage = crate::storage::create_storage(config)?;
 

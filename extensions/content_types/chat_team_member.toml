@@ -1,0 +1,45 @@
+[content_type]
+name = "TeamMember"
+singular = "chat_team_member"
+plural = "chat_team_members"
+table = "chat_team_members"
+group = "chat"
+description = "Team membership: an agent belongs to zero or more teams (architecture §4.5 candidate pool)."
+implements = ["ownable", "timestampable", "tenantable"]
+
+[fields.team_id]
+type = "bigint"
+required = true
+label = "chat_team.id"
+
+[fields.user_id]
+type = "bigint"
+required = true
+label = "Platform user id"
+
+[[indexes]]
+fields = ["team_id", "user_id"]
+unique = true
+
+[[indexes]]
+fields = ["user_id"]
+
+[api.list]
+access = "authed"
+cache = false
+
+[api.get]
+access = "authed"
+cache = false
+
+[api.create]
+access = "admin"
+cache = false
+
+[api.update]
+access = "admin"
+cache = false
+
+[api.delete]
+access = "admin"
+cache = false

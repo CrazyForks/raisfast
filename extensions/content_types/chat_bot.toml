@@ -5,7 +5,7 @@ plural = "chat_bots"
 table = "chat_bots"
 group = "chat"
 description = "Chat bot: LLM auto-reply entity, enabled per-inbox by binding (default none)"
-implements = ["ownable", "timestampable"]
+implements = ["ownable", "timestampable", "tenantable"]
 
 [fields.name]
 type = "text"

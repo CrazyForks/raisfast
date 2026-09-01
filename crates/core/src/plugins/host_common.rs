@@ -97,6 +97,11 @@ pub struct HostContext {
     vfs: Option<Arc<VirtualFs>>,
     event_bus: Option<EventBus>,
     content_type_registry: Option<Arc<crate::content_type::ContentTypeRegistry>>,
+    presence_store: Option<Arc<dyn crate::presence::PresenceStore>>,
+    /// Per-call auth context (user + role + tenant) injected by the dispatcher
+    /// before each route/job invocation. `None` = no auth available (jobs
+    /// carry only a tenant when resolvable; wasm/legacy paths stay None).
+    current_auth: Option<crate::content_type::repository::SaveContext>,
 }
 
 impl Clone for HostContext {
@@ -111,6 +116,8 @@ impl Clone for HostContext {
             vfs: self.vfs.clone(),
             event_bus: self.event_bus.clone(),
             content_type_registry: self.content_type_registry.clone(),
+            presence_store: self.presence_store.clone(),
+            current_auth: self.current_auth.clone(),
         }
     }
 }
@@ -192,12 +199,36 @@ impl HostContext {
             vfs: None,
             event_bus: None,
             content_type_registry: None,
+            presence_store: None,
+            current_auth: None,
         }
+    }
+
+    /// Set the per-call auth context (user/role/tenant). Injected by the
+    /// dispatcher before each route/job invocation; jobs carry only a tenant
+    /// (user stays None), routes carry the full authenticated identity.
+    pub fn set_current_auth(&mut self, auth: crate::content_type::repository::SaveContext) {
+        self.current_auth = Some(auth);
+    }
+
+    /// Current tenant for the invoking call (route auth or job payload).
+    /// Falls back to the platform default tenant (single-tenant deployments).
+    fn current_tenant(&self) -> &str {
+        self.current_auth
+            .as_ref()
+            .and_then(|a| a.tenant_id.as_deref())
+            .unwrap_or(crate::constants::DEFAULT_TENANT)
     }
 
     /// Set the event bus (called after PluginManager initialization)
     pub fn set_event_bus(&mut self, bus: EventBus) {
         self.event_bus = Some(bus);
+    }
+
+    /// Set the presence store (called after PluginManager initialization).
+    /// Enables the `presence.*` host APIs (architecture §5.3).
+    pub fn set_presence_store(&mut self, store: Arc<dyn crate::presence::PresenceStore>) {
+        self.presence_store = Some(store);
     }
 
     /// Set the content type registry (called after PluginManager initialization)
@@ -451,11 +482,17 @@ impl HostContext {
     }
 
     fn save_ctx(&self) -> crate::content_type::repository::SaveContext {
-        crate::content_type::repository::SaveContext {
-            user_id: None,
-            user_int_id: None,
-            user_role: None,
-            tenant_id: Some(crate::constants::DEFAULT_TENANT.to_string()),
+        // Full identity when the dispatcher injected route auth; jobs have no
+        // user (system behavior) so user fields stay None and only the tenant
+        // is carried. Fallback = platform default tenant (single-tenant).
+        match &self.current_auth {
+            Some(a) => a.clone(),
+            None => crate::content_type::repository::SaveContext {
+                user_id: None,
+                user_int_id: None,
+                user_role: None,
+                tenant_id: Some(crate::constants::DEFAULT_TENANT.to_string()),
+            },
         }
     }
 
@@ -465,6 +502,7 @@ impl HostContext {
     /// (op defaults to `eq`; same filter grammar as the CT REST API).
     #[must_use]
     pub fn ct_find(&self, ct_plural: &str, query_json: &str) -> String {
+        let tenant = self.current_tenant().to_string();
         self.ct_run(ct_plural, async |ct, repo| {
             let q: serde_json::Value = if query_json.trim().is_empty() {
                 serde_json::json!({})
@@ -505,7 +543,7 @@ impl HostContext {
                 filters,
                 search: None,
                 fields: None,
-                tenant_id: None,
+                tenant_id: Some(tenant.clone()),
                 include: None,
                 skip_total: false,
                 rule_where: None,
@@ -530,12 +568,13 @@ impl HostContext {
     /// Fetch one CT row by id (row JSON string, `null` when missing).
     #[must_use]
     pub fn ct_get(&self, ct_plural: &str, id: &str) -> String {
+        let tenant = self.current_tenant().to_string();
         self.ct_run(ct_plural, async |ct, repo| {
             let Ok(id) = crate::types::snowflake_id::parse_id(id) else {
                 return Err(r#"{"error":"invalid id"}"#.into());
             };
             let mut row = repo
-                .find_by_id(&ct, id, Some(crate::constants::DEFAULT_TENANT), true)
+                .find_by_id(&ct, id, Some(&tenant), true)
                 .await
                 .map_err(ct_err)?;
             if let Some(r) = row.as_mut() {
@@ -549,11 +588,12 @@ impl HostContext {
     #[must_use]
     pub fn ct_create(&self, ct_plural: &str, data_json: &str) -> String {
         let save_ctx = self.save_ctx();
+        let tenant = save_ctx.tenant_id.as_deref();
         self.ct_run(ct_plural, async |ct, repo| {
             let data: serde_json::Value = serde_json::from_str(data_json)
                 .map_err(|e| format!(r#"{{"error":"invalid data json: {e}"}}"#))?;
             let mut created = repo
-                .create(&ct, data, Some(crate::constants::DEFAULT_TENANT), &save_ctx)
+                .create(&ct, data, tenant, &save_ctx)
                 .await
                 .map_err(ct_err)?;
             normalize_row_for_plugin(&ct, &mut created);
@@ -565,6 +605,7 @@ impl HostContext {
     #[must_use]
     pub fn ct_update(&self, ct_plural: &str, id: &str, data_json: &str) -> String {
         let save_ctx = self.save_ctx();
+        let tenant = save_ctx.tenant_id.as_deref();
         self.ct_run(ct_plural, async |ct, repo| {
             let Ok(id) = crate::types::snowflake_id::parse_id(id) else {
                 return Err(r#"{"error":"invalid id"}"#.into());
@@ -576,7 +617,7 @@ impl HostContext {
                     &ct,
                     id,
                     data,
-                    Some(crate::constants::DEFAULT_TENANT),
+                    tenant,
                     &save_ctx,
                 )
                 .await
@@ -786,6 +827,69 @@ impl HostContext {
         crate::types::snowflake_id::parse_id(id)
             .map(|snow| snow.0.to_string())
             .unwrap_or_else(|_| id.to_string())
+    }
+
+    // ── Presence host API (architecture §5.3) ───────────────────────
+    // Business-agnostic kernel primitive: plugins query "who is available
+    // right now" for assignment/routing (chat.assign, CRM lead routing, …).
+    // Gated by `permissions.presence`.
+
+    /// Subjects currently available in a tenant (effective Online/Busy), as a
+    /// JSON array of digit-string ids. Empty array when the store is absent.
+    #[must_use]
+    pub fn presence_available(&self, tenant_id: &str) -> String {
+        if !PermissionChecker::is_presence_allowed(&self.permissions, "available") {
+            return r#"{"error":"presence.available denied: needs presence = [\"available\"]"}"#.into();
+        }
+        let Some(store) = &self.presence_store else {
+            return "[]".into();
+        };
+        let ids = store.available(tenant_id);
+        serde_json::to_string(&ids.iter().map(|id| id.to_string()).collect::<Vec<_>>())
+            .unwrap_or_else(|_| "[]".into())
+    }
+
+    /// Effective presence status of one subject, e.g. `"online"` / `"away"`.
+    /// Returns the string or an error envelope.
+    #[must_use]
+    pub fn presence_status(&self, tenant_id: &str, subject_id: &str) -> String {
+        if !PermissionChecker::is_presence_allowed(&self.permissions, "status") {
+            return r#"{"error":"presence.status denied: needs presence = [\"status\"]"}"#.into();
+        }
+        let Some(store) = &self.presence_store else {
+            return "null".into();
+        };
+        let Ok(id) = subject_id.parse::<i64>() else {
+            return r#"{"error":"presence.status: invalid subject_id"}"#.into();
+        };
+        serde_json::to_string(&store.status(tenant_id, id).as_str()).unwrap_or_else(|_| "null".into())
+    }
+
+    /// Set a subject's manual availability wish (away/busy/…; null clears).
+    /// Used by plugins that hold their own availability UI (e.g. agent profile).
+    #[must_use]
+    pub fn presence_report(&self, tenant_id: &str, subject_id: &str, status: &str) -> String {
+        if !PermissionChecker::is_presence_allowed(&self.permissions, "report") {
+            return r#"{"error":"presence.report denied: needs presence = [\"report\"]"}"#.into();
+        }
+        let Some(store) = &self.presence_store else {
+            return r#"{"ok":false,"error":"presence store unavailable"}"#.into();
+        };
+        let Ok(id) = subject_id.parse::<i64>() else {
+            return r#"{"error":"presence.report: invalid subject_id"}"#.into();
+        };
+        let manual = match status {
+            "online" => Some(crate::presence::Availability::Online),
+            "busy" => Some(crate::presence::Availability::Busy),
+            "away" => Some(crate::presence::Availability::Away),
+            "offline" => Some(crate::presence::Availability::Offline),
+            "" | "null" | "clear" | "none" => None,
+            other => return format!(r#"{{"error":"presence.report: invalid status '{other}'"}}"#),
+        };
+        if let (Some(t), Some(bus)) = (store.set_manual(tenant_id, id, manual), &self.event_bus) {
+            crate::presence::emit_transition(bus, &t);
+        }
+        r#"{"ok":true}"#.into()
     }
 
     /// Execute a read-only SQL query (returns a JSON array string).

@@ -1,0 +1,51 @@
+[content_type]
+name = "Team"
+singular = "chat_team"
+plural = "chat_teams"
+table = "chat_teams"
+group = "chat"
+description = "Agent team: candidate pool for auto-assignment (architecture §4.5)."
+implements = ["ownable", "timestampable", "tenantable"]
+
+[fields.name]
+type = "text"
+required = true
+max_length = 200
+label = "Team name"
+
+[fields.description]
+type = "text"
+label = "Description"
+
+[fields.allow_auto_assign]
+type = "boolean"
+default = true
+label = "Allow auto-assignment into this team"
+
+[fields.assign_config]
+type = "json"
+label = "Assignment strategy (round_robin cursor / least_busy)"
+
+[[indexes]]
+fields = ["name"]
+unique = true
+
+[api.list]
+access = "authed"
+cache = false
+
+[api.get]
+access = "authed"
+cache = false
+
+[api.create]
+access = "admin"
+cache = false
+
+[api.update]
+access = "admin"
+cache = false
+
+[api.delete]
+access = "admin"
+cache = false

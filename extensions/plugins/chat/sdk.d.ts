@@ -106,6 +106,15 @@ export declare function verifyToken(token: string): VerifiedToken | null;
  * Idempotent: already-digit ids pass through unchanged.
  */
 export declare function decodeId(id: string | number): string;
+/** Subjects currently available in a tenant (effective Online/Busy), as an
+ * array of digit-string ids (`presence = ["available"]` permission). */
+export declare function presenceAvailable(tenant: string): string[];
+/** Effective presence status of one subject, e.g. "online"/"away"
+ * (`presence = ["status"]` permission). */
+export declare function presenceStatus(tenant: string, subject: string | number): string;
+/** Set a subject's manual availability wish (away/busy/offline; empty/clear
+ * clears it) (`presence = ["report"]` permission). */
+export declare function presenceReport(tenant: string, subject: string | number, status?: string): void;
 export declare function logInfo(msg: string): void;
 export declare function logWarn(msg: string): void;
 export declare function logError(msg: string): void;

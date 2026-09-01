@@ -21,6 +21,9 @@ content_types = [
     "chat_contact_identities",
     "chat_conversations",
     "chat_messages",
+    "chat_agent_profiles",
+    "chat_teams",
+    "chat_team_members",
 ]
 # Read-only SQL for platform users (agents list) + channel_key→id lookup
 # (widget/session bootstrap). users/itg_channels are not CTs.
@@ -28,12 +31,16 @@ database = ["read:users", "read:itg_channels"]
 # Outbound LLM via declarative api-clients (named per bot config, e.g. "glm").
 egress = ["*"]
 # chat.ingress enqueues chat.autoreply (fallback mode uses delay_mins);
-# sendMessage enqueues chat.egress.
-jobs = ["chat.autoreply", "chat.egress"]
+# sendMessage enqueues chat.egress; chat.assign is triggered by the rescan
+# cron / workspace manual assign.
+jobs = ["chat.autoreply", "chat.egress", "chat.assign"]
 # Read inbound receipts (envelope snapshot = deterministic facts).
 integration = ["receipts"]
 # Widget session tokens: mint (issue) + validate (verify) short-session JWTs.
 session = ["issue", "verify"]
+# Presence store queries: assignment candidate filtering (available/status)
+# + manual availability wish (report). Business-agnostic kernel primitive.
+presence = ["available", "status", "report"]
 
 [[jobs]]
 job_type = "chat.ingress"
@@ -49,6 +56,26 @@ description = "Bot LLM step: context window -> callApi -> assistant message -> S
 job_type = "chat.egress"
 handler = "onEgress"
 description = "Outbound dispatch: kind=sse -> mark delivered; kind=api -> callApi passthrough"
+
+[[jobs]]
+job_type = "chat.assign"
+handler = "onAssign"
+description = "Auto-assignment: presence.available -> team/profile/max_open filter -> round_robin/least_busy -> assignee + SSE (architecture §4.5)"
+
+[[jobs]]
+job_type = "chat.assign.scan"
+handler = "onAssignScan"
+description = "Rescan cron: batch-assign unassigned open/pending conversations (coalesce; skips already-assigned / no-candidate)"
+
+# Rescan cadence for unassigned conversations (architecture §4.5: cron
+# coalesce, `app.chat.unassigned_scan_secs` default ~60s). 30s keeps the
+# worst-case assign latency bounded while staying gentle on the DB.
+[[cron]]
+label = "chat unassigned rescan"
+job_type = "chat.assign.scan"
+payload = '{"limit":100}'
+cron_expr = "*/30 * * * * *"
+enabled = true
 
 # ── Workspace routes (CH-1) ────────────────────────────────────────
 # Agent workspace action endpoints (有副作用编排: SSE/egress/冗余更新).

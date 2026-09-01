@@ -5,7 +5,7 @@ plural = "chat_conversations"
 table = "chat_conversations"
 group = "chat"
 description = "Chat conversation: state machine open/pending/snoozed/resolved"
-implements = ["ownable", "timestampable"]
+implements = ["ownable", "timestampable", "tenantable"]
 
 [fields.contact_id]
 type = "bigint"

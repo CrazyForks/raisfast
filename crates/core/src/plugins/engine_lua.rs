@@ -65,7 +65,12 @@ impl LuaEngine {
         Ok(lua)
     }
 
-    fn create_instance(&self, entry: &LuaPluginEntry, plugin_id: &str) -> anyhow::Result<Lua> {
+    fn create_instance(
+        &self,
+        entry: &LuaPluginEntry,
+        plugin_id: &str,
+        auth: Option<crate::content_type::repository::SaveContext>,
+    ) -> anyhow::Result<Lua> {
         let memory_limit = (self.config.plugin_max_memory_mb as usize) * 1024 * 1024;
         let lua = Self::create_sandboxed_lua(memory_limit)?;
         super::lua_host::register_host_functions(
@@ -76,6 +81,8 @@ impl LuaEngine {
             self.pool.clone(),
             self.event_bus.clone(),
             self.content_registry.clone(),
+            self.presence_store.clone(),
+            auth,
         )?;
         Self::register_require(&lua, &entry.plugin_dir, entry.sdk_source)?;
         lua.load(&entry.code).set_name("init.lua").exec()?;
@@ -144,6 +151,8 @@ impl LuaEngine {
             self.pool.clone(),
             self.event_bus.clone(),
             self.content_registry.clone(),
+            self.presence_store.clone(),
+            None,
         )?;
         Self::register_require(&lua, plugin_dir, sdk_source)?;
         lua.load(code).set_name("init.lua").exec()?;
@@ -182,12 +191,13 @@ impl LuaEngine {
         plugin_id: &str,
         func_name: &str,
         input: &T,
+        auth: Option<crate::content_type::repository::SaveContext>,
     ) -> anyhow::Result<Option<T>> {
         let Some(entry) = self.plugins.get(plugin_id) else {
             return Ok(None);
         };
 
-        let lua = self.create_instance(&entry, plugin_id)?;
+        let lua = self.create_instance(&entry, plugin_id, auth)?;
         exec_with_timeout(&lua, || {
             let globals = lua.globals();
             let plugin_table: mlua::Table = match globals.get("Plugin") {

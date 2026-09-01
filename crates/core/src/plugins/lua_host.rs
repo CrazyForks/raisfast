@@ -23,6 +23,8 @@ pub fn register_host_functions(
     pool: Option<Pool>,
     event_bus: Option<crate::eventbus::EventBus>,
     content_registry: Option<std::sync::Arc<crate::content_type::ContentTypeRegistry>>,
+    presence_store: Option<std::sync::Arc<dyn crate::presence::PresenceStore>>,
+    auth: Option<crate::content_type::repository::SaveContext>,
 ) -> anyhow::Result<()> {
     let globals = lua.globals();
     let host = lua.create_table()?;
@@ -33,6 +35,12 @@ pub fn register_host_functions(
     }
     if let Some(bus) = event_bus {
         hc_inner.set_event_bus(bus);
+    }
+    if let Some(presence) = presence_store {
+        hc_inner.set_presence_store(presence);
+    }
+    if let Some(auth_ctx) = auth {
+        hc_inner.set_current_auth(auth_ctx);
     }
     let host_ctx = Arc::new(hc_inner);
 
@@ -183,6 +191,33 @@ pub fn register_host_functions(
         Ok(mlua::Value::String(lua.create_string(hc.decode_id(&id))?))
     })?;
     host.set("decodeId", decode_id_fn)?;
+
+    // ── Presence host API (architecture §5.3) ───────────────────────
+    let hc = host_ctx.clone();
+    let presence_available_fn = lua.create_function(move |lua, tenant: String| {
+        Ok(mlua::Value::String(
+            lua.create_string(hc.presence_available(&tenant))?,
+        ))
+    })?;
+    host.set("presenceAvailable", presence_available_fn)?;
+
+    let hc = host_ctx.clone();
+    let presence_status_fn =
+        lua.create_function(move |lua, (tenant, subject): (String, String)| {
+            Ok(mlua::Value::String(
+                lua.create_string(hc.presence_status(&tenant, &subject))?,
+            ))
+        })?;
+    host.set("presenceStatus", presence_status_fn)?;
+
+    let hc = host_ctx.clone();
+    let presence_report_fn =
+        lua.create_function(move |lua, (tenant, subject, status): (String, String, String)| {
+            Ok(mlua::Value::String(
+                lua.create_string(hc.presence_report(&tenant, &subject, &status))?,
+            ))
+        })?;
+    host.set("presenceReport", presence_report_fn)?;
 
     let hc = host_ctx.clone();
     let db_begin_fn = lua.create_function(move |lua, ()| {

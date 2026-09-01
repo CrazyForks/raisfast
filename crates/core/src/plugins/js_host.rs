@@ -15,6 +15,11 @@ use crate::plugins::Permissions;
 use crate::plugins::host_common::HostContext;
 
 /// Register host functions into the JS global scope.
+///
+/// # Clippy
+/// Deliberately accepts all plugin dependencies as explicit params so the
+/// host surface is auditable at a glance (matches lua/rhai host registration).
+#[allow(clippy::too_many_arguments)]
 pub fn register_host_functions(
     ctx: rquickjs::Ctx,
     config: Arc<AppConfig>,
@@ -23,6 +28,8 @@ pub fn register_host_functions(
     pool: Option<Pool>,
     event_bus: Option<crate::eventbus::EventBus>,
     content_registry: Option<std::sync::Arc<crate::content_type::ContentTypeRegistry>>,
+    presence_store: Option<std::sync::Arc<dyn crate::presence::PresenceStore>>,
+    auth: Option<crate::content_type::repository::SaveContext>,
 ) -> rquickjs::Result<()> {
     let global = ctx.globals();
     let host = Object::new(ctx.clone())?;
@@ -33,6 +40,12 @@ pub fn register_host_functions(
     }
     if let Some(bus) = event_bus {
         hc_inner.set_event_bus(bus);
+    }
+    if let Some(presence) = presence_store {
+        hc_inner.set_presence_store(presence);
+    }
+    if let Some(auth_ctx) = auth {
+        hc_inner.set_current_auth(auth_ctx);
     }
     let host_ctx = Arc::new(hc_inner);
 
@@ -152,6 +165,30 @@ pub fn register_host_functions(
         hc.decode_id(&id)
     })?;
     host.set("decodeId", decode_id_fn)?;
+
+    // ── Presence host API (architecture §5.3) ───────────────────────
+    // Business-agnostic: "who is available right now" for assignment/routing.
+    let hc = host_ctx.clone();
+    let presence_available_fn = Function::new(ctx.clone(), move |tenant: String| -> String {
+        hc.presence_available(&tenant)
+    })?;
+    host.set("presenceAvailable", presence_available_fn)?;
+
+    let hc = host_ctx.clone();
+    let presence_status_fn =
+        Function::new(ctx.clone(), move |tenant: String, subject: String| -> String {
+            hc.presence_status(&tenant, &subject)
+        })?;
+    host.set("presenceStatus", presence_status_fn)?;
+
+    let hc = host_ctx.clone();
+    let presence_report_fn = Function::new(
+        ctx.clone(),
+        move |tenant: String, subject: String, status: String| -> String {
+            hc.presence_report(&tenant, &subject, &status)
+        },
+    )?;
+    host.set("presenceReport", presence_report_fn)?;
 
     let hc = host_ctx.clone();
     let db_execute_fn = Function::new(ctx.clone(), move |sql: String, params: String| -> String {
@@ -329,6 +366,8 @@ mod tests {
                 None,
                 None,
                 None,
+                None,
+                None,
             )
             .unwrap();
 
@@ -364,6 +403,8 @@ mod tests {
                 None,
                 None,
                 None,
+                None,
+                None,
             )
             .unwrap();
 
@@ -396,6 +437,8 @@ mod tests {
                 None,
                 None,
                 None,
+                None,
+                None,
             )
             .unwrap();
 
@@ -422,6 +465,8 @@ mod tests {
                 config,
                 "test-plugin".into(),
                 perms,
+                None,
+                None,
                 None,
                 None,
                 None,
@@ -454,6 +499,8 @@ mod tests {
                 None,
                 None,
                 None,
+                None,
+                None,
             )
             .unwrap();
 
@@ -480,6 +527,8 @@ mod tests {
                 config,
                 "test-plugin".into(),
                 perms,
+                None,
+                None,
                 None,
                 None,
                 None,
@@ -512,6 +561,8 @@ mod tests {
                 None,
                 None,
                 None,
+                None,
+                None,
             )
             .unwrap();
 
@@ -538,6 +589,8 @@ mod tests {
                 config,
                 "test-plugin".into(),
                 perms,
+                None,
+                None,
                 None,
                 None,
                 None,
@@ -570,6 +623,8 @@ mod tests {
                 None,
                 None,
                 None,
+                None,
+                None,
             )
             .unwrap();
 
@@ -596,6 +651,8 @@ mod tests {
                 config,
                 "test-plugin".into(),
                 perms,
+                None,
+                None,
                 None,
                 None,
                 None,

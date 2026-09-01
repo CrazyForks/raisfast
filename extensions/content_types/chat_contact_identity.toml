@@ -5,7 +5,7 @@ plural = "chat_contact_identities"
 table = "chat_contact_identities"
 group = "chat"
 description = "Per-channel sender identity merged into a contact (unique per channel+sender)"
-implements = ["ownable", "timestampable"]
+implements = ["ownable", "timestampable", "tenantable"]
 
 [fields.contact_id]
 type = "bigint"

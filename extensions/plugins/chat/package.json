@@ -1,0 +1,8 @@
+{
+  "name": "@raisfast/chat-plugin-tests",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --import ./test/loader.mjs --test test/*.test.mjs"
+  }
+}

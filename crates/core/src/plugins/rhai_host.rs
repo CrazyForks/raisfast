@@ -17,6 +17,11 @@ use crate::plugins::Permissions;
 use crate::plugins::host_common::HostContext;
 
 /// Register host functions into the Rhai Engine global scope.
+///
+/// # Clippy
+/// Deliberately accepts all plugin dependencies as explicit params so the
+/// host surface is auditable at a glance (matches js/lua host registration).
+#[allow(clippy::too_many_arguments)]
 pub fn register_host_functions(
     engine: &mut Engine,
     config: Arc<AppConfig>,
@@ -25,6 +30,8 @@ pub fn register_host_functions(
     pool: Option<Pool>,
     event_bus: Option<crate::eventbus::EventBus>,
     content_registry: Option<std::sync::Arc<crate::content_type::ContentTypeRegistry>>,
+    presence_store: Option<std::sync::Arc<dyn crate::presence::PresenceStore>>,
+    auth: Option<crate::content_type::repository::SaveContext>,
 ) {
     let mut hc_inner = HostContext::new("rhai", config, plugin_id, permissions, pool);
     if let Some(registry) = content_registry {
@@ -32,6 +39,12 @@ pub fn register_host_functions(
     }
     if let Some(bus) = event_bus {
         hc_inner.set_event_bus(bus);
+    }
+    if let Some(presence) = presence_store {
+        hc_inner.set_presence_store(presence);
+    }
+    if let Some(auth_ctx) = auth {
+        hc_inner.set_current_auth(auth_ctx);
     }
     let host_ctx = Arc::new(hc_inner);
 
@@ -138,6 +151,26 @@ pub fn register_host_functions(
 
     let hc = host_ctx.clone();
     engine.register_fn("decodeId", move |id: &str| -> String { hc.decode_id(id) });
+
+    // ── Presence host API (architecture §5.3) ───────────────────────
+    let hc = host_ctx.clone();
+    engine.register_fn("presenceAvailable", move |tenant: &str| -> String {
+        hc.presence_available(tenant)
+    });
+
+    let hc = host_ctx.clone();
+    engine.register_fn(
+        "presenceStatus",
+        move |tenant: &str, subject: &str| -> String { hc.presence_status(tenant, subject) },
+    );
+
+    let hc = host_ctx.clone();
+    engine.register_fn(
+        "presenceReport",
+        move |tenant: &str, subject: &str, status: &str| -> String {
+            hc.presence_report(tenant, subject, status)
+        },
+    );
 
     let hc = host_ctx.clone();
     engine.register_fn("dbExecute", move |sql: &str, params: &str| -> String {
@@ -324,6 +357,8 @@ mod tests {
             None,
             None,
             None,
+            None,
+            None,
         );
 
         let result: () = engine.eval(r#"log("info", "test")"#).unwrap();
@@ -344,6 +379,8 @@ mod tests {
             config,
             "test-plugin".into(),
             perms,
+            None,
+            None,
             None,
             None,
             None,
@@ -390,6 +427,8 @@ mod tests {
             None,
             None,
             None,
+            None,
+            None,
         );
 
         let result = engine
@@ -408,6 +447,8 @@ mod tests {
             config,
             "test-plugin".into(),
             perms,
+            None,
+            None,
             None,
             None,
             None,
@@ -432,6 +473,8 @@ mod tests {
             None,
             None,
             None,
+            None,
+            None,
         );
 
         let result = engine
@@ -450,6 +493,8 @@ mod tests {
             config,
             "test-plugin".into(),
             perms,
+            None,
+            None,
             None,
             None,
             None,
@@ -501,6 +546,8 @@ mod tests {
             None,
             None,
             None,
+            None,
+            None,
         );
 
         let result: String = engine
@@ -522,6 +569,8 @@ mod tests {
             None,
             None,
             None,
+            None,
+            None,
         );
 
         let result: String = engine
@@ -540,6 +589,8 @@ mod tests {
             config,
             "test-plugin".into(),
             perms,
+            None,
+            None,
             None,
             None,
             None,

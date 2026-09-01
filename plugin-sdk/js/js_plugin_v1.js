@@ -250,6 +250,32 @@ export function verifyToken(token) {
 export function decodeId(id) {
     return RaisFastHost.decodeId(String(id));
 }
+/** Subjects currently available in a tenant (effective Online/Busy), as an
+ * array of digit-string ids (`presence = ["available"]` permission). */
+export function presenceAvailable(tenant) {
+    const result = RaisFastHost.presenceAvailable(String(tenant));
+    const parsed = JSON.parse(result);
+    if (parsed?.error)
+        throw new Error(parsed.error);
+    return parsed;
+}
+/** Effective presence status of one subject, e.g. "online"/"away"
+ * (`presence = ["status"]` permission). */
+export function presenceStatus(tenant, subject) {
+    const result = RaisFastHost.presenceStatus(String(tenant), String(subject));
+    const parsed = JSON.parse(result);
+    if (parsed?.error)
+        throw new Error(parsed.error);
+    return parsed;
+}
+/** Set a subject's manual availability wish (away/busy/offline; empty/clear
+ * clears it) (`presence = ["report"]` permission). */
+export function presenceReport(tenant, subject, status) {
+    const result = RaisFastHost.presenceReport(String(tenant), String(subject), String(status ?? ""));
+    const parsed = JSON.parse(result);
+    if (parsed?.error)
+        throw new Error(parsed.error);
+}
 export function logInfo(msg) { RaisFastHost.log("info", msg); }
 export function logWarn(msg) { RaisFastHost.log("warn", msg); }
 export function logError(msg) { RaisFastHost.log("error", msg); }

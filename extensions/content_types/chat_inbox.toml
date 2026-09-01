@@ -5,7 +5,7 @@ plural = "chat_inboxes"
 table = "chat_inboxes"
 group = "chat"
 description = "Chat inbox: business profile bound to an integration channel"
-implements = ["ownable", "timestampable"]
+implements = ["ownable", "timestampable", "tenantable"]
 
 [fields.channel_id]
 type = "bigint"
