@@ -18,6 +18,9 @@ use crate::utils::tz::Timestamp;
 pub struct ItgChannel {
     pub id: SnowflakeId,
     pub tenant_id: String,
+    /// App ownership (channel-app-ownership.md §2): NULL = platform/global
+    /// channel managed by the platform admin; `Some(app_id)` = app-owned.
+    pub app_id: Option<String>,
     /// Human-readable routing key: `/ingress/{channel_key}`. Not named `key` —
     /// MySQL reserved word (glossary §1).
     pub channel_key: String,
@@ -147,6 +150,7 @@ pub mod model {
             "itg_channels",
             [
                 "id" => ch.id,
+                "app_id" => ch.app_id.as_deref(),
                 "channel_key" => &ch.channel_key,
                 "provider" => &ch.provider,
                 "display_name" => &ch.display_name,
@@ -202,7 +206,7 @@ pub mod model {
     /// Hand-written SQL: `crud_find_all!` requires a `where:` section and we
     /// genuinely want the full table (channels are few).
     pub async fn find_all(pool: &crate::db::Pool) -> AppResult<Vec<ItgChannel>> {
-        const CHANNEL_COLS: &str = "id, tenant_id, channel_key, provider, display_name, mode, \
+        const CHANNEL_COLS: &str = "id, tenant_id, app_id, channel_key, provider, display_name, mode, \
              transport, framing, codec, endpoint, verify_kind, verify_config, credentials, \
              mapping, normalizer_plugin, pull_semantics, pull_config, stream_config, \
              ack_kind, redelivery_max, backpressure, target_type, route_extra, status, \
@@ -310,6 +314,7 @@ mod tests {
         ItgChannel {
             id: new_snowflake_id(),
             tenant_id: "default".into(),
+            app_id: None,
             channel_key: "test-ch".into(),
             provider: "generic-hmac".into(),
             display_name: "Test".into(),

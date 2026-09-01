@@ -7,13 +7,17 @@
 // conversation.bot_status=active → enqueue chat.autoreply).
 
 import {
+    callApi,
     ctGet,
+    ctUpdate,
     getReceipt,
     jobEnqueue,
     logInfo,
+    logWarn,
 } from 'sdk';
 import {
     CT_BOT,
+    CT_CONTACT,
     CT_CONV,
     CT_INBOX,
     findFirst,
@@ -55,9 +59,19 @@ export function onIngress(input) {
     }
 
     const contactId = ensureIdentity(channelKey, sender);
+    enrichContact(channelKey, sender, contactId);
     const conv = ensureConversation(contactId, inbox, bot != null);
     const messageId = linkMessage(traceId, externalId, conv.id, conv.isNew);
     touchConversation(conv.id, conv.row);
+
+    // Persist the outbound reply target (per channel, from the mapping):
+    //   feishu  → reply_chat_id  (event.message.chat_id)
+    //   dingtalk → reply_webhook (data.sessionWebhook, per-message URL)
+    // chat.egress reads conv.reply_to to send agent replies back.
+    const replyTo = buildReplyTo(channelKey, env);
+    if (replyTo) {
+        ctUpdate(CT_CONV, conv.id, { reply_to: replyTo });
+    }
 
     emitMessageCreated({
         trace_id: traceId,
@@ -67,6 +81,7 @@ export function onIngress(input) {
         message_id: messageId,
         role: 'user',
         body,
+        last_message_at: new Date().toISOString(),
     });
     logInfo(`[chat] ingress merged trace=${traceId} conv=${conv.id}`);
 
@@ -86,4 +101,50 @@ export function onIngress(input) {
         }, opts);
     }
     return { conversation_id: conv.id };
+}
+
+// Derive the per-channel outbound reply target from the mapped envelope
+// payload (chat_message.reply_chat_id / reply_webhook). Null when the channel
+// has no reply capability (e.g. widget SSE — egress falls back to sse).
+export function buildReplyTo(channelKey, env) {
+    const payload = env?.payload ?? {};
+    const chatId = payload.reply_chat_id ?? payload.chat_id ?? null;
+    const openId = payload.reply_open_id ?? payload.open_id ?? null;
+    const webhook = payload.reply_webhook ?? payload.webhook ?? null;
+    if (!chatId && !openId && !webhook) return null;
+    const reply = { channel: channelKey };
+    if (chatId) reply.chat_id = String(chatId);
+    if (openId) reply.open_id = String(openId);
+    if (webhook) reply.webhook = String(webhook);
+    return reply;
+}
+
+// Enrich a contact's display name from the IM provider once, so the workspace
+// shows a real name instead of the raw open_id/staffId. Runs only when the
+// contact is still named after the sender (not yet resolved); best-effort —
+// any provider error keeps the sender id as the name.
+export function enrichContact(channelKey, sender, contactId) {
+    const contact = ctGet(CT_CONTACT, contactId);
+    if (!contact) return;
+    const name = contact.name;
+    if (name && name !== sender) return; // already resolved
+
+    try {
+        if (channelKey === 'feishu') {
+            const outRaw = callApi('feishu', 'get_user', { user_id: String(sender) });
+            const out = typeof outRaw === 'string' ? JSON.parse(outRaw) : outRaw;
+            if (out && out.error) throw new Error(out.error);
+            const v = out?.output ?? out;
+            const realName = v?.name ?? v?.data?.name;
+            if (realName) {
+                const patch = { name: String(realName) };
+                if (v.avatar_url) patch.avatar_url = String(v.avatar_url);
+                ctUpdate(CT_CONTACT, contactId, patch);
+                logInfo(`[chat] feishu contact enriched: ${sender} → ${realName}`);
+            }
+        }
+        // dingtalk/telegram/... per-channel resolvers land in CH-3.
+    } catch (e) {
+        logWarn(`[chat] contact enrich failed (${channelKey}/${sender}): ${e}`);
+    }
 }

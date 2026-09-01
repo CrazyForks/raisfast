@@ -72,9 +72,7 @@ pub(crate) fn plugin_auth_from_input(
             });
         // user_id crosses the boundary as a digit string; parse it back to the
         // int the ownable protocol needs for created_by/updated_by.
-        let user_int_id = user_id_str
-            .as_deref()
-            .and_then(|s| s.parse::<i64>().ok());
+        let user_int_id = user_id_str.as_deref().and_then(|s| s.parse::<i64>().ok());
         return Some(crate::content_type::repository::SaveContext {
             user_id: user_id_str,
             user_int_id,
@@ -1980,7 +1978,8 @@ impl PluginManager {
     ) -> Result<Option<serde_json::Value>, anyhow::Error> {
         // Per-call auth context: routes carry full identity in input.auth;
         // jobs carry only a tenant in payload.tenant_id (user stays None).
-        let auth_ctx = crate::plugins::plugin_auth_from_input(input);        match &plugin.instance {
+        let auth_ctx = crate::plugins::plugin_auth_from_input(input);
+        match &plugin.instance {
             #[cfg(feature = "plugin-wasm")]
             LoadedPluginInstance::Wasm(wasm) => {
                 let mut instance = wasm.acquire().await;

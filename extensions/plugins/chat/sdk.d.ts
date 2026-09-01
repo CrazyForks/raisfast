@@ -115,6 +115,79 @@ export declare function presenceStatus(tenant: string, subject: string | number)
 /** Set a subject's manual availability wish (away/busy/offline; empty/clear
  * clears it) (`presence = ["report"]` permission). */
 export declare function presenceReport(tenant: string, subject: string | number, status?: string): void;
+/** App-scoped channel host API (channel-app-ownership.md §4.2) — a plugin
+ * manages only its own app's channels (`integration = ["channels"]`). */
+/** List the invoking app's channels in the current tenant. */
+export declare function channelList(): Channel[];
+/** Create an app-owned channel; returns the created channel. `app_id` is
+ * derived from the plugin id, never from the payload. */
+export declare function channelCreate(data: Partial<ChannelInput> & {
+    channel_key: string;
+    provider: string;
+    mode: string;
+    transport: string;
+    framing: string;
+    codec: string;
+    verify_kind: string;
+    target_type: string;
+}): Channel;
+/** Partial-update an app-owned channel; returns the updated channel. */
+export declare function channelUpdate(id: string | number, data: Partial<ChannelInput>): Channel;
+/** Delete an app-owned channel. */
+export declare function channelDelete(id: string | number): void;
+/** Wire shape mirrors the kernel `CreateChannelRequest` (snake_case). */
+export interface ChannelInput {
+    channel_key: string;
+    provider: string;
+    display_name: string;
+    mode: string;
+    transport: string;
+    framing: string;
+    codec: string;
+    endpoint?: string | null;
+    verify_kind: string;
+    verify_config?: unknown;
+    credentials?: unknown;
+    mapping?: unknown;
+    pull_semantics?: string | null;
+    pull_config?: unknown;
+    stream_config?: unknown;
+    redelivery_max?: number;
+    backpressure?: unknown;
+    target_type: string;
+    route_extra?: unknown;
+    enabled?: boolean;
+}
+/** Wire shape mirrors the kernel `ChannelResponse` (snake_case). */
+export interface Channel {
+    id: string;
+    tenant_id: string;
+    app_id: string | null;
+    channel_key: string;
+    provider: string;
+    display_name: string;
+    mode: string;
+    transport: string;
+    framing: string;
+    codec: string;
+    endpoint: string | null;
+    verify_kind: string;
+    verify_config?: unknown;
+    mapping?: unknown;
+    pull_semantics: string | null;
+    pull_config?: unknown;
+    stream_config?: unknown;
+    ack_kind: string;
+    redelivery_max: number;
+    backpressure?: unknown;
+    target_type: string;
+    route_extra?: unknown;
+    status: string;
+    enabled: boolean;
+    version: number;
+    shadow: boolean;
+    has_credentials: boolean;
+}
 export declare function logInfo(msg: string): void;
 export declare function logWarn(msg: string): void;
 export declare function logError(msg: string): void;

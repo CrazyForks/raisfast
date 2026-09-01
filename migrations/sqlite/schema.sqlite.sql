@@ -1109,6 +1109,8 @@ CREATE INDEX IF NOT EXISTS idx_shipping_templates_status ON shipping_templates(s
 CREATE TABLE IF NOT EXISTS itg_channels (
     id INTEGER PRIMARY KEY,
     tenant_id TEXT NOT NULL DEFAULT 'default',
+    -- App ownership (channel-app-ownership.md §2): NULL = platform/global channel.
+    app_id TEXT,
     channel_key TEXT NOT NULL,
     provider TEXT NOT NULL,
     display_name TEXT NOT NULL,
@@ -1142,6 +1144,7 @@ CREATE TABLE IF NOT EXISTS itg_channels (
 );
 
 CREATE INDEX IF NOT EXISTS idx_itg_channels_tenant ON itg_channels(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_itg_channels_app ON itg_channels(app_id);
 CREATE INDEX IF NOT EXISTS idx_itg_channels_status ON itg_channels(status);
 
 -- Cursor store: one row per pull channel; advanced by conditional update

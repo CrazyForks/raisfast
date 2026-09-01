@@ -276,6 +276,40 @@ export function presenceReport(tenant, subject, status) {
     if (parsed?.error)
         throw new Error(parsed.error);
 }
+/** App-scoped channel host API (channel-app-ownership.md §4.2) — a plugin
+ * manages only its own app's channels (`integration = ["channels"]`). */
+/** List the invoking app's channels in the current tenant. */
+export function channelList() {
+    const result = RaisFastHost.channelList();
+    const parsed = JSON.parse(result);
+    if (parsed?.error)
+        throw new Error(parsed.error);
+    return parsed;
+}
+/** Create an app-owned channel; returns the created channel. `app_id` is
+ * derived from the plugin id, never from the payload. */
+export function channelCreate(data) {
+    const result = RaisFastHost.channelCreate(JSON.stringify(data));
+    const parsed = JSON.parse(result);
+    if (parsed?.error)
+        throw new Error(parsed.error);
+    return parsed;
+}
+/** Partial-update an app-owned channel; returns the updated channel. */
+export function channelUpdate(id, data) {
+    const result = RaisFastHost.channelUpdate(String(id), JSON.stringify(data));
+    const parsed = JSON.parse(result);
+    if (parsed?.error)
+        throw new Error(parsed.error);
+    return parsed;
+}
+/** Delete an app-owned channel. */
+export function channelDelete(id) {
+    const result = RaisFastHost.channelDelete(String(id));
+    const parsed = JSON.parse(result);
+    if (parsed?.error)
+        throw new Error(parsed.error);
+}
 export function logInfo(msg) { RaisFastHost.log("info", msg); }
 export function logWarn(msg) { RaisFastHost.log("warn", msg); }
 export function logError(msg) { RaisFastHost.log("error", msg); }

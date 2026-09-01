@@ -21,6 +21,7 @@ use crate::integration::dto::{
 use crate::integration::receipt;
 use crate::integration::vault::Vault;
 use crate::middleware::auth::{AuthUser, TokenAction};
+use crate::types::snowflake_id::SnowflakeId;
 use crate::utils::pagination::PaginationParams;
 
 // ── Validation ───────────────────────────────────────────────────────
@@ -28,7 +29,7 @@ use crate::utils::pagination::PaginationParams;
 /// Layer-stack legality matrix for this phase (integration.md §2, M1/M2
 /// subset). Rejects meaningless or not-yet-supported combinations at save
 /// time instead of runtime.
-fn validate_stack(req: &CreateChannelRequest) -> Result<(), AppError> {
+pub(crate) fn validate_stack(req: &CreateChannelRequest) -> Result<(), AppError> {
     const MODE_TRANSPORTS: &[(&str, &[&str])] = &[
         ("push", &["http1", "http2"]),
         #[cfg(feature = "integration-imap")]
@@ -71,10 +72,17 @@ fn validate_stack(req: &CreateChannelRequest) -> Result<(), AppError> {
             "framing+codec must be raw+json (or json-rpc+json on ws stream)".into(),
         ));
     }
-    let supported_verify = ["hmac-sha256", "token", "challenge", "none"];
+    let supported_verify = [
+        "hmac-sha256",
+        "token",
+        "challenge",
+        "wechat-aes",
+        "jwt-widget",
+        "none",
+    ];
     if !supported_verify.contains(&req.verify_kind.as_str()) {
         return Err(AppError::BadRequest(format!(
-            "verify_kind '{}' not supported (hmac-sha256 | token | challenge | none)",
+            "verify_kind '{}' not supported (hmac-sha256 | token | challenge | wechat-aes | jwt-widget | none)",
             req.verify_kind
         )));
     }
@@ -148,7 +156,7 @@ fn validate_mapping_and_ok(req: &CreateChannelRequest) -> Result<(), AppError> {
     Ok(())
 }
 
-fn seal_credentials(
+pub(crate) fn seal_credentials(
     vault: Option<&Vault>,
     credentials: Option<&Value>,
 ) -> Result<Option<String>, AppError> {
@@ -165,44 +173,74 @@ fn seal_credentials(
 
 // ── Channel CRUD ─────────────────────────────────────────────────────
 
+/// Query params for the channel list: optional `?app=<app_id>` filter
+/// (channel-app-ownership.md §4.1). `app` omitted → all channels.
+#[derive(Debug, Default, Deserialize)]
+pub struct ChannelListParams {
+    pub app: Option<String>,
+}
+
 pub async fn list_channels(
     auth: AuthUser,
     State(state): State<AppState>,
+    Query(params): Query<ChannelListParams>,
 ) -> AppResult<ApiResponse<Vec<ChannelResponse>>> {
     auth.ensure_admin()?;
     auth.ensure_scope("integration", TokenAction::Read)?;
     let rows = channel::model::find_all(&state.pool).await?;
+    // `app=none` filters platform/global channels (app_id IS NULL).
+    let filtered = match params.app.as_deref() {
+        Some("none") => rows
+            .iter()
+            .filter(|c| c.app_id.is_none())
+            .collect::<Vec<_>>(),
+        Some(app) => rows
+            .iter()
+            .filter(|c| c.app_id.as_deref() == Some(app))
+            .collect::<Vec<_>>(),
+        None => rows.iter().collect::<Vec<_>>(),
+    };
     Ok(ApiResponse::success(
-        rows.iter().map(ChannelResponse::from).collect(),
+        filtered.iter().map(|c| ChannelResponse::from(*c)).collect(),
     ))
 }
 
-pub async fn create_channel(
-    auth: AuthUser,
-    State(state): State<AppState>,
-    Json(req): Json<CreateChannelRequest>,
-) -> AppResult<ApiResponse<ChannelResponse>> {
-    auth.ensure_admin()?;
-    auth.ensure_scope("integration", TokenAction::Create)?;
-    validate_stack(&req)?;
+/// Validate a caller-supplied `app_id`: must reference an installed app when
+/// non-empty (soft reference, no FK — uninstall cleans up by app_id).
+async fn validate_app_id(state: &AppState, app_id: Option<&str>) -> AppResult<()> {
+    if let Some(app) = app_id {
+        if app.is_empty() {
+            return Err(AppError::BadRequest("app_id must be non-empty".into()));
+        }
+        state
+            .apps
+            .detail(app)
+            .await
+            .map_err(|_| AppError::BadRequest(format!("app_id '{app}' is not an installed app")))?;
+    }
+    Ok(())
+}
 
-    let plane = state
-        .integration
-        .as_ref()
-        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("integration plane disabled")))?;
-    let sealed = seal_credentials(plane.vault(), req.credentials.as_ref())?;
+/// Shared create path for the admin API and the plugin host API
+/// (channel-app-ownership.md §4.2). `app_id` is forced by the caller: the
+/// admin API passes the request value (after `validate_app_id`), the host API
+/// always passes the invoking plugin's own app id.
+pub(crate) async fn create_channel_row(
+    pool: &crate::db::Pool,
+    plane: Option<&crate::integration::IntegrationPlane>,
+    tenant_id: &str,
+    app_id: Option<String>,
+    req: &CreateChannelRequest,
+) -> AppResult<ItgChannel> {
+    validate_stack(req)?;
+    let sealed = seal_credentials(plane.and_then(|p| p.vault()), req.credentials.as_ref())?;
 
     // Active-row uniqueness: reject when an enabled non-shadow version of the
     // key already exists in this tenant (dual-run adds version rows later).
-    let existing = channel::model::find_by_key(
-        &state.pool,
-        crate::constants::DEFAULT_TENANT,
-        &req.channel_key,
-    )
-    .await?;
+    let existing = channel::model::find_by_key(pool, tenant_id, &req.channel_key).await?;
     if ItgChannel::resolve_active(&existing).is_some() {
         return Err(AppError::BadRequest(format!(
-            "channel_key '{}' already has an active version in the default tenant",
+            "channel_key '{}' already has an active version in tenant '{tenant_id}'",
             req.channel_key
         )));
     }
@@ -211,7 +249,8 @@ pub async fn create_channel(
     let now = crate::utils::tz::now_utc();
     let ch = ItgChannel {
         id: crate::utils::id::new_snowflake_id(),
-        tenant_id: crate::constants::DEFAULT_TENANT.to_string(),
+        tenant_id: tenant_id.to_string(),
+        app_id,
         channel_key: req.channel_key.clone(),
         provider: req.provider.clone(),
         display_name: if req.display_name.is_empty() {
@@ -250,26 +289,47 @@ pub async fn create_channel(
         created_at: now,
         updated_at: now,
     };
-    channel::model::insert(&state.pool, &ch).await?;
-    plane.channels().refresh().await?;
-    plane.wake_supervisor();
-    Ok(ApiResponse::success(ChannelResponse::from(&ch)))
+    channel::model::insert(pool, &ch).await?;
+    if let Some(plane) = plane {
+        plane.channels().refresh().await?;
+        plane.wake_supervisor();
+    }
+    Ok(ch)
 }
 
-pub async fn update_channel(
+pub async fn create_channel(
     auth: AuthUser,
     State(state): State<AppState>,
-    Path(id): Path<String>,
-    Json(req): Json<UpdateChannelRequest>,
+    Json(req): Json<CreateChannelRequest>,
 ) -> AppResult<ApiResponse<ChannelResponse>> {
     auth.ensure_admin()?;
-    auth.ensure_scope("integration", TokenAction::Update)?;
-    let id = crate::types::snowflake_id::parse_id(&id)?;
+    auth.ensure_scope("integration", TokenAction::Create)?;
+    validate_app_id(&state, req.app_id.as_deref()).await?;
     let plane = state
         .integration
         .as_ref()
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("integration plane disabled")))?;
-    let mut ch = channel::model::find_by_id(&state.pool, id).await?;
+    let ch = create_channel_row(
+        &state.pool,
+        Some(plane),
+        crate::constants::DEFAULT_TENANT,
+        req.app_id.clone(),
+        &req,
+    )
+    .await?;
+    Ok(ApiResponse::success(ChannelResponse::from(&ch)))
+}
+
+/// Shared partial-update path for the admin API and the plugin host API.
+/// `app_id` is immutable: the loaded row keeps its own value.
+pub(crate) async fn update_channel_row(
+    pool: &crate::db::Pool,
+    plane: Option<&crate::integration::IntegrationPlane>,
+    id: SnowflakeId,
+    req: &UpdateChannelRequest,
+) -> AppResult<ItgChannel> {
+    let mut ch = channel::model::find_by_id(pool, id).await?;
+    let vault = plane.and_then(|p| p.vault());
 
     if let Some(name) = &req.display_name {
         ch.display_name = name.clone();
@@ -306,7 +366,7 @@ pub async fn update_channel(
         ch.route_extra = Some(extra.clone());
     }
     if let Some(creds) = &req.credentials {
-        ch.credentials = seal_credentials(plane.vault(), Some(creds))?;
+        ch.credentials = seal_credentials(vault, Some(creds))?;
     }
     if let Some(enabled) = req.enabled {
         ch.enabled = enabled;
@@ -315,7 +375,7 @@ pub async fn update_channel(
 
     let now = ch.updated_at;
     let result = raisfast_derive::crud_update!(
-        &state.pool, "itg_channels",
+        pool, "itg_channels",
         bind: [
             "display_name" => &ch.display_name,
             "endpoint" => ch.endpoint.as_deref(),
@@ -335,9 +395,42 @@ pub async fn update_channel(
         where: ("id", id)
     )?;
     AppError::expect_affected(&result, "itg_channel")?;
-    plane.channels().refresh().await?;
-    plane.wake_supervisor();
+    if let Some(plane) = plane {
+        plane.channels().refresh().await?;
+        plane.wake_supervisor();
+    }
+    Ok(ch)
+}
+
+pub async fn update_channel(
+    auth: AuthUser,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(req): Json<UpdateChannelRequest>,
+) -> AppResult<ApiResponse<ChannelResponse>> {
+    auth.ensure_admin()?;
+    auth.ensure_scope("integration", TokenAction::Update)?;
+    let id = crate::types::snowflake_id::parse_id(&id)?;
+    let plane = state
+        .integration
+        .as_ref()
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("integration plane disabled")))?;
+    let ch = update_channel_row(&state.pool, Some(plane), id, &req).await?;
     Ok(ApiResponse::success(ChannelResponse::from(&ch)))
+}
+
+/// Shared delete path for the admin API and the plugin host API.
+pub(crate) async fn delete_channel_row(
+    pool: &crate::db::Pool,
+    plane: Option<&crate::integration::IntegrationPlane>,
+    id: SnowflakeId,
+) -> AppResult<()> {
+    channel::model::delete_by_id(pool, id).await?;
+    if let Some(plane) = plane {
+        plane.channels().refresh().await?;
+        plane.wake_supervisor();
+    }
+    Ok(())
 }
 
 pub async fn delete_channel(
@@ -348,11 +441,11 @@ pub async fn delete_channel(
     auth.ensure_admin()?;
     auth.ensure_scope("integration", TokenAction::Delete)?;
     let id = crate::types::snowflake_id::parse_id(&id)?;
-    channel::model::delete_by_id(&state.pool, id).await?;
-    if let Some(plane) = state.integration.as_ref() {
-        plane.channels().refresh().await?;
-        plane.wake_supervisor();
-    }
+    let plane = state
+        .integration
+        .as_ref()
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("integration plane disabled")))?;
+    delete_channel_row(&state.pool, Some(plane), id).await?;
     Ok(ApiResponse::success(()))
 }
 

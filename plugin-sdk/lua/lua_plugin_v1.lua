@@ -185,6 +185,31 @@ function M.getReceipt(traceId)
     return RaisFastHost.jsonDecode(result)
 end
 
+-- Integration channel host API (app-scoped; channel-app-ownership.md §4.2)
+function M.channelList()
+    return RaisFastHost.jsonDecode(RaisFastHost.channelList())
+end
+
+function M.channelCreate(data)
+    local dataStr = data == nil and "{}" or (type(data) == "string" and data or RaisFastHost.jsonEncode(data))
+    local decoded = RaisFastHost.jsonDecode(RaisFastHost.channelCreate(dataStr))
+    if decoded and decoded.error then error(decoded.error) end
+    return decoded
+end
+
+function M.channelUpdate(id, data)
+    local dataStr = data == nil and "{}" or (type(data) == "string" and data or RaisFastHost.jsonEncode(data))
+    local decoded = RaisFastHost.jsonDecode(RaisFastHost.channelUpdate(tostring(id), dataStr))
+    if decoded and decoded.error then error(decoded.error) end
+    return decoded
+end
+
+function M.channelDelete(id)
+    local decoded = RaisFastHost.jsonDecode(RaisFastHost.channelDelete(tostring(id)))
+    if decoded and decoded.error then error(decoded.error) end
+    return decoded
+end
+
 function M.configGet(key) return RaisFastHost.getConfig(key) end
 
 function M.storeGet(key) return RaisFastHost.getData(key) end

@@ -613,13 +613,7 @@ impl HostContext {
             let data: serde_json::Value = serde_json::from_str(data_json)
                 .map_err(|e| format!(r#"{{"error":"invalid data json: {e}"}}"#))?;
             let mut updated = repo
-                .update(
-                    &ct,
-                    id,
-                    data,
-                    tenant,
-                    &save_ctx,
-                )
+                .update(&ct, id, data, tenant, &save_ctx)
                 .await
                 .map_err(ct_err)?;
             normalize_row_for_plugin(&ct, &mut updated);
@@ -839,7 +833,8 @@ impl HostContext {
     #[must_use]
     pub fn presence_available(&self, tenant_id: &str) -> String {
         if !PermissionChecker::is_presence_allowed(&self.permissions, "available") {
-            return r#"{"error":"presence.available denied: needs presence = [\"available\"]"}"#.into();
+            return r#"{"error":"presence.available denied: needs presence = [\"available\"]"}"#
+                .into();
         }
         let Some(store) = &self.presence_store else {
             return "[]".into();
@@ -862,7 +857,8 @@ impl HostContext {
         let Ok(id) = subject_id.parse::<i64>() else {
             return r#"{"error":"presence.status: invalid subject_id"}"#.into();
         };
-        serde_json::to_string(&store.status(tenant_id, id).as_str()).unwrap_or_else(|_| "null".into())
+        serde_json::to_string(&store.status(tenant_id, id).as_str())
+            .unwrap_or_else(|_| "null".into())
     }
 
     /// Set a subject's manual availability wish (away/busy/…; null clears).
@@ -890,6 +886,190 @@ impl HostContext {
             crate::presence::emit_transition(bus, &t);
         }
         r#"{"ok":true}"#.into()
+    }
+
+    // ── Integration channel host API (channel-app-ownership.md §4.2) ──
+    // App-scoped channel management: a plugin manages only its own app's
+    // channels. `app_id` is derived from the plugin id (`{app_id}/{name}`)
+    // and is NEVER taken from plugin input — the plugin cannot touch another
+    // app's channels no matter what it sends. Gated by
+    // `permissions.integration = ["channels"]`.
+
+    /// App id of the invoking plugin — the ownership scope. Installed app
+    /// bundles use `{app_id}/{name}` (→ prefix); dev-directory plugins use the
+    /// bare id (→ the whole id). Both resolve to the same app id for the chat
+    /// plugin (`chat/chat` vs `chat`). Never empty.
+    fn plugin_app_id(&self) -> Option<&str> {
+        self.plugin_id.split('/').next().filter(|s| !s.is_empty())
+    }
+
+    fn integration_channel_gate(&self) -> Result<String, String> {
+        if !PermissionChecker::is_integration_allowed(&self.permissions, "channels") {
+            return Err("integration.channel* denied: needs integration = [\"channels\"]".into());
+        }
+        self.plugin_app_id()
+            .map(str::to_string)
+            .ok_or_else(|| "integration.channel*: plugin id has no app namespace".into())
+    }
+
+    /// List the invoking app's channels in the current tenant. Returns a JSON
+    /// array of channel objects (`channel_id` encoded per ID_ENCODING);
+    /// credentials are never echoed.
+    #[must_use]
+    pub fn integration_channel_list(&self) -> String {
+        let app = match self.integration_channel_gate() {
+            Ok(app) => app,
+            Err(e) => return serde_json::json!({ "error": e }).to_string(),
+        };
+        let Some(pool) = &self.pool else {
+            return serde_json::json!({ "error": "no database access" }).to_string();
+        };
+        let tenant = self.current_tenant().to_string();
+        let handle = tokio::runtime::Handle::current();
+        tokio::task::block_in_place(|| {
+            match handle.block_on(async {
+                let rows = crate::integration::channel::model::find_all(pool).await?;
+                let filtered: Vec<crate::integration::dto::ChannelResponse> = rows
+                    .into_iter()
+                    .filter(|c| c.app_id.as_deref() == Some(&app) && c.tenant_id == tenant)
+                    .map(|c| crate::integration::dto::ChannelResponse::from(&c))
+                    .collect();
+                Ok::<_, crate::errors::app_error::AppError>(filtered)
+            }) {
+                Ok(list) => serde_json::to_string(&list).unwrap_or_else(|_| "[]".into()),
+                Err(e) => serde_json::json!({ "error": e.to_string() }).to_string(),
+            }
+        })
+    }
+
+    /// Create a channel owned by the invoking app (tenant = current call
+    /// tenant). Returns the created channel or `{"error": ..}`.
+    #[must_use]
+    pub fn integration_channel_create(&self, data_json: &str) -> String {
+        let app = match self.integration_channel_gate() {
+            Ok(app) => app,
+            Err(e) => return serde_json::json!({ "error": e }).to_string(),
+        };
+        let Some(pool) = &self.pool else {
+            return serde_json::json!({ "error": "no database access" }).to_string();
+        };
+        let req: crate::integration::dto::CreateChannelRequest =
+            match serde_json::from_str(data_json) {
+                Ok(r) => r,
+                Err(e) => {
+                    return serde_json::json!({ "error": format!("invalid data json: {e}") })
+                        .to_string();
+                }
+            };
+        let tenant = self.current_tenant().to_string();
+        let handle = tokio::runtime::Handle::current();
+        tokio::task::block_in_place(|| {
+            match handle.block_on(async {
+                let plane = crate::integration::shared();
+                let ch = crate::integration::admin::create_channel_row(
+                    pool,
+                    plane.as_deref(),
+                    &tenant,
+                    Some(app),
+                    &req,
+                )
+                .await?;
+                Ok::<_, crate::errors::app_error::AppError>(ch)
+            }) {
+                Ok(ch) => {
+                    serde_json::to_string(&crate::integration::dto::ChannelResponse::from(&ch))
+                        .unwrap_or_default()
+                }
+                Err(e) => serde_json::json!({ "error": e.to_string() }).to_string(),
+            }
+        })
+    }
+
+    /// Partial-update a channel owned by the invoking app. Returns the updated
+    /// channel or `{"error": ..}` (ownership violation → error, never cross-app).
+    #[must_use]
+    pub fn integration_channel_update(&self, id: &str, data_json: &str) -> String {
+        let app = match self.integration_channel_gate() {
+            Ok(app) => app,
+            Err(e) => return serde_json::json!({ "error": e }).to_string(),
+        };
+        let Some(pool) = &self.pool else {
+            return serde_json::json!({ "error": "no database access" }).to_string();
+        };
+        let Ok(id) = crate::types::snowflake_id::parse_id(id) else {
+            return serde_json::json!({ "error": "invalid channel id" }).to_string();
+        };
+        let req: crate::integration::dto::UpdateChannelRequest =
+            match serde_json::from_str(data_json) {
+                Ok(r) => r,
+                Err(e) => {
+                    return serde_json::json!({ "error": format!("invalid data json: {e}") })
+                        .to_string();
+                }
+            };
+        let tenant = self.current_tenant().to_string();
+        let handle = tokio::runtime::Handle::current();
+        tokio::task::block_in_place(|| {
+            match handle.block_on(async {
+                let existing = crate::integration::channel::model::find_by_id(pool, id).await?;
+                Self::assert_channel_owned(&existing, &app, &tenant)?;
+                let plane = crate::integration::shared();
+                let ch =
+                    crate::integration::admin::update_channel_row(pool, plane.as_deref(), id, &req)
+                        .await?;
+                Ok::<_, crate::errors::app_error::AppError>(ch)
+            }) {
+                Ok(ch) => {
+                    serde_json::to_string(&crate::integration::dto::ChannelResponse::from(&ch))
+                        .unwrap_or_default()
+                }
+                Err(e) => serde_json::json!({ "error": e.to_string() }).to_string(),
+            }
+        })
+    }
+
+    /// Delete a channel owned by the invoking app. Returns `{"ok": true}` or
+    /// `{"error": ..}`.
+    #[must_use]
+    pub fn integration_channel_delete(&self, id: &str) -> String {
+        let app = match self.integration_channel_gate() {
+            Ok(app) => app,
+            Err(e) => return serde_json::json!({ "error": e }).to_string(),
+        };
+        let Some(pool) = &self.pool else {
+            return serde_json::json!({ "error": "no database access" }).to_string();
+        };
+        let Ok(id) = crate::types::snowflake_id::parse_id(id) else {
+            return serde_json::json!({ "error": "invalid channel id" }).to_string();
+        };
+        let tenant = self.current_tenant().to_string();
+        let handle = tokio::runtime::Handle::current();
+        tokio::task::block_in_place(|| {
+            match handle.block_on(async {
+                let existing = crate::integration::channel::model::find_by_id(pool, id).await?;
+                Self::assert_channel_owned(&existing, &app, &tenant)?;
+                let plane = crate::integration::shared();
+                crate::integration::admin::delete_channel_row(pool, plane.as_deref(), id).await?;
+                Ok::<_, crate::errors::app_error::AppError>(())
+            }) {
+                Ok(()) => r#"{"ok":true}"#.into(),
+                Err(e) => serde_json::json!({ "error": e.to_string() }).to_string(),
+            }
+        })
+    }
+
+    /// Ownership guard: the channel row must belong to the invoking app and
+    /// tenant, otherwise the op is rejected (never cross-app).
+    fn assert_channel_owned(
+        ch: &crate::integration::channel::ItgChannel,
+        app: &str,
+        tenant: &str,
+    ) -> Result<(), crate::errors::app_error::AppError> {
+        if ch.app_id.as_deref() == Some(app) && ch.tenant_id == tenant {
+            Ok(())
+        } else {
+            Err(crate::errors::app_error::AppError::ForbiddenOwnership)
+        }
     }
 
     /// Execute a read-only SQL query (returns a JSON array string).
@@ -2276,6 +2456,60 @@ mod tests {
         assert_eq!(ctx.decode_id(&raw.to_string()), raw.to_string());
         // Unparseable input is returned as-is.
         assert_eq!(ctx.decode_id("not-an-id"), "not-an-id");
+    }
+
+    #[test]
+    fn host_context_channel_api_requires_integration_permission() {
+        let config = make_test_config();
+        // No integration permissions at all.
+        let ctx = HostContext::new(
+            "test",
+            config,
+            "chat/chat".into(),
+            Permissions::default(),
+            None,
+        );
+        assert!(ctx.integration_channel_list().contains("denied"));
+        assert!(ctx.integration_channel_create("{}").contains("denied"));
+        assert!(ctx.integration_channel_update("1", "{}").contains("denied"));
+        assert!(ctx.integration_channel_delete("1").contains("denied"));
+    }
+
+    #[test]
+    fn host_context_channel_api_uses_bare_plugin_id_as_app() {
+        let config = make_test_config();
+        let perms = Permissions {
+            integration: vec!["channels".into()],
+            ..Permissions::default()
+        };
+        // Dev-directory plugins use the bare id (`chat`); installed bundles
+        // use `{app_id}/{name}` (`chat/chat`). Both must resolve to `chat`.
+        for id in ["chat", "chat/chat"] {
+            let ctx = HostContext::new("test", config.clone(), id.into(), perms.clone(), None);
+            // Gate passes (no "denied"), then fails on the missing pool — the
+            // ownership scope was derived, so the call reached DB access.
+            assert!(
+                ctx.integration_channel_list()
+                    .contains("no database access"),
+                "id '{id}' should derive an app and reach the DB check"
+            );
+        }
+    }
+
+    #[test]
+    fn host_context_channel_api_gated_then_no_pool() {
+        let config = make_test_config();
+        let perms = Permissions {
+            integration: vec!["channels".into()],
+            ..Permissions::default()
+        };
+        let ctx = HostContext::new("test", config, "chat/chat".into(), perms, None);
+        // Gate passes (no "denied"), then fails on the missing pool — proving
+        // the ownership scope is enforced at the gate, before any DB access.
+        assert!(
+            ctx.integration_channel_list()
+                .contains("no database access")
+        );
     }
 
     #[test]

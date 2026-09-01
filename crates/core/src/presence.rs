@@ -175,11 +175,11 @@ pub trait PresenceStore: Send + Sync {
     }
 }
 
-    /// In-memory presence store (single-instance discipline). Backed by a
-    /// `dashmap::DashMap` (already a platform dependency — lock-free reads,
-    /// no poisoning to handle). Reads (status/snapshot/available/counts)
-    /// never block a writer for long.
-    pub struct InMemoryPresenceStore {
+/// In-memory presence store (single-instance discipline). Backed by a
+/// `dashmap::DashMap` (already a platform dependency — lock-free reads,
+/// no poisoning to handle). Reads (status/snapshot/available/counts)
+/// never block a writer for long.
+pub struct InMemoryPresenceStore {
     inner: dashmap::DashMap<(String, i64), PresenceEntry>,
 }
 
@@ -233,7 +233,8 @@ impl PresenceStore for InMemoryPresenceStore {
         entry.conns = entry.conns.saturating_sub(1);
         // Do NOT refresh last_seen — disconnecting is not a liveness signal.
         let to = entry.effective(ttl);
-        let should_remove = to == PresenceStatus::Offline && entry.manual.is_none() && entry.conns == 0;
+        let should_remove =
+            to == PresenceStatus::Offline && entry.manual.is_none() && entry.conns == 0;
         let t = transition(tenant_id, subject_id, Some(prev), to);
         if should_remove {
             drop(entry);

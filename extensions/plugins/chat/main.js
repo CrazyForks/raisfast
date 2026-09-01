@@ -36,3 +36,6 @@ export {
     markConversationRead,
 } from './routes/conversations.js';
 export { listContacts, getContactTimeline, listAgents } from './routes/contacts.js';
+
+// ── Inbox channel wizard (channel-app-ownership.md §5.2, CH-1) ──────
+export { listInboxChannels, createInboxChannel, updateInboxChannel } from './routes/inbox.js';

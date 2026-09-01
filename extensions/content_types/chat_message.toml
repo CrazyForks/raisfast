@@ -50,6 +50,14 @@ label = "Channel-side message id"
 type = "bigint"
 label = "Inbound receipt id (trace link)"
 
+[fields.reply_chat_id]
+type = "text"
+label = "IM conversation/chat id for outbound reply (feishu chat_id etc.)"
+
+[fields.reply_webhook]
+type = "text"
+label = "Per-message reply webhook URL (dingtalk sessionWebhook)"
+
 [fields.sender_agent_id]
 type = "bigint"
 label = "Agent user id (role=agent)"

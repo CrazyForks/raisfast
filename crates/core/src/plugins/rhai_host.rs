@@ -172,6 +172,27 @@ pub fn register_host_functions(
         },
     );
 
+    // ── Integration channel host API (channel-app-ownership.md §4.2) ──
+    let hc = host_ctx.clone();
+    engine.register_fn("channelList", move || -> String {
+        hc.integration_channel_list()
+    });
+
+    let hc = host_ctx.clone();
+    engine.register_fn("channelCreate", move |data: &str| -> String {
+        hc.integration_channel_create(data)
+    });
+
+    let hc = host_ctx.clone();
+    engine.register_fn("channelUpdate", move |id: &str, data: &str| -> String {
+        hc.integration_channel_update(id, data)
+    });
+
+    let hc = host_ctx.clone();
+    engine.register_fn("channelDelete", move |id: &str| -> String {
+        hc.integration_channel_delete(id)
+    });
+
     let hc = host_ctx.clone();
     engine.register_fn("dbExecute", move |sql: &str, params: &str| -> String {
         hc.db_execute(sql, params)

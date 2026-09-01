@@ -89,6 +89,10 @@ label = "Bot status (active = bot handling)"
 type = "text"
 label = "Email thread merge key"
 
+[fields.reply_to]
+type = "json"
+label = "Outbound reply target per channel: {channel, chat_id?, open_id?, webhook?}"
+
 [fields.csat_rating]
 type = "integer"
 label = "Latest CSAT rating"

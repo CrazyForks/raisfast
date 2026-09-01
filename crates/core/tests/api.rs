@@ -1895,6 +1895,7 @@ type = "text"
     let channel = raisfast::integration::ItgChannel {
         id: raisfast::utils::id::new_snowflake_id(),
         tenant_id: "default".into(),
+        app_id: None,
         channel_key: "e2e-notes".into(),
         provider: "generic-hmac".into(),
         display_name: "E2E".into(),
@@ -2066,6 +2067,7 @@ required = true
     let channel = raisfast::integration::ItgChannel {
         id: raisfast::utils::id::new_snowflake_id(),
         tenant_id: "default".into(),
+        app_id: None,
         channel_key: "retry-ch".into(),
         provider: "generic-hmac".into(),
         display_name: "Retry".into(),
@@ -2171,6 +2173,7 @@ async fn integration_retry_recovers_when_target_appears() {
     let channel = raisfast::integration::ItgChannel {
         id: raisfast::utils::id::new_snowflake_id(),
         tenant_id: "default".into(),
+        app_id: None,
         channel_key: "recover-ch".into(),
         provider: "generic-hmac".into(),
         display_name: "Recover".into(),
@@ -2298,6 +2301,7 @@ async fn integration_pending_flip_and_append_step() {
     let channel = raisfast::integration::ItgChannel {
         id: raisfast::utils::id::new_snowflake_id(),
         tenant_id: "default".into(),
+        app_id: None,
         channel_key: "flip-ch".into(),
         provider: "generic-hmac".into(),
         display_name: "Flip".into(),
@@ -2495,6 +2499,7 @@ type = "text"
     let channel = raisfast::integration::ItgChannel {
         id: raisfast::utils::id::new_snowflake_id(),
         tenant_id: "default".into(),
+        app_id: None,
         channel_key: "pull-ch".into(),
         provider: "generic-rest".into(),
         display_name: "Pull".into(),
@@ -2689,6 +2694,7 @@ type = "text"
     let channel = raisfast::integration::ItgChannel {
         id: raisfast::utils::id::new_snowflake_id(),
         tenant_id: "default".into(),
+        app_id: None,
         channel_key: "archive-ch".into(),
         provider: "generic-hmac".into(),
         display_name: "Archive".into(),
@@ -3158,6 +3164,7 @@ type = "text"
     let channel = raisfast::integration::ItgChannel {
         id: raisfast::utils::id::new_snowflake_id(),
         tenant_id: "default".into(),
+        app_id: None,
         channel_key: "sup-ch".into(),
         provider: "mock".into(),
         display_name: "Sup".into(),
@@ -3336,6 +3343,7 @@ type = "text"
     let channel = raisfast::integration::ItgChannel {
         id: raisfast::utils::id::new_snowflake_id(),
         tenant_id: "default".into(),
+        app_id: None,
         channel_key: "ws-ch".into(),
         provider: "slack-socket-mode".into(),
         display_name: "WS".into(),
@@ -3520,6 +3528,7 @@ type = "text"
     let channel = raisfast::integration::ItgChannel {
         id: raisfast::utils::id::new_snowflake_id(),
         tenant_id: "default".into(),
+        app_id: None,
         channel_key: "tcp-ch".into(),
         provider: "generic-tcp".into(),
         display_name: "TCP".into(),
@@ -3654,6 +3663,7 @@ type = "text"
     let make_channel = |key: &str, rate: i64| raisfast::integration::ItgChannel {
         id: raisfast::utils::id::new_snowflake_id(),
         tenant_id: "default".into(),
+        app_id: None,
         channel_key: key.into(),
         provider: "generic-hmac".into(),
         display_name: key.into(),
@@ -3782,6 +3792,7 @@ type = "text"
     let mk = |key: &str, kind: &str| raisfast::integration::ItgChannel {
         id: raisfast::utils::id::new_snowflake_id(),
         tenant_id: "default".into(),
+        app_id: None,
         channel_key: key.into(),
         provider: "generic-hmac".into(),
         display_name: key.into(),
@@ -3982,6 +3993,7 @@ type = "text"
     let mk = |key: &str, kind: &str| raisfast::integration::ItgChannel {
         id: raisfast::utils::id::new_snowflake_id(),
         tenant_id: "default".into(),
+        app_id: None,
         channel_key: key.into(),
         provider: "generic-hmac".into(),
         display_name: key.into(),
@@ -4595,6 +4607,7 @@ type = "text"
     let channel = raisfast::integration::ItgChannel {
         id: raisfast::utils::id::new_snowflake_id(),
         tenant_id: "default".into(),
+        app_id: None,
         channel_key: "eg-trace-ch".into(),
         provider: "generic".into(),
         display_name: "eg".into(),
@@ -4735,6 +4748,7 @@ fn chat_channel(key: &str) -> raisfast::integration::ItgChannel {
     raisfast::integration::ItgChannel {
         id: raisfast::utils::id::new_snowflake_id(),
         tenant_id: "default".into(),
+        app_id: None,
         channel_key: key.into(),
         provider: "generic".into(),
         display_name: key.into(),
@@ -5488,24 +5502,27 @@ async fn chat_assign_end_to_end() {
         .await;
     assert!(res.is_ok(), "chat.assign should succeed: {res:?}");
 
-    let (assignee, status): (Option<i64>, String) = sqlx::query_as(raisfast::db::safe_sql(&format!(
+    let (assignee, status): (Option<i64>, String) =
+        sqlx::query_as(raisfast::db::safe_sql(&format!(
             "SELECT assignee_id, status FROM chat_conversations WHERE id = {}",
             raisfast::db::Driver::ph(1)
-        )),
-    )
-    .bind(conv_id)
-    .fetch_one(&state.pool)
-    .await
-    .unwrap();
-    assert_eq!(assignee, Some(agent_id), "assigned to the only online agent");
+        )))
+        .bind(conv_id)
+        .fetch_one(&state.pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        assignee,
+        Some(agent_id),
+        "assigned to the only online agent"
+    );
     assert_eq!(status, "open");
 
     // Activity message written.
     let activity: i64 = sqlx::query_scalar(raisfast::db::safe_sql(&format!(
-            "SELECT COUNT(*) FROM chat_messages WHERE conversation_id = {} AND role = 'activity'",
-            raisfast::db::Driver::ph(1)
-        )),
-    )
+        "SELECT COUNT(*) FROM chat_messages WHERE conversation_id = {} AND role = 'activity'",
+        raisfast::db::Driver::ph(1)
+    )))
     .bind(conv_id)
     .fetch_one(&state.pool)
     .await
@@ -5521,10 +5538,9 @@ async fn chat_assign_end_to_end() {
         .await;
     assert!(res.is_ok());
     let activity_after: i64 = sqlx::query_scalar(raisfast::db::safe_sql(&format!(
-            "SELECT COUNT(*) FROM chat_messages WHERE conversation_id = {} AND role = 'activity'",
-            raisfast::db::Driver::ph(1)
-        )),
-    )
+        "SELECT COUNT(*) FROM chat_messages WHERE conversation_id = {} AND role = 'activity'",
+        raisfast::db::Driver::ph(1)
+    )))
     .bind(conv_id)
     .fetch_one(&state.pool)
     .await
@@ -5603,7 +5619,9 @@ async fn chat_tenant_isolation_via_plugin() {
     .await;
     let items_a = list_a["data"]["items"].as_array().unwrap();
     assert!(
-        items_a.iter().any(|i| i["id"].as_str() == Some(&contact_a.to_string())),
+        items_a
+            .iter()
+            .any(|i| i["id"].as_str() == Some(&contact_a.to_string())),
         "tenant-a sees its own contact"
     );
 
@@ -5618,7 +5636,9 @@ async fn chat_tenant_isolation_via_plugin() {
     .await;
     let items_b = list_b["data"]["items"].as_array().unwrap();
     assert!(
-        !items_b.iter().any(|i| i["id"].as_str() == Some(&contact_a.to_string())),
+        !items_b
+            .iter()
+            .any(|i| i["id"].as_str() == Some(&contact_a.to_string())),
         "tenant-b must not see tenant-a's contact"
     );
 }
@@ -5738,7 +5758,8 @@ async fn chat_workspace_setup() -> (
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn chat_workspace_routes_end_to_end() {
-    let (_app, _state, plugins, conv_id) = chat_workspace_setup().await;    let auth = raisfast::middleware::auth::AuthUser::from_parts(
+    let (_app, _state, plugins, conv_id) = chat_workspace_setup().await;
+    let auth = raisfast::middleware::auth::AuthUser::from_parts(
         Some(7),
         raisfast::models::user::UserRole::Admin,
         Some("default".to_string()),
@@ -5880,9 +5901,7 @@ async fn chat_workspace_routes_end_to_end() {
         _state.presence.status(tenant, uid),
         raisfast::presence::PresenceStatus::Away
     );
-    _state
-        .presence
-        .set_manual(tenant, uid, None);
+    _state.presence.set_manual(tenant, uid, None);
     assert_eq!(_state.presence.available(tenant), vec![uid]);
 
     // Unauthenticated caller on a permissioned route is gated by dispatch auth.
@@ -6221,6 +6240,7 @@ type = "text"
     let channel = raisfast::integration::ItgChannel {
         id: raisfast::utils::id::new_snowflake_id(),
         tenant_id: "default".into(),
+        app_id: None,
         channel_key: "disp-ch".into(),
         provider: "long-connection-generic".into(),
         display_name: "Dispatch".into(),
@@ -6482,6 +6502,7 @@ type = "text"
     let channel = raisfast::integration::ItgChannel {
         id: raisfast::utils::id::new_snowflake_id(),
         tenant_id: "default".into(),
+        app_id: None,
         channel_key: "pb-ch".into(),
         provider: "pb-gateway-generic".into(),
         display_name: "PB".into(),
@@ -6700,6 +6721,7 @@ type = "text"
     let channel = raisfast::integration::ItgChannel {
         id: raisfast::utils::id::new_snowflake_id(),
         tenant_id: "default".into(),
+        app_id: None,
         channel_key: "ding-ch".into(),
         provider: "dingtalk-stream".into(),
         display_name: "DingTalk".into(),
@@ -6849,6 +6871,7 @@ type = "text"
     let channel = raisfast::integration::ItgChannel {
         id: raisfast::utils::id::new_snowflake_id(),
         tenant_id: "default".into(),
+        app_id: None,
         channel_key: "gh-ch".into(),
         provider: "github".into(),
         display_name: "GH".into(),
@@ -7012,6 +7035,7 @@ type = "text"
     let channel = raisfast::integration::ItgChannel {
         id: raisfast::utils::id::new_snowflake_id(),
         tenant_id: "default".into(),
+        app_id: None,
         channel_key: "wecom-ch".into(),
         provider: "wechat-work".into(),
         display_name: "WeCom".into(),
@@ -7289,6 +7313,7 @@ type = "text"
     let channel = raisfast::integration::ItgChannel {
         id: raisfast::utils::id::new_snowflake_id(),
         tenant_id: "default".into(),
+        app_id: None,
         channel_key: format!("imap-ch-{unique}"),
         provider: "imap".into(),
         display_name: "IMAP".into(),

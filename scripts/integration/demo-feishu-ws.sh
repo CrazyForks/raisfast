@@ -44,7 +44,7 @@ CREDS="{\"kind\":\"oauth-cc\",\"token_url\":\"https://open.feishu.cn/open-apis/a
 sec "1/5 api-client: feishu (oauth-cc 动态 token)"
 req GET "/admin/integration/api-clients"
 FEISHU_ID=$(jget "$_BODY" "next((c['id'] for c in d['data'] if c['client_key']=='feishu'), '')")
-OPS='{"send_text":{"method":"POST","path":"/im/v1/messages?receive_id_type=chat_id","output":{"message_id":"$.data.message_id"}}}'
+OPS='{"send_text":{"method":"POST","path":"/im/v1/messages?receive_id_type=chat_id","output":{"message_id":"$.data.message_id"}},"get_user":{"method":"GET","path":"/contact/v3/users/{user_id}?user_id_type=open_id","output":{"name":"$.data.name","avatar_url":"$.data.avatar.avatar_72"}}}'
 if [ -n "$FEISHU_ID" ]; then
   req POST "/admin/integration/api-clients/$FEISHU_ID/update" "{\"credentials\":$CREDS,\"ops\":$OPS,\"enabled\":true}"
   [ "$_CODE" = "200" ] && ok "feishu client refreshed" || die "刷新失败: $_RES"
@@ -87,9 +87,13 @@ print(json.dumps({
   "mapping":{
     "external_id":"$.header.event_id",
     "sender":"$.event.sender.sender_id.open_id",
-    "payload":{"body":"$.event.message.content | as_json($.text)"}
+    "payload":{
+      "body":"$.event.message.content | as_json($.text)",
+      "reply_chat_id":"$.event.message.chat_id"
+    }
   },
   "target_type":"chat/chat_messages",
+  "route_extra":{"jobs":[{"job_type":"chat.ingress","max_attempts":1}]},
   "stream_config":{
     "pre_connect":{
       "url":"https://open.feishu.cn/callback/ws/endpoint",

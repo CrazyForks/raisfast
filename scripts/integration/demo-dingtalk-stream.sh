@@ -61,9 +61,13 @@ print(json.dumps({
   "mapping":{
     "external_id":"$.headers.messageId",
     "sender":"$.data | as_json($.senderStaffId)",
-    "payload":{"body":"$.data | as_json($.text.content)"}
+    "payload":{
+      "body":"$.data | as_json($.text.content)",
+      "reply_webhook":"$.data | as_json($.sessionWebhook)"
+    }
   },
   "target_type":"chat/chat_messages",
+  "route_extra":{"jobs":[{"job_type":"chat.ingress","max_attempts":1}]},
   "stream_config":{
     "pre_connect":{
       "url":"https://api.dingtalk.com/v1.0/gateway/connections/open",

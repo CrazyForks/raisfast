@@ -34,8 +34,12 @@ egress = ["*"]
 # sendMessage enqueues chat.egress; chat.assign is triggered by the rescan
 # cron / workspace manual assign.
 jobs = ["chat.autoreply", "chat.egress", "chat.assign"]
-# Read inbound receipts (envelope snapshot = deterministic facts).
-integration = ["receipts"]
+# Read inbound receipts (envelope snapshot = deterministic facts) + app-scoped
+# channel management (inbox wizard, channel-app-ownership.md §4.2).
+integration = ["receipts", "channels"]
+# DingTalk bot replies POST to the per-message sessionWebhook URL directly
+# (chat.egress kind=webhook → httpPost). Feishu egress rides callApi instead.
+http = ["oapi.dingtalk.com"]
 # Widget session tokens: mint (issue) + validate (verify) short-session JWTs.
 session = ["issue", "verify"]
 # Presence store queries: assignment candidate filtering (available/status)
@@ -545,6 +549,95 @@ description = "Agent list"
 [[routes.output.fields]]
 name = "items"
 type = "array"
+
+# ── Inbox channel wizard (CH-1, channel-app-ownership.md §5.2) ──────
+# App-scoped channel management: the wizard creates an app-owned integration
+# channel + the chat_inbox row bound to it in one step (host derives app_id).
+
+[[routes]]
+method = "GET"
+path = "/api/v1/plugins/chat/admin/channels"
+handler = "listInboxChannels"
+description = "List app-owned channels joined with their inbox (if bound)"
+auth = "authed"
+permission = "channels:read"
+
+[routes.output]
+description = "Channels + inbox join"
+
+[[routes.output.fields]]
+name = "items"
+type = "array"
+description = "Channel rows with `inbox` (chat_inbox or null)"
+
+[[routes]]
+method = "POST"
+path = "/api/v1/plugins/chat/admin/channels"
+handler = "createInboxChannel"
+description = "Wizard: create app-owned channel + chat_inbox atomically (rollback channel on inbox failure)"
+auth = "authed"
+permission = "channels:write"
+
+[[routes.input]]
+name = "channel"
+in = "body"
+type = "json"
+description = "Channel overrides on top of the widget template (channel_key optional)"
+
+[[routes.input]]
+name = "inbox"
+in = "body"
+type = "json"
+required = true
+description = "chat_inbox fields: name (required), greeting, auto_assignment"
+
+[routes.output]
+description = "Created channel + inbox"
+
+[[routes.output.fields]]
+name = "channel"
+type = "object"
+
+[[routes.output.fields]]
+name = "inbox"
+type = "object"
+
+[[routes]]
+method = "PUT"
+path = "/api/v1/plugins/chat/admin/channels/:id"
+handler = "updateInboxChannel"
+description = "Update channel (display_name/enabled) + its inbox fields"
+auth = "authed"
+permission = "channels:write"
+
+[[routes.input]]
+name = "id"
+in = "path"
+type = "string"
+required = true
+
+[[routes.input]]
+name = "channel"
+in = "body"
+type = "json"
+description = "Channel partial patch (display_name, enabled, ...)"
+
+[[routes.input]]
+name = "inbox"
+in = "body"
+type = "json"
+description = "chat_inbox partial patch (name, greeting, auto_assignment)"
+
+[routes.output]
+description = "Updated channel + inbox"
+
+[[routes.output.fields]]
+name = "channel"
+type = "object"
+
+[[routes.output.fields]]
+name = "inbox"
+type = "object"
 
 # ── Widget routes (CH-1, W3/W4) ─────────────────────────────────
 # Visitor-facing endpoints (widget.md §5). auth=public — handlers validate the

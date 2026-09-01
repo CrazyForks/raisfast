@@ -436,6 +436,7 @@ mod tests {
         ItgChannel {
             id: new_snowflake_id(),
             tenant_id: "default".into(),
+            app_id: None,
             channel_key: "test".into(),
             provider: "generic-hmac".into(),
             display_name: "t".into(),

@@ -687,7 +687,8 @@ impl IntegrationConfig {
 
 fn default_ingress_body_limit() -> usize {
     1_048_576
-}fn default_receipts_retention_days() -> u64 {
+}
+fn default_receipts_retention_days() -> u64 {
     90
 }
 

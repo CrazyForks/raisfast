@@ -1055,6 +1055,7 @@ CREATE TABLE IF NOT EXISTS shipping_templates (
 CREATE TABLE IF NOT EXISTS itg_channels (
     id BIGINT PRIMARY KEY,
     tenant_id VARCHAR(36) NOT NULL DEFAULT 'default',
+    app_id VARCHAR(100),
     channel_key VARCHAR(255) NOT NULL,
     provider VARCHAR(100) NOT NULL,
     display_name VARCHAR(255) NOT NULL,
@@ -1086,6 +1087,7 @@ CREATE TABLE IF NOT EXISTS itg_channels (
     updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     UNIQUE KEY uq_itg_channels_tenant_key_version (tenant_id, channel_key, version),
     INDEX idx_itg_channels_tenant (tenant_id),
+    INDEX idx_itg_channels_app (app_id),
     INDEX idx_itg_channels_status (status)
 );
 

@@ -75,6 +75,11 @@ interface host-api {
     presence-available: func(tenant: string) -> string;
     presence-status: func(tenant: string, subject: string) -> string;
     presence-report: func(tenant: string, subject: string, status: string) -> string;
+    // Integration channel host API (app-scoped; channel-app-ownership.md §4.2).
+    channel-list: func() -> string;
+    channel-create: func(data: string) -> string;
+    channel-update: func(id: string, data: string) -> string;
+    channel-delete: func(id: string) -> string;
     vfs-read: func(path: string) -> option<string>;
     vfs-write: func(path: string, content: string) -> bool;
     vfs-delete: func(path: string) -> bool;

@@ -458,14 +458,26 @@ mod tests {
     #[test]
     fn resolve_module_path_handles_nested_relative_imports() {
         // Root entry importing a sibling directory.
-        assert_eq!(resolve_module_path("index.js", "./services/ingress.js"), "services/ingress.js");
+        assert_eq!(
+            resolve_module_path("index.js", "./services/ingress.js"),
+            "services/ingress.js"
+        );
         // Nested module importing back up to a shared lib dir.
-        assert_eq!(resolve_module_path("services/ingress.js", "../lib/ctx.js"), "lib/ctx.js");
-        assert_eq!(resolve_module_path("routes/conversations.js", "./contacts.js"), "routes/contacts.js");
+        assert_eq!(
+            resolve_module_path("services/ingress.js", "../lib/ctx.js"),
+            "lib/ctx.js"
+        );
+        assert_eq!(
+            resolve_module_path("routes/conversations.js", "./contacts.js"),
+            "routes/contacts.js"
+        );
         // Non-relative specifiers pass through (sdk, bare names).
         assert_eq!(resolve_module_path("index.js", "sdk"), "sdk");
         // Traversal above the plugin root collapses (guard is in the loader).
-        assert_eq!(resolve_module_path("services/ingress.js", "../../etc/passwd"), "etc/passwd");
+        assert_eq!(
+            resolve_module_path("services/ingress.js", "../../etc/passwd"),
+            "etc/passwd"
+        );
     }
 
     fn test_config() -> Arc<AppConfig> {
@@ -517,7 +529,12 @@ export function on_post_creating(inputJson) {
             .await
             .unwrap();
         let result: Option<serde_json::Value> = engine
-            .call_filter("nonexistent", "on_post_creating", &serde_json::json!({}), None)
+            .call_filter(
+                "nonexistent",
+                "on_post_creating",
+                &serde_json::json!({}),
+                None,
+            )
             .await
             .unwrap();
         assert!(result.is_none());
@@ -536,7 +553,12 @@ export function on_post_creating(inputJson) {
             .unwrap();
 
         let result: Option<serde_json::Value> = engine
-            .call_filter("test-nofunc", "on_post_creating", &serde_json::json!({}), None)
+            .call_filter(
+                "test-nofunc",
+                "on_post_creating",
+                &serde_json::json!({}),
+                None,
+            )
             .await
             .unwrap();
         assert!(result.is_none());
@@ -731,7 +753,12 @@ export function on_post_creating(inputJson) {
             .unwrap();
 
         let result: anyhow::Result<Option<serde_json::Value>> = engine
-            .call_filter("test-timeout", "on_post_creating", &serde_json::json!({}), None)
+            .call_filter(
+                "test-timeout",
+                "on_post_creating",
+                &serde_json::json!({}),
+                None,
+            )
             .await;
         assert!(result.is_err());
     }
@@ -932,13 +959,23 @@ export function on_post_creating(inputJson) {
             .unwrap();
 
         let r1: Option<serde_json::Value> = engine
-            .call_filter("test-isolation", "on_post_creating", &serde_json::json!({}), None)
+            .call_filter(
+                "test-isolation",
+                "on_post_creating",
+                &serde_json::json!({}),
+                None,
+            )
             .await
             .unwrap();
         assert_eq!(r1.as_ref().unwrap()["counter"], 1);
 
         let r2: Option<serde_json::Value> = engine
-            .call_filter("test-isolation", "on_post_creating", &serde_json::json!({}), None)
+            .call_filter(
+                "test-isolation",
+                "on_post_creating",
+                &serde_json::json!({}),
+                None,
+            )
             .await
             .unwrap();
         assert_eq!(
@@ -973,8 +1010,13 @@ export function on_post_creating(inputJson) {
             let eng = Arc::clone(&engine);
             handles.push(tokio::spawn(async move {
                 let input = serde_json::json!({"idx": i});
-                eng.call_filter::<serde_json::Value>("test-concurrent", "on_post_creating", &input, None)
-                    .await
+                eng.call_filter::<serde_json::Value>(
+                    "test-concurrent",
+                    "on_post_creating",
+                    &input,
+                    None,
+                )
+                .await
             }));
         }
 
@@ -1004,7 +1046,12 @@ export function on_post_creating(inputJson) {
         engine.unload_plugin("test-gone").await;
 
         let result: Option<serde_json::Value> = engine
-            .call_filter("test-gone", "on_post_creating", &serde_json::json!({}), None)
+            .call_filter(
+                "test-gone",
+                "on_post_creating",
+                &serde_json::json!({}),
+                None,
+            )
             .await
             .unwrap();
         assert!(result.is_none(), "call after unload should return None");
@@ -1048,7 +1095,7 @@ export function on_post_creating(inputJson) {
                 "test-undefined",
                 "on_post_creating",
                 &serde_json::json!({"title": "hello"}),
-            None,
+                None,
             )
             .await;
         assert!(
@@ -1209,7 +1256,12 @@ export function on_post_creating(inputJson) {
             .unwrap();
 
         let r1: Option<serde_json::Value> = engine
-            .call_filter("test-reload", "on_post_creating", &serde_json::json!({}), None)
+            .call_filter(
+                "test-reload",
+                "on_post_creating",
+                &serde_json::json!({}),
+                None,
+            )
             .await
             .unwrap();
         assert_eq!(r1.as_ref().unwrap()["version"], 1);
@@ -1227,7 +1279,12 @@ export function on_post_creating(inputJson) {
             .unwrap();
 
         let r2: Option<serde_json::Value> = engine
-            .call_filter("test-reload", "on_post_creating", &serde_json::json!({}), None)
+            .call_filter(
+                "test-reload",
+                "on_post_creating",
+                &serde_json::json!({}),
+                None,
+            )
             .await
             .unwrap();
         assert_eq!(r2.as_ref().unwrap()["version"], 2);

@@ -21,6 +21,10 @@ declare const RaisFastHost: {
   presenceAvailable(tenant: string): string;
   presenceStatus(tenant: string, subject: string): string;
   presenceReport(tenant: string, subject: string, status: string): string;
+  channelList(): string;
+  channelCreate(data: string): string;
+  channelUpdate(id: string, data: string): string;
+  channelDelete(id: string): string;
   dbInsert(table: string, data: string, options: string): string;
   dbFetchOne(table: string, where: string, options: string): string;
   dbFetchAll(table: string, where: string, options: string): string;
@@ -351,6 +355,105 @@ export function presenceReport(tenant: string, subject: string | number, status?
     const result = RaisFastHost.presenceReport(String(tenant), String(subject), String(status ?? ""));
     const parsed = JSON.parse(result);
     if (parsed?.error) throw new Error(parsed.error);
+}
+
+/** App-scoped channel host API (channel-app-ownership.md §4.2) — a plugin
+ * manages only its own app's channels (`integration = ["channels"]`). */
+
+/** List the invoking app's channels in the current tenant. */
+export function channelList(): Channel[] {
+    const result = RaisFastHost.channelList();
+    const parsed = JSON.parse(result);
+    if (parsed?.error) throw new Error(parsed.error);
+    return parsed;
+}
+
+/** Create an app-owned channel; returns the created channel. `app_id` is
+ * derived from the plugin id, never from the payload. */
+export function channelCreate(data: Partial<ChannelInput> & {
+    channel_key: string;
+    provider: string;
+    mode: string;
+    transport: string;
+    framing: string;
+    codec: string;
+    verify_kind: string;
+    target_type: string;
+}): Channel {
+    const result = RaisFastHost.channelCreate(JSON.stringify(data));
+    const parsed = JSON.parse(result);
+    if (parsed?.error) throw new Error(parsed.error);
+    return parsed;
+}
+
+/** Partial-update an app-owned channel; returns the updated channel. */
+export function channelUpdate(id: string | number, data: Partial<ChannelInput>): Channel {
+    const result = RaisFastHost.channelUpdate(String(id), JSON.stringify(data));
+    const parsed = JSON.parse(result);
+    if (parsed?.error) throw new Error(parsed.error);
+    return parsed;
+}
+
+/** Delete an app-owned channel. */
+export function channelDelete(id: string | number): void {
+    const result = RaisFastHost.channelDelete(String(id));
+    const parsed = JSON.parse(result);
+    if (parsed?.error) throw new Error(parsed.error);
+}
+
+/** Wire shape mirrors the kernel `CreateChannelRequest` (snake_case). */
+export interface ChannelInput {
+    channel_key: string;
+    provider: string;
+    display_name: string;
+    mode: string;
+    transport: string;
+    framing: string;
+    codec: string;
+    endpoint?: string | null;
+    verify_kind: string;
+    verify_config?: unknown;
+    credentials?: unknown;
+    mapping?: unknown;
+    pull_semantics?: string | null;
+    pull_config?: unknown;
+    stream_config?: unknown;
+    redelivery_max?: number;
+    backpressure?: unknown;
+    target_type: string;
+    route_extra?: unknown;
+    enabled?: boolean;
+}
+
+/** Wire shape mirrors the kernel `ChannelResponse` (snake_case). */
+export interface Channel {
+    id: string;
+    tenant_id: string;
+    app_id: string | null;
+    channel_key: string;
+    provider: string;
+    display_name: string;
+    mode: string;
+    transport: string;
+    framing: string;
+    codec: string;
+    endpoint: string | null;
+    verify_kind: string;
+    verify_config?: unknown;
+    mapping?: unknown;
+    pull_semantics: string | null;
+    pull_config?: unknown;
+    stream_config?: unknown;
+    ack_kind: string;
+    redelivery_max: number;
+    backpressure?: unknown;
+    target_type: string;
+    route_extra?: unknown;
+    status: string;
+    enabled: boolean;
+    version: number;
+    shadow: boolean;
+    has_credentials: boolean;
 }
 
 export function logInfo(msg: string): void { RaisFastHost.log("info", msg); }

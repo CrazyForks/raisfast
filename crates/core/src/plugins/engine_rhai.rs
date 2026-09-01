@@ -293,7 +293,12 @@ fn on_post_creating(input) {
     async fn rhai_engine_call_filter_missing_plugin() {
         let engine = RhaiEngine::new(&test_config(), None, None, None, None).unwrap();
         let result: Option<serde_json::Value> = engine
-            .call_filter("nonexistent", "on_post_creating", &serde_json::json!({}), None)
+            .call_filter(
+                "nonexistent",
+                "on_post_creating",
+                &serde_json::json!({}),
+                None,
+            )
             .await
             .unwrap();
         assert!(result.is_none());
@@ -310,7 +315,12 @@ fn on_post_creating(input) {
             .unwrap();
 
         let result: Option<serde_json::Value> = engine
-            .call_filter("test-nofunc", "on_post_creating", &serde_json::json!({}), None)
+            .call_filter(
+                "test-nofunc",
+                "on_post_creating",
+                &serde_json::json!({}),
+                None,
+            )
             .await
             .unwrap();
         assert!(result.is_none());
@@ -359,7 +369,7 @@ fn filter_html(html) {
                 "test-strfilter",
                 "filter_html",
                 "<head><title>Test</title></head>",
-            None,
+                None,
             )
             .await
             .unwrap();
@@ -423,13 +433,23 @@ fn on_post_creating(input) {
             .unwrap();
 
         let r1: Option<serde_json::Value> = engine
-            .call_filter("test-isolation", "on_post_creating", &serde_json::json!({}), None)
+            .call_filter(
+                "test-isolation",
+                "on_post_creating",
+                &serde_json::json!({}),
+                None,
+            )
             .await
             .unwrap();
         assert_eq!(r1.as_ref().unwrap()["counter"], 1);
 
         let r2: Option<serde_json::Value> = engine
-            .call_filter("test-isolation", "on_post_creating", &serde_json::json!({}), None)
+            .call_filter(
+                "test-isolation",
+                "on_post_creating",
+                &serde_json::json!({}),
+                None,
+            )
             .await
             .unwrap();
         assert_eq!(
@@ -459,8 +479,13 @@ fn on_post_creating(input) {
             let eng = Arc::clone(&engine);
             handles.push(tokio::spawn(async move {
                 let input = serde_json::json!({"idx": i});
-                eng.call_filter::<serde_json::Value>("test-concurrent", "on_post_creating", &input, None)
-                    .await
+                eng.call_filter::<serde_json::Value>(
+                    "test-concurrent",
+                    "on_post_creating",
+                    &input,
+                    None,
+                )
+                .await
             }));
         }
 
@@ -485,7 +510,12 @@ fn on_post_creating(input) {
         engine.unload_plugin("test-gone").await;
 
         let result: Option<serde_json::Value> = engine
-            .call_filter("test-gone", "on_post_creating", &serde_json::json!({}), None)
+            .call_filter(
+                "test-gone",
+                "on_post_creating",
+                &serde_json::json!({}),
+                None,
+            )
             .await
             .unwrap();
         assert!(result.is_none(), "call after unload should return None");
@@ -524,7 +554,12 @@ fn on_post_creating(input) {
             .unwrap();
 
         let r1: Option<serde_json::Value> = engine
-            .call_filter("test-reload", "on_post_creating", &serde_json::json!({}), None)
+            .call_filter(
+                "test-reload",
+                "on_post_creating",
+                &serde_json::json!({}),
+                None,
+            )
             .await
             .unwrap();
         assert_eq!(r1.as_ref().unwrap()["version"], 1);
@@ -541,7 +576,12 @@ fn on_post_creating(input) {
             .unwrap();
 
         let r2: Option<serde_json::Value> = engine
-            .call_filter("test-reload", "on_post_creating", &serde_json::json!({}), None)
+            .call_filter(
+                "test-reload",
+                "on_post_creating",
+                &serde_json::json!({}),
+                None,
+            )
             .await
             .unwrap();
         assert_eq!(r2.as_ref().unwrap()["version"], 2);
@@ -605,7 +645,7 @@ fn on_post_creating(input) {
                 "test-filter-throw",
                 "on_post_creating",
                 &serde_json::json!({}),
-            None,
+                None,
             )
             .await;
         assert!(result.is_err());

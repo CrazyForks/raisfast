@@ -247,6 +247,20 @@ async fn apps_install_lifecycle_end_to_end() {
     .unwrap();
     assert_eq!(enabled, Some(false), "seed channels land disabled");
 
+    // channel seeded app-owned (channel-app-ownership.md §2)
+    let app_id: Option<String> = sqlx::query_scalar(raisfast::db::safe_sql(&format!(
+        "SELECT app_id FROM itg_channels WHERE channel_key = '{}-widget'",
+        spec.id
+    )))
+    .fetch_one(&state.pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        app_id.as_deref(),
+        Some(spec.id.as_str()),
+        "seeded channels carry the owning app_id"
+    );
+
     // detail: every step carries an undo descriptor (§4.2 discipline)
     let (status, body) = send(
         &mut app,
@@ -685,5 +699,132 @@ async fn apps_install_failure_rolls_back_clean() {
         )
         .await,
         Some(0)
+    );
+}
+
+// ── channel app ownership (channel-app-ownership.md §2/§4.1) ────────
+
+#[tokio::test]
+async fn channel_app_ownership_admin_api() {
+    let (mut app, _state) = test_app().await;
+    let tok = admin_token();
+    let spec = BundleSpec::new("own");
+    let data = install(&mut app, &spec).await;
+    assert_eq!(data["status"], "installed");
+
+    // Platform channel (no app_id) — stays platform-owned.
+    let (status, body) = send(
+        &mut app,
+        post_json_auth(
+            "/api/v1/admin/integration/channels",
+            json!({
+                "channel_key": "platform-http",
+                "provider": "generic-hmac",
+                "mode": "push", "transport": "http1", "framing": "raw", "codec": "json",
+                "verify_kind": "challenge",
+                "target_type": "ingress_note",
+            }),
+            &tok,
+        ),
+    )
+    .await;
+    assert!(status.is_success(), "platform channel: {status} {body:?}");
+    assert_eq!(body["data"]["app_id"], serde_json::Value::Null);
+
+    // App-owned channel (app_id = installed app) — accepted.
+    let (status, body) = send(
+        &mut app,
+        post_json_auth(
+            "/api/v1/admin/integration/channels",
+            json!({
+                "channel_key": "own-app-ch",
+                "provider": "generic-hmac",
+                "mode": "push", "transport": "http1", "framing": "raw", "codec": "json",
+                "verify_kind": "challenge",
+                "target_type": "ingress_note",
+                "app_id": spec.id,
+            }),
+            &tok,
+        ),
+    )
+    .await;
+    assert!(status.is_success(), "app channel: {status} {body:?}");
+    assert_eq!(body["data"]["app_id"], spec.id.clone());
+
+    // Unknown app_id → rejected.
+    let (status, _) = send(
+        &mut app,
+        post_json_auth(
+            "/api/v1/admin/integration/channels",
+            json!({
+                "channel_key": "ghost-app-ch",
+                "provider": "generic-hmac",
+                "mode": "push", "transport": "http1", "framing": "raw", "codec": "json",
+                "verify_kind": "challenge",
+                "target_type": "ingress_note",
+                "app_id": "no-such-app",
+            }),
+            &tok,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "unknown app_id rejected");
+
+    // ?app= filter: only that app's channels (seeded widget + app-owned), not
+    // the platform channel.
+    let (status, body) = send(
+        &mut app,
+        get_auth(
+            &format!("/api/v1/admin/integration/channels?app={}", spec.id),
+            &tok,
+        ),
+    )
+    .await;
+    assert!(status.is_success(), "filter: {status} {body:?}");
+    let items = body["data"].as_array().unwrap();
+    assert!(!items.is_empty(), "app filter returns rows");
+    assert!(
+        items.iter().all(|c| c["app_id"] == spec.id.clone()),
+        "all filtered rows belong to the app"
+    );
+    assert!(
+        items.iter().all(|c| c["channel_key"] != "platform-http"),
+        "platform channel excluded"
+    );
+    assert!(
+        items
+            .iter()
+            .any(|c| c["channel_key"] == format!("{}-widget", spec.id)),
+        "seeded widget channel present"
+    );
+
+    // ?app=none → only platform/global channels (app_id NULL).
+    let (status, body) = send(
+        &mut app,
+        get_auth("/api/v1/admin/integration/channels?app=none", &tok),
+    )
+    .await;
+    assert!(status.is_success(), "none filter: {status} {body:?}");
+    let items = body["data"].as_array().unwrap();
+    assert!(
+        items.iter().any(|c| c["channel_key"] == "platform-http"),
+        "platform channel present under app=none"
+    );
+    assert!(
+        items.iter().all(|c| c["app_id"] == serde_json::Value::Null),
+        "app=none returns only app_id-null rows"
+    );
+
+    // Unfiltered list includes the platform channel (app_id null).
+    let (status, body) = send(
+        &mut app,
+        get_auth("/api/v1/admin/integration/channels", &tok),
+    )
+    .await;
+    assert!(status.is_success());
+    let items = body["data"].as_array().unwrap();
+    assert!(
+        items.iter().any(|c| c["channel_key"] == "platform-http"),
+        "unfiltered list includes platform channels"
     );
 }

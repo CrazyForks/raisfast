@@ -33,14 +33,8 @@ pub fn routes(
         "sse"
     )
     .route("/events/session", axum::routing::get(subscribe_session))
-    .route(
-        "/presence/heartbeat",
-        axum::routing::post(heartbeat),
-    )
-    .route(
-        "/presence/status",
-        axum::routing::post(set_status),
-    )
+    .route("/presence/heartbeat", axum::routing::post(heartbeat))
+    .route("/presence/status", axum::routing::post(set_status))
 }
 
 /// POST /api/v1/presence/heartbeat — refresh the caller's presence
@@ -51,13 +45,13 @@ pub fn routes(
 pub async fn heartbeat(
     auth: crate::middleware::auth::AuthUser,
     State(state): State<crate::AppState>,
-) -> crate::errors::app_error::AppResult<axum::Json<serde_json::Value>> {
+) -> crate::errors::app_error::AppResult<crate::errors::response::ApiResponse<serde_json::Value>> {
     let user_id = auth.ensure_snowflake_user_id()?;
     let tenant_id = auth.tenant_id().unwrap_or(crate::constants::DEFAULT_TENANT);
     if let Some(t) = state.presence.touch(tenant_id, user_id.0) {
         crate::presence::emit_transition(&state.eventbus, &t);
     }
-    Ok(axum::Json(serde_json::json!({ "ok": true })))
+    Ok(crate::errors::response::ApiResponse::success(serde_json::json!({ "ok": true })))
 }
 
 /// POST /api/v1/presence/status — set the caller's manual availability wish
@@ -69,7 +63,7 @@ pub async fn set_status(
     auth: crate::middleware::auth::AuthUser,
     State(state): State<crate::AppState>,
     axum::extract::Json(body): axum::extract::Json<serde_json::Value>,
-) -> crate::errors::app_error::AppResult<axum::Json<serde_json::Value>> {
+) -> crate::errors::app_error::AppResult<crate::errors::response::ApiResponse<serde_json::Value>> {
     let user_id = auth.ensure_snowflake_user_id()?;
     let tenant_id = auth.tenant_id().unwrap_or(crate::constants::DEFAULT_TENANT);
     let manual = match body.get("status").and_then(serde_json::Value::as_str) {
@@ -87,7 +81,7 @@ pub async fn set_status(
     if let Some(t) = state.presence.set_manual(tenant_id, user_id.0, manual) {
         crate::presence::emit_transition(&state.eventbus, &t);
     }
-    Ok(axum::Json(serde_json::json!({ "ok": true })))
+    Ok(crate::errors::response::ApiResponse::success(serde_json::json!({ "ok": true })))
 }
 
 /// Extract event type name
@@ -115,7 +109,11 @@ struct PresenceGuard {
 
 impl Drop for PresenceGuard {
     fn drop(&mut self) {
-        if let Some(t) = self.state.presence.disconnect(&self.tenant_id, self.subject_id) {
+        if let Some(t) = self
+            .state
+            .presence
+            .disconnect(&self.tenant_id, self.subject_id)
+        {
             crate::presence::emit_transition(&self.state.eventbus, &t);
         }
     }
@@ -148,22 +146,20 @@ pub async fn subscribe(
     // Presence: live connection counts toward presence (multi-tab = multiple
     // conns). A connect also refreshes last_seen so a reconnect after a
     // network blip resurrects immediately.
-    let presence_guard = auth
-        .user_id()
-        .map(|uid| {
-            let tenant_id = auth
-                .tenant_id()
-                .unwrap_or(crate::constants::DEFAULT_TENANT)
-                .to_string();
-            if let Some(t) = state.presence.connect(&tenant_id, uid) {
-                crate::presence::emit_transition(&state.eventbus, &t);
-            }
-            PresenceGuard {
-                state: state.clone(),
-                tenant_id,
-                subject_id: uid,
-            }
-        });
+    let presence_guard = auth.user_id().map(|uid| {
+        let tenant_id = auth
+            .tenant_id()
+            .unwrap_or(crate::constants::DEFAULT_TENANT)
+            .to_string();
+        if let Some(t) = state.presence.connect(&tenant_id, uid) {
+            crate::presence::emit_transition(&state.eventbus, &t);
+        }
+        PresenceGuard {
+            state: state.clone(),
+            tenant_id,
+            subject_id: uid,
+        }
+    });
 
     let rx = state.eventbus.subscribe();
     let filter_types: Vec<String> = query

@@ -175,10 +175,10 @@ pub fn register_host_functions(
     host.set("presenceAvailable", presence_available_fn)?;
 
     let hc = host_ctx.clone();
-    let presence_status_fn =
-        Function::new(ctx.clone(), move |tenant: String, subject: String| -> String {
-            hc.presence_status(&tenant, &subject)
-        })?;
+    let presence_status_fn = Function::new(
+        ctx.clone(),
+        move |tenant: String, subject: String| -> String { hc.presence_status(&tenant, &subject) },
+    )?;
     host.set("presenceStatus", presence_status_fn)?;
 
     let hc = host_ctx.clone();
@@ -189,6 +189,34 @@ pub fn register_host_functions(
         },
     )?;
     host.set("presenceReport", presence_report_fn)?;
+
+    // ── Integration channel host API (channel-app-ownership.md §4.2) ──
+    // App-scoped channel management: app_id comes from the plugin id, so a
+    // plugin can only manage its own app's channels.
+    let hc = host_ctx.clone();
+    let channel_list_fn = Function::new(ctx.clone(), move || -> String {
+        hc.integration_channel_list()
+    })?;
+    host.set("channelList", channel_list_fn)?;
+
+    let hc = host_ctx.clone();
+    let channel_create_fn = Function::new(ctx.clone(), move |data: String| -> String {
+        hc.integration_channel_create(&data)
+    })?;
+    host.set("channelCreate", channel_create_fn)?;
+
+    let hc = host_ctx.clone();
+    let channel_update_fn =
+        Function::new(ctx.clone(), move |id: String, data: String| -> String {
+            hc.integration_channel_update(&id, &data)
+        })?;
+    host.set("channelUpdate", channel_update_fn)?;
+
+    let hc = host_ctx.clone();
+    let channel_delete_fn = Function::new(ctx.clone(), move |id: String| -> String {
+        hc.integration_channel_delete(&id)
+    })?;
+    host.set("channelDelete", channel_delete_fn)?;
 
     let hc = host_ctx.clone();
     let db_execute_fn = Function::new(ctx.clone(), move |sql: String, params: String| -> String {

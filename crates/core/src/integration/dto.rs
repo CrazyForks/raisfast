@@ -22,6 +22,10 @@ use crate::utils::tz::Timestamp;
 #[derive(Debug, Deserialize)]
 pub struct CreateChannelRequest {
     pub channel_key: String,
+    /// App ownership (channel-app-ownership.md §2). Platform admin may set an
+    /// installed app_id (or omit for a platform/global channel). Plugin host
+    /// API derives this from the caller's manifest instead of trusting input.
+    pub app_id: Option<String>,
     pub provider: String,
     #[serde(default)]
     pub display_name: String,
@@ -105,6 +109,8 @@ fn default_empty_object() -> Value {
 pub struct ChannelResponse {
     pub id: SnowflakeId,
     pub tenant_id: String,
+    /// App ownership: NULL = platform/global channel (channel-app-ownership.md §2).
+    pub app_id: Option<String>,
     /// Human-readable routing key: `/ingress/{channel_key}`.
     pub channel_key: String,
     pub provider: String,
@@ -152,6 +158,7 @@ impl From<&ItgChannel> for ChannelResponse {
         Self {
             id: ch.id,
             tenant_id: ch.tenant_id.clone(),
+            app_id: ch.app_id.clone(),
             channel_key: ch.channel_key.clone(),
             provider: ch.provider.clone(),
             display_name: ch.display_name.clone(),

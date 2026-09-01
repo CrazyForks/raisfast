@@ -1,0 +1,12 @@
+{
+  "db_name": "MySQL",
+  "query": "INSERT INTO `itg_channels` (`id`, `app_id`, `channel_key`, `provider`, `display_name`, `mode`, `transport`, `framing`, `codec`, `endpoint`, `verify_kind`, `verify_config`, `credentials`, `mapping`, `normalizer_plugin`, `pull_semantics`, `pull_config`, `stream_config`, `ack_kind`, `redelivery_max`, `backpressure`, `target_type`, `route_extra`, `status`, `enabled`, `version`, `shadow`, `created_at`, `updated_at`, `tenant_id`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 30
+    },
+    "nullable": []
+  },
+  "hash": "1a9005cdc9874fd6dba6a57c4d24aa177c2695cbbcf3ed819e957225faca3984"
+}

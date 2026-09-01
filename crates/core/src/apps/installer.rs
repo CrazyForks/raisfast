@@ -471,7 +471,7 @@ async fn step_crons(
 
 async fn step_channels(
     ctx: &InstallCtx,
-    _target: &InstallTarget,
+    target: &InstallTarget,
     pkg: &AppPackage,
     progress: &mut Progress,
     pending: &mut PendingCredentials,
@@ -489,6 +489,9 @@ async fn step_channels(
         let ch = crate::integration::channel::ItgChannel {
             id: crate::utils::id::new_snowflake_id(),
             tenant_id: crate::constants::DEFAULT_TENANT.to_string(),
+            // App ownership: seeds belong to the installing app
+            // (channel-app-ownership.md §2).
+            app_id: Some(target.app_id.clone()),
             channel_key: channel_key.clone(),
             provider: str_field(obj, "provider"),
             display_name: str_field_or(obj, "display_name", &channel_key),

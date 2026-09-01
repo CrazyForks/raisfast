@@ -211,13 +211,47 @@ pub fn register_host_functions(
     host.set("presenceStatus", presence_status_fn)?;
 
     let hc = host_ctx.clone();
-    let presence_report_fn =
-        lua.create_function(move |lua, (tenant, subject, status): (String, String, String)| {
-            Ok(mlua::Value::String(
-                lua.create_string(hc.presence_report(&tenant, &subject, &status))?,
-            ))
-        })?;
+    let presence_report_fn = lua.create_function(
+        move |lua, (tenant, subject, status): (String, String, String)| {
+            Ok(mlua::Value::String(lua.create_string(
+                hc.presence_report(&tenant, &subject, &status),
+            )?))
+        },
+    )?;
     host.set("presenceReport", presence_report_fn)?;
+
+    // ── Integration channel host API (channel-app-ownership.md §4.2) ──
+    let hc = host_ctx.clone();
+    let channel_list_fn = lua.create_function(move |lua, ()| {
+        Ok(mlua::Value::String(
+            lua.create_string(hc.integration_channel_list())?,
+        ))
+    })?;
+    host.set("channelList", channel_list_fn)?;
+
+    let hc = host_ctx.clone();
+    let channel_create_fn = lua.create_function(move |lua, data: String| {
+        Ok(mlua::Value::String(
+            lua.create_string(hc.integration_channel_create(&data))?,
+        ))
+    })?;
+    host.set("channelCreate", channel_create_fn)?;
+
+    let hc = host_ctx.clone();
+    let channel_update_fn = lua.create_function(move |lua, (id, data): (String, String)| {
+        Ok(mlua::Value::String(lua.create_string(
+            hc.integration_channel_update(&id, &data),
+        )?))
+    })?;
+    host.set("channelUpdate", channel_update_fn)?;
+
+    let hc = host_ctx.clone();
+    let channel_delete_fn = lua.create_function(move |lua, id: String| {
+        Ok(mlua::Value::String(
+            lua.create_string(hc.integration_channel_delete(&id))?,
+        ))
+    })?;
+    host.set("channelDelete", channel_delete_fn)?;
 
     let hc = host_ctx.clone();
     let db_begin_fn = lua.create_function(move |lua, ()| {

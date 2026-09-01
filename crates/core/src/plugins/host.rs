@@ -90,6 +90,22 @@ impl Host for Arc<HostContext> {
         (**self).ingress_get_receipt(&trace_id)
     }
 
+    fn channel_list(&mut self) -> String {
+        (**self).integration_channel_list()
+    }
+
+    fn channel_create(&mut self, data: String) -> String {
+        (**self).integration_channel_create(&data)
+    }
+
+    fn channel_update(&mut self, id: String, data: String) -> String {
+        (**self).integration_channel_update(&id, &data)
+    }
+
+    fn channel_delete(&mut self, id: String) -> String {
+        (**self).integration_channel_delete(&id)
+    }
+
     fn vfs_read(&mut self, path: String) -> Option<String> {
         (**self).vfs_read(&path).ok()
     }

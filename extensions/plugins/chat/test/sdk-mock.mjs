@@ -84,6 +84,20 @@ export function callApi(client, op, input) {
   return JSON.stringify({ status: "ok", output: __llmReply ?? "mock reply" });
 }
 
+export function httpGet(url) {
+  emitted.push({ kind: "httpGet", url });
+  return "{}";
+}
+
+export function httpPost(url, body) {
+  emitted.push({ kind: "httpPost", url, body });
+  // Tests may force a host-style error return (e.g. URL not whitelisted).
+  if (globalThis.__httpPostError) return globalThis.__httpPostError;
+  // Tests may force a host-style HTTP response envelope with a status.
+  if (globalThis.__httpPostResp) return globalThis.__httpPostResp;
+  return "{}";
+}
+
 export function eventEmit(type, data) {
   emitted.push({ kind: "event", type, data });
 }
@@ -95,6 +109,53 @@ export function dbQuery(sql, params) {
   const key = String(sql.match(/channel_key = (\w+)/)?.[1] ?? "");
   const row = channels.get(key);
   return row ? [{ id: String(row.id) }] : [];
+}
+
+// ── integration.channel host API mock (channel-app-ownership.md §4.2) ──
+// The real host derives app_id from the plugin id; the mock stores it on the
+// row so tests can assert the wizard never sends one.
+
+const channelRows = [];   // app-owned channel rows (full shape)
+
+// The real host receives JSON strings (like every host fn); parse before use.
+function parseInput(data) {
+  return typeof data === "string" ? JSON.parse(data) : (data ?? {});
+}
+
+export function channelList() {
+  return channelRows.map((r) => ({ ...r }));
+}
+
+export function channelCreate(data) {
+  const parsed = parseInput(data);
+  const row = {
+    ...parsed,
+    id: `ch-${idSeq++}`,
+    app_id: "chat", // host-derived, never from plugin input
+    tenant_id: "default",
+    enabled: parsed.enabled ?? true,
+  };
+  channelRows.push(row);
+  return { ...row };
+}
+
+export function channelUpdate(id, patch) {
+  const row = channelRows.find((r) => String(r.id) === String(id));
+  if (!row) return { error: "channel not found" };
+  Object.assign(row, parseInput(patch));
+  return { ...row };
+}
+
+export function channelDelete(id) {
+  const idx = channelRows.findIndex((r) => String(r.id) === String(id));
+  if (idx >= 0) channelRows.splice(idx, 1);
+  return { ok: true };
+}
+
+// The real host decodes base62 (ID_ENCODING) → plain digits; the mock uses
+// plain ids, so this is a passthrough.
+export function decodeId(id) {
+  return String(id);
 }
 
 export function dbPh() { return "?"; }
@@ -123,6 +184,7 @@ export function __reset() {
   emitted.length = 0;
   receipts.clear();
   channels.clear();
+  channelRows.length = 0;
   presenceAvailableSet.length = 0;
   idSeq = 1;
 }
@@ -145,6 +207,11 @@ export function __seedReceipt(traceId, channelId, envelope) {
 
 export function __seedChannel(channelKey, id) {
   channels.set(channelKey, { id });
+}
+
+// Seed an app-owned channel row (shape matches channelList()).
+export function __seedChannelRow(row) {
+  channelRows.push({ app_id: "chat", tenant_id: "default", ...row });
 }
 
 // Configurable LLM reply (callApi output).

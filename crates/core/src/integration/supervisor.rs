@@ -212,7 +212,7 @@ impl IngressSupervisor {
     ///
     /// Returns `AppError` on the channel query failure.
     pub async fn rescan(self: &Arc<Self>) -> crate::errors::app_error::AppResult<()> {
-        const CHANNEL_SCAN_COLS: &str = "id, tenant_id, channel_key, provider, display_name, mode, transport, framing, \
+        const CHANNEL_SCAN_COLS: &str = "id, tenant_id, app_id, channel_key, provider, display_name, mode, transport, framing, \
              codec, endpoint, verify_kind, verify_config, credentials, mapping, \
              normalizer_plugin, pull_semantics, pull_config, stream_config, ack_kind, \
              redelivery_max, backpressure, target_type, route_extra, status, last_error, \
