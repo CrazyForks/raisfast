@@ -681,6 +681,9 @@ export function listAgents(input) {
     // users is not a CT — read via the read-only dbQuery host API (manifest
     // declares `database = ["read:users"]`; no JOIN — extract_table_name
     // rejects them, and email lives in user_credentials).
+    // Live presence comes from the kernel presence store (architecture §5.3);
+    // the workspace merges presence.* events into its store. Availability
+    // here stays a base shape; live status rides SSE presence events.
     let rows;
     try {
         rows = dbQuery('SELECT id, username, display_name, avatar FROM users ORDER BY username');
@@ -700,14 +703,9 @@ export function listAgents(input) {
     return { items };
 }
 
-// POST /api/v1/plugins/chat/presence/heartbeat
-export function heartbeat(input) {
-    const data = routeInput(input);
-    const me = agentId(data);
-    if (!me) return invalid('not authenticated');
-    eventEmit('chat.presence', { user_id: me, status: 'online', at: nowISO() });
-    return { ok: true };
-}
+// Presence heartbeat moved to the kernel primitive (`POST /api/v1/presence/heartbeat`),
+// which owns the presence store and emits presence.* events (architecture §5.3).
+// The workspace frontend calls the kernel endpoint directly — no plugin route needed.
 
 // ── chat.egress ───────────────────────────────────────────────
 // Outbound dispatch for an agent/assistant message. Reads chat_inbox.egress

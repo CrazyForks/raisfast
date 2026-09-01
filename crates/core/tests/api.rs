@@ -205,6 +205,7 @@ async fn build_test_app(pool: raisfast::db::Pool) -> (axum::Router, AppState) {
         ))),
         audit: Arc::new(raisfast::services::audit::AuditService::new(pool.clone())),
         webhook: Arc::new(raisfast::webhook::WebhookService::new(pool.clone())),
+        presence: Arc::new(raisfast::presence::InMemoryPresenceStore::new()),
         integration: Some(Arc::new(
             raisfast::integration::IntegrationPlane::init(
                 pool.clone(),
@@ -5414,8 +5415,7 @@ async fn chat_workspace_setup() -> (
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn chat_workspace_routes_end_to_end() {
-    let (_app, _state, plugins, conv_id) = chat_workspace_setup().await;
-    let auth = raisfast::middleware::auth::AuthUser::from_parts(
+    let (_app, _state, plugins, conv_id) = chat_workspace_setup().await;    let auth = raisfast::middleware::auth::AuthUser::from_parts(
         Some(7),
         raisfast::models::user::UserRole::Admin,
         Some("default".to_string()),
@@ -5541,16 +5541,26 @@ async fn chat_workspace_routes_end_to_end() {
         plugin_route_body(&plugins, "GET", "/api/v1/plugins/chat/agents", None, &auth).await;
     assert!(agents["data"]["items"].is_array());
 
-    // POST /presence/heartbeat
-    let hb = plugin_route_body(
-        &plugins,
-        "POST",
-        "/api/v1/plugins/chat/presence/heartbeat",
-        None,
-        &auth,
-    )
-    .await;
-    assert_eq!(hb["data"]["ok"], true);
+    // Presence is a kernel primitive (architecture §5.3), not a plugin route:
+    // connect → available, manual away → excluded, reconnect revives. The
+    // workspace frontend hits the kernel endpoints directly.
+    let tenant = "default";
+    let uid = 7;
+    let t = _state.presence.connect(tenant, uid).unwrap();
+    assert_eq!(t.to, raisfast::presence::PresenceStatus::Online);
+    assert_eq!(_state.presence.available(tenant), vec![uid]);
+    _state
+        .presence
+        .set_manual(tenant, uid, Some(raisfast::presence::Availability::Away));
+    assert!(_state.presence.available(tenant).is_empty());
+    assert_eq!(
+        _state.presence.status(tenant, uid),
+        raisfast::presence::PresenceStatus::Away
+    );
+    _state
+        .presence
+        .set_manual(tenant, uid, None);
+    assert_eq!(_state.presence.available(tenant), vec![uid]);
 
     // Unauthenticated caller on a permissioned route is gated by dispatch auth.
     let anon = raisfast::middleware::auth::AuthUser::from_parts(

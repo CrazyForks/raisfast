@@ -33,6 +33,61 @@ pub fn routes(
         "sse"
     )
     .route("/events/session", axum::routing::get(subscribe_session))
+    .route(
+        "/presence/heartbeat",
+        axum::routing::post(heartbeat),
+    )
+    .route(
+        "/presence/status",
+        axum::routing::post(set_status),
+    )
+}
+
+/// POST /api/v1/presence/heartbeat — refresh the caller's presence
+/// liveness signal (architecture §5.3). Body is ignored; identity comes
+/// from the authenticated user. Returns `{ok: true}` and never produces a
+/// presence.* event when the effective status did not change (the 30s
+/// heartbeat cadence emits nothing unless the user was offline).
+pub async fn heartbeat(
+    auth: crate::middleware::auth::AuthUser,
+    State(state): State<crate::AppState>,
+) -> crate::errors::app_error::AppResult<axum::Json<serde_json::Value>> {
+    let user_id = auth.ensure_snowflake_user_id()?;
+    let tenant_id = auth.tenant_id().unwrap_or(crate::constants::DEFAULT_TENANT);
+    if let Some(t) = state.presence.touch(tenant_id, user_id.0) {
+        crate::presence::emit_transition(&state.eventbus, &t);
+    }
+    Ok(axum::Json(serde_json::json!({ "ok": true })))
+}
+
+/// POST /api/v1/presence/status — set the caller's manual availability wish
+/// (e.g. "away"/"busy" while stepping away; architecture §5.3 `set_manual`).
+/// Body: `{"status": "away"}` — the only valid values are the Availability
+/// strings (`online/busy/away/offline`); a null/absent status clears it.
+/// The human wish has highest priority in the effective merge rule.
+pub async fn set_status(
+    auth: crate::middleware::auth::AuthUser,
+    State(state): State<crate::AppState>,
+    axum::extract::Json(body): axum::extract::Json<serde_json::Value>,
+) -> crate::errors::app_error::AppResult<axum::Json<serde_json::Value>> {
+    let user_id = auth.ensure_snowflake_user_id()?;
+    let tenant_id = auth.tenant_id().unwrap_or(crate::constants::DEFAULT_TENANT);
+    let manual = match body.get("status").and_then(serde_json::Value::as_str) {
+        Some("online") => Some(crate::presence::Availability::Online),
+        Some("busy") => Some(crate::presence::Availability::Busy),
+        Some("away") => Some(crate::presence::Availability::Away),
+        Some("offline") => Some(crate::presence::Availability::Offline),
+        Some(_) => {
+            return Err(crate::errors::app_error::AppError::BadRequest(
+                "invalid presence status".into(),
+            ));
+        }
+        None => None, // clear manual
+    };
+    if let Some(t) = state.presence.set_manual(tenant_id, user_id.0, manual) {
+        crate::presence::emit_transition(&state.eventbus, &t);
+    }
+    Ok(axum::Json(serde_json::json!({ "ok": true })))
 }
 
 /// Extract event type name
@@ -48,6 +103,24 @@ impl Drop for ActiveGuard {
     }
 }
 
+/// Presence-aware SSE guard: on connect, `touch`/`connect` the authenticated
+/// user into the presence store; on stream drop, `disconnect` (architecture
+/// §5.3). Disconnect is NOT an immediate offline — the reaper converts
+/// staleness once the heartbeat TTL passes.
+struct PresenceGuard {
+    state: crate::AppState,
+    tenant_id: String,
+    subject_id: i64,
+}
+
+impl Drop for PresenceGuard {
+    fn drop(&mut self) {
+        if let Some(t) = self.state.presence.disconnect(&self.tenant_id, self.subject_id) {
+            crate::presence::emit_transition(&self.state.eventbus, &t);
+        }
+    }
+}
+
 /// SSE event subscription endpoint
 ///
 /// - **Method/Path:** `GET /api/v1/events`
@@ -56,20 +129,41 @@ impl Drop for ActiveGuard {
 ///   Supports filtering by event type via `?filter=PostCreated,CommentCreated`.
 ///   Sends a keep-alive heartbeat every 30 seconds.
 pub async fn subscribe(
+    auth: crate::middleware::auth::AuthUser,
     State(state): State<crate::AppState>,
     Query(query): Query<SubscribeQuery>,
 ) -> crate::errors::app_error::AppResult<Sse<impl Stream<Item = Result<SseEvent, Infallible>>>> {
-    // Connection cap (§10.2): refuse beyond MAX_SSE_CLIENTS concurrent streams.
+    // Connection cap (§10.2): refuse beyond the configured concurrent cap.
     static ACTIVE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-    const MAX_SSE_CLIENTS: u64 = 64;
+    let max_clients = state.config.sse_max_clients;
     let current = ACTIVE.load(std::sync::atomic::Ordering::Relaxed);
-    if current >= MAX_SSE_CLIENTS {
+    if current >= max_clients {
         return Err(crate::errors::app_error::AppError::TooManyRequests(
             "SSE connection cap reached".into(),
         ));
     }
     ACTIVE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let guard = ActiveGuard(&ACTIVE);
+
+    // Presence: live connection counts toward presence (multi-tab = multiple
+    // conns). A connect also refreshes last_seen so a reconnect after a
+    // network blip resurrects immediately.
+    let presence_guard = auth
+        .user_id()
+        .map(|uid| {
+            let tenant_id = auth
+                .tenant_id()
+                .unwrap_or(crate::constants::DEFAULT_TENANT)
+                .to_string();
+            if let Some(t) = state.presence.connect(&tenant_id, uid) {
+                crate::presence::emit_transition(&state.eventbus, &t);
+            }
+            PresenceGuard {
+                state: state.clone(),
+                tenant_id,
+                subject_id: uid,
+            }
+        });
 
     let rx = state.eventbus.subscribe();
     let filter_types: Vec<String> = query
@@ -124,6 +218,7 @@ pub async fn subscribe(
 
     let stream = stream.map(move |item| {
         let _hold = &guard;
+        let _presence = &presence_guard;
         item
     });
     // Guard released when the stream is dropped (client disconnect).
@@ -145,9 +240,9 @@ pub async fn subscribe_session(
 ) -> crate::errors::app_error::AppResult<Sse<impl Stream<Item = Result<SseEvent, Infallible>>>> {
     // Connection cap (widget.md §3.3): separate budget from the authed stream.
     static ACTIVE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-    const MAX_SESSION_CLIENTS: u64 = 512;
+    let max_session_clients = state.config.sse_max_session_clients;
     let current = ACTIVE.load(std::sync::atomic::Ordering::Relaxed);
-    if current >= MAX_SESSION_CLIENTS {
+    if current >= max_session_clients {
         return Err(crate::errors::app_error::AppError::TooManyRequests(
             "SSE session connection cap reached".into(),
         ));

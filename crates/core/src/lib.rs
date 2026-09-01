@@ -43,6 +43,7 @@ pub mod panic_hook;
 pub mod payment;
 pub mod plugins;
 pub mod policy;
+pub mod presence;
 pub mod protocols;
 pub mod search;
 pub mod server;
@@ -138,6 +139,7 @@ pub struct AppState {
     pub tenant: Arc<TenantService>,
     pub audit: Arc<AuditService>,
     pub webhook: Arc<WebhookService>,
+    pub presence: Arc<dyn crate::presence::PresenceStore>,
     pub integration: Option<Arc<integration::IntegrationPlane>>,
     pub apps: Arc<apps::AppRegistry>,
     pub workflow: Arc<WorkflowService>,
@@ -377,6 +379,8 @@ pub async fn build_app_state(
     let tenant_service = Arc::new(TenantService::new(Arc::new(pool.clone())));
     let audit_service = Arc::new(crate::services::audit::AuditService::new(pool.clone()));
     let webhook_service = Arc::new(crate::webhook::WebhookService::new(pool.clone()));
+    let presence_store: Arc<dyn crate::presence::PresenceStore> =
+        Arc::new(crate::presence::InMemoryPresenceStore::new());
 
     let storage = crate::storage::create_storage(config)?;
 
@@ -425,6 +429,7 @@ pub async fn build_app_state(
         tenant: tenant_service,
         audit: audit_service,
         webhook: webhook_service.clone(),
+        presence: presence_store.clone(),
         integration: integration_plane,
         apps: apps_registry,
         workflow: Arc::new(WorkflowService::new(pool.clone())),
@@ -452,6 +457,16 @@ pub async fn build_app_state(
         eventbus.clone(),
         state.webhook.clone(),
         pool.clone(),
+        shutdown_rx.clone(),
+    );
+
+    // Presence reaper: converts stale heartbeats into offline transitions
+    // (architecture §5.3). Cold-start = everyone offline; reconnect revives.
+    crate::presence::spawn_reaper(
+        presence_store.clone(),
+        eventbus.clone(),
+        std::time::Duration::from_secs(config.presence_heartbeat_ttl_secs),
+        std::time::Duration::from_secs(config.presence_sweep_interval_secs),
         shutdown_rx,
     );
 

@@ -39,7 +39,11 @@ use serde::{Deserialize, Serialize};
 /// | `UPLOAD_DIR` | String | `{STORAGE_ROOT_DIR}/uploads` | Media upload directory |
 /// | `LOG_DIR` | String | `{STORAGE_ROOT_DIR}/logs` | Log file directory |
 /// | `SEARCH_INDEX_DIR` | String | `{STORAGE_ROOT_DIR}/search_index` | Search index directory |
-/// | `PLUGIN_VFS_ROOT` | String | `{STORAGE_ROOT_DIR}/vfs` | Plugin virtual filesystem directory |
+/// | `PRESENCE_HEARTBEAT_TTL_SECS` | u64 | `75` | PresenceMap heartbeat freshness window (architecture §5.3) |
+/// | `PRESENCE_SWEEP_INTERVAL_SECS` | u64 | `10` | PresenceMap reaper sweep interval |
+/// | `PRESENCE_HEARTBEAT_INTERVAL_SECS` | u64 | `30` | Workspace frontend heartbeat cadence |
+/// | `SSE_MAX_CLIENTS` | u64 | `64` | Authed workspace SSE stream cap |
+/// | `SSE_MAX_SESSION_CLIENTS` | u64 | `512` | Public session (widget) SSE stream cap |
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
     pub host: String,
@@ -183,6 +187,19 @@ pub struct AppConfig {
     pub registration_email_enabled: bool,
     #[serde(default)]
     pub registration_sms_enabled: bool,
+    /// Presence store (PresenceMap) timing — see architecture §5.3.
+    #[serde(default = "default_presence_heartbeat_ttl_secs")]
+    pub presence_heartbeat_ttl_secs: u64,
+    #[serde(default = "default_presence_sweep_interval_secs")]
+    pub presence_sweep_interval_secs: u64,
+    #[serde(default = "default_presence_heartbeat_interval_secs")]
+    pub presence_heartbeat_interval_secs: u64,
+    /// SSE connection caps (architecture §10.2): authed workspace stream and
+    /// public session (widget) stream. Hardcoded 64/512 before 2026-09-01.
+    #[serde(default = "default_sse_max_clients")]
+    pub sse_max_clients: u64,
+    #[serde(default = "default_sse_max_session_clients")]
+    pub sse_max_session_clients: u64,
     #[serde(default = "default_sms_code_expires_in")]
     pub sms_code_expires_in: u64,
     #[serde(default = "default_sms_code_length")]
@@ -670,9 +687,7 @@ impl IntegrationConfig {
 
 fn default_ingress_body_limit() -> usize {
     1_048_576
-}
-
-fn default_receipts_retention_days() -> u64 {
+}fn default_receipts_retention_days() -> u64 {
     90
 }
 
@@ -702,6 +717,26 @@ fn default_worker_visibility_timeout_secs() -> u64 {
 
 fn default_worker_sweep_interval_secs() -> u64 {
     60
+}
+
+fn default_presence_heartbeat_ttl_secs() -> u64 {
+    75
+}
+
+fn default_presence_sweep_interval_secs() -> u64 {
+    10
+}
+
+fn default_presence_heartbeat_interval_secs() -> u64 {
+    30
+}
+
+fn default_sse_max_clients() -> u64 {
+    64
+}
+
+fn default_sse_max_session_clients() -> u64 {
+    512
 }
 
 fn default_cron_log_retention_days() -> i64 {
@@ -1235,6 +1270,26 @@ impl AppConfig {
                 .ok()
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(false),
+            presence_heartbeat_ttl_secs: env::var("PRESENCE_HEARTBEAT_TTL_SECS")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(default_presence_heartbeat_ttl_secs()),
+            presence_sweep_interval_secs: env::var("PRESENCE_SWEEP_INTERVAL_SECS")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(default_presence_sweep_interval_secs()),
+            presence_heartbeat_interval_secs: env::var("PRESENCE_HEARTBEAT_INTERVAL_SECS")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(default_presence_heartbeat_interval_secs()),
+            sse_max_clients: env::var("SSE_MAX_CLIENTS")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(default_sse_max_clients()),
+            sse_max_session_clients: env::var("SSE_MAX_SESSION_CLIENTS")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(default_sse_max_session_clients()),
             sms_code_expires_in: env::var("SMS_CODE_EXPIRES_IN")
                 .ok()
                 .and_then(|v| v.parse().ok())
@@ -1411,6 +1466,11 @@ impl AppConfig {
             },
             registration_email_enabled: true,
             registration_sms_enabled: false,
+            presence_heartbeat_ttl_secs: default_presence_heartbeat_ttl_secs(),
+            presence_sweep_interval_secs: default_presence_sweep_interval_secs(),
+            presence_heartbeat_interval_secs: default_presence_heartbeat_interval_secs(),
+            sse_max_clients: default_sse_max_clients(),
+            sse_max_session_clients: default_sse_max_session_clients(),
             sms_code_expires_in: default_sms_code_expires_in(),
             sms_code_length: default_sms_code_length(),
             sms_rate_limit_secs: default_sms_rate_limit_secs(),
@@ -1562,6 +1622,16 @@ mod tests {
         assert!(c.registration_email_enabled);
         assert!(!c.registration_sms_enabled);
         assert!(!c.require_email_verification);
+    }
+
+    #[test]
+    fn sse_and_presence_defaults() {
+        let c = AppConfig::test_defaults();
+        assert_eq!(c.sse_max_clients, 64);
+        assert_eq!(c.sse_max_session_clients, 512);
+        assert_eq!(c.presence_heartbeat_ttl_secs, 75);
+        assert_eq!(c.presence_sweep_interval_secs, 10);
+        assert_eq!(c.presence_heartbeat_interval_secs, 30);
     }
 
     #[test]

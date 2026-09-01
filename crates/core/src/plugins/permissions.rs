@@ -121,6 +121,15 @@ impl PermissionChecker {
             .any(|pattern| pattern == "*" || pattern == action)
     }
 
+    /// Check if a plugin may report a presence status (`report`).
+    #[must_use]
+    pub fn is_presence_allowed(permissions: &Permissions, action: &str) -> bool {
+        permissions
+            .presence
+            .iter()
+            .any(|pattern| pattern == "*" || pattern == action)
+    }
+
     /// Check if a table allows read-only access
     #[must_use]
     pub fn is_table_readable(permissions: &Permissions, table: &str) -> bool {
@@ -354,6 +363,7 @@ mod tests {
             jobs: vec![],
             integration: vec![],
             session: vec![],
+            presence: vec![],
             max_memory_mb: None,
             timeout_ms: None,
         }

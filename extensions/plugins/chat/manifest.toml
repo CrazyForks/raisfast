@@ -519,22 +519,6 @@ description = "Agent list"
 name = "items"
 type = "array"
 
-[[routes]]
-method = "POST"
-path = "/api/v1/plugins/chat/presence/heartbeat"
-handler = "heartbeat"
-description = "Presence heartbeat (30s interval; in-memory PresenceMap)"
-auth = "authed"
-permission = "presence:write"
-
-[routes.output]
-description = "Ack"
-
-[[routes.output.fields]]
-name = "ok"
-type = "boolean"
-
-
 # ── Widget routes (CH-1, W3/W4) ─────────────────────────────────
 # Visitor-facing endpoints (widget.md §5). auth=public — handlers validate the
 # short-session widget JWT (Bearer) via host.verifyToken.

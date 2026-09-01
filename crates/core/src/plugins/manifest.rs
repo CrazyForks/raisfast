@@ -227,6 +227,11 @@ pub struct Permissions {
     /// short-session widget JWTs via `auth.issueToken` / `auth.verifyToken`.
     #[serde(default)]
     pub session: Vec<String>,
+    /// Presence actions (`report`): plugins may set a subject's manual
+    /// availability (away/busy/…) via `presence.report`. Business-agnostic
+    /// — any app that tracks "who is available" consumes the kernel store.
+    #[serde(default)]
+    pub presence: Vec<String>,
     pub max_memory_mb: Option<u32>,
     pub timeout_ms: Option<u64>,
 }
