@@ -127,6 +127,19 @@ pub fn register_host_functions(
     });
 
     let hc = host_ctx.clone();
+    engine.register_fn("issueToken", move |input: &str| -> String {
+        hc.auth_issue_token(input)
+    });
+
+    let hc = host_ctx.clone();
+    engine.register_fn("verifyToken", move |token: &str| -> String {
+        hc.auth_verify_token(token)
+    });
+
+    let hc = host_ctx.clone();
+    engine.register_fn("decodeId", move |id: &str| -> String { hc.decode_id(id) });
+
+    let hc = host_ctx.clone();
     engine.register_fn("dbExecute", move |sql: &str, params: &str| -> String {
         hc.db_execute(sql, params)
     });

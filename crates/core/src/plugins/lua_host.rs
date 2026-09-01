@@ -163,6 +163,28 @@ pub fn register_host_functions(
     host.set("getReceipt", get_receipt_fn)?;
 
     let hc = host_ctx.clone();
+    let issue_token_fn = lua.create_function(move |lua, input: String| {
+        Ok(mlua::Value::String(
+            lua.create_string(hc.auth_issue_token(&input))?,
+        ))
+    })?;
+    host.set("issueToken", issue_token_fn)?;
+
+    let hc = host_ctx.clone();
+    let verify_token_fn = lua.create_function(move |lua, token: String| {
+        Ok(mlua::Value::String(
+            lua.create_string(hc.auth_verify_token(&token))?,
+        ))
+    })?;
+    host.set("verifyToken", verify_token_fn)?;
+
+    let hc = host_ctx.clone();
+    let decode_id_fn = lua.create_function(move |lua, id: String| {
+        Ok(mlua::Value::String(lua.create_string(hc.decode_id(&id))?))
+    })?;
+    host.set("decodeId", decode_id_fn)?;
+
+    let hc = host_ctx.clone();
     let db_begin_fn = lua.create_function(move |lua, ()| {
         Ok(mlua::Value::String(lua.create_string(hc.db_begin())?))
     })?;

@@ -156,9 +156,9 @@ pub async fn challenge(
     };
 
     let vault = state.integration.as_ref().and_then(|p| p.vault());
-    match crate::integration::verify::verify(&ch, vault, &req) {
+    match crate::integration::verify::verify(&ch, vault, &req, Some(&state.config.jwt_secret)) {
         VerifyOutcome::ChallengeEcho(echo) => (StatusCode::OK, echo).into_response(),
-        VerifyOutcome::Ok | VerifyOutcome::OkDecrypted(_) => {
+        VerifyOutcome::Ok | VerifyOutcome::OkDecrypted(_) | VerifyOutcome::WidgetSession { .. } => {
             // Channel without a GET flow (e.g. hmac) — nothing to handshake.
             (StatusCode::METHOD_NOT_ALLOWED, "no GET flow").into_response()
         }

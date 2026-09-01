@@ -12,3 +12,4 @@ pub mod markdown;
 pub mod pagination;
 pub mod slug;
 pub mod tz;
+pub mod widget_token;

@@ -112,6 +112,15 @@ impl PermissionChecker {
             .any(|pattern| pattern == "*" || pattern == capability)
     }
 
+    /// Check if a plugin may perform a session-token action (`issue`/`verify`).
+    #[must_use]
+    pub fn is_session_allowed(permissions: &Permissions, action: &str) -> bool {
+        permissions
+            .session
+            .iter()
+            .any(|pattern| pattern == "*" || pattern == action)
+    }
+
     /// Check if a table allows read-only access
     #[must_use]
     pub fn is_table_readable(permissions: &Permissions, table: &str) -> bool {
@@ -344,6 +353,7 @@ mod tests {
             content_types: vec![],
             jobs: vec![],
             integration: vec![],
+            session: vec![],
             max_memory_mb: None,
             timeout_ms: None,
         }

@@ -41,7 +41,10 @@ pub mod permissions;
 pub mod sdk_v1;
 pub mod vfs;
 
-pub use manifest::{CronEntry, HookConfig, Permissions, PluginManifest, RouteDef};
+pub use manifest::{
+    CronEntry, HookConfig, Permissions, PluginManifest, RouteDef, RouteOutput, RouteOutputField,
+    RouteParam,
+};
 pub use permissions::PermissionChecker;
 
 #[cfg(feature = "export-types")]
@@ -1557,14 +1560,23 @@ impl PluginManager {
         self.plugins.read().await.len()
     }
 
-    /// Get all declarative routes from plugins (for route registry)
-    pub async fn all_plugin_routes(&self) -> Vec<(String, String, String)> {
+    /// Get all declarative routes from plugins (for route registry).
+    ///
+    /// Returns `(method, path, plugin_id, permission)`. `permission` is the
+    /// manifest `[[routes]].permission` (`resource:action`) so the global
+    /// permission guard can enforce RBAC uniformly for plugin routes too.
+    pub async fn all_plugin_routes(&self) -> Vec<(String, String, String, Option<String>)> {
         let plugins = self.plugins.read().await;
         let mut routes = Vec::new();
         for p in plugins.values() {
             let ext_id = p.manifest.plugin.id.clone();
             for route in &p.manifest.routes {
-                routes.push((route.method.clone(), route.path.clone(), ext_id.clone()));
+                routes.push((
+                    route.method.clone(),
+                    route.path.clone(),
+                    ext_id.clone(),
+                    route.permission.clone(),
+                ));
             }
         }
         routes
@@ -1759,7 +1771,14 @@ impl PluginManager {
             return None;
         }
 
-        let path_parts: Vec<&str> = path.trim_end_matches('/').split('/').collect();
+        // Strip the query string (e.g. `?status=open`) so it never breaks
+        // segment matching; it is re-exposed to handlers as `input.query`.
+        let (clean_path, query) = match path.split_once('?') {
+            Some((p, q)) => (p, q),
+            None => (path, ""),
+        };
+
+        let path_parts: Vec<&str> = clean_path.trim_end_matches('/').split('/').collect();
         let path_key: String = path_parts
             .iter()
             .take(3)
@@ -1811,14 +1830,36 @@ impl PluginManager {
                         .into_response(),
                 );
             }
-            let params = extract_route_params(path, &entry.pattern);
-            let input = serde_json::json!({
-                "path": path,
+            let params = extract_route_params(clean_path, &entry.pattern);
+            let mut input = serde_json::json!({
+                "path": clean_path,
                 "method": method,
                 "body": body.unwrap_or(""),
                 "headers": headers.unwrap_or(&serde_json::Value::Null),
                 "params": params,
             });
+
+            // Parse the query string into `input.query` (e.g. `{status:"open"}`).
+            if !query.is_empty() {
+                let q: std::collections::HashMap<String, String> =
+                    serde_urlencoded::from_str(query).unwrap_or_default();
+                input["query"] = serde_json::to_value(&q).unwrap_or(serde_json::Value::Null);
+            }
+
+            // Inject the authenticated caller so route handlers can implement
+            // agent-aware policy (assignee, visibility, RBAC). Ids cross the
+            // plugin boundary as strings (snowflake ids exceed JS safe ints).
+            if let Some(obj) = input.as_object_mut() {
+                obj.insert(
+                    "auth".into(),
+                    serde_json::json!({
+                        "user_id": auth.user_id().map(|i| i.to_string()),
+                        "role": auth.role(),
+                        "roles": auth.roles().iter().map(|r| r.as_str()).collect::<Vec<_>>(),
+                        "tenant_id": auth.tenant_id(),
+                    }),
+                );
+            }
 
             let handler = &entry.handler;
             let start = std::time::Instant::now();

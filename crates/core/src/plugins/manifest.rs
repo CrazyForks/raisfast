@@ -223,6 +223,10 @@ pub struct Permissions {
     /// inbound receipts + envelope snapshots via `ingress.getReceipt`).
     #[serde(default)]
     pub integration: Vec<String>,
+    /// Session token actions (`issue`/`verify`): plugins may mint / validate
+    /// short-session widget JWTs via `auth.issueToken` / `auth.verifyToken`.
+    #[serde(default)]
+    pub session: Vec<String>,
     pub max_memory_mb: Option<u32>,
     pub timeout_ms: Option<u64>,
 }

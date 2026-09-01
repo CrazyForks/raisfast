@@ -15,6 +15,9 @@ declare const RaisFastHost: {
   ctUpdate(ct: string, id: string, data: string): string;
   jobEnqueue(jobType: string, payload: string, opts: string): string;
   getReceipt(traceId: string): string | null;
+  issueToken(input: string): string;
+  verifyToken(token: string): string | null;
+  decodeId(id: string): string;
   dbInsert(table: string, data: string, options: string): string;
   dbFetchOne(table: string, where: string, options: string): string;
   dbFetchAll(table: string, where: string, options: string): string;
@@ -281,6 +284,44 @@ export function getReceipt(traceId: string | number): Record<string, unknown> | 
     const result = RaisFastHost.getReceipt(String(traceId));
     if (result === null || result === "null") return null;
     return JSON.parse(result);
+}
+
+export interface IssueTokenInput {
+    channel_key: string;
+    contact_id: string;
+    ttl_secs?: number;
+}
+
+export interface VerifiedToken {
+    channel_key: string;
+    contact_id: string;
+}
+
+/** Sign a short-session widget JWT (`session = ["issue"]` permission). */
+export function issueToken(input: IssueTokenInput): { token: string } {
+    const result = RaisFastHost.issueToken(JSON.stringify(input));
+    const parsed = JSON.parse(result);
+    if (parsed?.error) throw new Error(parsed.error);
+    return parsed;
+}
+
+/** Verify a short-session widget JWT; returns claims or null (`session = ["verify"]`). */
+export function verifyToken(token: string): VerifiedToken | null {
+    const result = RaisFastHost.verifyToken(String(token));
+    if (result === null || result === "null") return null;
+    const parsed = JSON.parse(result);
+    if (parsed?.error) throw new Error(parsed.error);
+    return parsed;
+}
+
+/**
+ * Decode a base62-encoded (ID_ENCODING) snowflake id to its plain digit form.
+ * On the plugin boundary PK ids are base62 while plain bigint FK fields are
+ * digit strings — use this to compare a PK id against an FK or token claim.
+ * Idempotent: already-digit ids pass through unchanged.
+ */
+export function decodeId(id: string | number): string {
+    return RaisFastHost.decodeId(String(id));
 }
 
 export function logInfo(msg: string): void { RaisFastHost.log("info", msg); }

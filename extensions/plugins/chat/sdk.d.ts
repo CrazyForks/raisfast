@@ -84,6 +84,28 @@ export declare function jobEnqueue(jobType: string, payload: Record<string, unkn
     ok?: boolean;
 };
 export declare function getReceipt(traceId: string | number): Record<string, unknown> | null;
+export interface IssueTokenInput {
+    channel_key: string;
+    contact_id: string;
+    ttl_secs?: number;
+}
+export interface VerifiedToken {
+    channel_key: string;
+    contact_id: string;
+}
+/** Sign a short-session widget JWT (`session = ["issue"]` permission). */
+export declare function issueToken(input: IssueTokenInput): {
+    token: string;
+};
+/** Verify a short-session widget JWT; returns claims or null (`session = ["verify"]`). */
+export declare function verifyToken(token: string): VerifiedToken | null;
+/**
+ * Decode a base62-encoded (ID_ENCODING) snowflake id to its plain digit form.
+ * On the plugin boundary PK ids are base62 while plain bigint FK fields are
+ * digit strings — use this to compare a PK id against an FK or token claim.
+ * Idempotent: already-digit ids pass through unchanged.
+ */
+export declare function decodeId(id: string | number): string;
 export declare function logInfo(msg: string): void;
 export declare function logWarn(msg: string): void;
 export declare function logError(msg: string): void;

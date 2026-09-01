@@ -122,7 +122,7 @@ impl AppRegistry {
                     .all_plugin_routes()
                     .await
                     .into_iter()
-                    .map(|(m, path, _)| (m, path))
+                    .map(|(m, path, _, _)| (m, path))
                     .collect();
                 (ids, routes)
             }

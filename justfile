@@ -93,6 +93,11 @@ build-full *FLAGS: _link-cache
     fi
     SQLX_OFFLINE=true DATABASE_URL={{db_url}} cargo build --release --no-default-features --features "{{features}}" {{FLAGS}}
 
+# Build the visitor widget (frontend/widget) into dist/widget.js.
+# The backend serves it at /widget/widget.js (WIDGET_DIR default ./frontend/widget/dist).
+widget-build:
+    cd frontend/widget && npm run build
+
 # ── Code Quality ──────────────────────────────────────────────────
 
 # Format code
@@ -213,6 +218,27 @@ test-db-init:
         mysql -u root -proot -e "CREATE DATABASE raisfast_test"
         mysql -u root -proot raisfast_test < "$SCHEMA"
     fi
+
+# ── Content Types ─────────────────────────────────────────────────
+
+# Generate TypeScript types from content-type TOML files.
+#   just ct-types                           # all CTs → stdout
+#   just ct-types chat_conversation         # one CT → stdout
+#   just ct-types chat_conversation -o frontend/chat/src/types/chat.ts
+# CT dir override: CONTENT_TYPE_DIR (default ./extensions/content_types).
+# App CTs are materialized as {singular}.toml — use the flat singular name (e.g. "chat_conversation"), not "group/singular".
+ct-types *ARGS: _link-cache
+    SQLX_OFFLINE=true DATABASE_URL={{db_url}} cargo run --no-default-features --features "{{features}}" -- ct types {{ARGS}}
+
+# Generate TypeScript types from plugin `[[routes]]` declarations.
+#   just plugin-types                        # all plugins → stdout
+#   just plugin-types chat                   # one plugin → stdout
+#   just plugin-types chat -o frontend/chat/src/types/routes.ts
+# Plugin dir override: PLUGIN_DIR (default ./extensions/plugins).
+# Routes without [[routes.input]]/[[routes.output]] appear with unknown payloads —
+# declare params/fields in the manifest to opt into full typing.
+plugin-types *ARGS: _link-cache
+    SQLX_OFFLINE=true DATABASE_URL={{db_url}} cargo run --no-default-features --features "{{features}}" -- plugin types {{ARGS}}
 
 # ── Run ───────────────────────────────────────────────────────────
 

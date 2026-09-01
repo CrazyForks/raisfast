@@ -412,8 +412,11 @@ async fn build_app(
 
     {
         let plugin_routes = state.plugins.all_plugin_routes().await;
-        for (method, path, ext_id) in &plugin_routes {
-            registry.record(method, path, "plugin", ext_id);
+        for (method, path, ext_id, permission) in &plugin_routes {
+            match permission {
+                Some(perm) => registry.record_perm(method, path, "plugin", ext_id, perm),
+                None => registry.record(method, path, "plugin", ext_id),
+            }
         }
     }
 
@@ -462,6 +465,7 @@ async fn build_app(
         .nest(crate::constants::API_PREFIX, api_v1)
         .nest_service("/uploads", ServeDir::new(&upload_dir))
         .nest_service("/static", ServeDir::new(&static_dir))
+        .nest_service("/widget", ServeDir::new(&config.widget_dir))
         .nest(
             "/admin",
             axum::Router::new().fallback(admin_spa::serve_admin),

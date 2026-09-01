@@ -223,6 +223,33 @@ export function getReceipt(traceId) {
         return null;
     return JSON.parse(result);
 }
+/** Sign a short-session widget JWT (`session = ["issue"]` permission). */
+export function issueToken(input) {
+    const result = RaisFastHost.issueToken(JSON.stringify(input));
+    const parsed = JSON.parse(result);
+    if (parsed?.error)
+        throw new Error(parsed.error);
+    return parsed;
+}
+/** Verify a short-session widget JWT; returns claims or null (`session = ["verify"]`). */
+export function verifyToken(token) {
+    const result = RaisFastHost.verifyToken(String(token));
+    if (result === null || result === "null")
+        return null;
+    const parsed = JSON.parse(result);
+    if (parsed?.error)
+        throw new Error(parsed.error);
+    return parsed;
+}
+/**
+ * Decode a base62-encoded (ID_ENCODING) snowflake id to its plain digit form.
+ * On the plugin boundary PK ids are base62 while plain bigint FK fields are
+ * digit strings — use this to compare a PK id against an FK or token claim.
+ * Idempotent: already-digit ids pass through unchanged.
+ */
+export function decodeId(id) {
+    return RaisFastHost.decodeId(String(id));
+}
 export function logInfo(msg) { RaisFastHost.log("info", msg); }
 export function logWarn(msg) { RaisFastHost.log("warn", msg); }
 export function logError(msg) { RaisFastHost.log("error", msg); }

@@ -49,6 +49,13 @@ pub enum VerifyOutcome {
     /// Trust established AND the body was transformed by the verifier
     /// (e.g. wechat-aes decryption) — the pipeline must use this body.
     OkDecrypted(Vec<u8>),
+    /// Widget session token verified: the caller is `contact_id` on
+    /// `channel_key`. The pipeline injects `sender` + `_session` so mappings
+    /// (and downstream chat.ingress) can attribute the message.
+    WidgetSession {
+        contact_id: String,
+        channel_key: String,
+    },
     /// Challenge verifier: respond with this echo body and 200 (GET verify flows).
     ChallengeEcho(String),
     /// Trust rejected — respond with status + reason, never 2xx.
@@ -110,10 +117,14 @@ fn cfg_u64(config: &Value, key: &str, default: u64) -> u64 {
 }
 
 /// Dispatch by `verify_kind`.
+///
+/// `jwt_secret` is the platform secret used to sign short-session widget
+/// tokens (verify `jwt-widget`); it is `None` for channels that don't need it.
 pub fn verify(
     channel: &ItgChannel,
     vault: Option<&Vault>,
     req: &InboundHttpRequest,
+    jwt_secret: Option<&str>,
 ) -> VerifyOutcome {
     let config = channel.verify_config.clone().unwrap_or(Value::Null);
     match channel.verify_kind.as_str() {
@@ -121,8 +132,40 @@ pub fn verify(
         "token" => verify_token(&config, channel, vault, req),
         "challenge" => verify_challenge(&config, req),
         "wechat-aes" => verify_wechat_aes(&config, channel, vault, req),
+        "jwt-widget" => verify_jwt_widget(&config, channel, req, jwt_secret),
         "none" => VerifyOutcome::Ok,
         other => reject(500, &format!("unsupported verify_kind '{other}'")),
+    }
+}
+
+/// `jwt-widget`: platform-issued short-session JWT (`Bearer <token>`).
+///
+/// Verifies signature (platform `jwt_secret`), `exp`, `typ == "widget"` and
+/// that `claims.ch` equals the channel key — so a token minted for one widget
+/// channel can never submit to another. On success the claims (contact_id,
+/// channel_key) are returned for `sender`/`_session` injection.
+fn verify_jwt_widget(
+    _config: &Value,
+    channel: &ItgChannel,
+    req: &InboundHttpRequest,
+    jwt_secret: Option<&str>,
+) -> VerifyOutcome {
+    let Some(secret) = jwt_secret else {
+        return reject(500, "jwt-widget verify requires platform JWT_SECRET");
+    };
+    let Some(auth) = req.header("authorization") else {
+        return reject(401, "missing Authorization header");
+    };
+    let Some(token) = crate::utils::widget_token::bearer_token(auth) else {
+        return reject(401, "expected 'Bearer <token>'");
+    };
+    match crate::utils::widget_token::verify_widget_token(secret, token) {
+        Some(claims) if claims.ch == channel.channel_key => VerifyOutcome::WidgetSession {
+            contact_id: claims.sub,
+            channel_key: claims.ch,
+        },
+        Some(_) => reject(403, "widget token channel mismatch"),
+        None => reject(401, "invalid or expired widget token"),
     }
 }
 
@@ -454,7 +497,10 @@ mod tests {
         let body = br#"{"id":1}"#;
         let sig = sign("s3cret", body);
         let req = request(body, &[("x-signature", &sig)]);
-        assert!(matches!(verify(&ch, Some(&vault), &req), VerifyOutcome::Ok));
+        assert!(matches!(
+            verify(&ch, Some(&vault), &req, None),
+            VerifyOutcome::Ok
+        ));
     }
 
     #[test]
@@ -467,14 +513,14 @@ mod tests {
         let sig = sign("wrong", body);
         let req = request(body, &[("x-signature", &sig)]);
         assert!(matches!(
-            verify(&ch, Some(&vault), &req),
+            verify(&ch, Some(&vault), &req, None),
             VerifyOutcome::Reject { .. }
         ));
 
         let sig = sign("s3cret", br#"{"id":2}"#);
         let req = request(body, &[("x-signature", &sig)]);
         assert!(matches!(
-            verify(&ch, Some(&vault), &req),
+            verify(&ch, Some(&vault), &req, None),
             VerifyOutcome::Reject { .. }
         ));
     }
@@ -492,7 +538,7 @@ mod tests {
         let sig = sign("s", b"{}");
         let req = request(b"{}", &[("x-signature", &sig), ("x-ts", &stale)]);
         assert!(matches!(
-            verify(&ch, Some(&vault), &req),
+            verify(&ch, Some(&vault), &req, None),
             VerifyOutcome::Reject { status: 401, .. }
         ));
     }
@@ -504,7 +550,7 @@ mod tests {
         let ch = channel("hmac-sha256", Value::Null, Some(creds));
         let req = request(b"{}", &[]);
         assert!(matches!(
-            verify(&ch, None, &req),
+            verify(&ch, None, &req, None),
             VerifyOutcome::Reject { status: 503, .. }
         ));
     }
@@ -520,15 +566,21 @@ mod tests {
         );
 
         let req = request(b"{}", &[("x-ingress-token", "tok1")]);
-        assert!(matches!(verify(&ch, Some(&vault), &req), VerifyOutcome::Ok));
+        assert!(matches!(
+            verify(&ch, Some(&vault), &req, None),
+            VerifyOutcome::Ok
+        ));
 
         let mut req = request(b"{}", &[]);
         req.query = "token=tok1".into();
-        assert!(matches!(verify(&ch, Some(&vault), &req), VerifyOutcome::Ok));
+        assert!(matches!(
+            verify(&ch, Some(&vault), &req, None),
+            VerifyOutcome::Ok
+        ));
 
         let req = request(b"{}", &[("x-ingress-token", "tok2")]);
         assert!(matches!(
-            verify(&ch, Some(&vault), &req),
+            verify(&ch, Some(&vault), &req, None),
             VerifyOutcome::Reject { .. }
         ));
     }
@@ -588,7 +640,10 @@ mod tests {
         mac.update(b"{\"shopify\":true}");
         let sig = base64::engine::general_purpose::STANDARD.encode(mac.finalize().into_bytes());
         let req = request(b"{\"shopify\":true}", &[("x-signature", sig.as_str())]);
-        assert!(matches!(verify(&ch, Some(&vault), &req), VerifyOutcome::Ok));
+        assert!(matches!(
+            verify(&ch, Some(&vault), &req, None),
+            VerifyOutcome::Ok
+        ));
     }
 
     #[test]
@@ -603,7 +658,7 @@ mod tests {
         let body = format!(r#"<xml><Encrypt>{encrypt}</Encrypt></xml>"#);
         let mut req = request(body.as_bytes(), &[]);
         req.query = format!("msg_signature={sig}&timestamp=1700000000&nonce=n1");
-        match verify(&ch, Some(&vault), &req) {
+        match verify(&ch, Some(&vault), &req, None) {
             VerifyOutcome::OkDecrypted(plain) => {
                 assert_eq!(String::from_utf8_lossy(&plain), plain_msg);
             }
@@ -614,7 +669,7 @@ mod tests {
         let mut req = request(body.as_bytes(), &[]);
         req.query = "msg_signature=deadbeef&timestamp=1700000000&nonce=n1".to_string();
         assert!(matches!(
-            verify(&ch, Some(&vault), &req),
+            verify(&ch, Some(&vault), &req, None),
             VerifyOutcome::Reject { status: 401, .. }
         ));
 
@@ -626,7 +681,7 @@ mod tests {
         req.method = "GET".into();
         req.query =
             format!("msg_signature={sig}&timestamp=1700000000&nonce=n1&echostr={echo_cipher}");
-        match verify(&ch, Some(&vault), &req) {
+        match verify(&ch, Some(&vault), &req, None) {
             VerifyOutcome::ChallengeEcho(echo) => assert_eq!(echo, echo_plain),
             other => panic!("expected echo, got {other:?}"),
         }
@@ -638,7 +693,7 @@ mod tests {
         let mut req = request(body.as_bytes(), &[]);
         req.query = format!("msg_signature={sig}&timestamp=1700000000&nonce=n1");
         assert!(matches!(
-            verify(&ch, Some(&vault), &req),
+            verify(&ch, Some(&vault), &req, None),
             VerifyOutcome::Reject { status: 400, .. }
         ));
     }
@@ -649,9 +704,51 @@ mod tests {
         let mut req = request(b"", &[]);
         req.method = "GET".into();
         req.query = "echostr=abc123".into();
-        match verify(&ch, None, &req) {
+        match verify(&ch, None, &req, None) {
             VerifyOutcome::ChallengeEcho(echo) => assert_eq!(echo, "abc123"),
             other => panic!("expected echo, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn jwt_widget_accepts_valid_channel_scoped_token() {
+        let secret = "platform-secret-32bytes-at-least";
+        let ch = channel("jwt-widget", Value::Null, None);
+        let tok = crate::utils::widget_token::issue_widget_token(secret, "test", "12345", 3600)
+            .expect("issue");
+        let req = request(b"{}", &[("authorization", &format!("Bearer {tok}"))]);
+        match verify(&ch, None, &req, Some(secret)) {
+            VerifyOutcome::WidgetSession {
+                contact_id,
+                channel_key,
+            } => {
+                assert_eq!(contact_id, "12345");
+                assert_eq!(channel_key, "test");
+            }
+            other => panic!("expected WidgetSession, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn jwt_widget_rejects_wrong_channel_and_bad_secret() {
+        let secret = "platform-secret-32bytes-at-least";
+        let ch = channel("jwt-widget", Value::Null, None);
+        let tok =
+            crate::utils::widget_token::issue_widget_token(secret, "chat-other", "12345", 3600)
+                .expect("issue");
+        let req = request(b"{}", &[("authorization", &format!("Bearer {tok}"))]);
+        assert!(matches!(
+            verify(&ch, None, &req, Some(secret)),
+            VerifyOutcome::Reject { status: 403, .. }
+        ));
+
+        let tok2 =
+            crate::utils::widget_token::issue_widget_token(secret, "chat-widget", "12345", 3600)
+                .expect("issue");
+        let req2 = request(b"{}", &[("authorization", &format!("Bearer {tok2}"))]);
+        assert!(matches!(
+            verify(&ch, None, &req2, Some("different-secret")),
+            VerifyOutcome::Reject { status: 401, .. }
+        ));
     }
 }

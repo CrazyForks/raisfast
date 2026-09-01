@@ -212,6 +212,7 @@ async fn build_test_app(pool: raisfast::db::Pool) -> (axum::Router, AppState) {
                 config.storage_root_dir.clone(),
                 content_registry.clone(),
                 emitter.clone(),
+                config.jwt_secret.clone(),
             )
             .await
             .expect("integration plane init"),
@@ -5297,6 +5298,469 @@ async fn chat_plugin_jobs_end_to_end() {
     .unwrap();
     assert_eq!(dave_status, "open", "failure → human takeover");
     assert_eq!(dave_bot, "disabled");
+}
+
+// ── Chat workspace routes (CH-1) ─────────────────────────────────
+
+/// Extract the JSON body of a plugin route response.
+async fn plugin_route_body(
+    plugins: &raisfast::plugins::PluginManager,
+    method: &str,
+    path: &str,
+    body: Option<&str>,
+    auth: &raisfast::middleware::auth::AuthUser,
+) -> serde_json::Value {
+    let resp = plugins
+        .dispatch_route(path, method, body, None, auth)
+        .await
+        .expect("plugin route matched");
+    let bytes = axum::body::to_bytes(resp.into_body(), 1 << 20)
+        .await
+        .unwrap();
+    serde_json::from_slice(&bytes).unwrap()
+}
+
+async fn chat_workspace_setup() -> (
+    axum::Router,
+    AppState,
+    std::sync::Arc<raisfast::plugins::PluginManager>,
+    i64,
+) {
+    let (mut app, state) = test_app().await;
+    let _ = &mut app;
+    register_chat_cts(&state).await;
+
+    let chat_manifest = format!(
+        "{}/../../extensions/plugins/chat/manifest.toml",
+        env!("CARGO_MANIFEST_DIR")
+    );
+    let plugins = raisfast::plugins::PluginManager::new_empty(
+        state.config.clone(),
+        raisfast::plugins::PluginManagerOptions {
+            pool: Some(state.pool.clone()),
+            event_bus: Some(state.eventbus.clone()),
+            content_registry: Some(state.content_type_registry.clone()),
+        },
+    )
+    .await;
+    plugins
+        .load_plugin_from_dir(std::path::Path::new(&chat_manifest))
+        .await
+        .unwrap();
+    let channel = chat_channel("chat-ws");
+    raisfast::integration::channel::model::insert(&state.pool, &channel)
+        .await
+        .unwrap();
+    state
+        .integration
+        .as_ref()
+        .unwrap()
+        .channels()
+        .refresh()
+        .await
+        .unwrap();
+
+    sqlx::query(raisfast::db::safe_sql(&format!(
+        "INSERT INTO itg_receipts (channel_id, external_id, kind, payload_hash, status, envelope) \
+         VALUES ({}, {}, 'push', '', 'processed', {})",
+        raisfast::db::Driver::ph(1),
+        raisfast::db::Driver::ph(2),
+        raisfast::db::Driver::ph(3),
+    )))
+    .bind(*channel.id)
+    .bind("route-m1")
+    .bind(serde_json::json!({"sender": "route-bob", "external_id": "route-m1", "payload": {"body": "hi there"}}))
+    .execute(&state.pool)
+    .await
+    .unwrap();
+
+    let trace: i64 = sqlx::query_scalar(raisfast::db::safe_sql(&format!(
+        "SELECT id FROM itg_receipts WHERE external_id = {}",
+        raisfast::db::Driver::ph(1),
+    )))
+    .bind("route-m1")
+    .fetch_one(&state.pool)
+    .await
+    .unwrap();
+
+    // The integration pipeline's route step writes the raw chat_message row
+    // (external_id/body/receipt_id) before enqueuing chat.ingress.
+    sqlx::query(raisfast::db::safe_sql(&format!(
+        "INSERT INTO chat_messages (role, content_type, body, external_id, receipt_id, status) \
+         VALUES ('user', 'text', 'hi there', 'route-m1', {}, 'sent')",
+        raisfast::db::Driver::ph(1),
+    )))
+    .bind(trace)
+    .execute(&state.pool)
+    .await
+    .unwrap();
+
+    let dispatcher = raisfast::worker::PluginCronDispatcher::new(plugins.clone());
+    dispatcher
+        .dispatch(&raisfast::worker::Job::Custom {
+            job_type: "chat.ingress".into(),
+            payload: json!({"trace_id": trace.to_string(), "channel_key": "chat-ws"}),
+        })
+        .await
+        .unwrap();
+
+    let conv_id: i64 =
+        sqlx::query_scalar("SELECT id FROM chat_conversations ORDER BY id DESC LIMIT 1")
+            .fetch_one(&state.pool)
+            .await
+            .unwrap();
+    (app, state, plugins, conv_id)
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn chat_workspace_routes_end_to_end() {
+    let (_app, _state, plugins, conv_id) = chat_workspace_setup().await;
+    let auth = raisfast::middleware::auth::AuthUser::from_parts(
+        Some(7),
+        raisfast::models::user::UserRole::Admin,
+        Some("default".to_string()),
+    );
+
+    // GET /conversations — the ingress-created conversation is visible.
+    let body = plugin_route_body(
+        &plugins,
+        "GET",
+        "/api/v1/plugins/chat/conversations?status=open",
+        None,
+        &auth,
+    )
+    .await;
+    let list = body["data"].clone();
+    assert_eq!(list["total"], 1, "one open conversation");
+    assert_eq!(list["items"][0]["id"], conv_id.to_string());
+    assert!(
+        list["items"][0].get("contact_name").is_some(),
+        "contact denormalized"
+    );
+
+    // GET /conversations/:id/messages — cursor pagination includes the visitor msg.
+    let msgs = plugin_route_body(
+        &plugins,
+        "GET",
+        &format!("/api/v1/plugins/chat/conversations/{conv_id}/messages"),
+        None,
+        &auth,
+    )
+    .await;
+    let items = msgs["data"]["items"].as_array().unwrap();
+    assert_eq!(items.len(), 1, "visitor message linked");
+    assert_eq!(items[0]["role"], "user");
+    assert_eq!(items[0]["body"], "hi there");
+
+    // POST /conversations/:id/messages — agent reply, private note, status flip.
+    let sent = plugin_route_body(
+        &plugins,
+        "POST",
+        &format!("/api/v1/plugins/chat/conversations/{conv_id}/messages"),
+        Some(r#"{"body":"got it, alice","client_id":"r1"}"#),
+        &auth,
+    )
+    .await;
+    let msg = sent["data"].clone();
+    assert_eq!(msg["role"], "agent");
+    assert_eq!(msg["sender_agent_id"], "7");
+    // Idempotency: same client_id is deduped.
+    let dup = plugin_route_body(
+        &plugins,
+        "POST",
+        &format!("/api/v1/plugins/chat/conversations/{conv_id}/messages"),
+        Some(r#"{"body":"got it, alice","client_id":"r1"}"#),
+        &auth,
+    )
+    .await;
+    assert_eq!(dup["data"]["id"], msg["id"], "client_id dedup");
+
+    let conv = sqlx::query_as::<_, (String, String)>(raisfast::db::safe_sql(&format!(
+        "SELECT status, last_message_role FROM chat_conversations WHERE id = {}",
+        raisfast::db::Driver::ph(1),
+    )))
+    .bind(conv_id)
+    .fetch_one(&_state.pool)
+    .await
+    .unwrap();
+    assert_eq!(conv.0, "open");
+    assert_eq!(conv.1, "agent", "conversation touched by agent reply");
+
+    // POST /conversations/:id/status — resolve.
+    let resolved = plugin_route_body(
+        &plugins,
+        "POST",
+        &format!("/api/v1/plugins/chat/conversations/{conv_id}/status"),
+        Some(r#"{"status":"resolved"}"#),
+        &auth,
+    )
+    .await;
+    assert_eq!(resolved["data"]["status"], "resolved");
+    assert!(resolved["data"]["resolved_at"].as_str().is_some());
+
+    // POST /conversations/:id/read — clears unread.
+    let read = plugin_route_body(
+        &plugins,
+        "POST",
+        &format!("/api/v1/plugins/chat/conversations/{conv_id}/read"),
+        None,
+        &auth,
+    )
+    .await;
+    assert_eq!(read["data"]["ok"], true);
+
+    // GET /contacts + /contacts/:id/timeline
+    let contacts = plugin_route_body(
+        &plugins,
+        "GET",
+        "/api/v1/plugins/chat/contacts",
+        None,
+        &auth,
+    )
+    .await;
+    let contact_id = contacts["data"]["items"][0]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let timeline = plugin_route_body(
+        &plugins,
+        "GET",
+        &format!("/api/v1/plugins/chat/contacts/{contact_id}/timeline"),
+        None,
+        &auth,
+    )
+    .await;
+    assert_eq!(timeline["data"]["identities"][0]["channel"], "chat-ws");
+    assert_eq!(
+        timeline["data"]["conversations"].as_array().unwrap().len(),
+        1
+    );
+
+    // GET /agents — platform users via dbQuery.
+    let agents =
+        plugin_route_body(&plugins, "GET", "/api/v1/plugins/chat/agents", None, &auth).await;
+    assert!(agents["data"]["items"].is_array());
+
+    // POST /presence/heartbeat
+    let hb = plugin_route_body(
+        &plugins,
+        "POST",
+        "/api/v1/plugins/chat/presence/heartbeat",
+        None,
+        &auth,
+    )
+    .await;
+    assert_eq!(hb["data"]["ok"], true);
+
+    // Unauthenticated caller on a permissioned route is gated by dispatch auth.
+    let anon = raisfast::middleware::auth::AuthUser::from_parts(
+        None,
+        raisfast::models::user::UserRole::Reader,
+        None,
+    );
+    let denied = plugins
+        .dispatch_route(
+            "/api/v1/plugins/chat/conversations",
+            "GET",
+            None,
+            None,
+            &anon,
+        )
+        .await
+        .expect("route matched");
+    assert_eq!(denied.status(), axum::http::StatusCode::UNAUTHORIZED);
+}
+
+// ── Chat widget loop (CH-1, W0-W4) ─────────────────────────────
+
+fn chat_widget_channel(key: &str) -> raisfast::integration::ItgChannel {
+    let mut ch = chat_channel(key);
+    ch.verify_kind = "jwt-widget".into();
+    ch.mapping = Some(json!({
+        "external_id": "$.id",
+        "sender": "$.sender",
+        "payload": {"body": "$.text"}
+    }));
+    ch
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn chat_widget_loop_end_to_end() {
+    let (mut app, state) = test_app().await;
+    register_chat_cts(&state).await;
+
+    let chat_manifest = format!(
+        "{}/../../extensions/plugins/chat/manifest.toml",
+        env!("CARGO_MANIFEST_DIR")
+    );
+    let plugins = raisfast::plugins::PluginManager::new_empty(
+        state.config.clone(),
+        raisfast::plugins::PluginManagerOptions {
+            pool: Some(state.pool.clone()),
+            event_bus: Some(state.eventbus.clone()),
+            content_registry: Some(state.content_type_registry.clone()),
+        },
+    )
+    .await;
+    plugins
+        .load_plugin_from_dir(std::path::Path::new(&chat_manifest))
+        .await
+        .unwrap();
+
+    let channel = chat_widget_channel("chat-widget");
+    let channel_id = *channel.id;
+    raisfast::integration::channel::model::insert(&state.pool, &channel)
+        .await
+        .unwrap();
+    state
+        .integration
+        .as_ref()
+        .unwrap()
+        .channels()
+        .refresh()
+        .await
+        .unwrap();
+
+    // chat_inbox referencing the widget channel (greeting + no bot = human).
+    sqlx::query(raisfast::db::safe_sql(&format!(
+        "INSERT INTO chat_inboxes (id, name, channel_id, greeting, created_at, updated_at) \
+         VALUES ({}, {}, {}, {}, {}, {})",
+        raisfast::db::Driver::ph(1),
+        raisfast::db::Driver::ph(2),
+        raisfast::db::Driver::ph(3),
+        raisfast::db::Driver::ph(4),
+        raisfast::db::Driver::ph(5),
+        raisfast::db::Driver::ph(6),
+    )))
+    .bind(raisfast::utils::id::new_snowflake_id())
+    .bind("Website Inbox")
+    .bind(channel_id)
+    .bind("Hi! How can we help?")
+    .bind(raisfast::utils::tz::now_utc())
+    .bind(raisfast::utils::tz::now_utc())
+    .execute(&state.pool)
+    .await
+    .unwrap();
+
+    let anon = raisfast::middleware::auth::AuthUser::from_parts(
+        None,
+        raisfast::models::user::UserRole::Reader,
+        None,
+    );
+
+    // W3: widget/session bootstrap → token + conversation.
+    let boot = plugin_route_body(
+        &plugins,
+        "POST",
+        "/api/v1/plugins/chat/widget/session",
+        Some(r#"{"channel_key":"chat-widget","visitor_id":"vis-1"}"#),
+        &anon,
+    )
+    .await;
+    let boot = boot["data"].clone();
+    let token = boot["token"].as_str().unwrap().to_string();
+    let contact_id = boot["contact_id"].as_str().unwrap().to_string();
+    let conversation_id = boot["conversation_id"].as_str().unwrap().to_string();
+    assert_eq!(
+        boot["greeting"], "Hi! How can we help?",
+        "greeting from inbox"
+    );
+    assert!(!token.is_empty(), "widget token issued");
+
+    let mut rx = state.eventbus.subscribe();
+
+    // W0: visitor message via the real ingress endpoint (verify=jwt-widget).
+    let (status, _) = send(
+        &mut app,
+        post_json_auth(
+            "/api/v1/ingress/chat-widget",
+            json!({"id": "wm1", "text": "hello from the widget"}),
+            &token,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "widget push acked");
+
+    let trace: i64 = sqlx::query_scalar(raisfast::db::safe_sql(&format!(
+        "SELECT id FROM itg_receipts WHERE external_id = {}",
+        raisfast::db::Driver::ph(1),
+    )))
+    .bind("wm1")
+    .fetch_one(&state.pool)
+    .await
+    .unwrap();
+
+    let dispatcher = raisfast::worker::PluginCronDispatcher::new(plugins.clone());
+    dispatcher
+        .dispatch(&raisfast::worker::Job::Custom {
+            job_type: "chat.ingress".into(),
+            payload: json!({"trace_id": trace.to_string(), "channel_key": "chat-widget"}),
+        })
+        .await
+        .unwrap();
+
+    // The routed message is linked into the SAME conversation (contact merge):
+    // the owning token can read it back (W4 header path).
+    let msgs_ok = plugins
+        .dispatch_route(
+            &format!("/api/v1/plugins/chat/widget/messages?conversation={conversation_id}"),
+            "GET",
+            None,
+            Some(&serde_json::json!({"authorization": format!("Bearer {token}")})),
+            &anon,
+        )
+        .await
+        .expect("widget messages route matched");
+    let bytes_ok = axum::body::to_bytes(msgs_ok.into_body(), 1 << 20)
+        .await
+        .unwrap();
+    let body_ok: serde_json::Value = serde_json::from_slice(&bytes_ok).unwrap();
+    let items = body_ok["data"]["items"].as_array().unwrap();
+    assert_eq!(items.len(), 1, "visitor message merged + readable by owner");
+    assert_eq!(items[0]["body"], "hello from the widget");
+
+    // W2: session SSE event carries contact_id (claims filter source).
+    let mut saw_widget_event = false;
+    while let Ok(ev) = rx.try_recv() {
+        if let raisfast::eventbus::Event::Custom {
+            event_type, data, ..
+        } = ev.as_ref()
+            && event_type == "chat.message.created"
+            && data["contact_id"].as_str() == Some(&contact_id)
+        {
+            saw_widget_event = true;
+        }
+    }
+    assert!(saw_widget_event, "chat.message.created carries contact_id");
+
+    // Cross-session isolation: a token for another contact must be rejected.
+    let other = plugin_route_body(
+        &plugins,
+        "POST",
+        "/api/v1/plugins/chat/widget/session",
+        Some(r#"{"channel_key":"chat-widget","visitor_id":"vis-2"}"#),
+        &anon,
+    )
+    .await;
+    let other_token = other["data"]["token"].as_str().unwrap().to_string();
+    let resp = plugins
+        .dispatch_route(
+            &format!("/api/v1/plugins/chat/widget/messages?conversation={conversation_id}"),
+            "GET",
+            None,
+            Some(&serde_json::json!({"authorization": format!("Bearer {other_token}")})),
+            &anon,
+        )
+        .await
+        .expect("widget messages route matched");
+    let bytes = axum::body::to_bytes(resp.into_body(), 1 << 20)
+        .await
+        .unwrap();
+    let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(
+        body["code"], 40300,
+        "foreign contact cannot read this conversation"
+    );
 }
 
 // ── Integration Plane: dispatch framing (generic discriminator-field WS) ──

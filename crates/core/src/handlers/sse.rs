@@ -32,6 +32,7 @@ pub fn routes(
         "system",
         "sse"
     )
+    .route("/events/session", axum::routing::get(subscribe_session))
 }
 
 /// Extract event type name
@@ -126,6 +127,93 @@ pub async fn subscribe(
         item
     });
     // Guard released when the stream is dropped (client disconnect).
+    Ok(Sse::new(stream).keep_alive(
+        KeepAlive::new()
+            .interval(std::time::Duration::from_secs(30))
+            .text("ping"),
+    ))
+}
+
+/// Public session SSE — widget visitors subscribe with their short-session JWT
+/// (`Bearer <widget token>`). Events are filtered server-side to the token's
+/// claims (widget.md §3.3): only `chat.*` events whose payload `contact_id`
+/// matches `claims.sub` (and, when present, matching the token's channel) are
+/// pushed — a cross-session subscription sees no data.
+pub async fn subscribe_session(
+    State(state): State<crate::AppState>,
+    headers: axum::http::HeaderMap,
+) -> crate::errors::app_error::AppResult<Sse<impl Stream<Item = Result<SseEvent, Infallible>>>> {
+    // Connection cap (widget.md §3.3): separate budget from the authed stream.
+    static ACTIVE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    const MAX_SESSION_CLIENTS: u64 = 512;
+    let current = ACTIVE.load(std::sync::atomic::Ordering::Relaxed);
+    if current >= MAX_SESSION_CLIENTS {
+        return Err(crate::errors::app_error::AppError::TooManyRequests(
+            "SSE session connection cap reached".into(),
+        ));
+    }
+    ACTIVE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let guard = ActiveGuard(&ACTIVE);
+
+    let auth = headers
+        .get(crate::constants::HEADER_AUTHORIZATION)
+        .and_then(|v| v.to_str().ok());
+    let Some(auth) = auth else {
+        return Err(crate::errors::app_error::AppError::Unauthorized);
+    };
+    let Some(token) = crate::utils::widget_token::bearer_token(auth) else {
+        return Err(crate::errors::app_error::AppError::Unauthorized);
+    };
+    let Some(claims) =
+        crate::utils::widget_token::verify_widget_token(&state.config.jwt_secret, token)
+    else {
+        return Err(crate::errors::app_error::AppError::Unauthorized);
+    };
+    let contact_id = claims.sub;
+    let channel_key = claims.ch;
+
+    let rx = state.eventbus.subscribe();
+    let stream = BroadcastStream::new(rx).filter_map(move |result| {
+        let arc_event: Arc<Event> = match result {
+            Ok(e) => e,
+            Err(tokio_stream::wrappers::errors::BroadcastStreamRecvError::Lagged(n)) => {
+                tracing::warn!("SSE session client lagged, skipped {n} events");
+                return None;
+            }
+        };
+
+        let (event_type, data) = match arc_event.as_ref() {
+            Event::Custom {
+                event_type, data, ..
+            } => (event_type.as_str(), data),
+            _ => return None,
+        };
+        if !event_type.starts_with("chat.") {
+            return None;
+        }
+        // Claims-mandated filter: only this contact's events (cross-session = ∅).
+        let ev_contact = data
+            .get("contact_id")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default();
+        if !ev_contact.is_empty() && ev_contact != contact_id {
+            return None;
+        }
+        if let Some(ch) = data.get("channel").and_then(serde_json::Value::as_str)
+            && !ch.is_empty()
+            && ch != channel_key
+        {
+            return None;
+        }
+
+        let json = serde_json::to_string(arc_event.as_ref()).unwrap_or_default();
+        Some(Ok(SseEvent::default().event(event_type).data(json)))
+    });
+
+    let stream = stream.map(move |item| {
+        let _hold = &guard;
+        item
+    });
     Ok(Sse::new(stream).keep_alive(
         KeepAlive::new()
             .interval(std::time::Duration::from_secs(30))

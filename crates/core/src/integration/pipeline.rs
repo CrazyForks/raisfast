@@ -87,6 +87,8 @@ pub struct Pipeline {
     registry: Arc<ContentTypeRegistry>,
     emitter: EventEmitter,
     vault: Option<Vault>,
+    /// Platform secret for signing/verifying short-session widget tokens.
+    jwt_secret: Option<String>,
     /// Compiled mapping plans, keyed by (channel id, updated_at) — the
     /// updated_at component invalidates on channel config changes.
     plan_cache: dashmap::DashMap<(i64, String), Arc<MappingPlan>>,
@@ -101,6 +103,7 @@ impl Pipeline {
         registry: Arc<ContentTypeRegistry>,
         emitter: EventEmitter,
         vault: Option<Vault>,
+        jwt_secret: Option<String>,
     ) -> Self {
         Self {
             repo: ContentRepository::new(pool.clone()),
@@ -110,6 +113,7 @@ impl Pipeline {
             registry,
             emitter,
             vault,
+            jwt_secret,
             plan_cache: dashmap::DashMap::new(),
         }
     }
@@ -200,7 +204,12 @@ impl Pipeline {
             // whole downstream pass (hash, archive, normalize all see the
             // plaintext).
             let vault = self.vault.as_ref();
-            match crate::integration::verify::verify(channel, vault, req) {
+            match crate::integration::verify::verify(
+                channel,
+                vault,
+                req,
+                self.jwt_secret.as_deref(),
+            ) {
                 VerifyOutcome::OkDecrypted(plain) => {
                     let mut owned = req.clone();
                     owned.body = plain;
@@ -257,8 +266,16 @@ impl Pipeline {
         let verify = if body_decrypted {
             VerifyOutcome::Ok
         } else {
-            crate::integration::verify::verify(channel, self.vault.as_ref(), req)
+            crate::integration::verify::verify(
+                channel,
+                self.vault.as_ref(),
+                req,
+                self.jwt_secret.as_deref(),
+            )
         };
+        // Widget session claims (verify `jwt-widget`): attributed to the
+        // contact, injected into the mapping input as `sender` + `_session`.
+        let mut widget_session: Option<(String, String)> = None;
         match &verify {
             // OkDecrypted never reaches here: `run_push` swaps the decrypted
             // body in and re-enters, so this pass verifies the plaintext
@@ -269,6 +286,17 @@ impl Pipeline {
                 t.elapsed().as_millis() as u64,
                 channel.verify_kind.clone(),
             )),
+            VerifyOutcome::WidgetSession {
+                contact_id,
+                channel_key,
+            } => {
+                widget_session = Some((contact_id.clone(), channel_key.clone()));
+                timeline.push(StepEntry::done(
+                    "verify",
+                    t.elapsed().as_millis() as u64,
+                    "jwt-widget".to_string(),
+                ));
+            }
             VerifyOutcome::OkDecrypted(plain) => {
                 // Defensive: stream/batch entries bypass run_push's swap —
                 // use the plaintext directly for this pass.
@@ -313,7 +341,7 @@ impl Pipeline {
         }
 
         // ── Normalize (L2: framing + mapping; self-timed) ──────────
-        let normalized = self.normalize(channel, req, &mut timeline);
+        let normalized = self.normalize(channel, req, widget_session.as_ref(), &mut timeline);
         let Some(normalized) = normalized else {
             // Timeline already carries the failing step (or skip note).
             return PipelineOutcome {
@@ -476,10 +504,11 @@ impl Pipeline {
         &self,
         channel: &ItgChannel,
         req: &InboundHttpRequest,
+        widget_session: Option<&(String, String)>,
         timeline: &mut StepTimeline,
     ) -> Option<Normalized> {
         let t = Instant::now();
-        let detail = match self.normalize_inner(channel, req) {
+        let detail = match self.normalize_inner(channel, req, widget_session) {
             Ok(Some(n)) => {
                 timeline.push(StepEntry::done(
                     "normalize",
@@ -511,8 +540,21 @@ impl Pipeline {
         &self,
         channel: &ItgChannel,
         req: &InboundHttpRequest,
+        widget_session: Option<&(String, String)>,
     ) -> Result<Option<Normalized>, AppError> {
         let mut input = framing::decode(&channel.framing, &channel.codec, &req.body)?;
+        // Widget session (verify `jwt-widget`): the contact is identified by
+        // the token claims, not the body — inject `sender` + `_session` so the
+        // mapping (`sender: $.sender`) and downstream jobs can attribute it.
+        if let (Some((contact_id, channel_key)), Value::Object(obj)) = (widget_session, &mut input)
+        {
+            obj.entry("sender".to_string())
+                .or_insert(Value::String(contact_id.clone()));
+            obj.insert(
+                "_session".to_string(),
+                serde_json::json!({ "contact_id": contact_id, "channel_key": channel_key }),
+            );
+        }
         // Request metadata for mappings: providers put idempotency keys in
         // headers (GitHub `x-github-delivery`, Stripe `stripe-event-id`, …).
         // Injected under `_headers` without clobbering body fields.
@@ -532,7 +574,15 @@ impl Pipeline {
                 "channel has no mapping and no plugin — configure `mapping`".into(),
             ));
         };
-        plan.apply(&input)
+        let mut normalized = plan.apply(&input)?;
+        // Widget: default `sender` to the token's contact even if the mapping
+        // does not declare a `sender` rule (widget.md §3.1).
+        if let (Some((contact_id, _)), Some(n)) = (widget_session, normalized.as_mut())
+            && n.sender.is_none()
+        {
+            n.sender = Some(contact_id.clone());
+        }
+        Ok(normalized)
     }
 
     /// Route inside the caller transaction: CT write via `tx_insert`.

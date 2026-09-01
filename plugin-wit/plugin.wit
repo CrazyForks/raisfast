@@ -66,6 +66,11 @@ interface host-api {
     // Job / integration host API.
     job-enqueue: func(job-type: string, payload: string, opts: string) -> string;
     get-receipt: func(trace-id: string) -> string;
+    // Session-token host API (short-session widget JWTs).
+    issue-token: func(input: string) -> string;
+    verify-token: func(token: string) -> string;
+    // ID utility: base62 (ID_ENCODING) → plain digit snowflake id.
+    decode-id: func(id: string) -> string;
     vfs-read: func(path: string) -> option<string>;
     vfs-write: func(path: string, content: string) -> bool;
     vfs-delete: func(path: string) -> bool;

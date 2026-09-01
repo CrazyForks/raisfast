@@ -60,6 +60,7 @@ pub struct AppConfig {
     pub started_at: Option<std::time::Instant>,
     pub max_upload_size: usize,
     pub static_dir: String,
+    pub widget_dir: String,
     pub base_url: String,
     pub cors_origins: Option<String>,
     pub tls_cert_path: Option<String>,
@@ -1039,6 +1040,7 @@ impl AppConfig {
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(104857600),
             static_dir: env::var("STATIC_DIR").unwrap_or_else(|_| "./static".into()),
+            widget_dir: env::var("WIDGET_DIR").unwrap_or_else(|_| "./frontend/widget/dist".into()),
             base_url,
             cors_origins,
             tls_cert_path,
@@ -1340,6 +1342,7 @@ impl AppConfig {
             backup_retention: default_backup_retention(),
             max_upload_size: 104857600,
             static_dir: "./static".into(),
+            widget_dir: "./frontend/widget/dist".into(),
             base_url: "http://localhost:3000".into(),
             cors_origins: None,
             tls_cert_path: None,

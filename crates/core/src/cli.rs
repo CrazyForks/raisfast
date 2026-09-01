@@ -265,6 +265,14 @@ pub enum PluginAction {
         /// Path to check (default: plugin_dir)
         path: Option<String>,
     },
+    /// Generate TypeScript types from plugin route declarations (`[[routes]]`)
+    Types {
+        /// Specific plugin id (e.g. "chat"). Omit to generate all.
+        id: Option<String>,
+        /// Output file path (default: stdout)
+        #[arg(short, long)]
+        output: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -561,6 +569,12 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
             action: PluginAction::Check { path },
         }) => {
             plugin_cmd::check(config, path.as_deref())?;
+        }
+
+        Some(Commands::Plugin {
+            action: PluginAction::Types { id, output },
+        }) => {
+            plugin_cmd::generate_types(config, id.as_deref(), output.as_deref())?;
         }
 
         Some(Commands::Route { action }) => {

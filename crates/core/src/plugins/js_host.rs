@@ -136,6 +136,24 @@ pub fn register_host_functions(
     host.set("getReceipt", get_receipt_fn)?;
 
     let hc = host_ctx.clone();
+    let issue_token_fn = Function::new(ctx.clone(), move |input: String| -> String {
+        hc.auth_issue_token(&input)
+    })?;
+    host.set("issueToken", issue_token_fn)?;
+
+    let hc = host_ctx.clone();
+    let verify_token_fn = Function::new(ctx.clone(), move |token: String| -> String {
+        hc.auth_verify_token(&token)
+    })?;
+    host.set("verifyToken", verify_token_fn)?;
+
+    let hc = host_ctx.clone();
+    let decode_id_fn = Function::new(ctx.clone(), move |id: String| -> String {
+        hc.decode_id(&id)
+    })?;
+    host.set("decodeId", decode_id_fn)?;
+
+    let hc = host_ctx.clone();
     let db_execute_fn = Function::new(ctx.clone(), move |sql: String, params: String| -> String {
         hc.db_execute(&sql, &params)
     })?;

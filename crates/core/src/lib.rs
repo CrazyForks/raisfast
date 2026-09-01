@@ -296,6 +296,7 @@ pub async fn build_app_state(
                 config.storage_root_dir.clone(),
                 ct_registry.clone(),
                 emitter.clone(),
+                config.jwt_secret.clone(),
             )
             .await?,
         );

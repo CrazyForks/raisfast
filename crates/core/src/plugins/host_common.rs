@@ -727,6 +727,67 @@ impl HostContext {
         })
     }
 
+    /// Sign a short-session widget JWT for a visitor. Gated by
+    /// `permissions.session = ["issue"]`. Input: `{ channel_key, contact_id, ttl_secs }`.
+    #[must_use]
+    pub fn auth_issue_token(&self, input_json: &str) -> String {
+        if !PermissionChecker::is_session_allowed(&self.permissions, "issue") {
+            return r#"{"error":"auth.issueToken denied: needs session = [\"issue\"]"}"#.into();
+        }
+        let Ok(input) = serde_json::from_str::<serde_json::Value>(input_json) else {
+            return r#"{"error":"auth.issueToken: invalid JSON input"}"#.into();
+        };
+        let Some(channel_key) = input.get("channel_key").and_then(serde_json::Value::as_str) else {
+            return r#"{"error":"auth.issueToken: channel_key required"}"#.into();
+        };
+        let Some(contact_id) = input.get("contact_id").and_then(serde_json::Value::as_str) else {
+            return r#"{"error":"auth.issueToken: contact_id required"}"#.into();
+        };
+        let ttl = input
+            .get("ttl_secs")
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or(7200);
+        match crate::utils::widget_token::issue_widget_token(
+            &self.config.jwt_secret,
+            channel_key,
+            contact_id,
+            ttl.clamp(60, 86_400),
+        ) {
+            Ok(token) => serde_json::json!({ "token": token }).to_string(),
+            Err(e) => format!(r#"{{"error":"auth.issueToken failed: {e}"}}"#),
+        }
+    }
+
+    /// Verify a short-session widget JWT. Gated by
+    /// `permissions.session = ["verify"]`. Returns the claims or null.
+    #[must_use]
+    pub fn auth_verify_token(&self, token: &str) -> String {
+        if !PermissionChecker::is_session_allowed(&self.permissions, "verify") {
+            return r#"{"error":"auth.verifyToken denied: needs session = [\"verify\"]"}"#.into();
+        }
+        match crate::utils::widget_token::verify_widget_token(&self.config.jwt_secret, token) {
+            Some(claims) => serde_json::json!({
+                "channel_key": claims.ch,
+                "contact_id": claims.sub,
+            })
+            .to_string(),
+            None => "null".into(),
+        }
+    }
+
+    /// Decode a base62-encoded (ID_ENCODING) snowflake id to its plain digit
+    /// form. Generic utility (like `newId`): on the plugin boundary PK ids are
+    /// base62-encoded while plain bigint FK fields are digit strings — plugins
+    /// that need to compare a PK id against an FK (or a token claim) call this.
+    /// Idempotent: already-digit ids pass through unchanged; unparseable input
+    /// is returned as-is.
+    #[must_use]
+    pub fn decode_id(&self, id: &str) -> String {
+        crate::types::snowflake_id::parse_id(id)
+            .map(|snow| snow.0.to_string())
+            .unwrap_or_else(|_| id.to_string())
+    }
+
     /// Execute a read-only SQL query (returns a JSON array string).
     #[must_use]
     pub fn db_query(&self, sql: &str, params_json: &str) -> String {
@@ -2096,8 +2157,21 @@ mod tests {
     fn host_context_api_call_blocked_without_permission() {
         let config = make_test_config();
         let ctx = HostContext::new("test", config, "p1".into(), Permissions::default(), None);
-        let result = ctx.api_call("dify", "chat", "{}");
-        assert!(result.contains("egress client not allowed"));
+        assert!(ctx.api_call("glm", "chat", "{}").contains("not allowed"));
+    }
+
+    #[test]
+    fn host_context_decode_id_roundtrip_and_passthrough() {
+        let config = make_test_config();
+        let ctx = HostContext::new("test", config, "p1".into(), Permissions::default(), None);
+        // encode_id/decode_id are symmetric in both ID_ENCODING modes.
+        let raw: i64 = 2094195004149858304;
+        let encoded = crate::types::snowflake_id::encode_id(raw);
+        assert_eq!(ctx.decode_id(&encoded), raw.to_string());
+        // Plain digits pass through unchanged.
+        assert_eq!(ctx.decode_id(&raw.to_string()), raw.to_string());
+        // Unparseable input is returned as-is.
+        assert_eq!(ctx.decode_id("not-an-id"), "not-an-id");
     }
 
     #[test]

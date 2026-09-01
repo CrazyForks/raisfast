@@ -39,7 +39,7 @@ impl RoutePermissionMap {
             let Some(ref perm) = r.permission else {
                 continue;
             };
-            if r.path.contains('{') {
+            if r.path.contains('{') || r.path.contains(':') {
                 patterns.push((r.method.clone(), r.path.clone(), perm.clone()));
             } else {
                 exact.insert((r.method.clone(), r.path.clone()), perm.clone());
@@ -66,7 +66,7 @@ impl RoutePermissionMap {
             let matched = req_segs
                 .iter()
                 .zip(pat_segs.iter())
-                .all(|(req, pat)| pat.starts_with('{') || pat == req);
+                .all(|(req, pat)| pat.starts_with('{') || pat.starts_with(':') || pat == req);
             if matched {
                 return Some(perm.as_str());
             }
@@ -263,4 +263,61 @@ async fn check_rbac_permission(
         .await;
 
     granted
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::server::RouteInfo;
+
+    fn ri(method: &str, path: &str, perm: &str) -> RouteInfo {
+        RouteInfo {
+            method: method.to_string(),
+            path: path.to_string(),
+            source: "plugin".to_string(),
+            source_name: "chat".to_string(),
+            permission: Some(perm.to_string()),
+        }
+    }
+
+    #[test]
+    fn plugin_path_params_match_patterns() {
+        let map = RoutePermissionMap::from_routes(&[
+            ri(
+                "POST",
+                "/api/v1/plugins/chat/conversations/:id/messages",
+                "conversations:write",
+            ),
+            ri(
+                "GET",
+                "/api/v1/plugins/chat/conversations",
+                "conversations:read",
+            ),
+            ri(
+                "POST",
+                "/api/v1/plugins/chat/presence/heartbeat",
+                "presence:write",
+            ),
+        ]);
+
+        assert_eq!(
+            map.lookup("POST", "/api/v1/plugins/chat/conversations/123/messages"),
+            Some("conversations:write")
+        );
+        assert_eq!(
+            map.lookup("GET", "/api/v1/plugins/chat/conversations"),
+            Some("conversations:read")
+        );
+        assert_eq!(
+            map.lookup("POST", "/api/v1/plugins/chat/presence/heartbeat"),
+            Some("presence:write")
+        );
+        // Different method does not match the same path.
+        assert_eq!(
+            map.lookup("GET", "/api/v1/plugins/chat/conversations/123/messages"),
+            None
+        );
+        // Unrelated path is not matched.
+        assert_eq!(map.lookup("POST", "/api/v1/plugins/chat/other"), None);
+    }
 }

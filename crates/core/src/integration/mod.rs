@@ -96,6 +96,7 @@ impl IntegrationPlane {
         storage_root: String,
         registry: std::sync::Arc<crate::content_type::ContentTypeRegistry>,
         emitter: crate::event::EventEmitter,
+        jwt_secret: String,
     ) -> crate::errors::app_error::AppResult<Self> {
         let vault = config
             .vault_key
@@ -112,6 +113,7 @@ impl IntegrationPlane {
             registry,
             emitter.clone(),
             vault.clone(),
+            Some(jwt_secret.clone()),
         ));
         pipeline.spawn_batch_flusher();
         Ok(Self {

@@ -22,12 +22,18 @@ content_types = [
     "chat_conversations",
     "chat_messages",
 ]
+# Read-only SQL for platform users (agents list) + channel_key→id lookup
+# (widget/session bootstrap). users/itg_channels are not CTs.
+database = ["read:users", "read:itg_channels"]
 # Outbound LLM via declarative api-clients (named per bot config, e.g. "glm").
 egress = ["*"]
-# chat.ingress enqueues chat.autoreply (fallback mode uses delay_mins).
-jobs = ["chat.autoreply"]
+# chat.ingress enqueues chat.autoreply (fallback mode uses delay_mins);
+# sendMessage enqueues chat.egress.
+jobs = ["chat.autoreply", "chat.egress"]
 # Read inbound receipts (envelope snapshot = deterministic facts).
 integration = ["receipts"]
+# Widget session tokens: mint (issue) + validate (verify) short-session JWTs.
+session = ["issue", "verify"]
 
 [[jobs]]
 job_type = "chat.ingress"
@@ -38,3 +44,617 @@ description = "Post-route merge: identity -> conversation -> message link -> cou
 job_type = "chat.autoreply"
 handler = "onAutoreply"
 description = "Bot LLM step: context window -> callApi -> assistant message -> SSE; first_line hands off after reply"
+
+[[jobs]]
+job_type = "chat.egress"
+handler = "onEgress"
+description = "Outbound dispatch: kind=sse -> mark delivered; kind=api -> callApi passthrough"
+
+# ── Workspace routes (CH-1) ────────────────────────────────────────
+# Agent workspace action endpoints (有副作用编排: SSE/egress/冗余更新).
+# Routes are the contract: declare input/output so `raisfast plugin types`
+# generates typed frontend clients. Handlers land in main.js during CH-1.
+# Plain CRUD resources (inboxes/bots/labels/teams/…) stay on the declarative
+# CT API (`/admin/cms/chat/chat_*`) — not declared here.
+
+[[routes]]
+method = "GET"
+path = "/api/v1/plugins/chat/conversations"
+handler = "listConversations"
+description = "List conversations with workspace filters (status/assignee/inbox/label/priority/q/sort)"
+auth = "authed"
+permission = "conversations:read"
+
+[[routes.input]]
+name = "status"
+in = "query"
+type = "string"
+description = "open | pending | snoozed | resolved"
+
+[[routes.input]]
+name = "assignee"
+in = "query"
+type = "string"
+description = "Filter by assignee user id"
+
+[[routes.input]]
+name = "inbox"
+in = "query"
+type = "string"
+description = "Filter by inbox id"
+
+[[routes.input]]
+name = "label"
+in = "query"
+type = "string"
+description = "Filter by label title"
+
+[[routes.input]]
+name = "priority"
+in = "query"
+type = "string"
+description = "low | medium | high | urgent"
+
+[[routes.input]]
+name = "q"
+in = "query"
+type = "string"
+description = "Keyword search"
+
+[[routes.input]]
+name = "sort"
+in = "query"
+type = "string"
+description = "last_message_at desc | priority | first_response_breached"
+
+[[routes.input]]
+name = "page"
+in = "query"
+type = "integer"
+
+[[routes.input]]
+name = "page_size"
+in = "query"
+type = "integer"
+
+[routes.output]
+description = "Paginated conversation summaries"
+
+[[routes.output.fields]]
+name = "items"
+type = "array"
+description = "Conversation summaries (ChatConversation shape + contact denormalized)"
+
+[[routes.output.fields]]
+name = "total"
+type = "integer"
+
+[[routes.output.fields]]
+name = "page"
+type = "integer"
+
+[[routes]]
+method = "GET"
+path = "/api/v1/plugins/chat/conversations/:id"
+handler = "getConversation"
+description = "Conversation summary + recent messages"
+auth = "authed"
+permission = "conversations:read"
+
+[[routes.input]]
+name = "id"
+in = "path"
+type = "string"
+required = true
+
+[routes.output]
+content_type = "chat_conversations"
+
+[[routes]]
+method = "GET"
+path = "/api/v1/plugins/chat/conversations/:id/messages"
+handler = "listMessages"
+description = "Cursor-paginated messages (after_id, no OFFSET)"
+auth = "authed"
+permission = "conversations:read"
+
+[[routes.input]]
+name = "id"
+in = "path"
+type = "string"
+required = true
+
+[[routes.input]]
+name = "after_id"
+in = "query"
+type = "string"
+description = "Return messages with id > after_id"
+
+[[routes.input]]
+name = "limit"
+in = "query"
+type = "integer"
+description = "Page size (default 50, max 100)"
+
+[routes.output]
+description = "Messages page"
+
+[[routes.output.fields]]
+name = "items"
+type = "array"
+description = "ChatMessage rows"
+
+[[routes.output.fields]]
+name = "next_after_id"
+type = "string"
+description = "Cursor for the next page"
+
+[[routes]]
+method = "POST"
+path = "/api/v1/plugins/chat/conversations/:id/messages"
+handler = "sendMessage"
+description = "Agent send message (private note allowed); SSE + chat.egress side effects"
+auth = "authed"
+permission = "conversations:write"
+
+[[routes.input]]
+name = "id"
+in = "path"
+type = "string"
+required = true
+
+[[routes.input]]
+name = "body"
+in = "body"
+type = "string"
+required = true
+description = "Message body (markdown ok)"
+
+[[routes.input]]
+name = "private"
+in = "body"
+type = "boolean"
+description = "Private note (agent-only, invisible to visitor)"
+
+[[routes.input]]
+name = "attachments"
+in = "body"
+type = "json"
+description = "[{url,name,mime,size}]"
+
+[[routes.input]]
+name = "canned_id"
+in = "body"
+type = "string"
+description = "Canned response id for template expansion"
+
+[[routes.input]]
+name = "client_id"
+in = "body"
+type = "string"
+description = "Frontend idempotency key (double-send guard)"
+
+[routes.output]
+description = "Created message"
+
+[[routes.output.fields]]
+name = "id"
+type = "string"
+
+[[routes.output.fields]]
+name = "conversation_id"
+type = "string"
+
+[[routes.output.fields]]
+name = "role"
+type = "string"
+
+[[routes.output.fields]]
+name = "content_type"
+type = "string"
+
+[[routes.output.fields]]
+name = "body"
+type = "string"
+
+[[routes.output.fields]]
+name = "private"
+type = "boolean"
+
+[[routes.output.fields]]
+name = "status"
+type = "string"
+
+[[routes.output.fields]]
+name = "client_id"
+type = "string"
+
+[[routes.output.fields]]
+name = "created_at"
+type = "string"
+
+[[routes]]
+method = "POST"
+path = "/api/v1/plugins/chat/conversations/:id/assign"
+handler = "assignConversation"
+description = "Assign conversation to an agent (activity + SSE chat.assignment)"
+auth = "authed"
+permission = "conversations:assign"
+
+[[routes.input]]
+name = "id"
+in = "path"
+type = "string"
+required = true
+
+[[routes.input]]
+name = "agent_id"
+in = "body"
+type = "string"
+required = true
+description = "Assignee user id"
+
+[routes.output]
+content_type = "chat_conversations"
+
+[[routes]]
+method = "POST"
+path = "/api/v1/plugins/chat/conversations/:id/unassign"
+handler = "unassignConversation"
+description = "Unassign (back to unassigned pool)"
+auth = "authed"
+permission = "conversations:assign"
+
+[[routes.input]]
+name = "id"
+in = "path"
+type = "string"
+required = true
+
+[routes.output]
+content_type = "chat_conversations"
+
+[[routes]]
+method = "POST"
+path = "/api/v1/plugins/chat/conversations/:id/team"
+handler = "assignTeam"
+description = "Reassign to a team"
+auth = "authed"
+permission = "conversations:assign"
+
+[[routes.input]]
+name = "id"
+in = "path"
+type = "string"
+required = true
+
+[[routes.input]]
+name = "team_id"
+in = "body"
+type = "string"
+required = true
+
+[routes.output]
+content_type = "chat_conversations"
+
+[[routes]]
+method = "POST"
+path = "/api/v1/plugins/chat/conversations/:id/status"
+handler = "updateStatus"
+description = "State machine transition open/pending/snoozed/resolved (CSAT/SLA hooks)"
+auth = "authed"
+permission = "conversations:resolve"
+
+[[routes.input]]
+name = "id"
+in = "path"
+type = "string"
+required = true
+
+[[routes.input]]
+name = "status"
+in = "body"
+type = "string"
+required = true
+description = "open | pending | snoozed | resolved"
+
+[[routes.input]]
+name = "snoozed_until"
+in = "body"
+type = "string"
+description = "RFC3339, required when status = snoozed"
+
+[routes.output]
+content_type = "chat_conversations"
+
+[[routes]]
+method = "POST"
+path = "/api/v1/plugins/chat/conversations/:id/bot"
+handler = "toggleBot"
+description = "Agent toggles bot_status active/disabled (handoff revert)"
+auth = "authed"
+permission = "conversations:write"
+
+[[routes.input]]
+name = "id"
+in = "path"
+type = "string"
+required = true
+
+[[routes.input]]
+name = "active"
+in = "body"
+type = "boolean"
+required = true
+description = "true = re-enable bot for this conversation"
+
+[routes.output]
+content_type = "chat_conversations"
+
+[[routes]]
+method = "POST"
+path = "/api/v1/plugins/chat/conversations/:id/labels"
+handler = "updateLabels"
+description = "Replace conversation labels"
+auth = "authed"
+permission = "conversations:write"
+
+[[routes.input]]
+name = "id"
+in = "path"
+type = "string"
+required = true
+
+[[routes.input]]
+name = "labels"
+in = "body"
+type = "array"
+required = true
+description = "Label titles"
+
+[routes.output]
+content_type = "chat_conversations"
+
+[[routes]]
+method = "POST"
+path = "/api/v1/plugins/chat/conversations/:id/read"
+handler = "markConversationRead"
+description = "Agent read: clear unread_count"
+auth = "authed"
+permission = "conversations:read"
+
+[[routes.input]]
+name = "id"
+in = "path"
+type = "string"
+required = true
+
+[routes.output]
+description = "Ack"
+
+[[routes.output.fields]]
+name = "ok"
+type = "boolean"
+
+[[routes]]
+method = "GET"
+path = "/api/v1/plugins/chat/contacts"
+handler = "listContacts"
+description = "List contacts with search"
+auth = "authed"
+permission = "contacts:read"
+
+[[routes.input]]
+name = "q"
+in = "query"
+type = "string"
+description = "Search name/email/phone"
+
+[[routes.input]]
+name = "page"
+in = "query"
+type = "integer"
+
+[[routes.input]]
+name = "page_size"
+in = "query"
+type = "integer"
+
+[routes.output]
+description = "Paginated contacts"
+
+[[routes.output.fields]]
+name = "items"
+type = "array"
+
+[[routes.output.fields]]
+name = "total"
+type = "integer"
+
+[[routes.output.fields]]
+name = "page"
+type = "integer"
+
+[[routes]]
+method = "GET"
+path = "/api/v1/plugins/chat/contacts/:id/timeline"
+handler = "getContactTimeline"
+description = "Contact profile + all conversations (CT include query)"
+auth = "authed"
+permission = "contacts:read"
+
+[[routes.input]]
+name = "id"
+in = "path"
+type = "string"
+required = true
+
+[routes.output]
+description = "Contact timeline"
+
+[[routes.output.fields]]
+name = "contact"
+type = "object"
+
+[[routes.output.fields]]
+name = "identities"
+type = "array"
+
+[[routes.output.fields]]
+name = "conversations"
+type = "array"
+
+[[routes]]
+method = "GET"
+path = "/api/v1/plugins/chat/agents"
+handler = "listAgents"
+description = "Agents + presence + open conversation counts"
+auth = "authed"
+permission = "agents:read"
+
+[routes.output]
+description = "Agent list"
+
+[[routes.output.fields]]
+name = "items"
+type = "array"
+
+[[routes]]
+method = "POST"
+path = "/api/v1/plugins/chat/presence/heartbeat"
+handler = "heartbeat"
+description = "Presence heartbeat (30s interval; in-memory PresenceMap)"
+auth = "authed"
+permission = "presence:write"
+
+[routes.output]
+description = "Ack"
+
+[[routes.output.fields]]
+name = "ok"
+type = "boolean"
+
+
+# ── Widget routes (CH-1, W3/W4) ─────────────────────────────────
+# Visitor-facing endpoints (widget.md §5). auth=public — handlers validate the
+# short-session widget JWT (Bearer) via host.verifyToken.
+
+[[routes]]
+method = "POST"
+path = "/api/v1/plugins/chat/widget/session"
+handler = "widgetSession"
+description = "Visitor bootstrap: create/find contact+conversation, issue widget token"
+auth = "public"
+
+[[routes.input]]
+name = "channel_key"
+in = "body"
+type = "string"
+required = true
+
+[[routes.input]]
+name = "visitor_id"
+in = "body"
+type = "string"
+description = "Persistent anonymous visitor id (localStorage); generated when absent"
+
+[[routes.input]]
+name = "identifier"
+in = "body"
+type = "string"
+description = "HMAC identity identifier (reserved, v1 anonymous)"
+
+[[routes.input]]
+name = "hmac"
+in = "body"
+type = "string"
+description = "HMAC-SHA256(identifier, inbox session secret) (reserved)"
+
+[routes.output]
+description = "Bootstrap result"
+
+[[routes.output.fields]]
+name = "token"
+type = "string"
+
+[[routes.output.fields]]
+name = "contact_id"
+type = "string"
+
+[[routes.output.fields]]
+name = "conversation_id"
+type = "string"
+
+[[routes.output.fields]]
+name = "inbox_id"
+type = "string"
+
+[[routes.output.fields]]
+name = "greeting"
+type = "string"
+
+[[routes]]
+method = "GET"
+path = "/api/v1/plugins/chat/widget/messages"
+handler = "widgetMessages"
+description = "Incremental message pull (since cursor); claims-scoped to the token's contact"
+auth = "public"
+
+[[routes.input]]
+name = "conversation"
+in = "query"
+type = "string"
+required = true
+
+[[routes.input]]
+name = "since"
+in = "query"
+type = "string"
+description = "Return messages with id > since"
+
+[routes.output]
+description = "Messages page"
+
+[[routes.output.fields]]
+name = "items"
+type = "array"
+
+[[routes]]
+method = "POST"
+path = "/api/v1/plugins/chat/widget/typing"
+handler = "widgetTyping"
+description = "Visitor typing indicator (fire-and-forget chat.typing, no persistence)"
+auth = "public"
+
+[[routes.input]]
+name = "conversation"
+in = "query"
+type = "string"
+required = true
+
+[routes.output]
+description = "Ack"
+
+[[routes.output.fields]]
+name = "ok"
+type = "boolean"
+
+[[routes]]
+method = "POST"
+path = "/api/v1/plugins/chat/widget/read"
+handler = "widgetRead"
+description = "Visitor read watermark (throttled visitor_last_seen_at)"
+auth = "public"
+
+[[routes.input]]
+name = "conversation"
+in = "query"
+type = "string"
+required = true
+
+[routes.output]
+description = "Ack"
+
+[[routes.output.fields]]
+name = "ok"
+type = "boolean"
