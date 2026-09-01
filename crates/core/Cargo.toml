@@ -25,7 +25,7 @@ plugin-rhai = ["rhai"]
 plugin-all  = ["plugin-wasm", "plugin-js", "plugin-lua", "plugin-rhai"]
 
 # ── Integration plane stream connectors ─────────────────────────────
-integration-stream = ["tokio-tungstenite", "rumqttc"]
+integration-stream = ["tokio-tungstenite", "rumqttc", "native-tls", "tokio-native-tls"]
 
 # ── Integration plane IMAP (email inbound) ───────────────────────────
 integration-imap = ["async-imap", "mail-parser", "native-tls", "tokio-native-tls", "dep:tokio-util"]

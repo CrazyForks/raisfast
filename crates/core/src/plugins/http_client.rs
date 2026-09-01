@@ -13,14 +13,34 @@ const DEFAULT_TIMEOUT_SECS: u64 = 10;
 /// Maximum response body size (1 MB)
 const MAX_RESPONSE_BYTES: usize = 1024 * 1024;
 
+/// Build a reqwest client honoring the standard proxy env vars
+/// (`HTTPS_PROXY` / `HTTP_PROXY` / `ALL_PROXY`) when set — required for
+/// outbound plugin/egress HTTP in networks that block direct connections
+/// (e.g. Telegram API behind a VPN/corporate proxy).
+pub(crate) fn client_with_proxy(timeout_secs: u64) -> AppResult<reqwest::Client> {
+    let builder = reqwest::Client::builder().timeout(Duration::from_secs(timeout_secs));
+    let proxy = std::env::var("HTTPS_PROXY")
+        .or_else(|_| std::env::var("https_proxy"))
+        .or_else(|_| std::env::var("HTTP_PROXY"))
+        .or_else(|_| std::env::var("http_proxy"))
+        .or_else(|_| std::env::var("ALL_PROXY"))
+        .ok();
+    let client = match proxy.as_deref().filter(|p| !p.is_empty()) {
+        Some(p) => builder
+            .proxy(reqwest::Proxy::all(p).map_err(|e| {
+                crate::errors::app_error::AppError::Internal(anyhow::anyhow!("build proxy: {e}"))
+            })?)
+            .build(),
+        None => builder.build(),
+    };
+    client.map_err(|e| {
+        crate::errors::app_error::AppError::Internal(anyhow::anyhow!("build http client: {e}"))
+    })
+}
+
 /// Execute an HTTP GET request
 pub async fn http_get(url: &str) -> AppResult<String> {
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(DEFAULT_TIMEOUT_SECS))
-        .build()
-        .map_err(|e| {
-            crate::errors::app_error::AppError::Internal(anyhow::anyhow!("build http client: {e}"))
-        })?;
+    let client = client_with_proxy(DEFAULT_TIMEOUT_SECS)?;
 
     let response = client.get(url).send().await.map_err(|e| {
         crate::errors::app_error::AppError::Internal(anyhow::anyhow!("http get {url}: {e}"))
@@ -50,12 +70,7 @@ pub async fn http_get(url: &str) -> AppResult<String> {
 
 /// Execute an HTTP POST request
 pub async fn http_post(url: &str, body: &str, content_type: Option<&str>) -> AppResult<String> {
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(DEFAULT_TIMEOUT_SECS))
-        .build()
-        .map_err(|e| {
-            crate::errors::app_error::AppError::Internal(anyhow::anyhow!("build http client: {e}"))
-        })?;
+    let client = client_with_proxy(DEFAULT_TIMEOUT_SECS)?;
 
     let ct = content_type.unwrap_or("application/json");
     let request = client

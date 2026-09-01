@@ -25,6 +25,7 @@ import {
     parseJobInput,
 } from '../lib/ctx.js';
 import { emitMessageCreated } from '../lib/events.js';
+import { renderTemplate } from '../lib/template.js';
 import {
     ensureConversation,
     ensureIdentity,
@@ -59,7 +60,7 @@ export function onIngress(input) {
     }
 
     const contactId = ensureIdentity(channelKey, sender);
-    enrichContact(channelKey, sender, contactId);
+    enrichContact(channelKey, sender, contactId, inbox);
     const conv = ensureConversation(contactId, inbox, bot != null);
     const messageId = linkMessage(traceId, externalId, conv.id, conv.isNew);
     touchConversation(conv.id, conv.row);
@@ -111,40 +112,83 @@ export function buildReplyTo(channelKey, env) {
     const chatId = payload.reply_chat_id ?? payload.chat_id ?? null;
     const openId = payload.reply_open_id ?? payload.open_id ?? null;
     const webhook = payload.reply_webhook ?? payload.webhook ?? null;
-    if (!chatId && !openId && !webhook) return null;
+    const groupId = payload.reply_group_id ?? payload.group_id ?? null;
+    const messageType = payload.reply_message_type ?? payload.message_type ?? null;
+    if (!chatId && !openId && !webhook && !groupId) return null;
     const reply = { channel: channelKey };
     if (chatId) reply.chat_id = String(chatId);
     if (openId) reply.open_id = String(openId);
     if (webhook) reply.webhook = String(webhook);
+    if (groupId) reply.group_id = String(groupId);
+    if (messageType) reply.message_type = String(messageType);
     return reply;
 }
 
 // Enrich a contact's display name from the IM provider once, so the workspace
-// shows a real name instead of the raw open_id/staffId. Runs only when the
-// contact is still named after the sender (not yet resolved); best-effort —
-// any provider error keeps the sender id as the name.
-export function enrichContact(channelKey, sender, contactId) {
+// shows a real name instead of the raw open_id/staffId. Driven by the inbox's
+// `enrich` config (architecture §4.1 3c): {client, op, input template,
+// name mapping, avatar path}. Runs only when the contact is still named after
+// the sender; best-effort — any provider error keeps the sender id as the name.
+export function enrichContact(channelKey, sender, contactId, inbox) {
     const contact = ctGet(CT_CONTACT, contactId);
     if (!contact) return;
     const name = contact.name;
     if (name && name !== sender) return; // already resolved
 
+    const enrich = inbox?.enrich;
+    if (!enrich?.client) return; // channel has no enrichment declared
     try {
-        if (channelKey === 'feishu') {
-            const outRaw = callApi('feishu', 'get_user', { user_id: String(sender) });
-            const out = typeof outRaw === 'string' ? JSON.parse(outRaw) : outRaw;
-            if (out && out.error) throw new Error(out.error);
-            const v = out?.output ?? out;
-            const realName = v?.name ?? v?.data?.name;
-            if (realName) {
-                const patch = { name: String(realName) };
-                if (v.avatar_url) patch.avatar_url = String(v.avatar_url);
-                ctUpdate(CT_CONTACT, contactId, patch);
-                logInfo(`[chat] feishu contact enriched: ${sender} → ${realName}`);
-            }
+        const ctx = { sender: String(sender), chat_id: String(sender) };
+        const outRaw = callApi(
+            enrich.client,
+            enrich.op ?? 'get_profile',
+            renderTemplate(enrich.input ?? {}, ctx),
+        );
+        const out = typeof outRaw === 'string' ? JSON.parse(outRaw) : outRaw;
+        if (out && out.error) throw new Error(out.error);
+        const v = out?.output ?? out;
+
+        const patch = {};
+        const realName = buildEnrichedName(v, enrich.name);
+        if (realName) patch.name = realName;
+        if (enrich.avatar) {
+            const av = lookupPath(v, enrich.avatar);
+            if (av) patch.avatar_url = String(av);
         }
-        // dingtalk/telegram/... per-channel resolvers land in CH-3.
+        if (Object.keys(patch).length > 0) {
+            ctUpdate(CT_CONTACT, contactId, patch);
+            logInfo(`[chat] contact enriched: ${sender} → ${realName ?? '?'}`);
+        }
     } catch (e) {
         logWarn(`[chat] contact enrich failed (${channelKey}/${sender}): ${e}`);
     }
+}
+
+// Resolve a display name from the provider output per the `name` config:
+//   string                → dot path (e.g. "name")
+//   ["first_name","last"] → join the found parts with a space
+//   {join:[...], sep?, fallback?} → join parts, else fallback path
+function buildEnrichedName(v, nameCfg) {
+    if (!nameCfg) return null;
+    if (typeof nameCfg === 'string') return lookupPath(v, nameCfg);
+    if (Array.isArray(nameCfg)) {
+        const parts = nameCfg.map((p) => lookupPath(v, p)).filter(Boolean);
+        return parts.length ? parts.join(' ') : null;
+    }
+    if (typeof nameCfg === 'object') {
+        const join = Array.isArray(nameCfg.join) ? nameCfg.join : [];
+        const parts = join.map((p) => lookupPath(v, p)).filter(Boolean);
+        if (parts.length) return parts.join(nameCfg.sep ?? ' ');
+        if (nameCfg.fallback) return lookupPath(v, nameCfg.fallback);
+    }
+    return null;
+}
+
+function lookupPath(v, path) {
+    let cur = v;
+    for (const p of String(path).split('.')) {
+        if (cur == null) return null;
+        cur = cur[p];
+    }
+    return cur == null ? null : String(cur);
 }

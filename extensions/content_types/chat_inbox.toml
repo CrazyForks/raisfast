@@ -30,6 +30,10 @@ label = "Greeting message"
 type = "json"
 label = "Reply dispatch template"
 
+[fields.enrich]
+type = "json"
+label = "Contact enrichment config: {client, op, input template, name mapping, avatar path}"
+
 [fields.auto_assignment]
 type = "boolean"
 default = false

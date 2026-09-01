@@ -54,23 +54,45 @@ use crate::integration::supervisor::StreamConnector;
 pub struct WsClientConnector;
 
 /// `{path, equals}` frame matcher — the dispatch framing's discriminator.
+/// `equals` may be a string or a number/bool (Discord's opcode is numeric).
 #[derive(Debug, Clone)]
 struct Matcher {
     path: String,
-    equals: String,
+    equals: serde_json::Value,
 }
 
 impl Matcher {
     fn parse(v: &Value) -> Option<Self> {
         Some(Self {
             path: v.get("path")?.as_str()?.to_string(),
-            equals: v.get("equals")?.as_str()?.to_string(),
+            equals: v.get("equals")?.clone(),
         })
     }
 
     fn matches(&self, frame: &Value) -> bool {
-        walk_path(frame, &self.path).as_str() == Some(self.equals.as_str())
+        let got = walk_path(frame, &self.path);
+        match (&self.equals, got) {
+            (Value::String(e), Value::String(g)) => e == g,
+            (Value::Number(e), Value::Number(g)) => e == g,
+            (Value::Bool(e), Value::Bool(g)) => e == g,
+            // Loose scalar cross-compare (string config vs numeric frame, etc.).
+            (Value::String(e), g) => e == &g.to_string(),
+            (e, Value::String(g)) => e.as_str() == Some(g.as_str()),
+            _ => false,
+        }
     }
+}
+
+/// Server-initiated heartbeat: match a server frame, reply with a template.
+/// Client-initiated periodic heartbeat whose interval is learned from a server
+/// frame (Discord Gateway HELLO opcode 10 `d.heartbeat_interval`).
+struct ClientHeartbeat {
+    /// Which server frame carries the interval (e.g. `{op: 10}` HELLO).
+    matcher: Matcher,
+    /// JSONPath to the interval in ms inside that frame.
+    interval_path: String,
+    /// Heartbeat frame template to send on the discovered cadence.
+    frame: Value,
 }
 
 /// Declarative protocol profile for the `dispatch` framing.
@@ -81,6 +103,8 @@ struct DispatchProfile {
     ack: Option<(Matcher, Option<String>)>,
     /// Server-initiated heartbeat: match frame, reply with template.
     reply_heartbeat: Option<(Matcher, String)>,
+    /// Client-initiated heartbeat with a server-provided interval.
+    client_heartbeat: Option<ClientHeartbeat>,
     /// Event frames: matcher + payload path submitted to the pipeline.
     events: Option<(Matcher, String)>,
     /// Optional per-event in-connection ack (rendered with `{{id}}`).
@@ -125,6 +149,17 @@ impl DispatchProfile {
                     Matcher::parse(h.get("match")?)?,
                     serde_json::to_string(h.get("reply")?).ok()?,
                 ))
+            }),
+            client_heartbeat: cfg.get("client_heartbeat").and_then(|h| {
+                Some(ClientHeartbeat {
+                    matcher: Matcher::parse(h.get("match")?)?,
+                    interval_path: h
+                        .get("interval_path")
+                        .and_then(Value::as_str)
+                        .unwrap_or("$")
+                        .to_string(),
+                    frame: h.get("frame")?.clone(),
+                })
             }),
             events,
             ack_reply: cfg
@@ -425,13 +460,9 @@ async fn run(ch: Arc<ItgChannel>, sink: ConnectionSink) -> AppResult<()> {
     // Bound the whole establishment phase (DNS + TCP + TLS + upgrade):
     // gateways may silently park unauthorized upgrades — without a timeout
     // the supervisor waits forever in `connecting`.
-    let (ws, _resp) = tokio::time::timeout(
-        Duration::from_secs(15),
-        tokio_tungstenite::connect_async(request),
-    )
-    .await
-    .map_err(|_| AppError::Internal(anyhow::anyhow!("ws connect timeout (15s)")))?
-    .map_err(|e| AppError::Internal(anyhow::anyhow!("ws connect: {e}")))?;
+    let ws = tokio::time::timeout(Duration::from_secs(15), establish_ws(&endpoint, request))
+        .await
+        .map_err(|_| AppError::Internal(anyhow::anyhow!("ws connect timeout (15s)")))??;
     tracing::info!(channel = %ch.channel_key, endpoint, "ws connected");
 
     let (mut write, mut read) = ws.split();
@@ -500,6 +531,45 @@ async fn run(ch: Arc<ItgChannel>, sink: ConnectionSink) -> AppResult<()> {
         sink.mark_connected(&ch).await;
     }
 
+    // Client-initiated heartbeat with a server-provided interval (Discord
+    // Gateway HELLO). The config frame arrives right after connect (before the
+    // event loop); read it, extract the interval in ms, then a periodic tick
+    // sends the heartbeat frame.
+    let mut client_hb = if let Some(hb) = profile.as_ref().and_then(|p| p.client_heartbeat.as_ref())
+    {
+        let interval_ms = tokio::time::timeout(Duration::from_secs(15), async {
+            while let Some(Ok(msg)) = read.next().await {
+                if let tokio_tungstenite::tungstenite::Message::Text(text) = msg
+                    && let Ok(v) = serde_json::from_str::<Value>(&text)
+                    && hb.matcher.matches(&v)
+                {
+                    return walk_path(&v, &hb.interval_path).as_u64();
+                }
+            }
+            None
+        })
+        .await
+        .map_err(|_| {
+            AppError::Internal(anyhow::anyhow!("ws client heartbeat config frame timeout"))
+        })?
+        .ok_or_else(|| {
+            AppError::Internal(anyhow::anyhow!(
+                "ws client heartbeat config frame not received"
+            ))
+        })?;
+        if interval_ms == 0 {
+            return Err(AppError::Internal(anyhow::anyhow!(
+                "ws client heartbeat interval is 0"
+            )));
+        }
+        tracing::info!(channel = %ch.channel_key, interval_ms, "ws client heartbeat configured");
+        let mut tick = tokio::time::interval(Duration::from_millis(interval_ms));
+        tick.tick().await; // first tick fires immediately — skip it
+        Some((hb.frame.clone(), tick))
+    } else {
+        None
+    };
+
     // Keepalive: pb-frame sends application-level CONTROL pings; raw and
     // json-rpc use the WS protocol layer. dispatch protocols declare their
     // own heartbeat — EXCEPT those without one (opt in via ws_keepalive).
@@ -523,6 +593,16 @@ async fn run(ch: Arc<ItgChannel>, sink: ConnectionSink) -> AppResult<()> {
 
     loop {
         tokio::select! {
+            // Client-initiated heartbeat (Discord-style server-provided interval).
+            _ = client_hb_ready(&mut client_hb) => {
+                if let Some((frame, _)) = &client_hb {
+                    write.send(tokio_tungstenite::tungstenite::Message::Text(
+                        frame.to_string().into(),
+                    ))
+                    .await
+                    .map_err(|e| AppError::Internal(anyhow::anyhow!("ws client heartbeat send: {e}")))?;
+                }
+            }
             _ = ping_tick.tick(), if ws_keepalive || pb_keepalive => {
                 let msg = if let Some(p) = &pb_profile {
                     tokio_tungstenite::tungstenite::Message::Binary(
@@ -567,6 +647,115 @@ async fn run(ch: Arc<ItgChannel>, sink: ConnectionSink) -> AppResult<()> {
             }
         }
     }
+}
+/// Resolves when the client heartbeat tick fires; stays pending when no
+/// client heartbeat is configured (so the select arm is inert).
+async fn client_hb_ready(hb: &mut Option<(Value, tokio::time::Interval)>) {
+    if let Some((_, tick)) = hb {
+        tick.tick().await;
+    } else {
+        std::future::pending::<()>().await;
+    }
+}
+
+/// Establish the WebSocket, tunneling through an HTTP CONNECT proxy when
+/// `HTTPS_PROXY`/`HTTP_PROXY`/`ALL_PROXY` is set. The underlying tokio-tungstenite
+/// `connect_async` never honors proxy env — Discord/Slack gateways are often
+/// unreachable directly in restricted networks (reqwest outbound already proxies).
+async fn establish_ws<R: tokio_tungstenite::tungstenite::client::IntoClientRequest + Unpin>(
+    endpoint: &str,
+    request: R,
+) -> AppResult<
+    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>,
+> {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let proxy = [
+        "HTTPS_PROXY",
+        "https_proxy",
+        "HTTP_PROXY",
+        "http_proxy",
+        "ALL_PROXY",
+        "all_proxy",
+    ]
+    .iter()
+    .find_map(|k| std::env::var(k).ok().filter(|v| !v.is_empty()));
+
+    let url = reqwest::Url::parse(endpoint)
+        .map_err(|e| AppError::BadRequest(format!("invalid ws endpoint: {e}")))?;
+    let host = url
+        .host_str()
+        .ok_or_else(|| AppError::BadRequest("ws endpoint has no host".into()))?
+        .to_string();
+    let port = url.port_or_known_default().unwrap_or(443);
+    let secure = url.scheme() == "wss";
+
+    let stream: tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream> = if let Some(proxy) =
+        proxy
+    {
+        let p = reqwest::Url::parse(&proxy)
+            .map_err(|e| AppError::BadRequest(format!("invalid proxy url: {e}")))?;
+        let phost = p
+            .host_str()
+            .ok_or_else(|| AppError::BadRequest("proxy has no host".into()))?
+            .to_string();
+        let pport = p.port().unwrap_or(80);
+        let mut tcp = tokio::net::TcpStream::connect((phost.as_str(), pport))
+            .await
+            .map_err(|e| AppError::Internal(anyhow::anyhow!("proxy tcp connect: {e}")))?;
+        let target = format!("{host}:{port}");
+        tcp.write_all(format!("CONNECT {target} HTTP/1.1\r\nHost: {target}\r\n\r\n").as_bytes())
+            .await
+            .map_err(|e| AppError::Internal(anyhow::anyhow!("proxy CONNECT write: {e}")))?;
+        let mut head = Vec::new();
+        let mut buf = [0u8; 1024];
+        while !head.windows(4).any(|w| w == b"\r\n\r\n") && head.len() < 16384 {
+            let n = tcp
+                .read(&mut buf)
+                .await
+                .map_err(|e| AppError::Internal(anyhow::anyhow!("proxy CONNECT read: {e}")))?;
+            if n == 0 {
+                break;
+            }
+            head.extend_from_slice(&buf[..n]);
+        }
+        let head = String::from_utf8_lossy(&head);
+        if !head.starts_with("HTTP/1.1 200") && !head.starts_with("HTTP/1.0 200") {
+            return Err(AppError::Internal(anyhow::anyhow!(
+                "proxy CONNECT rejected: {}",
+                head.trim()
+            )));
+        }
+        let tls = native_tls::TlsConnector::builder()
+            .build()
+            .map_err(|e| AppError::Internal(anyhow::anyhow!("tls builder: {e}")))?;
+        let stream = tokio_native_tls::TlsConnector::from(tls)
+            .connect(&host, tcp)
+            .await
+            .map_err(|e| AppError::Internal(anyhow::anyhow!("tls through proxy: {e}")))?;
+        tokio_tungstenite::MaybeTlsStream::NativeTls(stream)
+    } else {
+        let tcp = tokio::net::TcpStream::connect((host.as_str(), port))
+            .await
+            .map_err(|e| AppError::Internal(anyhow::anyhow!("tcp connect: {e}")))?;
+        if secure {
+            let tls = native_tls::TlsConnector::builder()
+                .build()
+                .map_err(|e| AppError::Internal(anyhow::anyhow!("tls builder: {e}")))?;
+            let stream = tokio_native_tls::TlsConnector::from(tls)
+                .connect(&host, tcp)
+                .await
+                .map_err(|e| AppError::Internal(anyhow::anyhow!("tls connect: {e}")))?;
+            tokio_tungstenite::MaybeTlsStream::NativeTls(stream)
+        } else {
+            tokio_tungstenite::MaybeTlsStream::Plain(tcp)
+        }
+    };
+
+    tokio_tungstenite::client_async(request, stream)
+        .await
+        .map(|(ws, _)| ws)
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("ws upgrade: {e}")))
 }
 
 /// Static token from credentials (no oauth-cc involvement).
@@ -681,7 +870,12 @@ async fn handle_dispatch(
         return Ok(());
     };
     if !matcher.matches(&frame) {
-        tracing::debug!(channel = %ch.channel_key, "dispatch: unmatched frame ignored");
+        tracing::debug!(
+            channel = %ch.channel_key,
+            op = frame.get("op").and_then(|v| v.as_u64()).unwrap_or(u64::MAX),
+            t = frame.get("t").and_then(|v| v.as_str()).unwrap_or(""),
+            "dispatch: unmatched frame ignored"
+        );
         return Ok(());
     }
     let payload = walk_path(&frame, payload_path).clone();
@@ -792,5 +986,34 @@ async fn handle_text(
         other => Err(AppError::BadRequest(format!(
             "ws connector supports framing raw|json-rpc — got '{other}'"
         ))),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dispatch_profile_parses_client_heartbeat() {
+        let cfg = serde_json::json!({
+            "handshake": {"frames": ["{\"op\":2,\"d\":{}}"]},
+            "events": {"match": {"path": "$.t", "equals": "MESSAGE_CREATE"}, "payload_path": "$.d"},
+            "client_heartbeat": {
+                "match": {"path": "$.op", "equals": 10},
+                "interval_path": "$.d.heartbeat_interval",
+                "frame": {"op": 1, "d": 0}
+            }
+        });
+        let profile = DispatchProfile::parse(&cfg).expect("parse");
+        let hb = profile.client_heartbeat.expect("client heartbeat");
+        assert!(hb.matcher.matches(&serde_json::json!({"op": 10})));
+        assert!(!hb.matcher.matches(&serde_json::json!({"op": 0})));
+        assert_eq!(hb.interval_path, "$.d.heartbeat_interval");
+        assert_eq!(hb.frame["op"], 1);
+    }
+
+    #[test]
+    fn dispatch_profile_requires_events() {
+        assert!(DispatchProfile::parse(&serde_json::json!({})).is_none());
     }
 }

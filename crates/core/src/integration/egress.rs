@@ -207,7 +207,30 @@ impl EgressExecutor {
         let path_tpl = op.get("path").and_then(Value::as_str).unwrap_or("/");
         let path = render_path(path_tpl, &req.input)?;
 
-        let url = format!("{}{path}", client.base_url.trim_end_matches('/'));
+        // `url-path-token` auth: embed the sealed secret into the URL path
+        // (e.g. Telegram `/bot<token>/sendMessage`), between base_url and the
+        // op path. The secret is resolved before the header-injection block so
+        // it applies to the URL rather than a header.
+        let url = if client.auth_kind() == "url-path-token" {
+            let prefix = client
+                .auth
+                .as_ref()
+                .and_then(|a| a.get("path_prefix"))
+                .and_then(Value::as_str)
+                .unwrap_or("");
+            let secret = self.resolve_secret(&client).await?;
+            let Some(secret) = secret else {
+                return Err(AppError::BadRequest(
+                    "url-path-token auth requires sealed credentials".into(),
+                ));
+            };
+            format!(
+                "{}{prefix}{secret}{path}",
+                client.base_url.trim_end_matches('/')
+            )
+        } else {
+            format!("{}{path}", client.base_url.trim_end_matches('/'))
+        };
         let url = reqwest::Url::parse(&url)
             .map_err(|e| AppError::BadRequest(format!("egress url invalid: {e}")))?;
 
@@ -215,12 +238,8 @@ impl EgressExecutor {
             use reqwest::Method;
             let m = Method::from_bytes(method.as_bytes())
                 .map_err(|_| AppError::BadRequest(format!("method '{method}' invalid")))?;
-            let client_http = reqwest::Client::builder()
-                .timeout(std::time::Duration::from_secs(
-                    self.config.egress_timeout_secs,
-                ))
-                .build()
-                .map_err(|e| AppError::Internal(anyhow::anyhow!("egress http client: {e}")))?;
+            let client_http =
+                crate::plugins::http_client::client_with_proxy(self.config.egress_timeout_secs)?;
             if method == "GET" || method == "DELETE" {
                 client_http.request(m, url)
             } else {

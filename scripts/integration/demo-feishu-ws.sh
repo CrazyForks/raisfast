@@ -46,7 +46,7 @@ req GET "/admin/integration/api-clients"
 FEISHU_ID=$(jget "$_BODY" "next((c['id'] for c in d['data'] if c['client_key']=='feishu'), '')")
 OPS='{"send_text":{"method":"POST","path":"/im/v1/messages?receive_id_type=chat_id","output":{"message_id":"$.data.message_id"}},"get_user":{"method":"GET","path":"/contact/v3/users/{user_id}?user_id_type=open_id","output":{"name":"$.data.name","avatar_url":"$.data.avatar.avatar_72"}}}'
 if [ -n "$FEISHU_ID" ]; then
-  req POST "/admin/integration/api-clients/$FEISHU_ID/update" "{\"credentials\":$CREDS,\"ops\":$OPS,\"enabled\":true}"
+  req PUT "/admin/integration/api-clients/$FEISHU_ID" "{\"credentials\":$CREDS,\"ops\":$OPS,\"enabled\":true}"
   [ "$_CODE" = "200" ] && ok "feishu client refreshed" || die "刷新失败: $_RES"
 else
   req POST /admin/integration/api-clients "{\"client_key\":\"feishu\",\"base_url\":\"https://open.feishu.cn/open-apis\",\"auth\":{\"kind\":\"bearer\"},\"credentials\":$CREDS,\"ops\":$OPS}"
@@ -113,7 +113,7 @@ print(json.dumps({
 }, ensure_ascii=False))' "$CREDS")
 if [ -n "$CH_ID" ]; then
   # Protocol config is replaced wholesale: delete + recreate.
-  req POST "/admin/integration/channels/$CH_ID/delete" "{}"
+  req DELETE "/admin/integration/channels/$CH_ID"
   [ "$_CODE" = "200" ] && ok "old channel removed" || die "旧渠道删除失败: $_RES"
 fi
 if [ -z "$CH_ID" ] || true; then

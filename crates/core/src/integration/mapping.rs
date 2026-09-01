@@ -54,6 +54,7 @@ enum Segment {
 #[derive(Debug, Clone)]
 enum Pipe {
     AsNumber,
+    AsStr,
     AsDatetime,
     Default(Value),
     Regex(String),
@@ -203,6 +204,7 @@ fn compile_expr(v: &Value) -> Result<Expr, AppError> {
         }
         let pipe = match part {
             "as_number" => Pipe::AsNumber,
+            "as_str" => Pipe::AsStr,
             "as_datetime" => Pipe::AsDatetime,
             "as_json" => Pipe::AsJson(None),
             _ if part.starts_with("as_json(") && part.ends_with(')') => {
@@ -219,7 +221,7 @@ fn compile_expr(v: &Value) -> Result<Expr, AppError> {
             other => {
                 return Err(AppError::BadRequest(format!(
                     "pipe function '{other}' not supported \
-                     (as_number | as_datetime | default(v) | regex(pattern))"
+                     (as_number | as_str | as_datetime | default(v) | regex(pattern))"
                 )));
             }
         };
@@ -386,6 +388,15 @@ fn eval_value(expr: &Expr, input: &Value) -> Result<Value, AppError> {
     Ok(v)
 }
 
+/// Scalar → string (numbers/bools/strings; other JSON falls back to JSON text).
+fn scalar_to_string(v: &Value) -> String {
+    match v {
+        Value::String(s) => s.clone(),
+        Value::Null => String::new(),
+        other => other.to_string(),
+    }
+}
+
 fn apply_pipe(pipe: &Pipe, v: Value) -> Result<Value, AppError> {
     match pipe {
         Pipe::AsNumber => {
@@ -405,6 +416,11 @@ fn apply_pipe(pipe: &Pipe, v: Value) -> Result<Value, AppError> {
             } else {
                 Ok(Value::from(n))
             }
+        }
+        Pipe::AsStr => {
+            // Coerce a scalar (e.g. Telegram numeric chat.id) to a string —
+            // TEXT columns reject numbers at CT insert time.
+            Ok(Value::String(scalar_to_string(&v)))
         }
         Pipe::AsJson(sub_path) => {
             // Escaped payloads: a JSON *string* holding JSON. The optional
@@ -599,5 +615,21 @@ mod tests {
             .apply(&json!({"id": 1, "ts": "not-a-date"}))
             .expect_err("bad date");
         assert!(err.to_string().contains("as_datetime"));
+    }
+
+    #[test]
+    fn as_str_coerces_numeric_ids() {
+        let plan = compile_ok(json!({
+            "external_id": "$.message.message_id | as_str",
+            "sender": "$.message.from.id | as_str",
+            "payload": {"body": "$.message.text", "reply_chat_id": "$.message.chat.id | as_str"}
+        }));
+        let out = plan
+            .apply(&json!({"message": {"message_id": 2, "from": {"id": 8760804080_i64}, "chat": {"id": 123456789_i64}, "text": "hello"}}))
+            .expect("apply")
+            .expect("matched");
+        assert_eq!(out.external_id, "2");
+        assert_eq!(out.sender.as_deref(), Some("8760804080"));
+        assert_eq!(out.payload["reply_chat_id"], json!("123456789"));
     }
 }

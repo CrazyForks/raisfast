@@ -906,6 +906,19 @@ impl ContentRepository {
             values.push(BindValue::Text(tid.clone()));
         }
 
+        // Timestampable protocol: auto-populate created_at/updated_at when the
+        // CT implements it and the caller didn't supply them (the schema has no
+        // DB-side default, so inserts would otherwise leave them NULL). Use
+        // RFC3339 UTC (matches the sqlite schema default + frontend Date.parse).
+        let now_rfc3339 =
+            crate::utils::tz::now_utc().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+        if ct.has_protocol_column(COL_CREATED_AT) && !obj.contains_key(COL_CREATED_AT) {
+            obj.insert(COL_CREATED_AT.into(), Value::String(now_rfc3339.clone()));
+        }
+        if ct.has_protocol_column(COL_UPDATED_AT) && !obj.contains_key(COL_UPDATED_AT) {
+            obj.insert(COL_UPDATED_AT.into(), Value::String(now_rfc3339));
+        }
+
         let mut fk_relation_map: std::collections::HashMap<String, (String, String)> =
             std::collections::HashMap::new();
         let mut junction_fields: Vec<(String, String, String, String, String)> = Vec::new();

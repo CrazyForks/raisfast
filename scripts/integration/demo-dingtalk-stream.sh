@@ -88,7 +88,7 @@ print(json.dumps({
   "enabled":True
 }, ensure_ascii=False))')
 if [ -n "$CH_ID" ]; then
-  req POST "/admin/integration/channels/$CH_ID/delete" "{}"
+  req DELETE "/admin/integration/channels/$CH_ID"
   [ "$_CODE" = "200" ] && ok "old channel removed" || die "旧渠道删除失败: $_RES"
 fi
 BODY=$(python3 -c 'import json,sys;b=json.loads(sys.argv[1]);b["channel_key"]="dingtalk";print(json.dumps(b))' "$CH_BODY")

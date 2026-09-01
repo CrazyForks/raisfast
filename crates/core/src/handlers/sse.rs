@@ -51,7 +51,9 @@ pub async fn heartbeat(
     if let Some(t) = state.presence.touch(tenant_id, user_id.0) {
         crate::presence::emit_transition(&state.eventbus, &t);
     }
-    Ok(crate::errors::response::ApiResponse::success(serde_json::json!({ "ok": true })))
+    Ok(crate::errors::response::ApiResponse::success(
+        serde_json::json!({ "ok": true }),
+    ))
 }
 
 /// POST /api/v1/presence/status — set the caller's manual availability wish
@@ -81,7 +83,9 @@ pub async fn set_status(
     if let Some(t) = state.presence.set_manual(tenant_id, user_id.0, manual) {
         crate::presence::emit_transition(&state.eventbus, &t);
     }
-    Ok(crate::errors::response::ApiResponse::success(serde_json::json!({ "ok": true })))
+    Ok(crate::errors::response::ApiResponse::success(
+        serde_json::json!({ "ok": true }),
+    ))
 }
 
 /// Extract event type name

@@ -41,7 +41,7 @@ impl ItgApiClient {
         self.ops.as_ref()?.get(op)?.as_object()
     }
 
-    /// Auth kind (`bearer` | `api-key-header` | `none`).
+    /// Auth kind (`bearer` | `api-key-header` | `url-path-token` | `none`).
     #[must_use]
     pub fn auth_kind(&self) -> &str {
         self.auth
@@ -152,9 +152,25 @@ pub fn validate(base_url: &str, auth: Option<&Value>, ops: Option<&Value>) -> Ap
                     ));
                 }
             }
+            "url-path-token" => {
+                // The sealed secret is injected into the URL path (e.g. Telegram
+                // `/bot<token>/sendMessage`). Requires a non-empty `path_prefix`
+                // starting with `/`; the secret is appended right after it.
+                let prefix = auth
+                    .get("path_prefix")
+                    .and_then(Value::as_str)
+                    .unwrap_or("");
+                if prefix.is_empty() || !prefix.starts_with('/') || prefix.ends_with('/') {
+                    return Err(AppError::BadRequest(
+                        "auth 'path_prefix' must start with '/' and not end with '/' \
+                         (e.g. \"/bot\")"
+                            .into(),
+                    ));
+                }
+            }
             other => {
                 return Err(AppError::BadRequest(format!(
-                    "auth kind '{other}' not supported (bearer | api-key-header | none)"
+                    "auth kind '{other}' not supported (bearer | api-key-header | url-path-token | none)"
                 )));
             }
         }
@@ -184,4 +200,35 @@ pub fn validate(base_url: &str, auth: Option<&Value>, ops: Option<&Value>) -> Ap
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn validate_accepts_url_path_token_auth() {
+        let auth = serde_json::json!({ "kind": "url-path-token", "path_prefix": "/bot" });
+        assert!(validate("https://api.telegram.org", Some(&auth), None).is_ok());
+    }
+
+    #[test]
+    fn validate_rejects_bad_path_prefix() {
+        for bad in [
+            serde_json::json!({ "kind": "url-path-token", "path_prefix": "" }),
+            serde_json::json!({ "kind": "url-path-token", "path_prefix": "bot" }),
+            serde_json::json!({ "kind": "url-path-token", "path_prefix": "/bot/" }),
+        ] {
+            assert!(
+                validate("https://api.telegram.org", Some(&bad), None).is_err(),
+                "should reject {bad}"
+            );
+        }
+    }
+
+    #[test]
+    fn validate_rejects_unknown_auth_kind() {
+        let auth = serde_json::json!({ "kind": "query-token" });
+        assert!(validate("https://api.telegram.org", Some(&auth), None).is_err());
+    }
 }

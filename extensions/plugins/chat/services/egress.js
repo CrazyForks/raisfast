@@ -1,11 +1,10 @@
 // chat.egress — outbound dispatch for an agent/assistant message
 // (architecture §4.2). Dispatch by `chat_inbox.egress`:
 //   kind=sse      → mark delivered (widget; SSE was already pushed live)
-//   kind=api      → callApi passthrough to a declarative api-client
+//   kind=api      → callApi to a declarative api-client; the payload is the
+//                   rendered `egress.input` `{var}` template (architecture §4.2)
 //   kind=webhook  → httpPost to the conversation's per-channel reply target
-// The channel shape is driven by conv.reply_to (captured by chat.ingress):
-//   feishu   → callApi(egress.client, 'send_text', {receive_id: chat_id, ...})
-//   dingtalk → httpPost(reply_to.webhook, {msgtype:'text', text:{content}})
+// The `{var}` context for templates: {msg, conv, reply, sender}.
 
 import {
     callApi,
@@ -20,6 +19,7 @@ import {
     idOf,
     parseJobInput,
 } from '../lib/ctx.js';
+import { renderTemplate } from '../lib/template.js';
 import { emitAlert } from '../lib/events.js';
 
 export function onEgress(input) {
@@ -51,13 +51,18 @@ export function onEgress(input) {
     try {
         if (kind === 'webhook' && reply?.webhook) {
             // DingTalk bot reply: per-message sessionWebhook (self-auth).
+            const bodyTpl = egress?.body ?? { msgtype: 'text', text: { content: '{msg.body}' } };
             const resp = httpPost(
                 String(reply.webhook),
-                JSON.stringify({ msgtype: 'text', text: { content: msg.body ?? '' } }),
+                JSON.stringify(renderTemplate(bodyTpl, { msg, conv, reply })),
             );
             if (!httpPostOk(resp)) throw new Error(String(resp).slice(0, 300));
         } else if (kind === 'api' && egress?.client) {
-            callApi(egress.client, egress.op ?? 'send', buildApiInput(reply, egress, msg, conv));
+            const ctx = { msg, conv, reply };
+            const payload = egress?.input != null
+                ? pruneEmpty(renderTemplate(egress.input, ctx))
+                : { message: msg, conversation: conv, reply };
+            callApi(egress.client, egress.op ?? 'send', payload);
         } else {
             throw new Error(`chat.egress: no dispatch for kind=${kind} reply=${JSON.stringify(reply)}`);
         }
@@ -74,28 +79,6 @@ export function onEgress(input) {
     }
 }
 
-// Shape the callApi input for an IM reply. feishu `send_text` op expects
-// {receive_id, msg_type, content}; other clients get the generic passthrough
-// (message/conversation/reply) unless egress.input overrides the shape.
-function buildApiInput(reply, egress, msg, conv) {
-    const channel = reply?.channel;
-    if (channel === 'feishu') {
-        return {
-            receive_id: reply?.chat_id ?? reply?.open_id ?? '',
-            receive_id_type: reply?.chat_id ? 'chat_id' : 'open_id',
-            msg_type: 'text',
-            content: JSON.stringify({ text: msg.body ?? '' }),
-        };
-    }
-    const payload = {
-        message: msg,
-        conversation: conv,
-        reply,
-    };
-    if (egress?.input) payload.input = egress.input;
-    return payload;
-}
-
 // The host `httpPost` returns `{"status":<code>,"body":...}` on an HTTP reply,
 // or an `error:`-prefixed string on network/whitelist failure. Fail closed on
 // any non-2xx so the message is marked failed + alerted instead of silently
@@ -106,4 +89,20 @@ function httpPostOk(resp) {
     const m = s.match(/"status":\s*(\d{3})/);
     if (m) return Number(m[1]) >= 200 && Number(m[1]) < 300;
     return true;
+}
+
+// Drop object keys whose rendered template value is an empty string — lets an
+// egress template declare optional fields (e.g. QQ group_id present only for
+// group messages) without conditional logic in the payload.
+function pruneEmpty(v) {
+    if (Array.isArray(v)) return v.map(pruneEmpty);
+    if (v && typeof v === 'object') {
+        const out = {};
+        for (const [k, val] of Object.entries(v)) {
+            const next = pruneEmpty(val);
+            if (next !== '') out[k] = next;
+        }
+        return out;
+    }
+    return v;
 }

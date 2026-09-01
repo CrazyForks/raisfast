@@ -54,6 +54,14 @@ label = "Inbound receipt id (trace link)"
 type = "text"
 label = "IM conversation/chat id for outbound reply (feishu chat_id etc.)"
 
+[fields.reply_group_id]
+type = "text"
+label = "Group chat id for outbound reply (QQ group_id etc.)"
+
+[fields.reply_message_type]
+type = "text"
+label = "Inbound message_type discriminator (QQ private|group etc.)"
+
 [fields.reply_webhook]
 type = "text"
 label = "Per-message reply webhook URL (dingtalk sessionWebhook)"
