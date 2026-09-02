@@ -4195,6 +4195,27 @@ async fn egress_mock_api(listener: tokio::net::TcpListener) {
         axum::Json(json!({"bodies": bodies, "auths": auths}))
     }
 
+    // Full echo: uri + headers map + body (parsed JSON when possible). Used to
+    // verify op query/headers/body templating and auth injection on the wire.
+    async fn echo_full(
+        uri: axum::extract::OriginalUri,
+        headers: header::HeaderMap,
+        body: axum::body::Bytes,
+    ) -> axum::Json<Value> {
+        let hmap: serde_json::Map<String, Value> = headers
+            .iter()
+            .filter_map(|(k, v)| v.to_str().ok().map(|s| (k.to_string(), s.to_string())))
+            .map(|(k, v)| (k.to_ascii_lowercase(), Value::String(v)))
+            .collect();
+        let text = String::from_utf8_lossy(&body).to_string();
+        let body_json = serde_json::from_str::<Value>(&text).unwrap_or(Value::String(text));
+        axum::Json(json!({
+            "uri": uri.to_string(),
+            "headers": hmap,
+            "body": body_json,
+        }))
+    }
+
     async fn fail() -> (StatusCode, &'static str) {
         (StatusCode::INTERNAL_SERVER_ERROR, "boom")
     }
@@ -4203,6 +4224,7 @@ async fn egress_mock_api(listener: tokio::net::TcpListener) {
         .route("/v1/chat-messages", post(chat))
         .route("/v1/items/{id}", get(item))
         .route("/v1/echo-header/{name}", get(echo_header))
+        .route("/v1/echo-full", get(echo_full).post(echo_full))
         .route("/v1/fail", post(fail))
         .route("/v1/seen", get(seen));
     axum::serve(listener, app).await.unwrap();
@@ -4427,6 +4449,180 @@ async fn integration_egress_call_end_to_end() {
     // ── Unknown client / op / disabled ──
     assert!(plane.call_api("eg-none", "chat", json!({})).await.is_err());
     assert!(plane.call_api("eg-llm", "nope", json!({})).await.is_err());
+}
+
+#[tokio::test]
+async fn integration_egress_http_surface() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(egress_mock_api(listener));
+
+    let (mut app, state) = test_app().await;
+    let _ = &mut app;
+    let plane = state.integration.as_ref().unwrap();
+
+    // Basic-auth client with query/body/headers templating ops.
+    let client = raisfast::integration::api_client::ItgApiClient {
+        id: raisfast::utils::id::new_snowflake_id(),
+        tenant_id: "default".into(),
+        client_key: "eg-http-pro".into(),
+        display_name: "eg-http-pro".into(),
+        base_url: format!("http://{addr}"),
+        auth: Some(json!({"kind": "basic"})),
+        credentials: Some(
+            plane
+                .vault()
+                .unwrap()
+                .seal(r#"{"username":"u","password":"p"}"#)
+                .unwrap(),
+        ),
+        rate_limit: None,
+        ops: Some(json!({
+            "search": {
+                "method": "GET", "path": "/v1/echo-full",
+                "query": {"q": "{q}", "page": 2},
+                "headers": {"X-Trace": "t-{trace}"}
+            },
+            "create": {
+                "method": "POST", "path": "/v1/echo-full",
+                "query": {"dry_run": true},
+                "headers": {"X-Client": "raisfast"},
+                "body": {"text": "user:{user}", "limit": "{limit}"}
+            },
+            "token": {
+                "method": "POST", "path": "/v1/echo-full",
+                "form": {"grant_type": "authorization_code", "code": "{code}"}
+            },
+            "upload": {
+                "method": "POST", "path": "/v1/echo-full",
+                "multipart": {
+                    "text": {"caption": "hi {user}"},
+                    "files": {"file": {"filename": "{name}.png", "content_type": "image/png", "content": "{b64}"}}
+                }
+            }
+        })),
+        enabled: true,
+        created_at: raisfast::utils::tz::now_utc(),
+        updated_at: raisfast::utils::tz::now_utc(),
+    };
+    raisfast::integration::api_client::model::insert(&state.pool, &client)
+        .await
+        .unwrap();
+
+    // ── GET: query templating + custom header + basic auth on the wire ──
+    let receipt = plane
+        .call_api(
+            "eg-http-pro",
+            "search",
+            json!({"q": "hello world", "trace": "ab"}),
+        )
+        .await
+        .expect("search");
+    assert_eq!(receipt.status, 200);
+    assert_eq!(
+        receipt.body["uri"], "/v1/echo-full?q=hello+world&page=2",
+        "query rendered + encoded"
+    );
+    assert_eq!(receipt.body["headers"]["x-trace"], "t-ab");
+    assert_eq!(
+        receipt.body["headers"]["authorization"],
+        format!("Basic {}", base64_std_encode(b"u:p")),
+        "basic auth injected"
+    );
+
+    // ── POST: body template (raw embed + interpolation) + boolean query ──
+    let receipt = plane
+        .call_api(
+            "eg-http-pro",
+            "create",
+            json!({"user": "alice", "limit": 7}),
+        )
+        .await
+        .expect("create");
+    assert_eq!(receipt.status, 200);
+    assert_eq!(
+        receipt.body["uri"], "/v1/echo-full?dry_run=true",
+        "boolean query param"
+    );
+    assert_eq!(receipt.body["body"]["text"], "user:alice");
+    assert_eq!(
+        receipt.body["body"]["limit"], 7,
+        "whole-string {{var}} keeps the raw number type"
+    );
+    assert_eq!(receipt.body["headers"]["x-client"], "raisfast");
+    assert_eq!(receipt.body["headers"]["content-type"], "application/json");
+    assert_eq!(
+        receipt.body["headers"]["authorization"],
+        format!("Basic {}", base64_std_encode(b"u:p"))
+    );
+
+    // ── form: application/x-www-form-urlencoded body ──
+    let receipt = plane
+        .call_api("eg-http-pro", "token", json!({"code": "abc123"}))
+        .await
+        .expect("token");
+    assert_eq!(receipt.status, 200);
+    let ct = receipt.body["headers"]["content-type"]
+        .as_str()
+        .unwrap_or("");
+    assert!(
+        ct.starts_with("application/x-www-form-urlencoded"),
+        "form content-type: {ct}"
+    );
+    let body_str = receipt.body["body"].as_str().unwrap_or("").to_string();
+    let pairs: std::collections::HashMap<String, String> = body_str
+        .split('&')
+        .filter_map(|kv| {
+            let mut it = kv.splitn(2, '=');
+            Some((it.next()?.to_string(), it.next().unwrap_or("").to_string()))
+        })
+        .collect();
+    assert_eq!(
+        pairs.get("grant_type").map(String::as_str),
+        Some("authorization_code")
+    );
+    assert_eq!(pairs.get("code").map(String::as_str), Some("abc123"));
+
+    // ── multipart: multipart/form-data with text + file parts ──
+    let png_b64 = base64_std_encode(&[0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a]);
+    let receipt = plane
+        .call_api(
+            "eg-http-pro",
+            "upload",
+            json!({"user": "alice", "name": "avatar", "b64": png_b64}),
+        )
+        .await
+        .expect("upload");
+    assert_eq!(receipt.status, 200);
+    let ct = receipt.body["headers"]["content-type"]
+        .as_str()
+        .unwrap_or("");
+    assert!(
+        ct.starts_with("multipart/form-data; boundary="),
+        "multipart content-type: {ct}"
+    );
+    let body_str = receipt.body["body"].as_str().unwrap_or("").to_string();
+    assert!(body_str.contains("name=\"caption\""), "text part present");
+    assert!(body_str.contains("hi alice"), "text part value rendered");
+    assert!(body_str.contains("name=\"file\""), "file part present");
+    assert!(
+        body_str.contains("filename=\"avatar.png\""),
+        "file filename rendered"
+    );
+    assert!(
+        body_str.contains("Content-Type: image/png"),
+        "file mime set"
+    );
+    assert!(
+        body_str.contains("PNG\r\n"),
+        "file bytes (base64-decoded PNG magic) present"
+    );
+}
+
+/// base64 (standard) — used to assert the injected Basic header.
+fn base64_std_encode(data: &[u8]) -> String {
+    use base64::Engine as _;
+    base64::engine::general_purpose::STANDARD.encode(data)
 }
 
 #[tokio::test]

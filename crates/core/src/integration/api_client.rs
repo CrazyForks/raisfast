@@ -41,7 +41,7 @@ impl ItgApiClient {
         self.ops.as_ref()?.get(op)?.as_object()
     }
 
-    /// Auth kind (`bearer` | `api-key-header` | `url-path-token` | `none`).
+    /// Auth kind (`bearer` | `api-key-header` | `url-path-token` | `oauth2-auth-code` | `none`).
     #[must_use]
     pub fn auth_kind(&self) -> &str {
         self.auth
@@ -49,6 +49,20 @@ impl ItgApiClient {
             .and_then(|a| a.get("kind"))
             .and_then(Value::as_str)
             .unwrap_or("none")
+    }
+
+    /// OAuth2 authorization-code redirect URI (validated at create/update).
+    ///
+    /// # Errors
+    ///
+    /// `BadRequest` when the client isn't an `oauth2-auth-code` client.
+    pub fn redirect_uri(&self) -> AppResult<String> {
+        self.auth
+            .as_ref()
+            .and_then(|a| a.get("redirect_uri"))
+            .and_then(Value::as_str)
+            .map(str::to_string)
+            .ok_or_else(|| AppError::BadRequest("auth requires a 'redirect_uri'".into()))
     }
 }
 
@@ -134,7 +148,7 @@ pub fn validate(base_url: &str, auth: Option<&Value>, ops: Option<&Value>) -> Ap
         let kind = auth.get("kind").and_then(Value::as_str).unwrap_or("none");
         match kind {
             "none" => {}
-            "bearer" => {
+            "bearer" | "basic" => {
                 if auth.get("header").is_some() {
                     return Err(AppError::BadRequest(
                         "auth kind 'bearer' does not take a 'header'".into(),
@@ -168,9 +182,24 @@ pub fn validate(base_url: &str, auth: Option<&Value>, ops: Option<&Value>) -> Ap
                     ));
                 }
             }
+            "oauth2-auth-code" => {
+                // 3-legged OAuth: the static config lives here (sealed with the
+                // client's credentials); the dynamic token is persisted per
+                // (client, tenant) via itg_oauth_tokens (oauth2-egress.md §2).
+                // `auth` here only declares the header kind for injection.
+                let url = auth
+                    .get("redirect_uri")
+                    .and_then(Value::as_str)
+                    .unwrap_or("");
+                if url.is_empty() {
+                    return Err(AppError::BadRequest(
+                        "auth kind 'oauth2-auth-code' requires a 'redirect_uri'".into(),
+                    ));
+                }
+            }
             other => {
                 return Err(AppError::BadRequest(format!(
-                    "auth kind '{other}' not supported (bearer | api-key-header | url-path-token | none)"
+                    "auth kind '{other}' not supported (bearer | basic | api-key-header | url-path-token | oauth2-auth-code | none)"
                 )));
             }
         }
@@ -196,6 +225,106 @@ pub fn validate(base_url: &str, auth: Option<&Value>, ops: Option<&Value>) -> Ap
                 return Err(AppError::BadRequest(format!(
                     "op '{name}': path must start with '/'"
                 )));
+            }
+            if let Some(query) = op.get("query") {
+                let Some(qobj) = query.as_object() else {
+                    return Err(AppError::BadRequest(format!(
+                        "op '{name}': query must be an object"
+                    )));
+                };
+                for (k, v) in qobj {
+                    if !v.is_string() && !v.is_number() && !v.is_boolean() {
+                        return Err(AppError::BadRequest(format!(
+                            "op '{name}': query '{k}' must be a scalar"
+                        )));
+                    }
+                }
+            }
+            if let Some(headers) = op.get("headers") {
+                let Some(hobj) = headers.as_object() else {
+                    return Err(AppError::BadRequest(format!(
+                        "op '{name}': headers must be an object"
+                    )));
+                };
+                for (k, v) in hobj {
+                    reqwest::header::HeaderName::try_from(k.as_str()).map_err(|_| {
+                        AppError::BadRequest(format!("op '{name}': invalid header name '{k}'"))
+                    })?;
+                    if !v.is_string() {
+                        return Err(AppError::BadRequest(format!(
+                            "op '{name}': header '{k}' must be a string"
+                        )));
+                    }
+                }
+            }
+            let body_shapes = ["body", "form", "multipart"]
+                .iter()
+                .filter(|k| op.get(*k).is_some())
+                .count();
+            if body_shapes > 1 {
+                return Err(AppError::BadRequest(format!(
+                    "op '{name}': only one of body/form/multipart may be set"
+                )));
+            }
+            if let Some(form) = op.get("form") {
+                let Some(fobj) = form.as_object() else {
+                    return Err(AppError::BadRequest(format!(
+                        "op '{name}': form must be an object"
+                    )));
+                };
+                for (k, v) in fobj {
+                    if !v.is_string() && !v.is_number() && !v.is_boolean() {
+                        return Err(AppError::BadRequest(format!(
+                            "op '{name}': form '{k}' must be a scalar"
+                        )));
+                    }
+                }
+            }
+            if let Some(mp) = op.get("multipart") {
+                let Some(mobj) = mp.as_object() else {
+                    return Err(AppError::BadRequest(format!(
+                        "op '{name}': multipart must be an object"
+                    )));
+                };
+                if let Some(text) = mobj.get("text") {
+                    let Some(tobj) = text.as_object() else {
+                        return Err(AppError::BadRequest(format!(
+                            "op '{name}': multipart.text must be an object"
+                        )));
+                    };
+                    for (k, v) in tobj {
+                        if !v.is_string() && !v.is_number() && !v.is_boolean() {
+                            return Err(AppError::BadRequest(format!(
+                                "op '{name}': multipart.text '{k}' must be a scalar"
+                            )));
+                        }
+                    }
+                }
+                if let Some(files) = mobj.get("files") {
+                    let Some(fobj) = files.as_object() else {
+                        return Err(AppError::BadRequest(format!(
+                            "op '{name}': multipart.files must be an object"
+                        )));
+                    };
+                    for (k, v) in fobj {
+                        let Some(ff) = v.as_object() else {
+                            return Err(AppError::BadRequest(format!(
+                                "op '{name}': multipart file '{k}' must be an object"
+                            )));
+                        };
+                        for field in ["filename", "content_type", "content"] {
+                            if !ff
+                                .get(field)
+                                .and_then(Value::as_str)
+                                .is_some_and(|s| !s.is_empty())
+                            {
+                                return Err(AppError::BadRequest(format!(
+                                    "op '{name}': multipart file '{k}' requires a string '{field}'"
+                                )));
+                            }
+                        }
+                    }
+                }
             }
         }
     }
@@ -230,5 +359,73 @@ mod tests {
     fn validate_rejects_unknown_auth_kind() {
         let auth = serde_json::json!({ "kind": "query-token" });
         assert!(validate("https://api.telegram.org", Some(&auth), None).is_err());
+    }
+
+    #[test]
+    fn validate_accepts_basic_auth() {
+        let auth = serde_json::json!({ "kind": "basic" });
+        assert!(validate("https://api.example.org", Some(&auth), None).is_ok());
+    }
+
+    #[test]
+    fn validate_op_query_headers_shapes() {
+        let good = serde_json::json!({
+            "search": {
+                "method": "GET",
+                "path": "/search",
+                "query": {"q": "{q}", "limit": 10},
+                "headers": {"X-Trace": "t-{trace}"}
+            }
+        });
+        assert!(validate("https://api.example.org", None, Some(&good)).is_ok());
+
+        let bad_query = serde_json::json!({
+            "op": {"method": "GET", "path": "/x", "query": {"nested": {"a": 1}}}
+        });
+        assert!(validate("https://api.example.org", None, Some(&bad_query)).is_err());
+
+        let bad_header = serde_json::json!({
+            "op": {"method": "GET", "path": "/x", "headers": {"bad name": "v"}}
+        });
+        assert!(validate("https://api.example.org", None, Some(&bad_header)).is_err());
+    }
+
+    #[test]
+    fn validate_op_form_and_multipart_shapes() {
+        let form = serde_json::json!({
+            "op": {"method": "POST", "path": "/token",
+                   "form": {"grant_type": "authorization_code", "code": "{code}"}}
+        });
+        assert!(validate("https://api.example.org", None, Some(&form)).is_ok());
+
+        let multipart = serde_json::json!({
+            "op": {"method": "POST", "path": "/upload",
+                   "multipart": {
+                       "text": {"caption": "hi {user}"},
+                       "files": {"file": {"filename": "{name}.png", "content_type": "image/png", "content": "{b64}"}}
+                   }}
+        });
+        assert!(validate("https://api.example.org", None, Some(&multipart)).is_ok());
+
+        // body+form mutually exclusive
+        let both = serde_json::json!({
+            "op": {"method": "POST", "path": "/x", "body": {"a": 1}, "form": {"b": "2"}}
+        });
+        assert!(validate("https://api.example.org", None, Some(&both)).is_err());
+
+        // multipart file missing content
+        let bad_file = serde_json::json!({
+            "op": {"method": "POST", "path": "/upload",
+                   "multipart": {"files": {"f": {"filename": "a.txt"}}}}
+        });
+        assert!(validate("https://api.example.org", None, Some(&bad_file)).is_err());
+    }
+
+    #[test]
+    fn validate_oauth2_auth_code_requires_redirect_uri() {
+        let ok = serde_json::json!({ "kind": "oauth2-auth-code", "redirect_uri": "https://h/cb" });
+        assert!(validate("https://s", Some(&ok), None).is_ok());
+        let bad = serde_json::json!({ "kind": "oauth2-auth-code" });
+        assert!(validate("https://s", Some(&bad), None).is_err());
     }
 }

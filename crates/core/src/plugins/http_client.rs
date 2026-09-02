@@ -18,7 +18,10 @@ const MAX_RESPONSE_BYTES: usize = 1024 * 1024;
 /// outbound plugin/egress HTTP in networks that block direct connections
 /// (e.g. Telegram API behind a VPN/corporate proxy).
 pub(crate) fn client_with_proxy(timeout_secs: u64) -> AppResult<reqwest::Client> {
-    let builder = reqwest::Client::builder().timeout(Duration::from_secs(timeout_secs));
+    let builder = reqwest::Client::builder()
+        .timeout(Duration::from_secs(timeout_secs))
+        // Some APIs (GitHub REST) reject requests without a User-Agent header.
+        .user_agent(format!("raisfast/{}", env!("CARGO_PKG_VERSION")));
     let proxy = std::env::var("HTTPS_PROXY")
         .or_else(|_| std::env::var("https_proxy"))
         .or_else(|_| std::env::var("HTTP_PROXY"))

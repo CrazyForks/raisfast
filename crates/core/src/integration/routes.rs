@@ -453,7 +453,7 @@ pub fn routes(
         "integration",
         "admin/integration"
     );
-    crate::reg_route!(
+    let r = crate::reg_route!(
         r,
         registry,
         admin,
@@ -462,5 +462,48 @@ pub fn routes(
         crate::integration::admin::list_egress_log,
         "integration",
         "admin/integration"
+    );
+
+    // ── OAuth2 authorization-code (oauth2-egress.md §3) ─────────────
+    let r = crate::reg_route!(
+        r,
+        registry,
+        admin,
+        "/admin/integration/api-clients/{id}/oauth/start",
+        post,
+        crate::integration::oauth::oauth_start,
+        "integration",
+        "admin/integration"
+    );
+    let r = crate::reg_route!(
+        r,
+        registry,
+        admin,
+        "/admin/integration/api-clients/{id}/oauth/status",
+        get,
+        crate::integration::oauth::oauth_status,
+        "integration",
+        "admin/integration"
+    );
+    let r = crate::reg_route!(
+        r,
+        registry,
+        admin,
+        "/admin/integration/api-clients/{id}/oauth/revoke",
+        post,
+        crate::integration::oauth::oauth_revoke,
+        "integration",
+        "admin/integration"
+    );
+    // Public provider callback (no JWT — the state param is the CSRF).
+    crate::reg_route!(
+        r,
+        registry,
+        false,
+        "/integration/oauth/callback",
+        get,
+        crate::integration::oauth::oauth_callback,
+        "integration",
+        "integration"
     )
 }

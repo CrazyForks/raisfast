@@ -231,8 +231,33 @@ impl EgressExecutor {
         } else {
             format!("{}{path}", client.base_url.trim_end_matches('/'))
         };
-        let url = reqwest::Url::parse(&url)
+        let mut url = reqwest::Url::parse(&url)
             .map_err(|e| AppError::BadRequest(format!("egress url invalid: {e}")))?;
+
+        // op.query — query-param templating: `{"q": "{q}", "limit": 10}`.
+        // Values render `{var}` placeholders from input; reqwest encodes them.
+        if let Some(query) = op.get("query").and_then(Value::as_object) {
+            for (key, val) in query {
+                let rendered = match val {
+                    Value::String(s) => render_scalar(s, &req.input)?,
+                    Value::Number(n) => n.to_string(),
+                    Value::Bool(b) => b.to_string(),
+                    other => {
+                        return Err(AppError::BadRequest(format!(
+                            "op '{}': query '{key}' must be scalar (got {other})",
+                            req.op
+                        )));
+                    }
+                };
+                url.query_pairs_mut().append_pair(key, &rendered);
+            }
+        }
+
+        // op.headers — per-op custom headers (values templated from input).
+        let op_headers = op.get("headers").and_then(Value::as_object);
+        let has_content_type = op_headers
+            .map(|h| h.keys().any(|k| k.eq_ignore_ascii_case("content-type")))
+            .unwrap_or(false);
 
         let mut request = {
             use reqwest::Method;
@@ -240,25 +265,85 @@ impl EgressExecutor {
                 .map_err(|_| AppError::BadRequest(format!("method '{method}' invalid")))?;
             let client_http =
                 crate::plugins::http_client::client_with_proxy(self.config.egress_timeout_secs)?;
-            if method == "GET" || method == "DELETE" {
-                client_http.request(m, url)
+            let mut builder = client_http.request(m, url);
+            // Body shapes, in priority order (validate enforces at most one):
+            //   op.form      → application/x-www-form-urlencoded
+            //   op.multipart → multipart/form-data (text + file parts)
+            //   op.body      → JSON template (or input for write methods)
+            if let Some(form) = op.get("form").and_then(Value::as_object) {
+                let mut pairs: Vec<(String, String)> = Vec::with_capacity(form.len());
+                for (key, val) in form {
+                    let rendered = match val {
+                        Value::String(s) => render_scalar(s, &req.input)?,
+                        Value::Number(n) => n.to_string(),
+                        Value::Bool(b) => b.to_string(),
+                        other => {
+                            return Err(AppError::BadRequest(format!(
+                                "op '{}': form '{key}' must be scalar (got {other})",
+                                req.op
+                            )));
+                        }
+                    };
+                    pairs.push((key.clone(), rendered));
+                }
+                builder = builder.form(&pairs);
+            } else if let Some(mp) = op.get("multipart").and_then(Value::as_object) {
+                builder = build_multipart(builder, mp, &req.input)?;
             } else {
-                client_http
-                    .request(m, url)
-                    .header("Content-Type", "application/json")
-                    .json(&req.input)
+                // GET/DELETE carry no body unless an explicit op.body is given.
+                let body = if let Some(tpl) = op.get("body") {
+                    Some(render_body(tpl, &req.input)?)
+                } else if !(method == "GET" || method == "DELETE") {
+                    Some(req.input.clone())
+                } else {
+                    None
+                };
+                if let Some(body) = body {
+                    if !has_content_type {
+                        builder = builder.header("Content-Type", "application/json");
+                    }
+                    builder = builder.json(&body);
+                }
             }
+            builder
         };
+
+        if let Some(headers) = op_headers {
+            for (key, val) in headers {
+                let v = match val {
+                    Value::String(s) => render_scalar(s, &req.input)?,
+                    other => {
+                        return Err(AppError::BadRequest(format!(
+                            "op '{}': header '{key}' must be a string (got {other})",
+                            req.op
+                        )));
+                    }
+                };
+                request = request.header(key, v);
+            }
+        }
 
         if let Some(secret) = self.resolve_secret(&client).await? {
             request = match client.auth_kind() {
-                "bearer" => {
+                // `oauth2-auth-code` resolves to a bearer access token too
+                // (oauth2-egress.md §4: "bearer 注入路径零改动").
+                "bearer" | "oauth2-auth-code" => {
                     let prefix = client
                         .auth
                         .as_ref()
                         .and_then(|a| a.get("prefix"))
                         .and_then(Value::as_str)
                         .unwrap_or("Bearer");
+                    request.header("Authorization", format!("{prefix} {secret}"))
+                }
+                "basic" => {
+                    // resolve_secret returns the pre-encoded `user:pass` base64.
+                    let prefix = client
+                        .auth
+                        .as_ref()
+                        .and_then(|a| a.get("prefix"))
+                        .and_then(Value::as_str)
+                        .unwrap_or("Basic");
                     request.header("Authorization", format!("{prefix} {secret}"))
                 }
                 "api-key-header" => {
@@ -357,10 +442,38 @@ impl EgressExecutor {
                 .await
                 .map(Some);
         }
-        Ok(value
+        // OAuth2 authorization-code (3-legged): persisted per (client, tenant),
+        // auto-refreshed. Default tenant for now (oauth2-egress.md §4).
+        if super::token::is_auth_code(&value) {
+            return super::token::resolve_auth_code_token(
+                &client.client_key,
+                crate::constants::DEFAULT_TENANT,
+                &value,
+                &self.pool,
+                self.vault.as_ref(),
+            )
+            .await
+            .map(Some);
+        }
+        if let Some(secret) = value
             .get("secret")
             .and_then(Value::as_str)
-            .map(str::to_string))
+            .map(str::to_string)
+        {
+            return Ok(Some(secret));
+        }
+        // Basic auth: credentials carry `username`/`password`; pre-encode the
+        // `user:pass` combo so the injection branch just prefixes "Basic ".
+        if let (Some(user), Some(pass)) = (
+            value.get("username").and_then(Value::as_str),
+            value.get("password").and_then(Value::as_str),
+        ) {
+            use base64::Engine as _;
+            let combined = format!("{user}:{pass}");
+            let encoded = base64::engine::general_purpose::STANDARD.encode(combined.as_bytes());
+            return Ok(Some(encoded));
+        }
+        Ok(None)
     }
 
     /// Best-effort log write; failures are logged, never fail the call path
@@ -481,6 +594,137 @@ fn value_to_path_string(v: &Value) -> AppResult<String> {
             "path placeholder values must be scalar".into(),
         )),
     }
+}
+
+/// Render `{var}` placeholders in a scalar template from input (query values,
+/// header values, string-interpolated body fields). Values are NOT
+/// percent-encoded — callers decide (path encodes, query/headers let reqwest).
+fn render_scalar(tpl: &str, input: &Value) -> AppResult<String> {
+    let mut out = String::with_capacity(tpl.len());
+    let mut rest = tpl;
+    while let Some(start) = rest.find('{') {
+        out.push_str(&rest[..start]);
+        let after = &rest[start + 1..];
+        let Some(end) = after.find('}') else {
+            return Err(AppError::BadRequest(format!(
+                "template '{tpl}' has an unclosed '{{'"
+            )));
+        };
+        let var = &after[..end];
+        let val = input
+            .get(var)
+            .map(value_to_path_string)
+            .transpose()?
+            .ok_or_else(|| {
+                AppError::BadRequest(format!("placeholder '{{{var}}}' missing in input"))
+            })?;
+        out.push_str(&val);
+        rest = &after[end + 1..];
+    }
+    out.push_str(rest);
+    Ok(out)
+}
+
+/// JSON-aware body template: walk the op.body shape recursively, substituting
+/// input values. A whole-string `{var}` embeds the raw value (type preserved,
+/// e.g. `{"limit": {limit}}` → number); `{var}` inside a larger string is
+/// interpolated as text (e.g. `{"q": "user:{q}"}`).
+fn render_body(tpl: &Value, input: &Value) -> AppResult<Value> {
+    match tpl {
+        Value::String(s) => {
+            if let Some(var) = s
+                .strip_prefix('{')
+                .and_then(|r| r.strip_suffix('}'))
+                .filter(|var| {
+                    !var.is_empty()
+                        && var
+                            .chars()
+                            .all(|c| !c.is_whitespace() && c != '{' && c != '}')
+                })
+                && let Some(val) = input.get(var)
+            {
+                return Ok(val.clone());
+            }
+            Ok(Value::String(render_scalar(s, input)?))
+        }
+        Value::Object(map) => {
+            let mut out = serde_json::Map::new();
+            for (k, v) in map {
+                out.insert(k.clone(), render_body(v, input)?);
+            }
+            Ok(Value::Object(out))
+        }
+        Value::Array(arr) => {
+            let mut out = Vec::with_capacity(arr.len());
+            for v in arr {
+                out.push(render_body(v, input)?);
+            }
+            Ok(Value::Array(out))
+        }
+        other => Ok(other.clone()),
+    }
+}
+
+/// Build a multipart/form-data body from an op template:
+/// `{"text": {field: scalar-tpl}, "files": {name: {filename, content_type, content(b64)}}}`
+/// File bytes are base64 in the input and decoded here.
+fn build_multipart(
+    builder: reqwest::RequestBuilder,
+    mp: &serde_json::Map<String, Value>,
+    input: &Value,
+) -> AppResult<reqwest::RequestBuilder> {
+    use base64::Engine as _;
+    let mut form = reqwest::multipart::Form::new();
+    if let Some(text) = mp.get("text").and_then(Value::as_object) {
+        for (key, val) in text {
+            let rendered = match val {
+                Value::String(s) => render_scalar(s, input)?,
+                Value::Number(n) => n.to_string(),
+                Value::Bool(b) => b.to_string(),
+                other => {
+                    return Err(AppError::BadRequest(format!(
+                        "multipart text '{key}' must be scalar (got {other})"
+                    )));
+                }
+            };
+            form = form.text(key.clone(), rendered);
+        }
+    }
+    if let Some(files) = mp.get("files").and_then(Value::as_object) {
+        for (key, val) in files {
+            let Some(fobj) = val.as_object() else {
+                return Err(AppError::BadRequest(format!(
+                    "multipart file '{key}' must be an object"
+                )));
+            };
+            let tpl = |field: &str| -> AppResult<String> {
+                let s = fobj.get(field).and_then(Value::as_str).ok_or_else(|| {
+                    AppError::BadRequest(format!(
+                        "multipart file '{key}' requires a string '{field}'"
+                    ))
+                })?;
+                render_scalar(s, input)
+            };
+            let filename = tpl("filename")?;
+            let content_type = tpl("content_type")?;
+            let b64 = tpl("content")?;
+            let bytes = base64::engine::general_purpose::STANDARD
+                .decode(b64.as_bytes())
+                .map_err(|e| {
+                    AppError::BadRequest(format!(
+                        "multipart file '{key}' content is not valid base64: {e}"
+                    ))
+                })?;
+            let mut part = reqwest::multipart::Part::bytes(bytes).file_name(filename);
+            if !content_type.is_empty() {
+                part = part.mime_str(&content_type).map_err(|e| {
+                    AppError::BadRequest(format!("multipart file '{key}' bad content_type: {e}"))
+                })?;
+            }
+            form = form.part(key.clone(), part);
+        }
+    }
+    Ok(builder.multipart(form))
 }
 
 fn parse_body(text: &str) -> Value {
@@ -652,6 +896,46 @@ mod tests {
     fn render_path_rejects_missing_var() {
         let err = render_path("/items/{missing}", &json!({})).unwrap_err();
         assert!(err.to_string().contains("missing"));
+    }
+
+    #[test]
+    fn render_scalar_interpolates_without_encoding() {
+        let input = json!({"q": "hello world", "page": 2});
+        assert_eq!(render_scalar("{q}", &input).unwrap(), "hello world");
+        assert_eq!(
+            render_scalar("page={page}&x=1", &input).unwrap(),
+            "page=2&x=1"
+        );
+        assert!(render_scalar("{missing}", &input).is_err());
+    }
+
+    #[test]
+    fn render_body_embeds_raw_and_interpolates() {
+        let input = json!({"q": "hi", "limit": 10, "user": "alice"});
+        let mut query = serde_json::Map::new();
+        query.insert("q".into(), json!("user:{user}"));
+        query.insert("match".into(), json!("{q}"));
+        let mut tpl = serde_json::Map::new();
+        tpl.insert("query".into(), Value::Object(query));
+        tpl.insert("limit".into(), json!("{limit}"));
+        tpl.insert("tags".into(), json!(["a", "{q}"]));
+        let tpl = Value::Object(tpl);
+        let out = render_body(&tpl, &input).unwrap();
+        assert_eq!(out["query"]["q"], "user:alice");
+        assert_eq!(out["query"]["match"], "hi");
+        assert_eq!(
+            out["limit"],
+            json!(10),
+            "whole-string {{var}} keeps the raw type"
+        );
+        assert_eq!(out["tags"][1], "hi");
+    }
+
+    #[test]
+    fn render_body_unknown_var_in_string_stays_literal_via_scalar_error() {
+        // A whole-string {var} that isn't in input falls back to scalar render,
+        // which errors loudly (config mistake) rather than sending a blank.
+        assert!(render_body(&json!("{nope}"), &json!({})).is_err());
     }
 
     #[test]

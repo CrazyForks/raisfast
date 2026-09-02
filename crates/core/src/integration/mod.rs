@@ -29,6 +29,8 @@ pub mod egress;
 pub mod envelope;
 pub mod framing;
 pub mod mapping;
+pub mod oauth;
+pub mod oauth_token;
 pub mod pipeline;
 pub mod receipt;
 pub mod routes;

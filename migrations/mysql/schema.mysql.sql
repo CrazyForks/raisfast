@@ -1140,6 +1140,22 @@ CREATE TABLE IF NOT EXISTS itg_api_clients (
     INDEX idx_itg_api_clients_tenant (tenant_id)
 );
 
+-- OAuth2 authorization-code tokens (oauth2-egress.md §2): one row per
+-- (api-client, tenant); access/refresh tokens are vault-sealed.
+CREATE TABLE IF NOT EXISTS itg_oauth_tokens (
+    id BIGINT PRIMARY KEY,
+    client_key VARCHAR(255) NOT NULL,
+    tenant_id VARCHAR(36) NOT NULL DEFAULT 'default',
+    access_token TEXT,
+    refresh_token TEXT,
+    expires_at DATETIME,
+    scope VARCHAR(1000),
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uq_itg_oauth_tokens (client_key, tenant_id),
+    INDEX idx_itg_oauth_tokens_tenant (tenant_id)
+);
+
 -- Full outbound call log (integration.md §10.7: trace_id = itg_receipts.id)
 CREATE TABLE IF NOT EXISTS itg_egress_log (
     id BIGINT PRIMARY KEY,
