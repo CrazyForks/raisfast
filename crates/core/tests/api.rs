@@ -4617,6 +4617,75 @@ async fn integration_egress_http_surface() {
         body_str.contains("PNG\r\n"),
         "file bytes (base64-decoded PNG magic) present"
     );
+
+    // ── request signature: AWS SigV4 recipe through the real executor ──
+    let signed = raisfast::integration::api_client::ItgApiClient {
+        id: raisfast::utils::id::new_snowflake_id(),
+        tenant_id: "default".into(),
+        client_key: "eg-signed".into(),
+        display_name: "eg-signed".into(),
+        base_url: format!("http://{addr}"),
+        auth: Some(json!({"kind": "none"})),
+        credentials: Some(
+            plane
+                .vault()
+                .unwrap()
+                .seal(
+                    r#"{"access_key":"AKIDEXAMPLE","secret_key":"wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY"}"#,
+                )
+                .unwrap(),
+        ),
+        rate_limit: None,
+        ops: Some(json!({
+            "signed": {
+                "method": "GET",
+                "path": "/v1/echo-full",
+                "query": {"Action": "ListUsers", "Version": "2010-05-08"},
+                "signature": {
+                    "algorithm": "hmac-sha256",
+                    "encoding": "hex",
+                    "key": {"type": "hmac_chain", "prefix": "AWS4",
+                            "steps": ["{@date}", "us-east-1", "iam", "aws4_request"]},
+                    "canonical_headers": ["host", "x-amz-date"],
+                    "canonical_template": "{@method}\n{@uri}\n{@query}\n{@headers_canon}\n{@headers_signed}\n{@payload_hash}",
+                    "scope": "{@date}/us-east-1/iam/aws4_request",
+                    "string_to_sign_template": "AWS4-HMAC-SHA256\n{@timestamp}\n{@scope}\n{@canonical_hash}",
+                    "headers": {"x-amz-date": "{@timestamp}"},
+                    "timestamp": "{ts}",
+                    "inject": {"into": "header", "header": "Authorization",
+                               "template": "AWS4-HMAC-SHA256 Credential={access_key}/{@scope}, SignedHeaders={@headers_signed}, Signature={sig}"}
+                }
+            }
+        })),
+        enabled: true,
+        created_at: raisfast::utils::tz::now_utc(),
+        updated_at: raisfast::utils::tz::now_utc(),
+    };
+    raisfast::integration::api_client::model::insert(&state.pool, &signed)
+        .await
+        .unwrap();
+    let receipt = plane
+        .call_api("eg-signed", "signed", json!({"ts": "20150830T123600Z"}))
+        .await
+        .expect("signed call");
+    assert_eq!(receipt.status, 200);
+    let auth = receipt.body["headers"]["authorization"]
+        .as_str()
+        .unwrap_or("");
+    assert!(
+        auth.starts_with(
+            "AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20150830/us-east-1/iam/aws4_request, "
+        ),
+        "sigv4 credential scope: {auth}"
+    );
+    assert!(
+        auth.contains("SignedHeaders=host;x-amz-date, Signature="),
+        "signed headers include derived host: {auth}"
+    );
+    assert_eq!(
+        receipt.body["headers"]["x-amz-date"], "20150830T123600Z",
+        "timestamp aux header"
+    );
 }
 
 /// base64 (standard) — used to assert the injected Basic header.

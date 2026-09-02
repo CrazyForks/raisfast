@@ -236,6 +236,7 @@ impl EgressExecutor {
 
         // op.query — query-param templating: `{"q": "{q}", "limit": 10}`.
         // Values render `{var}` placeholders from input; reqwest encodes them.
+        let mut query_pairs: Vec<(String, String)> = Vec::new();
         if let Some(query) = op.get("query").and_then(Value::as_object) {
             for (key, val) in query {
                 let rendered = match val {
@@ -249,67 +250,16 @@ impl EgressExecutor {
                         )));
                     }
                 };
+                query_pairs.push((key.clone(), rendered.clone()));
                 url.query_pairs_mut().append_pair(key, &rendered);
             }
         }
 
         // op.headers — per-op custom headers (values templated from input).
         let op_headers = op.get("headers").and_then(Value::as_object);
-        let has_content_type = op_headers
-            .map(|h| h.keys().any(|k| k.eq_ignore_ascii_case("content-type")))
-            .unwrap_or(false);
-
-        let mut request = {
-            use reqwest::Method;
-            let m = Method::from_bytes(method.as_bytes())
-                .map_err(|_| AppError::BadRequest(format!("method '{method}' invalid")))?;
-            let client_http =
-                crate::plugins::http_client::client_with_proxy(self.config.egress_timeout_secs)?;
-            let mut builder = client_http.request(m, url);
-            // Body shapes, in priority order (validate enforces at most one):
-            //   op.form      → application/x-www-form-urlencoded
-            //   op.multipart → multipart/form-data (text + file parts)
-            //   op.body      → JSON template (or input for write methods)
-            if let Some(form) = op.get("form").and_then(Value::as_object) {
-                let mut pairs: Vec<(String, String)> = Vec::with_capacity(form.len());
-                for (key, val) in form {
-                    let rendered = match val {
-                        Value::String(s) => render_scalar(s, &req.input)?,
-                        Value::Number(n) => n.to_string(),
-                        Value::Bool(b) => b.to_string(),
-                        other => {
-                            return Err(AppError::BadRequest(format!(
-                                "op '{}': form '{key}' must be scalar (got {other})",
-                                req.op
-                            )));
-                        }
-                    };
-                    pairs.push((key.clone(), rendered));
-                }
-                builder = builder.form(&pairs);
-            } else if let Some(mp) = op.get("multipart").and_then(Value::as_object) {
-                builder = build_multipart(builder, mp, &req.input)?;
-            } else {
-                // GET/DELETE carry no body unless an explicit op.body is given.
-                let body = if let Some(tpl) = op.get("body") {
-                    Some(render_body(tpl, &req.input)?)
-                } else if !(method == "GET" || method == "DELETE") {
-                    Some(req.input.clone())
-                } else {
-                    None
-                };
-                if let Some(body) = body {
-                    if !has_content_type {
-                        builder = builder.header("Content-Type", "application/json");
-                    }
-                    builder = builder.json(&body);
-                }
-            }
-            builder
-        };
-
-        if let Some(headers) = op_headers {
-            for (key, val) in headers {
+        let mut headers: Vec<(String, String)> = Vec::new();
+        if let Some(hobj) = op_headers {
+            for (key, val) in hobj {
                 let v = match val {
                     Value::String(s) => render_scalar(s, &req.input)?,
                     other => {
@@ -319,32 +269,38 @@ impl EgressExecutor {
                         )));
                     }
                 };
-                request = request.header(key, v);
+                headers.push((key.to_ascii_lowercase(), v));
             }
         }
 
+        // Body shapes, in priority order (validate enforces at most one):
+        //   op.form      → application/x-www-form-urlencoded
+        //   op.multipart → multipart/form-data (text + file parts)
+        //   op.body      → JSON template (or input for write methods)
+        let body = build_body(op, method, &req.input, &mut headers)?;
+        let has_ct_override = headers
+            .iter()
+            .any(|(n, _)| n.eq_ignore_ascii_case("content-type"));
+
+        // Auth injection (bearer/basic/api-key → headers; url-path-token is
+        // embedded in the URL earlier).
         if let Some(secret) = self.resolve_secret(&client).await? {
-            request = match client.auth_kind() {
+            match client.auth_kind() {
                 // `oauth2-auth-code` resolves to a bearer access token too
                 // (oauth2-egress.md §4: "bearer 注入路径零改动").
-                "bearer" | "oauth2-auth-code" => {
+                "bearer" | "oauth2-auth-code" | "basic" => {
+                    let default = if client.auth_kind() == "basic" {
+                        "Basic"
+                    } else {
+                        "Bearer"
+                    };
                     let prefix = client
                         .auth
                         .as_ref()
                         .and_then(|a| a.get("prefix"))
                         .and_then(Value::as_str)
-                        .unwrap_or("Bearer");
-                    request.header("Authorization", format!("{prefix} {secret}"))
-                }
-                "basic" => {
-                    // resolve_secret returns the pre-encoded `user:pass` base64.
-                    let prefix = client
-                        .auth
-                        .as_ref()
-                        .and_then(|a| a.get("prefix"))
-                        .and_then(Value::as_str)
-                        .unwrap_or("Basic");
-                    request.header("Authorization", format!("{prefix} {secret}"))
+                        .unwrap_or(default);
+                    set_header(&mut headers, "authorization", &format!("{prefix} {secret}"));
                 }
                 "api-key-header" => {
                     let header = client
@@ -353,11 +309,56 @@ impl EgressExecutor {
                         .and_then(|a| a.get("header"))
                         .and_then(Value::as_str)
                         .unwrap_or("X-API-Key");
-                    request.header(header, secret)
+                    set_header(&mut headers, header, &secret);
                 }
-                _ => request,
-            };
+                _ => {}
+            }
         }
+
+        // Generic request signing (egress-signature.md) — pure config recipe.
+        if let Some(sig) = op.get("signature") {
+            let vars = self.signature_vars(&client, &req.input).await?;
+            let mut sign_req = crate::integration::signing::SignRequest {
+                method,
+                url: &mut url,
+                headers: &mut headers,
+                payload: body.payload(),
+            };
+            crate::integration::signing::apply_signature_value(&mut sign_req, sig, &vars)?;
+        }
+
+        // Assemble the final request.
+        let mut request = {
+            use reqwest::Method;
+            let m = Method::from_bytes(method.as_bytes())
+                .map_err(|_| AppError::BadRequest(format!("method '{method}' invalid")))?;
+            let client_http =
+                crate::plugins::http_client::client_with_proxy(self.config.egress_timeout_secs)?;
+            client_http.request(m, url)
+        };
+        for (name, value) in &headers {
+            if let Ok(hname) = reqwest::header::HeaderName::try_from(name.as_str()) {
+                request = request.header(hname, value);
+            }
+        }
+        let is_json_body = matches!(body, Body::Json(_));
+        request = match body {
+            Body::Json(bytes) | Body::Form(bytes) => {
+                if !has_ct_override {
+                    request = request.header(
+                        "Content-Type",
+                        if is_json_body {
+                            "application/json"
+                        } else {
+                            "application/x-www-form-urlencoded"
+                        },
+                    );
+                }
+                request.body(bytes)
+            }
+            Body::Multipart(form) => request.multipart(form),
+            Body::None => request,
+        };
 
         let started = std::time::Instant::now();
         let outcome = match request.send().await {
@@ -421,8 +422,8 @@ impl EgressExecutor {
         })
     }
 
-    /// Unseal the credential secret (None when the client has no credentials).
-    async fn resolve_secret(&self, client: &ItgApiClient) -> AppResult<Option<String>> {
+    /// Unseal the credential JSON (None when the client has no credentials).
+    async fn resolve_credentials(&self, client: &ItgApiClient) -> AppResult<Option<Value>> {
         let Some(sealed) = client.credentials.as_deref() else {
             return Ok(None);
         };
@@ -435,6 +436,14 @@ impl EgressExecutor {
         let json = vault.unseal(sealed)?;
         let value: Value = serde_json::from_str(&json)
             .map_err(|e| AppError::Internal(anyhow::anyhow!("credential json: {e}")))?;
+        Ok(Some(value))
+    }
+
+    /// Unseal the credential secret (None when the client has no credentials).
+    async fn resolve_secret(&self, client: &ItgApiClient) -> AppResult<Option<String>> {
+        let Some(value) = self.resolve_credentials(client).await? else {
+            return Ok(None);
+        };
         // OAuth client-credentials: a shared, cached dynamic token (the same
         // one the stream connectors use — one refresh serves both sides).
         if super::token::is_oauth_cc(&value) {
@@ -474,6 +483,21 @@ impl EgressExecutor {
             return Ok(Some(encoded));
         }
         Ok(None)
+    }
+
+    /// Caller variables for signature templates: input ∪ sealed credentials
+    /// (credentials win — `access_key`/`secret_key` never come from input).
+    async fn signature_vars(&self, client: &ItgApiClient, input: &Value) -> AppResult<Value> {
+        let mut vars = serde_json::Map::new();
+        if let Some(obj) = input.as_object() {
+            vars.extend(obj.clone());
+        }
+        if let Some(creds) = self.resolve_credentials(client).await?
+            && let Some(obj) = creds.as_object()
+        {
+            vars.extend(obj.clone());
+        }
+        Ok(Value::Object(vars))
     }
 
     /// Best-effort log write; failures are logged, never fail the call path
@@ -669,10 +693,9 @@ fn render_body(tpl: &Value, input: &Value) -> AppResult<Value> {
 /// `{"text": {field: scalar-tpl}, "files": {name: {filename, content_type, content(b64)}}}`
 /// File bytes are base64 in the input and decoded here.
 fn build_multipart(
-    builder: reqwest::RequestBuilder,
     mp: &serde_json::Map<String, Value>,
     input: &Value,
-) -> AppResult<reqwest::RequestBuilder> {
+) -> AppResult<reqwest::multipart::Form> {
     use base64::Engine as _;
     let mut form = reqwest::multipart::Form::new();
     if let Some(text) = mp.get("text").and_then(Value::as_object) {
@@ -724,7 +747,109 @@ fn build_multipart(
             form = form.part(key.clone(), part);
         }
     }
-    Ok(builder.multipart(form))
+    Ok(form)
+}
+
+/// Request body shapes. Bytes are kept explicitly so request-signing can hash
+/// the exact wire payload.
+enum Body {
+    Json(Vec<u8>),
+    Form(Vec<u8>),
+    Multipart(reqwest::multipart::Form),
+    None,
+}
+
+impl Body {
+    /// Exact payload bytes to sign; multipart hashes the empty string (the
+    /// boundary is produced by reqwest and not accessible for hashing).
+    fn payload(&self) -> &[u8] {
+        match self {
+            Body::Json(b) | Body::Form(b) => b,
+            Body::Multipart(_) | Body::None => &[],
+        }
+    }
+}
+
+/// Resolve the op body (form / multipart / JSON) into a [`Body`], rendering
+/// templates from input. JSON + form bodies are serialized to exact bytes.
+fn build_body(
+    op: &serde_json::Map<String, Value>,
+    method: &str,
+    input: &Value,
+    headers: &mut Vec<(String, String)>,
+) -> AppResult<Body> {
+    if let Some(form) = op.get("form").and_then(Value::as_object) {
+        let mut pairs: Vec<(String, String)> = Vec::with_capacity(form.len());
+        for (key, val) in form {
+            let rendered = match val {
+                Value::String(s) => render_scalar(s, input)?,
+                Value::Number(n) => n.to_string(),
+                Value::Bool(b) => b.to_string(),
+                other => {
+                    return Err(AppError::BadRequest(format!(
+                        "form '{key}' must be scalar (got {other})"
+                    )));
+                }
+            };
+            pairs.push((key.clone(), rendered));
+        }
+        return Ok(Body::Form(form_encode(&pairs).into_bytes()));
+    }
+    if let Some(mp) = op.get("multipart").and_then(Value::as_object) {
+        // reqwest owns the multipart boundary — drop any user content-type.
+        headers.retain(|(n, _)| !n.eq_ignore_ascii_case("content-type"));
+        return Ok(Body::Multipart(build_multipart(mp, input)?));
+    }
+    // GET/DELETE carry no body unless an explicit op.body is given.
+    let body = if let Some(tpl) = op.get("body") {
+        Some(render_body(tpl, input)?)
+    } else if !(method == "GET" || method == "DELETE") {
+        Some(input.clone())
+    } else {
+        None
+    };
+    if let Some(body) = body {
+        let bytes = serde_json::to_vec(&body)
+            .map_err(|e| AppError::Internal(anyhow::anyhow!("body serialize: {e}")))?;
+        Ok(Body::Json(bytes))
+    } else {
+        Ok(Body::None)
+    }
+}
+
+/// Insert (or replace) a header by case-insensitive name.
+fn set_header(headers: &mut Vec<(String, String)>, name: &str, value: &str) {
+    if let Some(existing) = headers
+        .iter_mut()
+        .find(|(n, _)| n.eq_ignore_ascii_case(name))
+    {
+        existing.1 = value.to_string();
+    } else {
+        headers.push((name.to_ascii_lowercase(), value.to_string()));
+    }
+}
+
+/// `application/x-www-form-urlencoded` encoding (space → `+`).
+fn form_encode(pairs: &[(String, String)]) -> String {
+    pairs
+        .iter()
+        .map(|(k, v)| format!("{}={}", form_enc(k), form_enc(v)))
+        .collect::<Vec<_>>()
+        .join("&")
+}
+
+fn form_enc(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for b in s.bytes() {
+        match b {
+            b' ' => out.push('+'),
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
+                out.push(char::from(b))
+            }
+            _ => out.push_str(&format!("%{b:02X}")),
+        }
+    }
+    out
 }
 
 fn parse_body(text: &str) -> Value {

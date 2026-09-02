@@ -326,6 +326,101 @@ pub fn validate(base_url: &str, auth: Option<&Value>, ops: Option<&Value>) -> Ap
                     }
                 }
             }
+            if let Some(sig) = op.get("signature") {
+                validate_signature(name, sig)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Validate an `op.signature` recipe (egress-signature.md §3). Only the
+/// structural shape — actual template variables resolve at call time.
+fn validate_signature(op_name: &str, sig: &Value) -> AppResult<()> {
+    let Some(obj) = sig.as_object() else {
+        return Err(AppError::BadRequest(format!(
+            "op '{op_name}': signature must be an object"
+        )));
+    };
+    for required in ["canonical_template", "string_to_sign_template", "inject"] {
+        if !obj.contains_key(required) {
+            return Err(AppError::BadRequest(format!(
+                "op '{op_name}': signature requires '{required}'"
+            )));
+        }
+    }
+    if let Some(alg) = obj
+        .get("algorithm")
+        .and_then(Value::as_str)
+        .filter(|a| !matches!(*a, "hmac-sha256" | "hmac-sha1"))
+    {
+        return Err(AppError::BadRequest(format!(
+            "op '{op_name}': signature algorithm '{alg}' not supported (hmac-sha256 | hmac-sha1)"
+        )));
+    }
+    if let Some(enc) = obj
+        .get("encoding")
+        .and_then(Value::as_str)
+        .filter(|e| !matches!(*e, "hex" | "base64"))
+    {
+        return Err(AppError::BadRequest(format!(
+            "op '{op_name}': signature encoding '{enc}' not supported (hex | base64)"
+        )));
+    }
+    if let Some(key) = obj.get("key") {
+        let Some(kind) = key.get("type").and_then(Value::as_str) else {
+            return Err(AppError::BadRequest(format!(
+                "op '{op_name}': signature.key requires a 'type' (hmac_chain | secret)"
+            )));
+        };
+        match kind {
+            "hmac_chain" => {
+                if !key
+                    .get("steps")
+                    .and_then(Value::as_array)
+                    .is_some_and(|s| !s.is_empty())
+                {
+                    return Err(AppError::BadRequest(format!(
+                        "op '{op_name}': signature.key.hmac_chain requires non-empty 'steps'"
+                    )));
+                }
+            }
+            "secret" => {}
+            other => {
+                return Err(AppError::BadRequest(format!(
+                    "op '{op_name}': signature.key type '{other}' not supported (hmac_chain | secret)"
+                )));
+            }
+        }
+    }
+    let Some(inject) = obj.get("inject").and_then(Value::as_object) else {
+        return Err(AppError::BadRequest(format!(
+            "op '{op_name}': signature.inject must be an object"
+        )));
+    };
+    let into = inject
+        .get("into")
+        .and_then(Value::as_str)
+        .unwrap_or("header");
+    match into {
+        "header" => {
+            if !inject.contains_key("template") {
+                return Err(AppError::BadRequest(format!(
+                    "op '{op_name}': signature.inject.header requires a 'template'"
+                )));
+            }
+        }
+        "query" => {
+            if !inject.contains_key("query_param") {
+                return Err(AppError::BadRequest(format!(
+                    "op '{op_name}': signature.inject.query requires a 'query_param'"
+                )));
+            }
+        }
+        other => {
+            return Err(AppError::BadRequest(format!(
+                "op '{op_name}': signature.inject.into '{other}' not supported (header | query)"
+            )));
         }
     }
     Ok(())

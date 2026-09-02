@@ -34,6 +34,7 @@ pub mod oauth_token;
 pub mod pipeline;
 pub mod receipt;
 pub mod routes;
+pub mod signing;
 pub mod supervisor;
 pub mod token;
 pub mod trace;
