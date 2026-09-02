@@ -897,6 +897,8 @@ mod category;
 mod comment;
 #[path = "api/cron.rs"]
 mod cron;
+#[path = "api/flows/mod.rs"]
+mod flows;
 #[path = "api/health.rs"]
 mod health;
 #[path = "api/media.rs"]
@@ -7680,4 +7682,151 @@ type = "text"
         .args(["rm", "-f", &container])
         .output()
         .await;
+}
+
+#[tokio::test]
+async fn flow_engine_egress_e2e_acceptance() {
+    // P1.11 acceptance: HTTP-free engine e2e with real plane + egress + plugins.
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(egress_mock_api(listener));
+
+    let (mut app, state) = test_app().await;
+    let _ = &mut app;
+    let plane = state.integration.as_ref().unwrap();
+
+    // api-client wired to the mock egress server (LLM-ish chat op).
+    let ops = json!({
+        "chat": {"method": "POST", "path": "/v1/chat-messages", "output": {"text": "$.answer"}}
+    });
+    let client = insert_egress_client(
+        &state,
+        plane,
+        &format!("wf-eg-{}", raisfast::utils::id::new_id()),
+        json!({"kind": "bearer"}),
+        Some("sk"),
+        ops,
+        None,
+    )
+    .await;
+    let sql = format!(
+        "UPDATE itg_api_clients SET base_url = {} WHERE id = {}",
+        raisfast::db::Driver::ph(1),
+        raisfast::db::Driver::ph(2)
+    );
+    sqlx::query(raisfast::db::safe_sql(&sql))
+        .bind(format!("http://{addr}"))
+        .bind(*client.id)
+        .execute(&state.pool)
+        .await
+        .unwrap();
+
+    use raisfast::flows::exec::FlowsExec;
+    use raisfast::flows::model::{self, Flow, FlowInstance, FlowVersion};
+    use raisfast::flows::run;
+    use raisfast::utils::tz::now_utc;
+
+    let now = now_utc();
+    let flow_id = raisfast::utils::id::new_snowflake_id();
+    let flow = Flow {
+        id: flow_id,
+        tenant_id: "default".into(),
+        name: format!("wf-e2e-{}", raisfast::utils::id::new_id()),
+        description: None,
+        enabled: true,
+        current_version: None,
+        extra: None,
+        created_at: now,
+        updated_at: now,
+    };
+    model::insert_flow(&state.pool, &flow).await.unwrap();
+
+    let def = json!({
+        "name": "egress-e2e",
+        "graph": {
+            "nodes": [
+                {"id": "start", "data": {"type": "start", "config": {}}},
+                {"id": "e1", "data": {"type": "egress", "config": {
+                    "client_key": client.client_key,
+                    "op": "chat",
+                    "input": {"query": {"literal": "hi"}}
+                }}},
+                {"id": "end", "data": {"type": "end", "config": {
+                    "outputs": [{"name": "ans", "value": {"ref": ["e1", "output", "text"]}}]
+                }}}
+            ],
+            "edges": [
+                {"source": "start", "target": "e1"},
+                {"source": "e1", "target": "end"}
+            ]
+        }
+    });
+    let version_id = raisfast::utils::id::new_snowflake_id();
+    let version = FlowVersion {
+        id: version_id,
+        flow_id,
+        version_number: 1,
+        definition: def,
+        created_by: None,
+        created_at: now,
+    };
+    model::insert_flow_version(&state.pool, &version)
+        .await
+        .unwrap();
+    model::set_flow_current_version(&state.pool, flow_id, version_id)
+        .await
+        .unwrap();
+
+    let instance_id = raisfast::utils::id::new_snowflake_id();
+    let instance = FlowInstance {
+        id: instance_id,
+        tenant_id: "default".into(),
+        flow_id,
+        flow_version_id: version_id,
+        status: "running".into(),
+        has_exceptions: false,
+        trigger_kind: "api".into(),
+        trigger_payload: Some(json!({"msg": "hi"})),
+        inputs_summary: None,
+        outputs: None,
+        error: None,
+        started_by: None,
+        started_at: Some(now),
+        finished_at: None,
+        waiting_kind: None,
+        waiting_needed: None,
+        waiting_received: 0,
+        resume_until: None,
+        created_at: now,
+    };
+    model::insert_flow_instance(&state.pool, &instance)
+        .await
+        .unwrap();
+
+    let exec = FlowsExec {
+        plane: Some(plane.clone()),
+        plugins: Some(state.plugins.clone()),
+    };
+    run::execute_instance(&state.pool, instance_id, &exec)
+        .await
+        .unwrap();
+
+    let done = model::find_instance_by_id(&state.pool, instance_id)
+        .await
+        .unwrap();
+    assert_eq!(done.status, "success", "instance failed: {done:?}");
+    let outputs = done.outputs.unwrap();
+    assert_eq!(
+        outputs["ans"], "mock-reply",
+        "real egress round-trip: {outputs}"
+    );
+
+    let snap = model::find_snapshot(&state.pool, instance_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        snap.get("node_states").is_some(),
+        "durable snapshot persisted"
+    );
 }

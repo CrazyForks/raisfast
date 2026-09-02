@@ -1319,3 +1319,89 @@ INSERT IGNORE INTO options (id, tenant_id, `option_key`, value, `type`, group_na
     (10014, 'default', 'maintenance_mode', 'false', 'boolean', 'appearance', 'Maintenance mode', 'When enabled, a maintenance page is shown to visitors', NULL, TRUE, TRUE, 31, NOW()),
     (10015, 'default', 'default_currency', '"USD"', 'select', 'ecommerce', 'Default currency', 'Currency code for products and orders', '{"values":["USD","CNY","EUR","GBP","JPY","KRW","HKD","TWD","SGD","AUD","CAD"]}', TRUE, TRUE, 40, NOW()),
     (10017, 'default', 'reserved_usernames', '"admin,administrator,root,system,official,support,staff,moderator,mod,help,info,mail,webmaster,security,billing,sales,owner,superuser,operator"', 'text', 'general', 'Reserved usernames', 'Comma-separated usernames that cannot be registered', '{"max_length":10000}', FALSE, TRUE, 5, NOW());
+
+-- ============================================================
+-- Flow orchestration engine v2 (dev-docs/workflow) — P0-P1 5 tables
+-- Data is engine-own (independent namespace); egress only referenced.
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS flow (
+    id BIGINT PRIMARY KEY,
+    tenant_id VARCHAR(36) NOT NULL DEFAULT 'default',
+    name VARCHAR(255) NOT NULL,
+    description TEXT,
+    enabled TINYINT(1) NOT NULL DEFAULT 1,
+    current_version BIGINT NULL,
+    extra JSON,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_flow_tenant (tenant_id)
+);
+
+-- Immutable definition snapshots (publish = append; instance locks a version)
+CREATE TABLE IF NOT EXISTS flow_version (
+    id BIGINT PRIMARY KEY,
+    flow_id BIGINT NOT NULL,
+    version_number BIGINT NOT NULL,
+    definition JSON NOT NULL,
+    created_by BIGINT NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY uq_flow_version (flow_id, version_number),
+    INDEX idx_flow_version_flow (flow_id)
+);
+
+-- One run of a flow (wf_trace root = instance id)
+CREATE TABLE IF NOT EXISTS flow_instance (
+    id BIGINT PRIMARY KEY,
+    tenant_id VARCHAR(36) NOT NULL DEFAULT 'default',
+    flow_id BIGINT NOT NULL,
+    flow_version_id BIGINT NOT NULL,
+    status VARCHAR(20) NOT NULL DEFAULT 'running',
+    has_exceptions TINYINT(1) NOT NULL DEFAULT 0,
+    trigger_kind VARCHAR(10) NOT NULL,
+    trigger_payload JSON,
+    inputs_summary JSON,
+    outputs JSON,
+    error JSON,
+    started_by BIGINT NULL,
+    started_at DATETIME NULL,
+    finished_at DATETIME NULL,
+    waiting_kind VARCHAR(10) NULL,
+    waiting_needed BIGINT NULL,
+    waiting_received BIGINT NOT NULL DEFAULT 0,
+    resume_until DATETIME NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_flow_instance_flow_status (flow_id, status),
+    INDEX idx_flow_instance_status_time (status, created_at),
+    INDEX idx_flow_instance_waiting (status, resume_until)
+);
+
+-- Durable runnable state (whole snapshot, 1:1, rewritten each step)
+CREATE TABLE IF NOT EXISTS flow_instance_snapshot (
+    instance_id BIGINT PRIMARY KEY,
+    snapshot JSON NOT NULL,
+    snapshot_version BIGINT NOT NULL DEFAULT 1,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
+
+-- Per-node run history (engine-own observability)
+CREATE TABLE IF NOT EXISTS flow_node_run (
+    id BIGINT PRIMARY KEY,
+    instance_id BIGINT NOT NULL,
+    node_id VARCHAR(64) NOT NULL,
+    node_type VARCHAR(32) NOT NULL,
+    seq BIGINT NOT NULL,
+    attempt BIGINT NOT NULL DEFAULT 1,
+    status VARCHAR(20) NOT NULL,
+    started_at DATETIME NULL,
+    finished_at DATETIME NULL,
+    latency_ms BIGINT NULL,
+    input_summary JSON,
+    output_summary JSON,
+    error JSON,
+    egress_log_id BIGINT NULL,
+    container_ref JSON,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_flow_node_run_instance_seq (instance_id, seq),
+    INDEX idx_flow_node_run_egress (egress_log_id)
+);

@@ -1380,3 +1380,89 @@ INSERT OR IGNORE INTO options (id, tenant_id, option_key, value, type, group_nam
     (10014, 'default', 'maintenance_mode', 'false', 'boolean', 'appearance', 'Maintenance mode', 'When enabled, a maintenance page is shown to visitors', NULL, 1, 1, 31, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     (10015, 'default', 'default_currency', '"USD"', 'select', 'ecommerce', 'Default currency', 'Currency code for products and orders', '{"values":["USD","CNY","EUR","GBP","JPY","KRW","HKD","TWD","SGD","AUD","CAD"]}', 1, 1, 40, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     (10017, 'default', 'reserved_usernames', '"admin,administrator,root,system,official,support,staff,moderator,mod,help,info,mail,webmaster,security,billing,sales,owner,superuser,operator"', 'text', 'general', 'Reserved usernames', 'Comma-separated usernames that cannot be registered', '{"max_length":10000}', 0, 1, 5, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'));
+
+-- ============================================================
+-- Flow orchestration engine v2 (dev-docs/workflow) — P0-P1 5 tables
+-- Data is engine-own (independent namespace); egress only referenced.
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS flow (
+    id INTEGER PRIMARY KEY,
+    tenant_id TEXT NOT NULL DEFAULT 'default',
+    name TEXT NOT NULL,
+    description TEXT,
+    enabled INTEGER NOT NULL DEFAULT 1,
+    current_version INTEGER,
+    extra TEXT,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_flow_tenant ON flow(tenant_id);
+
+-- Immutable definition snapshots (publish = append; instance locks a version)
+CREATE TABLE IF NOT EXISTS flow_version (
+    id INTEGER PRIMARY KEY,
+    flow_id INTEGER NOT NULL,
+    version_number INTEGER NOT NULL,
+    definition TEXT NOT NULL,
+    created_by INTEGER,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+    UNIQUE (flow_id, version_number)
+);
+CREATE INDEX IF NOT EXISTS idx_flow_version_flow ON flow_version(flow_id);
+
+-- One run of a flow (wf_trace root = instance id)
+CREATE TABLE IF NOT EXISTS flow_instance (
+    id INTEGER PRIMARY KEY,
+    tenant_id TEXT NOT NULL DEFAULT 'default',
+    flow_id INTEGER NOT NULL,
+    flow_version_id INTEGER NOT NULL,
+    status TEXT NOT NULL DEFAULT 'running',
+    has_exceptions INTEGER NOT NULL DEFAULT 0,
+    trigger_kind TEXT NOT NULL,
+    trigger_payload TEXT,
+    inputs_summary TEXT,
+    outputs TEXT,
+    error TEXT,
+    started_by INTEGER,
+    started_at TEXT,
+    finished_at TEXT,
+    waiting_kind TEXT,
+    waiting_needed INTEGER,
+    waiting_received INTEGER NOT NULL DEFAULT 0,
+    resume_until TEXT,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_flow_instance_flow_status ON flow_instance(flow_id, status);
+CREATE INDEX IF NOT EXISTS idx_flow_instance_status_time ON flow_instance(status, created_at);
+CREATE INDEX IF NOT EXISTS idx_flow_instance_waiting ON flow_instance(status, resume_until);
+
+-- Durable runnable state (whole snapshot, 1:1, rewritten each step)
+CREATE TABLE IF NOT EXISTS flow_instance_snapshot (
+    instance_id INTEGER PRIMARY KEY,
+    snapshot TEXT NOT NULL,
+    snapshot_version INTEGER NOT NULL DEFAULT 1,
+    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+);
+
+-- Per-node run history (engine-own observability)
+CREATE TABLE IF NOT EXISTS flow_node_run (
+    id INTEGER PRIMARY KEY,
+    instance_id INTEGER NOT NULL,
+    node_id TEXT NOT NULL,
+    node_type TEXT NOT NULL,
+    seq INTEGER NOT NULL,
+    attempt INTEGER NOT NULL DEFAULT 1,
+    status TEXT NOT NULL,
+    started_at TEXT,
+    finished_at TEXT,
+    latency_ms INTEGER,
+    input_summary TEXT,
+    output_summary TEXT,
+    error TEXT,
+    egress_log_id INTEGER,
+    container_ref TEXT,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_flow_node_run_instance_seq ON flow_node_run(instance_id, seq);
+CREATE INDEX IF NOT EXISTS idx_flow_node_run_egress ON flow_node_run(egress_log_id);

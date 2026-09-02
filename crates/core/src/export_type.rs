@@ -29,7 +29,21 @@ mod private {
                 seen.insert(name.clone());
                 let decl = (et.decl_fn)(&cfg);
                 decls.push((name, decl));
+                continue;
             }
+            let decl = (et.decl_fn)(&cfg);
+            let Some((_, prev_decl)) = decls.iter().find(|(n, _)| n == &name) else {
+                continue;
+            };
+            if prev_decl == &decl {
+                continue; // identical duplicate registration — safe to ignore
+            }
+            panic!(
+                "TS export collision: two different Rust types resolve to the \
+                 type name `{name}` (flat single-file export requires globally \
+                 unique names). Registering module must rename one of them via \
+                 the export_types! registration or a distinct Rust type name."
+            );
         }
         decls.sort_by(|a, b| a.0.cmp(&b.0));
         decls

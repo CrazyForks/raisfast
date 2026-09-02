@@ -31,3 +31,4 @@ fly.toml
 crates/core/target/
 
 apps/
+third/

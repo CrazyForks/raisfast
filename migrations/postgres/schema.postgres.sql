@@ -1382,3 +1382,89 @@ INSERT INTO options (id, tenant_id, option_key, value, type, group_name, label, 
     (10015, 'default', 'default_currency', '"USD"', 'select', 'ecommerce', 'Default currency', 'Currency code for products and orders', '{"values":["USD","CNY","EUR","GBP","JPY","KRW","HKD","TWD","SGD","AUD","CAD"]}', TRUE, TRUE, 40, NOW()),
     (10017, 'default', 'reserved_usernames', '"admin,administrator,root,system,official,support,staff,moderator,mod,help,info,mail,webmaster,security,billing,sales,owner,superuser,operator"', 'text', 'general', 'Reserved usernames', 'Comma-separated usernames that cannot be registered', '{"max_length":10000}', FALSE, TRUE, 5, NOW())
 ON CONFLICT (tenant_id, option_key) DO NOTHING;
+
+-- ============================================================
+-- Flow orchestration engine v2 (dev-docs/workflow) — P0-P1 5 tables
+-- Data is engine-own (independent namespace); egress only referenced.
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS flow (
+    id BIGINT PRIMARY KEY,
+    tenant_id TEXT NOT NULL DEFAULT 'default',
+    name TEXT NOT NULL,
+    description TEXT,
+    enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    current_version BIGINT,
+    extra JSONB,
+    created_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_flow_tenant ON flow(tenant_id);
+
+-- Immutable definition snapshots (publish = append; instance locks a version)
+CREATE TABLE IF NOT EXISTS flow_version (
+    id BIGINT PRIMARY KEY,
+    flow_id BIGINT NOT NULL,
+    version_number BIGINT NOT NULL,
+    definition JSONB NOT NULL,
+    created_by BIGINT,
+    created_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW(),
+    UNIQUE (flow_id, version_number)
+);
+CREATE INDEX IF NOT EXISTS idx_flow_version_flow ON flow_version(flow_id);
+
+-- One run of a flow (wf_trace root = instance id)
+CREATE TABLE IF NOT EXISTS flow_instance (
+    id BIGINT PRIMARY KEY,
+    tenant_id TEXT NOT NULL DEFAULT 'default',
+    flow_id BIGINT NOT NULL,
+    flow_version_id BIGINT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'running',
+    has_exceptions BOOLEAN NOT NULL DEFAULT FALSE,
+    trigger_kind TEXT NOT NULL,
+    trigger_payload JSONB,
+    inputs_summary JSONB,
+    outputs JSONB,
+    error JSONB,
+    started_by BIGINT,
+    started_at TIMESTAMPTZ(0),
+    finished_at TIMESTAMPTZ(0),
+    waiting_kind TEXT,
+    waiting_needed BIGINT,
+    waiting_received BIGINT NOT NULL DEFAULT 0,
+    resume_until TIMESTAMPTZ(0),
+    created_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_flow_instance_flow_status ON flow_instance(flow_id, status);
+CREATE INDEX IF NOT EXISTS idx_flow_instance_status_time ON flow_instance(status, created_at);
+CREATE INDEX IF NOT EXISTS idx_flow_instance_waiting ON flow_instance(status, resume_until);
+
+-- Durable runnable state (whole snapshot, 1:1, rewritten each step)
+CREATE TABLE IF NOT EXISTS flow_instance_snapshot (
+    instance_id BIGINT PRIMARY KEY,
+    snapshot JSONB NOT NULL,
+    snapshot_version BIGINT NOT NULL DEFAULT 1,
+    updated_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW()
+);
+
+-- Per-node run history (engine-own observability)
+CREATE TABLE IF NOT EXISTS flow_node_run (
+    id BIGINT PRIMARY KEY,
+    instance_id BIGINT NOT NULL,
+    node_id TEXT NOT NULL,
+    node_type TEXT NOT NULL,
+    seq BIGINT NOT NULL,
+    attempt BIGINT NOT NULL DEFAULT 1,
+    status TEXT NOT NULL,
+    started_at TIMESTAMPTZ(0),
+    finished_at TIMESTAMPTZ(0),
+    latency_ms BIGINT,
+    input_summary JSONB,
+    output_summary JSONB,
+    error JSONB,
+    egress_log_id BIGINT,
+    container_ref JSONB,
+    created_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_flow_node_run_instance_seq ON flow_node_run(instance_id, seq);
+CREATE INDEX IF NOT EXISTS idx_flow_node_run_egress ON flow_node_run(egress_log_id);

@@ -1055,6 +1055,55 @@ impl PluginManager {
         Ok(())
     }
 
+    /// Execute an inline script and capture its JSON return value (flow script
+    /// nodes). Same load/call/unload + zero-state-leakage model as
+    /// [`Self::run_inline_script`], but uses each engine's value-returning
+    /// filter path. The code must export `func_name`, which receives the input
+    /// as a JSON string and returns a JSON string.
+    ///
+    /// v1 supports `js`; lua/rhai return a clear not-wired error.
+    pub async fn run_inline_script_value(
+        &self,
+        runtime: &str,
+        id: &str,
+        code: &str,
+        func_name: &str,
+        data: &serde_json::Value,
+        permissions: Permissions,
+    ) -> AppResult<serde_json::Value> {
+        match runtime {
+            #[cfg(feature = "plugin-js")]
+            "js" => {
+                let sdk_source = sdk_v1::get_sdk_source("js", "v1").ok_or_else(|| {
+                    AppError::Internal(anyhow::anyhow!("SDK source for js/v1 not found"))
+                })?;
+                // `host` alias so inline scripts can use host.* without imports.
+                let wrapped = format!("const host = globalThis.RaisFastHost;\n{code}");
+                self.js_engine
+                    .load_plugin(
+                        id,
+                        &wrapped,
+                        permissions,
+                        std::path::Path::new("."),
+                        sdk_source,
+                    )
+                    .await
+                    .map_err(|e| AppError::Internal(anyhow::anyhow!("load inline js: {e}")))?;
+                let result = self
+                    .js_engine
+                    .call_filter::<serde_json::Value>(id, func_name, data, None)
+                    .await
+                    .map_err(|e| AppError::Internal(anyhow::anyhow!("exec inline js: {e}")))
+                    .map(|v| v.unwrap_or(serde_json::Value::Null));
+                self.js_engine.unload_plugin(id).await;
+                result
+            }
+            other => Err(AppError::BadRequest(format!(
+                "script runtime '{other}' 尚未接入 flow（v1 支持 js）"
+            ))),
+        }
+    }
+
     /// Sync plugin Cron schedules to the database
     async fn sync_crons_for_plugin(&self, plugin_id: &str, entries: &[CronEntry]) {
         if let Some(ref pool) = self.pool
@@ -2281,6 +2330,32 @@ mod tests {
         let mgr = PluginManager::new(config).await;
         mgr.unload_plugin("does-not-exist").await;
         assert_eq!(mgr.plugin_count().await, 0);
+    }
+
+    #[cfg(feature = "plugin-js")]
+    #[tokio::test]
+    async fn inline_script_value_returns_and_denies_host_by_default() {
+        let config = test_config();
+        let mgr = PluginManager::new(config).await;
+        let code = r#"
+export function main(__in) {
+    const input = JSON.parse(__in || '{}');
+    return { sum: input.a + input.b };
+}
+"#;
+        let data = serde_json::json!({"a": 2, "b": 3});
+        let out = mgr
+            .run_inline_script_value(
+                "js",
+                "__test_inline",
+                code,
+                "main",
+                &data,
+                Permissions::default(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(out["sum"], 5, "script return value: {out}");
     }
 
     #[tokio::test]

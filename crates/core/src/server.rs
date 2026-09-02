@@ -256,6 +256,7 @@ async fn build_app(
 
     if config.builtins.workflow {
         api_v1 = api_v1.merge(workflow::handler::routes(&mut registry, config));
+        api_v1 = api_v1.merge(crate::flows::handler::routes(&mut registry, config));
     }
 
     api_v1 = crate::content_type::handler::register_content_routes(
