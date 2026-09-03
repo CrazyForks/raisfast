@@ -419,6 +419,10 @@ async fn run_turn_inner(
         "stop_reason": stop_reason,
         "system_hash": assembled.hash,
         "prompt_version": assembled.version,
+        "prompt": {
+            "system_chars": assembled.system_chars,
+            "skills_chars": assembled.skills_chars,
+        },
         "iterations": outcome.iterations,
         "tool_calls_made": outcome.tool_calls_made,
         "usage_total": outcome.usage.as_ref().map(|u| json!({
@@ -488,6 +492,51 @@ pub async fn find_agent(
 /// List agents of a tenant (admin/selection).
 pub async fn list_agents(pool: &crate::db::Pool, tenant: Option<&str>) -> AppResult<Vec<AiAgent>> {
     crate::agent::models::ai_agent::list_agents(pool, tenant).await
+}
+
+/// Partial update payload for an agent (admin). Fields present are applied.
+#[derive(Debug, Clone, Default, serde::Deserialize)]
+pub struct AgentPatch {
+    pub system_prompt: Option<String>,
+    pub provider: Option<String>,
+    pub model: Option<String>,
+    pub temperature: Option<f64>,
+    pub max_iterations: Option<i32>,
+    pub tools: Option<Vec<String>>,
+    pub memory_enabled: Option<bool>,
+    pub params: Option<serde_json::Value>,
+}
+
+/// Apply a partial patch to an agent (overlay on current row) and return it.
+pub async fn update_agent(
+    pool: &crate::db::Pool,
+    tenant_id: Option<&str>,
+    id: SnowflakeId,
+    patch: &AgentPatch,
+) -> AppResult<AiAgent> {
+    let current = crate::agent::models::ai_agent::find_agent_by_id(pool, id, tenant_id).await?;
+    let tools = match &patch.tools {
+        Some(t) => serde_json::to_value(t).unwrap_or(serde_json::Value::Array(vec![])),
+        None => current.tools,
+    };
+    crate::agent::models::ai_agent::update_agent(
+        pool,
+        tenant_id,
+        id,
+        patch
+            .system_prompt
+            .as_deref()
+            .unwrap_or(&current.system_prompt),
+        patch.provider.as_deref().unwrap_or(&current.provider),
+        patch.model.as_deref().unwrap_or(&current.model),
+        patch.temperature.or(current.temperature),
+        patch.max_iterations.unwrap_or(current.max_iterations),
+        tools,
+        patch.memory_enabled.unwrap_or(current.memory_enabled),
+        patch.params.clone().or(current.params),
+    )
+    .await?;
+    crate::agent::models::ai_agent::find_agent_by_id(pool, id, tenant_id).await
 }
 
 /// Create a session owned by `owner_id` on an agent.

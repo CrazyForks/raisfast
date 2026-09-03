@@ -92,6 +92,42 @@ pub async fn list_agents(
     Ok(result)
 }
 
+/// Update an agent's editable columns (full overwrite of provided values).
+#[allow(clippy::too_many_arguments)]
+pub async fn update_agent(
+    pool: &crate::db::Pool,
+    tenant_id: Option<&str>,
+    id: SnowflakeId,
+    system_prompt: &str,
+    provider: &str,
+    model: &str,
+    temperature: Option<f64>,
+    max_iterations: i32,
+    tools: serde_json::Value,
+    memory_enabled: bool,
+    params: Option<serde_json::Value>,
+) -> AppResult<()> {
+    let now = now_utc();
+    let result = raisfast_derive::crud_update!(
+        pool,
+        "ai_agents",
+        bind: [
+            "system_prompt" => system_prompt,
+            "provider" => provider,
+            "model" => model,
+            "temperature" => temperature,
+            "max_iterations" => max_iterations,
+            "tools" => tools,
+            "memory_enabled" => memory_enabled,
+            "params" => params,
+            "updated_at" => &now
+        ],
+        where: ("id", id),
+        tenant: tenant_id
+    )?;
+    AppError::expect_affected(&result, "ai_agent")
+}
+
 /// Delete an agent by id (tenant-scoped).
 pub async fn delete_agent(
     pool: &crate::db::Pool,

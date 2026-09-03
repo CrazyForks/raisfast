@@ -21,6 +21,10 @@ pub struct AssembledPrompt {
     pub hash: String,
     /// The template version that produced `text`.
     pub version: u32,
+    /// Total chars of the rendered system prompt (context budget observability).
+    pub system_chars: usize,
+    /// Chars contributed by the injected skills section, 0 when none.
+    pub skills_chars: usize,
 }
 
 /// Versioned prompt template registry.
@@ -115,6 +119,8 @@ fn assemble_v1(agent: &AiAgent, tools: &[String], skills_section: Option<&str>) 
     let version = PROMPT_TEMPLATE_VERSION;
     let hash = system_hash(version, &agent.model, &text, &tools);
     AssembledPrompt {
+        skills_chars: skills_section.map_or(0, str::len),
+        system_chars: text.len(),
         text,
         hash,
         version,
@@ -172,6 +178,27 @@ mod tests {
         assert_eq!(p1.version, PROMPT_TEMPLATE_VERSION);
         assert!(p1.text.contains("# Role"));
         assert!(p1.text.contains("be nice"));
+    }
+
+    #[test]
+    fn stats_capture_skills_budget_signal() {
+        let a = agent("m", "a", "p");
+        let tools = vec!["list_posts".to_string()];
+        let plain = assemble(&a, &tools);
+        assert_eq!(
+            plain.skills_chars, 0,
+            "no skills section -> no skill budget"
+        );
+        assert!(plain.system_chars > 0);
+
+        let skill_body = "# skill body for budget observability";
+        let with_skills = assemble_with_skills(&a, &tools, Some(skill_body));
+        assert_eq!(with_skills.skills_chars, skill_body.len());
+        assert!(with_skills.system_chars > with_skills.skills_chars);
+        assert_ne!(
+            plain.hash, with_skills.hash,
+            "skill content covered by hash"
+        );
     }
 
     #[test]

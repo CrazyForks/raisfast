@@ -12,6 +12,7 @@ mod mcp_cmd;
 mod plugin_cmd;
 mod route_cmd;
 mod server_cmd;
+mod skills_cmd;
 #[cfg(feature = "tunnel")]
 mod tunnel_cmd;
 mod user_cmd;
@@ -74,6 +75,11 @@ enum Commands {
     Codegen {
         #[command(subcommand)]
         action: CodegenAction,
+    },
+    /// Skills management
+    Skills {
+        #[command(subcommand)]
+        action: skills_cmd::SkillsAction,
     },
     /// MCP (Model Context Protocol) server
     #[cfg(feature = "mcp")]
@@ -636,6 +642,10 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
                 },
         }) => {
             codegen_cmd::run_model(&tables, force, dry_run)?;
+        }
+
+        Some(Commands::Skills { action }) => {
+            skills_cmd::run(action)?;
         }
 
         #[cfg(feature = "mcp")]

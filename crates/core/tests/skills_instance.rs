@@ -179,6 +179,41 @@ async fn agent_with_skill_full_and_compact() {
         "Compact does not inline instructions"
     );
 
+    // Fixture regression: import Claude-style and zeroclaw-style SKILL.md
+    // samples into the temp store and assert they load with correct metadata.
+    let fixtures = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/skills");
+    for entry in std::fs::read_dir(&fixtures).unwrap() {
+        let entry = entry.unwrap();
+        if !entry.path().is_dir() {
+            continue;
+        }
+        raisfast::agent::skills::import::import_skill(
+            &entry.path(),
+            skills_dir.path(),
+            "platform",
+            None,
+            false,
+        )
+        .expect("fixture skill importable");
+    }
+    let all = raisfast::agent::skills::load_skills(skills_dir.path(), Some(&t), &["*".to_string()]);
+    let names: Vec<&str> = all.iter().map(|s| s.name.as_str()).collect();
+    assert!(names.contains(&"ship"), "manual skill loaded");
+    assert!(
+        names.contains(&"code-review"),
+        "claude-style fixture imported"
+    );
+    assert!(
+        names.contains(&"zeroclaw-ops"),
+        "zeroclaw-style fixture imported"
+    );
+    let zops = all.iter().find(|s| s.name == "zeroclaw-ops").unwrap();
+    assert!(zops.always, "zeroclaw `always: true` parsed");
+    assert!(
+        zops.description.contains("ZeroClaw"),
+        "frontmatter description kept"
+    );
+
     // cleanup
     raisfast::agent::models::ai_agent::delete_agent(&pool, agent_full.id, Some(&t))
         .await

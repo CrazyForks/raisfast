@@ -143,6 +143,19 @@ pub async fn admin_create_agent(
     Ok(ApiResponse::success(agent))
 }
 
+pub async fn admin_update_agent(
+    auth: AuthUser,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(patch): Json<crate::agent::service::AgentPatch>,
+) -> AppResult<ApiResponse<crate::agent::models::ai_agent::AiAgent>> {
+    auth.ensure_admin()?;
+    let id = crate::types::snowflake_id::parse_id(&id)?;
+    let agent =
+        crate::agent::service::update_agent(&state.pool, auth.tenant_id(), id, &patch).await?;
+    Ok(ApiResponse::success(agent))
+}
+
 pub async fn admin_list_agents(
     auth: AuthUser,
     State(state): State<AppState>,
@@ -246,6 +259,8 @@ pub async fn run_turn(
 
     let pool = state.pool.clone();
     let ai_cfg = state.config.ai.clone();
+    let emitter = state.emitter.clone();
+    let broadcast = state.config.ai.broadcast_events;
     let content = body.content;
 
     let cancel = CancellationToken::new();
@@ -275,10 +290,34 @@ pub async fn run_turn(
                     text_len = outcome.text.len(),
                     "ai turn: done"
                 );
+                if broadcast {
+                    emitter.emit(crate::event::Event::Custom {
+                        source: "ai".to_string(),
+                        event_type: "ai.turn.done".to_string(),
+                        data: json!({
+                            "session_id": session.id.0,
+                            "agent_id": agent.id.0,
+                            "text": outcome.text,
+                            "iterations": outcome.iterations,
+                            "tool_calls_made": outcome.tool_calls_made,
+                        }),
+                    });
+                }
                 let _ = tx.send(Ok(done_event(&outcome))).await;
             }
             Err(e) => {
                 tracing::warn!(session = session.id.0, error = %e, "ai turn: failed");
+                if broadcast {
+                    emitter.emit(crate::event::Event::Custom {
+                        source: "ai".to_string(),
+                        event_type: "ai.turn.error".to_string(),
+                        data: json!({
+                            "session_id": session.id.0,
+                            "agent_id": agent.id.0,
+                            "message": e.to_string(),
+                        }),
+                    });
+                }
                 let _ = tx
                     .send(Ok(SseEvent::default().event("error").data(
                         json!({
