@@ -15,6 +15,7 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use axum::Json;
+use raisfast::agent::models::ai_message::AiMessage;
 use raisfast::agent::service as ai_service;
 use raisfast::config::app::AiConfig;
 use sqlx::postgres::{PgPool, PgPoolOptions};
@@ -34,6 +35,15 @@ fn tenant() -> String {
         .unwrap()
         .as_nanos();
     format!("t_ai_svc_{n}")
+}
+
+fn meta_hash(row: &AiMessage) -> String {
+    let value: serde_json::Value =
+        serde_json::from_str(&row.content).expect("turn:meta content is JSON");
+    value["system_hash"]
+        .as_str()
+        .expect("system_hash present")
+        .to_string()
 }
 
 /// Boot a mock `/v1/chat/completions` returning a fixed text answer.
@@ -126,11 +136,26 @@ async fn agent_service_turn_end_to_end() {
     assert_eq!(usage["output"], 7);
     assert_eq!(rows[2].role, "meta");
     assert_eq!(rows[2].kind, "turn:meta");
+    let first_hash = meta_hash(&rows[2]);
 
     // busy released: a sequential second turn runs fine (status back to open)
     let second = ai_service::run_turn(&pool, &ai, &agent, session.id, "第二条").await;
     assert!(second.is_ok(), "session is open again, second turn runs");
     assert!(second.unwrap().text.contains("小明"));
+
+    // system_hash is stable across identical config turns
+    let rows2 = ai_service::list_messages(&pool, session.id, Some(&tenant_id), None, 10)
+        .await
+        .expect("list messages after second turn");
+    let last_meta = rows2
+        .iter()
+        .rfind(|m| m.kind == "turn:meta")
+        .expect("meta row");
+    assert_eq!(
+        meta_hash(last_meta),
+        first_hash,
+        "system_hash stable across turns"
+    );
 
     // cleanup
     raisfast::agent::models::ai_agent::delete_agent(&pool, agent.id, Some(&tenant_id))

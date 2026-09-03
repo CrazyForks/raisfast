@@ -30,6 +30,7 @@ pub struct HandlerDeps {
     pub email_sender: Arc<dyn EmailSender>,
     pub sms_sender: Arc<dyn SmsSender>,
     pub plugins: Arc<crate::plugins::PluginManager>,
+    pub emitter: crate::event::EventEmitter,
 }
 
 /// Inventory entry for a builtin cron handler. Handlers self-register via
@@ -59,6 +60,7 @@ macro_rules! register_cron_handler {
     };
 }
 
+pub mod agent_run;
 pub mod cache;
 pub mod cron_ping;
 pub mod db_backup;
@@ -95,6 +97,7 @@ pub fn register_all(deps: HandlerDeps) -> JobHandlerRegistry {
         email_sender,
         sms_sender,
         plugins,
+        emitter,
     } = deps;
 
     // Clones for the inventory loop (single-use values moved into handlers above).
@@ -102,6 +105,7 @@ pub fn register_all(deps: HandlerDeps) -> JobHandlerRegistry {
     let loop_cache = cache.clone();
     let loop_email = email_sender.clone();
     let loop_sms = sms_sender.clone();
+    let loop_emitter = emitter.clone();
     registry.register(
         "send_welcome_email",
         Box::new(email::SendWelcomeEmailHandler::new(
@@ -206,6 +210,16 @@ pub fn register_all(deps: HandlerDeps) -> JobHandlerRegistry {
         &flow_run::META,
     );
 
+    registry.register_with_meta(
+        agent_run::META.id,
+        Box::new(agent_run::AgentRunHandler::new(
+            pool.clone(),
+            config.clone(),
+            emitter.clone(),
+        )),
+        &agent_run::META,
+    );
+
     // ── Cron handlers: collected from inventory self-registration ───────────
     // Every `register_cron_handler!(...)` call in a handler file is collected here.
     for entry in inventory::iter::<CronHandlerEntry> {
@@ -217,6 +231,7 @@ pub fn register_all(deps: HandlerDeps) -> JobHandlerRegistry {
             email_sender: loop_email.clone(),
             sms_sender: loop_sms.clone(),
             plugins: plugins.clone(),
+            emitter: loop_emitter.clone(),
         };
         let handler = (entry.factory)(&deps);
         registry.register_with_meta(entry.meta.id, handler, entry.meta);

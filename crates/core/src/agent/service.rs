@@ -223,6 +223,11 @@ pub async fn run_turn_streamed(
     }
 
     ai_session::set_session_status(pool, session_id, tenant_id, "running").await?;
+    tracing::info!(
+        session = session_id.0,
+        agent = agent.id.0,
+        "agent_service: streamed turn start"
+    );
     let executed = run_turn_inner(
         pool,
         ai,
@@ -235,6 +240,11 @@ pub async fn run_turn_streamed(
         cancel,
     )
     .await;
+    tracing::debug!(
+        session = session_id.0,
+        err = executed.is_err(),
+        "agent_service: streamed turn end"
+    );
     let result = match executed {
         Ok(r) => r,
         Err(e) => {
@@ -263,8 +273,9 @@ async fn run_turn_inner(
         ai_message::list_messages_after(pool, session_id, tenant_id, None, 10_000).await?;
     let mut history: Vec<ChatMessage> = existing.iter().filter_map(row_to_chat_message).collect();
     let old_len = history.len();
-    let had_system = !agent.system_prompt.is_empty();
-    let system_opt = had_system.then_some(agent.system_prompt.as_str());
+    // We always send an assembled framework system prompt (agent/system_prompt
+    // is embedded inside it), so the engine always inserts one leading System.
+    let had_system = true;
 
     // Two-phase (1): durable user row before any model call.
     let mut seq = ai_message::next_seq(pool, session_id, tenant_id).await?;
@@ -280,6 +291,8 @@ async fn run_turn_inner(
     let memory = ScopedMemory::new(pool.clone(), agent.tenant_id.clone(), agent.id);
     let mut tools = extra_tools.unwrap_or_default();
     register_memory_tools(&mut tools, memory.clone());
+    let tool_names = tools.names();
+    let assembled = crate::agent::prompt::assemble(agent, &tool_names);
     let provider = provider_for(agent, ai)?;
     let engine = TurnEngine::new(
         provider,
@@ -298,11 +311,11 @@ async fn run_turn_inner(
 
     let outcome = match emitter.take() {
         Some(mut cb) => engine
-            .run_streamed(&mut history, system_opt, user, &mut cb)
+            .run_streamed(&mut history, Some(&assembled.text), user, &mut cb)
             .await
             .map_err(turn_error)?,
         None => engine
-            .run(&mut history, system_opt, user)
+            .run(&mut history, Some(&assembled.text), user)
             .await
             .map_err(turn_error)?,
     };
@@ -330,6 +343,8 @@ async fn run_turn_inner(
     };
     let meta = json!({
         "stop_reason": stop_reason,
+        "system_hash": assembled.hash,
+        "prompt_version": assembled.version,
         "iterations": outcome.iterations,
         "tool_calls_made": outcome.tool_calls_made,
         "usage_total": outcome.usage.as_ref().map(|u| json!({

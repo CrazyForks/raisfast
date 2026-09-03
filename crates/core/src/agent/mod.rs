@@ -7,6 +7,7 @@
 pub mod handler;
 pub mod memory_sql;
 pub mod models;
+pub mod prompt;
 pub mod service;
 pub mod tools;
 

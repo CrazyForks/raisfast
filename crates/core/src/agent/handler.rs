@@ -158,19 +158,18 @@ pub struct CreateSessionReq {
 pub async fn create_session(
     auth: AuthUser,
     State(state): State<AppState>,
-    Path(agent_id): Path<i64>,
+    Path(agent_id): Path<String>,
     Json(body): Json<CreateSessionReq>,
 ) -> AppResult<ApiResponse<crate::agent::models::ai_session::AiSession>> {
     let owner = current_owner(&auth)?;
+    let agent_id = crate::types::snowflake_id::parse_id(&agent_id)?;
     let tenant = auth.tenant_id().map(str::to_string);
     // Agent must exist in this tenant.
-    let agent =
-        ai_service::find_agent(&state.pool, SnowflakeId(agent_id), tenant.as_deref()).await?;
-    let _ = agent;
+    let _agent = ai_service::find_agent(&state.pool, agent_id, tenant.as_deref()).await?;
     let session = ai_service::create_session(
         &state.pool,
         tenant,
-        SnowflakeId(agent_id),
+        agent_id,
         owner,
         body.title.as_deref().unwrap_or(""),
     )
@@ -181,12 +180,12 @@ pub async fn create_session(
 pub async fn list_my_sessions(
     auth: AuthUser,
     State(state): State<AppState>,
-    Path(agent_id): Path<i64>,
+    Path(agent_id): Path<String>,
 ) -> AppResult<ApiResponse<Vec<crate::agent::models::ai_session::AiSession>>> {
     let owner = current_owner(&auth)?;
+    let agent_id = crate::types::snowflake_id::parse_id(&agent_id)?;
     let sessions =
-        ai_service::list_my_sessions(&state.pool, auth.tenant_id(), SnowflakeId(agent_id), owner)
-            .await?;
+        ai_service::list_my_sessions(&state.pool, auth.tenant_id(), agent_id, owner).await?;
     Ok(ApiResponse::success(sessions))
 }
 
@@ -201,11 +200,12 @@ pub struct MessagesQuery {
 pub async fn get_messages(
     auth: AuthUser,
     State(state): State<AppState>,
-    Path(id): Path<i64>,
+    Path(id): Path<String>,
     Query(q): Query<MessagesQuery>,
 ) -> AppResult<ApiResponse<Vec<crate::agent::models::ai_message::AiMessage>>> {
     let owner = current_owner(&auth)?;
-    let session = ai_service::find_session(&state.pool, SnowflakeId(id), auth.tenant_id()).await?;
+    let id = crate::types::snowflake_id::parse_id(&id)?;
+    let session = ai_service::find_session(&state.pool, id, auth.tenant_id()).await?;
     if session.owner_id != owner {
         return Err(AppError::ForbiddenOwnership);
     }
@@ -229,11 +229,12 @@ pub struct TurnReq {
 pub async fn run_turn(
     auth: AuthUser,
     State(state): State<AppState>,
-    Path(id): Path<i64>,
+    Path(id): Path<String>,
     Json(body): Json<TurnReq>,
 ) -> AppResult<Sse<CancelOnDrop<ReceiverStream<Result<SseEvent, Infallible>>>>> {
     let owner = current_owner(&auth)?;
-    let session = ai_service::find_session(&state.pool, SnowflakeId(id), auth.tenant_id()).await?;
+    let id = crate::types::snowflake_id::parse_id(&id)?;
+    let session = ai_service::find_session(&state.pool, id, auth.tenant_id()).await?;
     if session.owner_id != owner {
         return Err(AppError::ForbiddenOwnership);
     }
@@ -247,9 +248,10 @@ pub async fn run_turn(
     let cancel = CancellationToken::new();
     let task_cancel = cancel.clone();
     let (tx, rx) = mpsc::channel::<Result<SseEvent, Infallible>>(64);
+    tracing::info!(session = session.id.0, "ai turn: starting (streamed)");
     tokio::spawn(async move {
         let mut emit = |ev: raisfast_agent::TurnEvent| {
-            let _ = tx.blocking_send(Ok(agent_event(ev)));
+            let _ = tx.try_send(Ok(agent_event(ev)));
         };
         let result = ai_service::run_turn_streamed(
             &pool,
@@ -265,17 +267,25 @@ pub async fn run_turn(
 
         match result {
             Ok(outcome) => {
-                let _ = tx.blocking_send(Ok(done_event(&outcome)));
+                tracing::info!(
+                    session = session.id.0,
+                    text_len = outcome.text.len(),
+                    "ai turn: done"
+                );
+                let _ = tx.send(Ok(done_event(&outcome))).await;
             }
             Err(e) => {
-                let _ = tx.blocking_send(Ok(SseEvent::default().event("error").data(
-                    json!({
-                        "code": "turn_failed",
-                        "message": e.to_string(),
-                        "fatal": true,
-                    })
-                    .to_string(),
-                )));
+                tracing::warn!(session = session.id.0, error = %e, "ai turn: failed");
+                let _ = tx
+                    .send(Ok(SseEvent::default().event("error").data(
+                        json!({
+                            "code": "turn_failed",
+                            "message": e.to_string(),
+                            "fatal": true,
+                        })
+                        .to_string(),
+                    )))
+                    .await;
             }
         }
     });

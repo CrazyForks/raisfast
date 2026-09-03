@@ -1033,6 +1033,7 @@ async fn spawn_workers(
             email_sender: crate::notifier::build_email_sender(config),
             sms_sender: crate::notifier::build_sms_sender(config),
             plugins: plugins.clone(),
+            emitter: crate::event::EventEmitter::eventbus_only(eventbus.clone()),
         },
     ));
 
