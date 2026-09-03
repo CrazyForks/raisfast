@@ -35,6 +35,22 @@ impl ChatResponse {
     }
 }
 
+/// A live event while a response is being generated.
+#[derive(Debug, Clone)]
+pub enum StreamEvent {
+    TextDelta {
+        delta: String,
+    },
+    /// Reasoning/thinking delta (shown separately, never merged into text).
+    ReasoningDelta {
+        delta: String,
+    },
+    /// A fully assembled tool call (emitted at end of stream).
+    ToolCall(ToolCall),
+    Usage(TokenUsage),
+    Final,
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum ProviderError {
     #[error("provider config error: {0}")]
@@ -57,4 +73,29 @@ pub trait ModelProvider: Send + Sync {
         request: &ChatRequest<'_>,
         model: &str,
     ) -> Result<ChatResponse, ProviderError>;
+
+    /// Streaming variant: feed incremental events to `on_event` while the
+    /// response is produced, and return the fully assembled response.
+    /// Default = non-streaming `chat` replayed as a single batch of events.
+    async fn chat_stream(
+        &self,
+        request: &ChatRequest<'_>,
+        model: &str,
+        on_event: &mut (dyn FnMut(StreamEvent) + Send),
+    ) -> Result<ChatResponse, ProviderError> {
+        let response = self.chat(request, model).await?;
+        if let Some(text) = &response.text {
+            on_event(StreamEvent::TextDelta {
+                delta: text.clone(),
+            });
+        }
+        for call in &response.tool_calls {
+            on_event(StreamEvent::ToolCall(call.clone()));
+        }
+        if let Some(usage) = response.usage {
+            on_event(StreamEvent::Usage(usage));
+        }
+        on_event(StreamEvent::Final);
+        Ok(response)
+    }
 }

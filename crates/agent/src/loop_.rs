@@ -10,8 +10,9 @@ use std::sync::Arc;
 
 use serde_json::Value;
 
+use crate::memory::{Memory, render_memory_context};
 use crate::messages::{ChatMessage, ChatRole, TokenUsage};
-use crate::provider::{ChatRequest, ModelProvider, ProviderError};
+use crate::provider::{ChatRequest, ModelProvider, ProviderError, StreamEvent};
 use crate::tool::ToolRegistry;
 
 #[derive(Debug, Clone, Copy)]
@@ -33,7 +34,11 @@ impl Default for TurnConfig {
 /// Events surfaced to the caller (UI/tool trace). Not persisted by the engine.
 #[derive(Debug, Clone)]
 pub enum TurnEvent {
-    /// Assistant text produced during an iteration (including the terminal one).
+    /// Live text delta (only emitted by `run_streamed`).
+    Chunk { delta: String },
+    /// Live reasoning/thinking delta (only emitted by `run_streamed`).
+    Thinking { delta: String },
+    /// Assistant text produced during an iteration (non-streaming `run`).
     Text { text: String },
     /// The model requested a tool.
     ToolCall { name: String, arguments: Value },
@@ -62,6 +67,7 @@ pub struct TurnEngine {
     model: String,
     tools: Arc<ToolRegistry>,
     cfg: TurnConfig,
+    memory: Option<Arc<dyn Memory>>,
 }
 
 impl TurnEngine {
@@ -76,7 +82,15 @@ impl TurnEngine {
             model: model.into(),
             tools,
             cfg,
+            memory: None,
         }
+    }
+
+    /// Attach a long-term memory handle (facts are injected before each user
+    /// turn; the agent may also read/write them via the `memory_*` tools).
+    pub fn with_memory(mut self, memory: Arc<dyn Memory>) -> Self {
+        self.memory = Some(memory);
+        self
     }
 
     /// Run one turn: append `user`, loop until terminal or `max_iterations`.
@@ -87,17 +101,56 @@ impl TurnEngine {
         system: Option<&str>,
         user: &str,
     ) -> Result<TurnOutcome, TurnError> {
+        self.run_impl(history, system, user, None).await
+    }
+
+    /// Like [`Self::run`], but text and reasoning are delivered live as
+    /// [`TurnEvent::Chunk`]/[`TurnEvent::Thinking`] while generated.
+    pub async fn run_streamed(
+        &self,
+        history: &mut Vec<ChatMessage>,
+        system: Option<&str>,
+        user: &str,
+        on_event: &mut (dyn FnMut(TurnEvent) + Send),
+    ) -> Result<TurnOutcome, TurnError> {
+        self.run_impl(history, system, user, Some(on_event)).await
+    }
+
+    async fn run_impl(
+        &self,
+        history: &mut Vec<ChatMessage>,
+        system: Option<&str>,
+        user: &str,
+        mut emitter: Option<&mut (dyn FnMut(TurnEvent) + Send)>,
+    ) -> Result<TurnOutcome, TurnError> {
         // Ensure a single leading system message exists.
         if let Some(system) = system
             && !matches!(history.first(), Some(m) if m.role == ChatRole::System)
         {
             history.insert(0, ChatMessage::system(system));
         }
-        history.push(ChatMessage::user(user));
+        // Memory injection: recall relevant facts and prepend the
+        // `[Memory context]` block to the user message (idempotent per message).
+        let user_msg = if let Some(memory) = &self.memory {
+            let prefixed = user.starts_with("[Memory context]");
+            match (prefixed, memory.recall(Some(user), 4).await) {
+                (true, _) => user.to_string(),
+                (false, Ok(entries)) => match render_memory_context(&entries) {
+                    Some(block) => format!("{block}\n\n{user}"),
+                    None => user.to_string(),
+                },
+                // Recall failures must never fail a turn.
+                (false, Err(_)) => user.to_string(),
+            }
+        } else {
+            user.to_string()
+        };
+        history.push(ChatMessage::user(user_msg));
 
         let specs = self.tools.specs();
         let tools_arg = (!specs.is_empty()).then_some(specs.as_slice());
 
+        let streaming = emitter.is_some();
         let mut outcome = TurnOutcome::default();
         let mut narration: Option<String> = None;
 
@@ -117,7 +170,34 @@ impl TurnEngine {
                 tools: tools_arg,
                 temperature: self.cfg.temperature,
             };
-            let resp = self.provider.chat(&request, &self.model).await?;
+            let resp = {
+                match emitter.take() {
+                    Some(emit) => {
+                        let result = {
+                            let mut stream = |event: StreamEvent| match event {
+                                StreamEvent::TextDelta { delta } => {
+                                    emit(TurnEvent::Chunk { delta });
+                                }
+                                StreamEvent::ReasoningDelta { delta } => {
+                                    emit(TurnEvent::Thinking { delta });
+                                }
+                                // Tool call / usage / final are not surfaced here;
+                                // the engine re-emits tool calls around execution
+                                // and settles usage itself.
+                                StreamEvent::ToolCall(_)
+                                | StreamEvent::Usage(_)
+                                | StreamEvent::Final => {}
+                            };
+                            self.provider
+                                .chat_stream(&request, &self.model, &mut stream)
+                                .await
+                        }?;
+                        emitter = Some(emit);
+                        result
+                    }
+                    None => self.provider.chat(&request, &self.model).await?,
+                }
+            };
 
             if let Some(u) = resp.usage {
                 match &mut outcome.usage {
@@ -128,7 +208,7 @@ impl TurnEngine {
 
             // Assistant text (any iteration) is narration; terminal if no tools.
             let text = resp.text.clone().filter(|t| !t.trim().is_empty());
-            if let Some(t) = &text {
+            if !streaming && let Some(t) = &text {
                 narration = Some(t.clone());
                 outcome.events.push(TurnEvent::Text { text: t.clone() });
             }
@@ -153,10 +233,14 @@ impl TurnEngine {
                 outcome.tool_calls_made += 1;
                 let arguments = serde_json::from_str(&call.arguments)
                     .unwrap_or(Value::String(call.arguments.clone()));
-                outcome.events.push(TurnEvent::ToolCall {
+                let ev = TurnEvent::ToolCall {
                     name: call.name.clone(),
                     arguments: arguments.clone(),
-                });
+                };
+                outcome.events.push(ev.clone());
+                if let Some(cb) = emitter.as_mut() {
+                    (*cb)(ev);
+                }
 
                 let output = match self.tools.get(&call.name) {
                     Some(tool) => match tool.execute(arguments).await {
@@ -165,10 +249,14 @@ impl TurnEngine {
                     },
                     None => format!("工具不存在: {}", call.name),
                 };
-                outcome.events.push(TurnEvent::ToolResult {
+                let ev = TurnEvent::ToolResult {
                     name: call.name.clone(),
                     output: output.clone(),
-                });
+                };
+                outcome.events.push(ev.clone());
+                if let Some(cb) = emitter.as_mut() {
+                    (*cb)(ev);
+                }
                 history.push(ChatMessage::tool(call.id.clone(), output));
             }
         }
@@ -180,6 +268,7 @@ impl TurnEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::memory::{InMemoryMemory, Memory};
     use crate::messages::{ChatMessage, ChatRole, ToolCall};
     use crate::provider::{ChatRequest, ChatResponse, ModelProvider, ProviderError};
     use crate::tool::Tool;
@@ -420,5 +509,107 @@ mod tests {
         assert_eq!(outcome.iterations, 2);
         assert_eq!(outcome.tool_calls_made, 2);
         assert!(!outcome.text.is_empty(), "cap path returns a fallback text");
+    }
+
+    #[tokio::test]
+    async fn streamed_turn_emits_chunks_and_tool_events() {
+        let provider = Arc::new(ScriptedProvider {
+            responses: Mutex::new(VecDeque::from([
+                tool_calls_response(vec![call("c1", "add", 1.0, 2.0)]),
+                text_response("结果是 3"),
+            ])),
+        });
+        let engine = engine_with(vec![Arc::new(AddTool)], provider);
+
+        let mut history = Vec::new();
+        let mut seen: Vec<TurnEvent> = Vec::new();
+        let outcome = engine
+            .run_streamed(&mut history, Some("你是助手"), "1+2?", &mut |e| {
+                seen.push(e)
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(outcome.iterations, 2);
+        assert!(outcome.text.contains('3'));
+        let chunk = seen.iter().find_map(|e| match e {
+            TurnEvent::Chunk { delta } => Some(delta.clone()),
+            _ => None,
+        });
+        assert!(
+            chunk.is_some_and(|d| d.contains('3')),
+            "final text streamed as Chunk"
+        );
+        assert!(
+            seen.iter()
+                .any(|e| matches!(e, TurnEvent::ToolCall { name, .. } if name == "add"))
+        );
+        assert!(seen
+            .iter()
+            .any(|e| matches!(e, TurnEvent::ToolResult { name, output } if name == "add" && output == "3")));
+        // Whole-batch Text events are not emitted in streamed mode.
+        assert!(!seen.iter().any(|e| matches!(e, TurnEvent::Text { .. })));
+    }
+
+    #[tokio::test]
+    async fn memory_facts_are_injected_before_turn() {
+        let memory: Arc<dyn Memory> = Arc::new(InMemoryMemory::new());
+        memory
+            .store("today", "今天的安排：先检查发布，再开周会（用户偏好中文）")
+            .await
+            .unwrap();
+
+        let captured: Arc<Mutex<Vec<ChatMessage>>> = Arc::new(Mutex::new(Vec::new()));
+        struct CaptureProvider {
+            responses: Mutex<VecDeque<ChatResponse>>,
+            captured: Arc<Mutex<Vec<ChatMessage>>>,
+        }
+        #[async_trait]
+        impl ModelProvider for CaptureProvider {
+            fn name(&self) -> &str {
+                "capture"
+            }
+            async fn chat(
+                &self,
+                request: &ChatRequest<'_>,
+                _model: &str,
+            ) -> Result<ChatResponse, ProviderError> {
+                *self.captured.lock().unwrap() = request.messages.to_vec();
+                Ok(self
+                    .responses
+                    .lock()
+                    .unwrap()
+                    .pop_front()
+                    .ok_or_else(|| ProviderError::Config("script exhausted".into()))?)
+            }
+        }
+
+        let provider = Arc::new(CaptureProvider {
+            responses: Mutex::new(VecDeque::from([text_response("好的")])),
+            captured: captured.clone(),
+        });
+        let engine = engine_with(Vec::new(), provider).with_memory(memory);
+
+        let mut history = Vec::new();
+        let _ = engine
+            .run(&mut history, None, "帮我看看今天的安排")
+            .await
+            .unwrap();
+
+        let sent = captured.lock().unwrap();
+        let last_user = sent
+            .iter()
+            .rfind(|m| m.role == ChatRole::User)
+            .expect("a user message was sent");
+        let content = last_user.content.as_deref().unwrap();
+        assert!(
+            content.contains("[Memory context]"),
+            "block header injected"
+        );
+        assert!(content.contains("先检查发布"), "recalled fact injected");
+        assert!(
+            content.contains("帮我看看今天的安排"),
+            "original prompt kept"
+        );
     }
 }

@@ -1,22 +1,26 @@
-//! Real-LLM smoke demo: native tool calling against an OpenAI-compatible endpoint.
+//! Real-LLM demo: native tool calling + agent-managed long-term memory.
+//!
+//! Two turns over the SAME session + memory handle:
+//!   turn 1: remember the user's nickname (via `memory_store`) and answer today's date.
+//!   turn 2: a later question where the stored fact is auto-injected (`[Memory context]`).
 //!
 //! Env:
 //!   RAISFAST_AI_BASE_URL   (default https://api.openai.com/v1; Ollama: http://localhost:11434/v1)
-//!   RAISFAST_AI_API_KEY    (optional, e.g. local Ollama needs none)
+//!   RAISFAST_AI_API_KEY    (optional for local Ollama)
 //!   RAISFAST_AI_MODEL      (default gpt-4o-mini)
 //!
 //! Run:
 //!   cargo run -p raisfast-agent --example chat
-//!   cargo run -p raisfast-agent --example chat -- "今天是几号？12345*9876 是多少？"
 
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
 use raisfast_agent::loop_::TurnEvent;
+use raisfast_agent::memory::{InMemoryMemory, register_memory_tools};
 use raisfast_agent::provider::openai::OpenAiCompatProvider;
 use raisfast_agent::tool::{Tool, ToolExecution};
-use raisfast_agent::{ToolRegistry, TurnConfig, TurnEngine};
+use raisfast_agent::{Memory, ToolRegistry, TurnConfig, TurnEngine};
 use serde_json::Value;
 
 struct TodayTool;
@@ -71,9 +75,6 @@ impl Tool for CalcTool {
 }
 
 fn main() {
-    let prompt = std::env::args().nth(1).unwrap_or_else(|| {
-        "今天是几号？请把 12345 * 9876 算出来。最后用一句话把两个结果告诉我。".to_string()
-    });
     let base = std::env::var("RAISFAST_AI_BASE_URL")
         .unwrap_or_else(|_| "https://api.openai.com/v1".to_string());
     let key = std::env::var("RAISFAST_AI_API_KEY")
@@ -91,9 +92,12 @@ fn main() {
     rt.block_on(async move {
         let provider: Arc<dyn raisfast_agent::ModelProvider> =
             Arc::new(OpenAiCompatProvider::new(base, key));
+        let memory: Arc<dyn Memory> = Arc::new(InMemoryMemory::new());
+
         let mut tools = ToolRegistry::new();
         tools.register(TodayTool);
         tools.register(CalcTool);
+        register_memory_tools(&mut tools, memory.clone());
 
         let engine = TurnEngine::new(
             provider,
@@ -103,44 +107,45 @@ fn main() {
                 max_iterations: 8,
                 temperature: Some(0.2),
             },
-        );
+        )
+        .with_memory(memory.clone());
+
+        let system = "你是能调用工具的助手，可用工具：today、calculate、memory_store/memory_recall/memory_forget。\
+                     当用户透露姓名/偏好/约定时，用 memory_store 存下来（key 用英文 snake_case）。回答简洁、用中文。";
+
+        let prompts = [
+            "用户说：请记住我的昵称叫「小明」。然后告诉我今天是几号？",
+            "我是谁？把我当成老朋友来问候。",
+        ];
 
         let mut history = Vec::new();
-        let outcome = engine
-            .run(
-                &mut history,
-                Some(
-                    "你是能调用工具的助手。需要日期就调 today，需要计算就调 calculate，回答简洁。",
-                ),
-                &prompt,
-            )
-            .await;
-
-        match outcome {
-            Ok(o) => {
-                for e in &o.events {
-                    match e {
-                        TurnEvent::Text { text } => println!("[text] {text}"),
-                        TurnEvent::ToolCall { name, arguments } => {
-                            println!("[tool_call] {name} {arguments}")
-                        }
-                        TurnEvent::ToolResult { name, output } => {
-                            println!("[tool_result] {name} -> {output}")
+        for (i, prompt) in prompts.iter().enumerate() {
+            println!("======== turn {} ========\n>>> {prompt}", i + 1);
+            match engine.run(&mut history, Some(system), prompt).await {
+                Ok(outcome) => {
+                    for event in &outcome.events {
+                        match event {
+                            TurnEvent::Text { text } => println!("[text] {text}"),
+                            TurnEvent::ToolCall { name, arguments } => {
+                                println!("[tool_call] {name} {arguments}")
+                            }
+                            TurnEvent::ToolResult { name, output } => {
+                                println!("[tool_result] {name} -> {output}")
+                            }
+                            _ => {}
                         }
                     }
+                    println!("\nfinal: {}", outcome.text);
                 }
-                println!("\n--- final ---\n{}", o.text);
-                if let Some(u) = o.usage {
-                    println!(
-                        "\nusage: input={} output={} | iterations={} tools={}",
-                        u.input_tokens.unwrap_or(0),
-                        u.output_tokens.unwrap_or(0),
-                        o.iterations,
-                        o.tool_calls_made
-                    );
-                }
+                Err(e) => eprintln!("turn failed: {e}"),
             }
-            Err(e) => eprintln!("turn failed: {e}"),
+        }
+
+        // Show what the agent persisted across turns.
+        let facts = memory.recall(None, 10).await.unwrap_or_default();
+        println!("\nstored memory entries: {}", facts.len());
+        for f in &facts {
+            println!("  - {}: {}", f.key, f.content);
         }
     });
 }

@@ -10,11 +10,15 @@
 //! wire-shape conventions borrowed from claw-code `api/src/providers/openai_compat.rs` (MIT).
 
 pub mod loop_;
+pub mod memory;
 pub mod messages;
 pub mod provider;
 pub mod tool;
 
 pub use loop_::{TurnConfig, TurnEngine, TurnError, TurnEvent, TurnOutcome};
+pub use memory::{
+    InMemoryMemory, Memory, MemoryEntry, MemoryError, register_memory_tools, render_memory_context,
+};
 pub use messages::{ChatMessage, ChatRole, TokenUsage, ToolCall};
-pub use provider::{ChatRequest, ChatResponse, ModelProvider, ProviderError, openai};
+pub use provider::{ChatRequest, ChatResponse, ModelProvider, ProviderError, StreamEvent, openai};
 pub use tool::{Tool, ToolRegistry, ToolSpec};
