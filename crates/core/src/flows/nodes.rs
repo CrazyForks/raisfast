@@ -80,10 +80,27 @@ pub struct SandboxLimits {
 }
 
 #[cfg_attr(feature = "export-types", derive(ts_rs::TS))]
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Default)]
 pub struct HostPermissions {
+    /// Outbound api-client keys the script may call via `egress.call` / `host.callApi`.
     #[serde(default)]
     pub call_api: Option<Vec<String>>,
+    /// Content types (plural names) the script may touch via `ct.*` host APIs
+    /// (`*` = all; empty/absent = denied).
+    #[serde(default)]
+    pub content_types: Option<Vec<String>>,
+    /// Raw SQL tables (read-only / read-write forms) via the `db` host API.
+    #[serde(default)]
+    pub database: Option<Vec<String>>,
+    /// Raw HTTP domain whitelist (`*.example.com`, `api.example.com/*`).
+    #[serde(default)]
+    pub http: Option<Vec<String>>,
+    /// Session-token actions (`issue`/`verify`).
+    #[serde(default)]
+    pub session: Option<Vec<String>>,
+    /// Presence actions (`available`/`status`/`report`).
+    #[serde(default)]
+    pub presence: Option<Vec<String>>,
     #[serde(default)]
     pub data: Option<bool>,
     #[serde(default)]
@@ -280,6 +297,7 @@ pub enum NodeKind {
 #[cfg_attr(feature = "export-types", derive(ts_rs::TS))]
 #[cfg_attr(feature = "export-types", ts(untagged))]
 #[allow(dead_code)]
+#[allow(clippy::large_enum_variant)]
 pub enum NodeConfigVariant {
     Start(StartConfig),
     End(EndConfig),

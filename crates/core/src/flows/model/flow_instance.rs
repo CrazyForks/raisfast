@@ -95,6 +95,7 @@ pub async fn find_instances_page(
     pool: &crate::db::Pool,
     flow_id: Option<SnowflakeId>,
     status: Option<&str>,
+    trigger: Option<&str>,
     page: i64,
     page_size: i64,
 ) -> AppResult<(Vec<FlowInstance>, i64)> {
@@ -106,6 +107,10 @@ pub async fn find_instances_page(
     }
     if status.is_some() {
         clauses.push(format!("status = {}", Driver::ph(next)));
+        next += 1;
+    }
+    if trigger.is_some() {
+        clauses.push(format!("trigger_kind = {}", Driver::ph(next)));
         next += 1;
     }
     let where_sql = clauses.join(" AND ");
@@ -123,6 +128,9 @@ pub async fn find_instances_page(
     if let Some(s) = status {
         total_q = total_q.bind(s);
     }
+    if let Some(t) = trigger {
+        total_q = total_q.bind(t);
+    }
     let total = total_q.fetch_one(pool).await?;
 
     let rows_sql = format!(
@@ -139,6 +147,9 @@ pub async fn find_instances_page(
     }
     if let Some(s) = status {
         rows_q = rows_q.bind(s);
+    }
+    if let Some(t) = trigger {
+        rows_q = rows_q.bind(t);
     }
     let offset = (page - 1).max(0) * page_size;
     let rows = rows_q.bind(page_size).bind(offset).fetch_all(pool).await?;

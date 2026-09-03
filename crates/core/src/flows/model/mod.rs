@@ -12,12 +12,13 @@ pub mod flow_api_key;
 pub mod flow_instance;
 pub mod flow_instance_snapshot;
 pub mod flow_node_run;
+pub mod flow_trigger;
 pub mod flow_version;
 
 pub use flow::{
-    Flow, delete_flow, extra_get, extra_set, find_flow_by_id, find_flows_by_tenant,
-    find_flows_page, flow_api_token, flow_draft, insert_flow, set_flow_current_version,
-    set_flow_draft, update_flow_meta,
+    Flow, delete_flow, extra_get, extra_set, find_flow_by_id, find_flow_by_name,
+    find_flows_by_tenant, find_flows_page, flow_api_token, flow_draft, flow_name_taken,
+    insert_flow, set_flow_current_version, set_flow_draft, update_flow_meta,
 };
 pub use flow_api_key::{
     FlowApiKey, create as create_api_key, delete_by_flow as delete_api_key_by_flow,
@@ -32,6 +33,13 @@ pub use flow_instance::{
 };
 pub use flow_instance_snapshot::{delete_snapshot, find_snapshot, upsert_snapshot};
 pub use flow_node_run::{FlowNodeRun, find_node_runs, record_node_run};
+pub use flow_trigger::{
+    FlowTrigger, create as create_flow_trigger, delete as delete_flow_trigger,
+    find_by_id as find_flow_trigger_by_id, list as list_flow_triggers,
+    list_enabled_by_event as list_flow_triggers_by_event,
+    list_enabled_cron as list_flow_triggers_cron, set_enabled as set_flow_trigger_enabled,
+    set_last_triggered as set_flow_trigger_last_triggered,
+};
 pub use flow_version::{
     FlowVersion, current_version_number, find_version_by_id, insert_flow_version, latest_version,
     list_versions,

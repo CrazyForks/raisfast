@@ -1482,3 +1482,21 @@ CREATE TABLE IF NOT EXISTS flow_api_key (
     created_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_flow_api_key_flow ON flow_api_key(flow_id);
+
+-- Internal flow triggers (event/cron): point at a flow, decoupled from flow.
+CREATE TABLE IF NOT EXISTS flow_trigger (
+    id BIGINT PRIMARY KEY,
+    tenant_id TEXT NOT NULL DEFAULT 'default',
+    flow_id BIGINT NOT NULL,
+    kind TEXT NOT NULL,
+    name TEXT NOT NULL DEFAULT '',
+    event_type TEXT,
+    filter JSONB,
+    cron_expr TEXT,
+    inputs_map JSONB,
+    enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    last_triggered_at TIMESTAMPTZ(0),
+    created_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_flow_trigger_kind_event ON flow_trigger(kind, event_type);
+CREATE INDEX IF NOT EXISTS idx_flow_trigger_flow ON flow_trigger(flow_id);

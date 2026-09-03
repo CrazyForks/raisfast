@@ -64,6 +64,7 @@ pub mod cron_ping;
 pub mod db_backup;
 pub mod email;
 pub mod email_verification;
+pub mod flow_run;
 pub mod ingress_orphan_scan;
 pub mod ingress_pull;
 pub mod ingress_retry;
@@ -197,6 +198,12 @@ pub fn register_all(deps: HandlerDeps) -> JobHandlerRegistry {
     registry.register(
         "db_backup",
         Box::new(db_backup::DbBackupHandler::new(config.clone())),
+    );
+
+    registry.register_with_meta(
+        flow_run::META.id,
+        Box::new(flow_run::FlowRunHandler::new(pool.clone(), plugins.clone())),
+        &flow_run::META,
     );
 
     // ── Cron handlers: collected from inventory self-registration ───────────

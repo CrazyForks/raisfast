@@ -42,14 +42,40 @@ impl FlowsExec {
             )));
         };
 
-        // Permissions derived from the node's declared host surface. egress =
-        // allowlist of api-clients (empty = denied); everything else denied by
-        // default. No raw http/fs/db unless declared.
-        let mut perms = Permissions::default();
-        if let Some(hp) = &cfg.host_permissions
-            && let Some(list) = &hp.call_api
-        {
-            perms.egress = list.clone();
+        // Flows are authored by admins only — the script runs with the full
+        // platform host surface by default (egress clients, ct.*, raw db/sql,
+        // raw http (SSRF filter still applies), session, presence, receipts).
+        // `host_permissions` may narrow any allowlist further if desired.
+        let star = vec!["*".to_string()];
+        let mut perms = Permissions {
+            egress: star.clone(),
+            content_types: star.clone(),
+            database: star.clone(),
+            http: star.clone(),
+            session: star.clone(),
+            presence: star.clone(),
+            integration: star.clone(),
+            ..Permissions::default()
+        };
+        if let Some(hp) = &cfg.host_permissions {
+            if let Some(list) = &hp.call_api {
+                perms.egress = list.clone();
+            }
+            if let Some(list) = &hp.content_types {
+                perms.content_types = list.clone();
+            }
+            if let Some(list) = &hp.database {
+                perms.database = list.clone();
+            }
+            if let Some(list) = &hp.http {
+                perms.http = list.clone();
+            }
+            if let Some(list) = &hp.session {
+                perms.session = list.clone();
+            }
+            if let Some(list) = &hp.presence {
+                perms.presence = list.clone();
+            }
         }
         if let Some(sb) = &cfg.sandbox {
             perms.max_memory_mb = sb.memory_mb.filter(|&m| m > 0).map(|m| m as u32);

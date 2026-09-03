@@ -147,6 +147,55 @@ pub async fn set_flow_draft(
     extra_set(pool, flow_id, "_draft", draft).await
 }
 
+/// Whether another flow in the tenant already uses `name` (case-insensitive).
+pub async fn flow_name_taken(
+    pool: &crate::db::Pool,
+    tenant_id: &str,
+    name: &str,
+    exclude_id: Option<SnowflakeId>,
+) -> AppResult<bool> {
+    let where_sql = match exclude_id {
+        Some(_) => format!(
+            "tenant_id = {} AND LOWER(name) = LOWER({}) AND id <> {}",
+            Driver::ph(1),
+            Driver::ph(2),
+            Driver::ph(3)
+        ),
+        None => format!(
+            "tenant_id = {} AND LOWER(name) = LOWER({})",
+            Driver::ph(1),
+            Driver::ph(2)
+        ),
+    };
+    let sql = format!("SELECT 1 FROM flow WHERE {where_sql} LIMIT 1");
+    let mut q = sqlx::query_scalar::<crate::db::pool::Db, i64>(crate::db::safe_sql(&sql));
+    q = q.bind(tenant_id).bind(name);
+    if let Some(id) = exclude_id {
+        q = q.bind(*id);
+    }
+    Ok(q.fetch_optional(pool).await?.is_some())
+}
+
+/// Find a flow by its unique (case-insensitive) name within a tenant.
+pub async fn find_flow_by_name(
+    pool: &crate::db::Pool,
+    tenant_id: &str,
+    name: &str,
+) -> AppResult<Option<Flow>> {
+    let sql = format!(
+        "SELECT {FLOW_COLS} FROM flow WHERE tenant_id = {} AND LOWER(name) = LOWER({})          LIMIT 1",
+        Driver::ph(1),
+        Driver::ph(2)
+    );
+    Ok(
+        sqlx::query_as::<crate::db::pool::Db, Flow>(crate::db::safe_sql(&sql))
+            .bind(tenant_id)
+            .bind(name)
+            .fetch_optional(pool)
+            .await?,
+    )
+}
+
 /// Paged flow rows (newest first) with the total count.
 pub async fn find_flows_page(
     pool: &crate::db::Pool,
@@ -238,6 +287,7 @@ pub async fn delete_flow(pool: &crate::db::Pool, flow_id: SnowflakeId) -> AppRes
         format!(
             "DELETE FROM flow_node_run WHERE instance_id IN (SELECT id FROM flow_instance WHERE flow_id = {p1})"
         ),
+        format!("DELETE FROM flow_trigger WHERE flow_id = {p1}"),
         format!("DELETE FROM flow_api_key WHERE flow_id = {p1}"),
         format!("DELETE FROM flow_instance WHERE flow_id = {p1}"),
         format!("DELETE FROM flow_version WHERE flow_id = {p1}"),

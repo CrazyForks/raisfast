@@ -1420,3 +1420,21 @@ CREATE TABLE IF NOT EXISTS flow_api_key (
     UNIQUE KEY uq_flow_api_key_hash (token_hash),
     INDEX idx_flow_api_key_flow (flow_id)
 );
+
+-- Internal flow triggers (event/cron): point at a flow, decoupled from flow.
+CREATE TABLE IF NOT EXISTS flow_trigger (
+    id BIGINT PRIMARY KEY,
+    tenant_id VARCHAR(36) NOT NULL DEFAULT 'default',
+    flow_id BIGINT NOT NULL,
+    kind VARCHAR(20) NOT NULL,
+    name TEXT NOT NULL,
+    event_type VARCHAR(255) NULL,
+    filter JSON NULL,
+    cron_expr VARCHAR(255) NULL,
+    inputs_map JSON NULL,
+    enabled TINYINT(1) NOT NULL DEFAULT 1,
+    last_triggered_at DATETIME NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_flow_trigger_kind_event (kind, event_type),
+    INDEX idx_flow_trigger_flow (flow_id)
+);

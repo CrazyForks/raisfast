@@ -23,6 +23,7 @@ pub mod model;
 pub mod nodes;
 pub mod params;
 pub mod run;
+pub mod trigger;
 
 #[cfg(feature = "export-types")]
 crate::export_types!(
@@ -30,6 +31,7 @@ crate::export_types!(
     model::FlowVersion,
     model::FlowInstance,
     model::FlowNodeRun,
+    model::FlowTrigger,
     nodes::StartParam,
     nodes::StartConfig,
     nodes::EndOutput,
@@ -50,4 +52,5 @@ crate::export_types!(
     handler::UpdateFlowReq,
     handler::PublishFlowReq,
     handler::FlowDetail,
+    handler::TriggerCreateReq,
 );

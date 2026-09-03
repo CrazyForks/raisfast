@@ -463,6 +463,18 @@ pub async fn build_app_state(
         shutdown_rx.clone(),
     );
 
+    crate::flows::trigger::spawn_flow_event_subscriber(
+        eventbus.clone(),
+        state.pool.clone(),
+        state.plugins.clone(),
+        shutdown_rx.clone(),
+    );
+    crate::flows::trigger::spawn_flow_cron_subscriber(
+        state.pool.clone(),
+        state.plugins.clone(),
+        shutdown_rx.clone(),
+    );
+
     // Presence reaper: converts stale heartbeats into offline transitions
     // (architecture §5.3). Cold-start = everyone offline; reconnect revives.
     crate::presence::spawn_reaper(

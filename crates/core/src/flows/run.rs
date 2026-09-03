@@ -9,7 +9,12 @@
 use async_trait::async_trait;
 
 use crate::errors::app_error::{AppError, AppResult};
+use crate::integration::IntegrationPlane;
+use crate::plugins::PluginManager;
 use crate::types::snowflake_id::SnowflakeId;
+use std::sync::Arc;
+
+use super::exec::FlowsExec;
 
 use super::engine::{self, NodeExecutor, Persist, S_FAILED, S_SUCCESS, S_WAITING, Snapshot};
 use super::graph::{self, Graph};
@@ -52,6 +57,136 @@ fn seed_pool(
         }
     }
     ns
+}
+
+pub async fn run_flow_latest(
+    pool: &crate::db::Pool,
+    plane: Option<Arc<IntegrationPlane>>,
+    plugins: Option<Arc<PluginManager>>,
+    flow_id: SnowflakeId,
+    inputs: Option<serde_json::Value>,
+    trigger: &str,
+) -> AppResult<model::FlowInstance> {
+    let flow = model::find_flow_by_id(pool, flow_id).await?;
+    let version = model::latest_version(pool, flow_id)
+        .await?
+        .ok_or_else(|| AppError::not_found("flow_version"))?;
+    graph::load_definition(&version.definition)?;
+
+    let instance_id = crate::utils::id::new_snowflake_id();
+    let now = crate::utils::tz::now_utc();
+    let instance = model::FlowInstance {
+        id: instance_id,
+        tenant_id: flow.tenant_id.clone(),
+        flow_id,
+        flow_version_id: version.id,
+        status: "running".into(),
+        has_exceptions: false,
+        trigger_kind: trigger.to_string(),
+        trigger_payload: inputs,
+        inputs_summary: None,
+        outputs: None,
+        error: None,
+        started_by: None,
+        started_at: Some(now),
+        finished_at: None,
+        waiting_kind: None,
+        waiting_needed: None,
+        waiting_received: 0,
+        resume_until: None,
+        created_at: now,
+    };
+    model::insert_flow_instance(pool, &instance).await?;
+
+    let exec = FlowsExec { plane, plugins };
+    execute_instance(pool, instance_id, &exec).await?;
+    model::find_instance_by_id(pool, instance_id).await
+}
+
+/// Run an ad-hoc definition (current canvas / draft) against a flow without
+/// publishing a version. The instance references the latest published version
+/// id; execution + node-runs reflect the provided definition. trigger='test'.
+pub async fn run_definition_latest(
+    pool: &crate::db::Pool,
+    plane: Option<Arc<IntegrationPlane>>,
+    plugins: Option<Arc<PluginManager>>,
+    flow_id: SnowflakeId,
+    definition: serde_json::Value,
+    inputs: Option<serde_json::Value>,
+) -> AppResult<model::FlowInstance> {
+    graph::load_definition(&definition)?;
+    let flow = model::find_flow_by_id(pool, flow_id).await?;
+    let version = model::latest_version(pool, flow_id)
+        .await?
+        .ok_or_else(|| AppError::not_found("flow_version"))?;
+    let instance_id = crate::utils::id::new_snowflake_id();
+    let now = crate::utils::tz::now_utc();
+    let instance = model::FlowInstance {
+        id: instance_id,
+        tenant_id: flow.tenant_id.clone(),
+        flow_id,
+        flow_version_id: version.id,
+        status: "running".into(),
+        has_exceptions: false,
+        trigger_kind: "test".into(),
+        trigger_payload: inputs,
+        inputs_summary: None,
+        outputs: None,
+        error: None,
+        started_by: None,
+        started_at: Some(now),
+        finished_at: None,
+        waiting_kind: None,
+        waiting_needed: None,
+        waiting_received: 0,
+        resume_until: None,
+        created_at: now,
+    };
+    model::insert_flow_instance(pool, &instance).await?;
+
+    // Seed a fresh snapshot from the trigger payload + start params, then run
+    // the engine against the provided (unpublished) definition.
+    let graph = graph::load_definition(&definition)?;
+    let mut ns = seed_pool(instance.trigger_payload.as_ref());
+    if let Some(start_node) = graph.nodes.get(&graph.start) {
+        let cfg: super::nodes::StartConfig = serde_json::from_value(start_node.data.config.clone())
+            .map_err(|e| AppError::BadRequest(format!("start config: {e}")))?;
+        super::params::apply(&cfg.params, &mut ns)?;
+    }
+    let mut snap = Snapshot::new();
+    snap.pool.insert(graph.start.clone(), ns);
+    let persist = DbPersist {
+        pool: pool.clone(),
+        instance_id,
+    };
+    let exec = FlowsExec { plane, plugins };
+    engine::run_persisted(&graph, &mut snap, &exec, &persist).await?;
+    record_node_runs(pool, instance_id, &graph, &snap).await?;
+
+    if snap.status == S_WAITING {
+        model::update_instance_status(pool, instance_id, "waiting", false, None, None).await?;
+    } else if snap.status == S_SUCCESS {
+        model::finalize_instance(
+            pool,
+            instance_id,
+            S_SUCCESS,
+            false,
+            snap.outputs.as_ref(),
+            None,
+        )
+        .await?;
+    } else if snap.status == S_FAILED {
+        model::finalize_instance(
+            pool,
+            instance_id,
+            S_FAILED,
+            false,
+            None,
+            snap.error.as_ref(),
+        )
+        .await?;
+    }
+    model::find_instance_by_id(pool, instance_id).await
 }
 
 /// Run an instance to completion (idempotent: terminals return early; completed
