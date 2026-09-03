@@ -96,6 +96,8 @@ pub async fn execute_instance(
     };
     engine::run_persisted(&graph, &mut snap, exec, &persist).await?;
 
+    record_node_runs(pool, instance_id, &graph, &snap).await?;
+
     if snap.status == S_WAITING {
         // Parked on an await node: keep the snapshot; a resume call continues.
         model::update_instance_status(pool, instance_id, "waiting", false, None, None).await?;
@@ -120,6 +122,57 @@ pub async fn execute_instance(
             false,
             None,
             snap.error.as_ref(),
+        )
+        .await?;
+    }
+    Ok(())
+}
+
+/// Mirror terminal node states onto `flow_node_run` (upsert per node). Ran for
+/// every pass (initial + after resume), so a node parked as `waiting` gets its
+/// row flipped to `success` once resumed.
+async fn record_node_runs(
+    pool: &crate::db::Pool,
+    instance_id: SnowflakeId,
+    graph: &Graph,
+    snap: &Snapshot,
+) -> AppResult<()> {
+    let mut ordered: Vec<&String> = snap.exec_order.iter().collect();
+    for id in snap.node_states.keys() {
+        if !snap.exec_order.contains(id) {
+            ordered.push(id);
+        }
+    }
+    for node_id in ordered {
+        let Some(st) = snap.node_states.get(node_id) else {
+            continue;
+        };
+        let status = st.status.as_str();
+        if !matches!(status, "success" | "failed" | "skipped" | "waiting") {
+            continue;
+        }
+        let Some(node) = graph.nodes.get(node_id) else {
+            continue;
+        };
+        let error = st.error.as_ref().map(|v| {
+            if let Some(s) = v.as_str() {
+                s.to_string()
+            } else {
+                v.to_string()
+            }
+        });
+        let input = st.input.as_ref().map(|v| v.to_string());
+        let output = st.output.as_ref().map(|v| v.to_string());
+        model::record_node_run(
+            pool,
+            instance_id,
+            node_id,
+            node.data.kind.as_str(),
+            status,
+            st.attempt,
+            input.as_deref(),
+            output.as_deref(),
+            error.as_deref(),
         )
         .await?;
     }
@@ -302,6 +355,7 @@ mod tests {
         snap.node_states.insert(
             "start".into(),
             engine::NodeState {
+                input: None,
                 status: engine::N_SUCCESS.into(),
                 output: Some(Value::Null),
                 error: None,

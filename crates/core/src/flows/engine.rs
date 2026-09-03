@@ -38,6 +38,8 @@ pub const N_FAILED: &str = "failed";
 pub struct NodeState {
     pub status: String,
     #[serde(default)]
+    pub input: Option<Value>,
+    #[serde(default)]
     pub output: Option<Value>,
     #[serde(default)]
     pub error: Option<Value>,
@@ -87,6 +89,10 @@ pub struct Snapshot {
     /// Nodes parked on `await` (resume completes the head of this list).
     #[serde(default)]
     pub waiting_nodes: Vec<String>,
+    /// Node ids in the order this run (re)executed them — observability feed
+    /// for `flow_node_run`; not used for scheduling decisions.
+    #[serde(default)]
+    pub exec_order: Vec<String>,
 }
 
 fn edge_key(e: &Edge) -> String {
@@ -103,6 +109,7 @@ impl Snapshot {
             error: None,
             outputs: None,
             waiting_nodes: Vec::new(),
+            exec_order: Vec::new(),
         }
     }
 }
@@ -195,6 +202,8 @@ pub async fn run_persisted(
             continue;
         }
 
+        snap.exec_order.push(id.clone());
+
         let attempt = snap.node_states.get(&id).map_or(1, |s| s.attempt + 1);
         match node.data.kind.as_str() {
             nodes::T_START => {
@@ -227,13 +236,36 @@ pub async fn run_persisted(
                     .and_then(|r| r.attempts)
                     .unwrap_or(1)
                     .max(1);
-                let input = match resolve_inputs(&node.data.config, &snap.pool) {
-                    Ok(v) => v,
-                    Err(e) => {
-                        fail(snap, &id, e.to_string());
-                        continue;
+                // Directly after `start` with no explicit `input` mapping: pass
+                // the caller's trigger inputs through by default, so external /
+                // manual runs reach the first script without extra wiring.
+                let has_explicit_input = node.data.config.get("input").is_some();
+                let fed_by_start_only = graph
+                    .in_edges
+                    .get(&id)
+                    .map(|idx| {
+                        !idx.is_empty()
+                            && idx.iter().all(|&ei| graph.edges[ei].source == graph.start)
+                    })
+                    .unwrap_or(false);
+                let input = if !has_explicit_input && fed_by_start_only {
+                    let mut m = serde_json::Map::new();
+                    if let Some(ns) = snap.pool.get(&graph.start) {
+                        for (k, v) in ns {
+                            m.insert(k.clone(), v.clone());
+                        }
+                    }
+                    Value::Object(m)
+                } else {
+                    match resolve_inputs(&node.data.config, &snap.pool) {
+                        Ok(v) => v,
+                        Err(e) => {
+                            fail(snap, &id, e.to_string());
+                            continue;
+                        }
                     }
                 };
+                snap.node_states.entry(id.clone()).or_default().input = Some(input.clone());
                 let mut last_error: Option<String> = None;
                 let mut outcome: Option<ExecOutcome> = None;
                 for i in 1..=attempts {

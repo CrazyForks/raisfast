@@ -1405,3 +1405,18 @@ CREATE TABLE IF NOT EXISTS flow_node_run (
     INDEX idx_flow_node_run_instance_seq (instance_id, seq),
     INDEX idx_flow_node_run_egress (egress_log_id)
 );
+
+-- Public API keys for flows (external invocation auth)
+CREATE TABLE IF NOT EXISTS flow_api_key (
+    id BIGINT PRIMARY KEY,
+    flow_id BIGINT NOT NULL,
+    token_hash VARCHAR(64) NOT NULL UNIQUE,
+    token_enc TEXT NOT NULL,
+    slug VARCHAR(40) NULL UNIQUE,
+    enabled TINYINT(1) NOT NULL DEFAULT 1,
+    require_auth TINYINT(1) NOT NULL DEFAULT 1,
+    last_used_at DATETIME NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY uq_flow_api_key_hash (token_hash),
+    INDEX idx_flow_api_key_flow (flow_id)
+);

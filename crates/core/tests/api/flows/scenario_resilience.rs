@@ -141,6 +141,7 @@ async fn durable_resume_does_not_rerun_completed_nodes() {
     snap.node_states.insert(
         "start".into(),
         raisfast::flows::engine::NodeState {
+            input: None,
             status: N_SUCCESS.into(),
             output: Some(json!(null)),
             error: None,

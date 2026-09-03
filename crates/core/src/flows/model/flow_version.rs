@@ -63,6 +63,44 @@ pub async fn latest_version(
     )
 }
 
+/// Every version of a flow, oldest first.
+pub async fn list_versions(
+    pool: &crate::db::Pool,
+    flow_id: SnowflakeId,
+) -> AppResult<Vec<FlowVersion>> {
+    let sql = format!(
+        "SELECT {FLOW_VERSION_COLS} FROM flow_version WHERE flow_id = {} \
+         ORDER BY version_number ASC",
+        Driver::ph(1)
+    );
+    Ok(
+        sqlx::query_as::<crate::db::pool::Db, FlowVersion>(crate::db::safe_sql(&sql))
+            .bind(*flow_id)
+            .fetch_all(pool)
+            .await?,
+    )
+}
+
+/// The highest published `version_number` of a flow (fallback for the list
+/// view when `current_version` metadata is missing/stale).
+pub async fn current_version_number(
+    pool: &crate::db::Pool,
+    flow_id: SnowflakeId,
+) -> AppResult<Option<i64>> {
+    let sql = format!(
+        "SELECT {} FROM flow_version WHERE flow_id = {} \
+         ORDER BY version_number DESC LIMIT 1",
+        Driver::cast_int("version_number"),
+        Driver::ph(1)
+    );
+    Ok(
+        sqlx::query_scalar::<crate::db::pool::Db, i64>(crate::db::safe_sql(&sql))
+            .bind(*flow_id)
+            .fetch_optional(pool)
+            .await?,
+    )
+}
+
 pub async fn find_version_by_id(
     pool: &crate::db::Pool,
     id: SnowflakeId,

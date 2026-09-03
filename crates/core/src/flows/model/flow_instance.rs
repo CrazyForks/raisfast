@@ -89,6 +89,111 @@ pub async fn find_instance_by_id(
         .ok_or_else(|| row_not_found("flow_instance"))
 }
 
+/// Paged instance listing (default tenant), optionally filtered by flow/status.
+/// Returns `(rows, total)`; rows newest first.
+pub async fn find_instances_page(
+    pool: &crate::db::Pool,
+    flow_id: Option<SnowflakeId>,
+    status: Option<&str>,
+    page: i64,
+    page_size: i64,
+) -> AppResult<(Vec<FlowInstance>, i64)> {
+    let mut clauses = vec![format!("tenant_id = {}", Driver::ph(1))];
+    let mut next = 2usize;
+    if flow_id.is_some() {
+        clauses.push(format!("flow_id = {}", Driver::ph(next)));
+        next += 1;
+    }
+    if status.is_some() {
+        clauses.push(format!("status = {}", Driver::ph(next)));
+        next += 1;
+    }
+    let where_sql = clauses.join(" AND ");
+
+    let total_sql = format!(
+        "SELECT {} FROM flow_instance WHERE {where_sql}",
+        Driver::cast_int("COUNT(*)")
+    );
+    let mut total_q =
+        sqlx::query_scalar::<crate::db::pool::Db, i64>(crate::db::safe_sql(&total_sql));
+    total_q = total_q.bind(crate::constants::DEFAULT_TENANT);
+    if let Some(f) = flow_id {
+        total_q = total_q.bind(*f);
+    }
+    if let Some(s) = status {
+        total_q = total_q.bind(s);
+    }
+    let total = total_q.fetch_one(pool).await?;
+
+    let rows_sql = format!(
+        "SELECT {FLOW_INSTANCE_COLS} FROM flow_instance WHERE {where_sql} \
+         ORDER BY id DESC LIMIT {} OFFSET {}",
+        Driver::ph(next),
+        Driver::ph(next + 1)
+    );
+    let mut rows_q =
+        sqlx::query_as::<crate::db::pool::Db, FlowInstance>(crate::db::safe_sql(&rows_sql));
+    rows_q = rows_q.bind(crate::constants::DEFAULT_TENANT);
+    if let Some(f) = flow_id {
+        rows_q = rows_q.bind(*f);
+    }
+    if let Some(s) = status {
+        rows_q = rows_q.bind(s);
+    }
+    let offset = (page - 1).max(0) * page_size;
+    let rows = rows_q.bind(page_size).bind(offset).fetch_all(pool).await?;
+
+    Ok((rows, total))
+}
+
+/// Paged instances created by a specific trigger kind (external API calls use
+/// `api_public`), optionally restricted to one flow, newest first.
+pub async fn find_instances_by_trigger_page(
+    pool: &crate::db::Pool,
+    trigger: &str,
+    flow_id: Option<SnowflakeId>,
+    page: i64,
+    page_size: i64,
+) -> AppResult<(Vec<FlowInstance>, i64)> {
+    let mut clauses = vec![
+        format!("tenant_id = {}", Driver::ph(1)),
+        format!("trigger_kind = {}", Driver::ph(2)),
+    ];
+    let mut next = 3usize;
+    if flow_id.is_some() {
+        clauses.push(format!("flow_id = {}", Driver::ph(next)));
+        next += 1;
+    }
+    let where_sql = clauses.join(" AND ");
+    let total_sql = format!(
+        "SELECT {} FROM flow_instance WHERE {where_sql}",
+        Driver::cast_int("COUNT(*)")
+    );
+    let mut total_q =
+        sqlx::query_scalar::<crate::db::pool::Db, i64>(crate::db::safe_sql(&total_sql));
+    total_q = total_q.bind(crate::constants::DEFAULT_TENANT).bind(trigger);
+    if let Some(f) = flow_id {
+        total_q = total_q.bind(*f);
+    }
+    let total = total_q.fetch_one(pool).await?;
+
+    let rows_sql = format!(
+        "SELECT {FLOW_INSTANCE_COLS} FROM flow_instance WHERE {where_sql} \
+         ORDER BY id DESC LIMIT {} OFFSET {}",
+        Driver::ph(next),
+        Driver::ph(next + 1)
+    );
+    let mut rows_q =
+        sqlx::query_as::<crate::db::pool::Db, FlowInstance>(crate::db::safe_sql(&rows_sql));
+    rows_q = rows_q.bind(crate::constants::DEFAULT_TENANT).bind(trigger);
+    if let Some(f) = flow_id {
+        rows_q = rows_q.bind(*f);
+    }
+    let offset = (page - 1).max(0) * page_size;
+    let rows = rows_q.bind(page_size).bind(offset).fetch_all(pool).await?;
+    Ok((rows, total))
+}
+
 /// Update instance terminal/running status + optional finished_at.
 #[allow(clippy::too_many_arguments)]
 pub async fn update_instance_status(

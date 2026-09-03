@@ -8,20 +8,34 @@
 //! (flow_node_run added with P1.9 observability.)
 
 pub mod flow;
+pub mod flow_api_key;
 pub mod flow_instance;
 pub mod flow_instance_snapshot;
+pub mod flow_node_run;
 pub mod flow_version;
 
 pub use flow::{
-    Flow, delete_flow, find_flow_by_id, find_flows_by_tenant, insert_flow,
-    set_flow_current_version, update_flow_meta,
+    Flow, delete_flow, extra_get, extra_set, find_flow_by_id, find_flows_by_tenant,
+    find_flows_page, flow_api_token, flow_draft, insert_flow, set_flow_current_version,
+    set_flow_draft, update_flow_meta,
+};
+pub use flow_api_key::{
+    FlowApiKey, create as create_api_key, delete_by_flow as delete_api_key_by_flow,
+    find_by_flow as find_api_key_by_flow, find_by_hash as find_api_key_by_hash,
+    find_by_slug as find_api_key_by_slug, set_enabled as set_api_key_enabled,
+    set_require_auth as set_api_key_require_auth, touch as touch_api_key,
+    update_slug as update_api_key_slug, update_token as update_api_key_token,
 };
 pub use flow_instance::{
-    FlowInstance, finalize_instance, find_instance_by_id, insert_flow_instance,
-    update_instance_status,
+    FlowInstance, finalize_instance, find_instance_by_id, find_instances_by_trigger_page,
+    find_instances_page, insert_flow_instance, update_instance_status,
 };
 pub use flow_instance_snapshot::{delete_snapshot, find_snapshot, upsert_snapshot};
-pub use flow_version::{FlowVersion, find_version_by_id, insert_flow_version, latest_version};
+pub use flow_node_run::{FlowNodeRun, find_node_runs, record_node_run};
+pub use flow_version::{
+    FlowVersion, current_version_number, find_version_by_id, insert_flow_version, latest_version,
+    list_versions,
+};
 
 #[cfg(test)]
 mod tests {

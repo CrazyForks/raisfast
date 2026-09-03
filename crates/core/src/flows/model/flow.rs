@@ -81,6 +81,105 @@ pub async fn find_flows_by_tenant(pool: &crate::db::Pool, tenant_id: &str) -> Ap
     )
 }
 
+/// Read a key from the `flow.extra` JSON object.
+pub fn extra_get(flow: &Flow, key: &str) -> Option<Value> {
+    let obj = flow.extra.as_ref()?.as_object()?;
+    obj.get(key).cloned()
+}
+
+/// Set/clear a key inside the `flow.extra` JSON object (preserves other keys).
+pub async fn extra_set(
+    pool: &crate::db::Pool,
+    flow_id: SnowflakeId,
+    key: &str,
+    value: Option<Value>,
+) -> AppResult<()> {
+    let flow = find_flow_by_id(pool, flow_id).await?;
+    let mut obj = match flow.extra {
+        Some(Value::Object(m)) => m,
+        _ => serde_json::Map::new(),
+    };
+    match value {
+        Some(v) => {
+            obj.insert(key.to_string(), v);
+        }
+        None => {
+            obj.remove(key);
+        }
+    }
+    let extra = if obj.is_empty() {
+        None
+    } else {
+        Some(Value::Object(obj))
+    };
+    let sql = format!(
+        "UPDATE flow SET extra = {}, updated_at = {} WHERE id = {}",
+        Driver::ph(1),
+        Driver::ph(2),
+        Driver::ph(3)
+    );
+    sqlx::query(crate::db::safe_sql(&sql))
+        .bind(&extra)
+        .bind(crate::utils::tz::now_utc())
+        .bind(*flow_id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+/// The working-draft definition lives inside `flow.extra` under `_draft`
+/// (schema-free, avoids a migration); publish promotes it to a version.
+pub fn flow_draft(flow: &Flow) -> Option<Value> {
+    extra_get(flow, "_draft")
+}
+
+/// The public API token (Dify-style external invocation).
+pub fn flow_api_token(flow: &Flow) -> Option<String> {
+    extra_get(flow, "_api_token").and_then(|v| v.as_str().map(str::to_string))
+}
+
+/// Store (`Some`) or clear (`None`) the working draft in `flow.extra`.
+pub async fn set_flow_draft(
+    pool: &crate::db::Pool,
+    flow_id: SnowflakeId,
+    draft: Option<Value>,
+) -> AppResult<()> {
+    extra_set(pool, flow_id, "_draft", draft).await
+}
+
+/// Paged flow rows (newest first) with the total count.
+pub async fn find_flows_page(
+    pool: &crate::db::Pool,
+    tenant_id: &str,
+    page: i64,
+    page_size: i64,
+) -> AppResult<(Vec<Flow>, i64)> {
+    let total_sql = format!(
+        "SELECT {} FROM flow WHERE tenant_id = {}",
+        Driver::cast_int("COUNT(*)"),
+        Driver::ph(1)
+    );
+    let total = sqlx::query_scalar::<crate::db::pool::Db, i64>(crate::db::safe_sql(&total_sql))
+        .bind(tenant_id)
+        .fetch_one(pool)
+        .await?;
+    let rows_sql = format!(
+        "SELECT {FLOW_COLS} FROM flow WHERE tenant_id = {} \
+         ORDER BY id DESC LIMIT {} OFFSET {}",
+        Driver::ph(1),
+        Driver::ph(2),
+        Driver::ph(3)
+    );
+    let offset = (page - 1).max(0) * page_size;
+    let rows = sqlx::query_as::<crate::db::pool::Db, Flow>(crate::db::safe_sql(&rows_sql))
+        .bind(tenant_id)
+        .bind(page_size)
+        .bind(offset)
+        .fetch_all(pool)
+        .await?;
+    Ok((rows, total))
+}
+
 /// Update the mutable metadata columns of a flow row (name/description).
 pub async fn update_flow_meta(
     pool: &crate::db::Pool,
@@ -139,6 +238,7 @@ pub async fn delete_flow(pool: &crate::db::Pool, flow_id: SnowflakeId) -> AppRes
         format!(
             "DELETE FROM flow_node_run WHERE instance_id IN (SELECT id FROM flow_instance WHERE flow_id = {p1})"
         ),
+        format!("DELETE FROM flow_api_key WHERE flow_id = {p1}"),
         format!("DELETE FROM flow_instance WHERE flow_id = {p1}"),
         format!("DELETE FROM flow_version WHERE flow_id = {p1}"),
         format!("DELETE FROM flow WHERE id = {p1}"),

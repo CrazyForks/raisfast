@@ -1468,3 +1468,17 @@ CREATE TABLE IF NOT EXISTS flow_node_run (
 );
 CREATE INDEX IF NOT EXISTS idx_flow_node_run_instance_seq ON flow_node_run(instance_id, seq);
 CREATE INDEX IF NOT EXISTS idx_flow_node_run_egress ON flow_node_run(egress_log_id);
+
+-- Public API keys for flows (external invocation auth)
+CREATE TABLE IF NOT EXISTS flow_api_key (
+    id BIGINT PRIMARY KEY,
+    flow_id BIGINT NOT NULL,
+    token_hash VARCHAR(64) NOT NULL UNIQUE,
+    token_enc TEXT NOT NULL,
+    slug VARCHAR(40) UNIQUE,
+    enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    require_auth BOOLEAN NOT NULL DEFAULT TRUE,
+    last_used_at TIMESTAMPTZ(0),
+    created_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_flow_api_key_flow ON flow_api_key(flow_id);

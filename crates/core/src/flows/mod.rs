@@ -29,6 +29,7 @@ crate::export_types!(
     model::Flow,
     model::FlowVersion,
     model::FlowInstance,
+    model::FlowNodeRun,
     nodes::StartParam,
     nodes::StartConfig,
     nodes::EndOutput,
@@ -47,5 +48,6 @@ crate::export_types!(
     handler::RunFlowReq,
     handler::ResumeReq,
     handler::UpdateFlowReq,
+    handler::PublishFlowReq,
     handler::FlowDetail,
 );
