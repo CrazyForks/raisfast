@@ -17,6 +17,7 @@ node_modules
 # storage root path
 storage/*
 !storage/.gitkeep
+!storage/skills
 
 # test artifacts
 test-storage/

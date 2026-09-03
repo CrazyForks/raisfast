@@ -9,6 +9,7 @@ pub mod memory_sql;
 pub mod models;
 pub mod prompt;
 pub mod service;
+pub mod skills;
 pub mod tools;
 
 pub use models::ai_agent::AiAgent;

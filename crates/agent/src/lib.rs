@@ -13,6 +13,7 @@ pub mod loop_;
 pub mod memory;
 pub mod messages;
 pub mod provider;
+pub mod skill_doc;
 pub mod tool;
 
 pub use loop_::{TurnConfig, TurnEngine, TurnError, TurnEvent, TurnOutcome};
@@ -21,5 +22,6 @@ pub use memory::{
 };
 pub use messages::{ChatMessage, ChatRole, TokenUsage, ToolCall};
 pub use provider::{ChatRequest, ChatResponse, ModelProvider, ProviderError, StreamEvent, openai};
+pub use skill_doc::{SkillDocError, SkillDocument, SkillFrontmatter};
 pub use tokio_util::sync::CancellationToken;
 pub use tool::{Tool, ToolRegistry, ToolSpec};

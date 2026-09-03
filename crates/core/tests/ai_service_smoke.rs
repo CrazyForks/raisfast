@@ -86,6 +86,7 @@ async fn agent_service_turn_end_to_end() {
         None,
         vec![],
         true,
+        None,
     )
     .await
     .expect("create agent");

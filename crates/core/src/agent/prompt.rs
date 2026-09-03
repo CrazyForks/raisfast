@@ -38,17 +38,35 @@ impl PromptRegistry {
 
     /// Assemble with the current (active) template.
     pub fn assemble_current(&self, agent: &AiAgent, tools: &[String]) -> AssembledPrompt {
-        assemble_v1(agent, tools)
+        assemble_v1(agent, tools, None)
     }
 }
 
 /// Build the system prompt (and its stable hash) for a turn with the active
 /// template version.
 pub fn assemble(agent: &AiAgent, tools: &[String]) -> AssembledPrompt {
-    PromptRegistry.assemble_current(agent, tools)
+    assemble_impl(agent, tools, None)
 }
 
-fn assemble_v1(agent: &AiAgent, tools: &[String]) -> AssembledPrompt {
+/// Like [`assemble`], but appends an optional skills section (rendered skills)
+/// before hashing, so skills changes are covered by `system_hash`.
+pub fn assemble_with_skills(
+    agent: &AiAgent,
+    tools: &[String],
+    skills_section: Option<&str>,
+) -> AssembledPrompt {
+    assemble_impl(agent, tools, skills_section)
+}
+
+fn assemble_impl(
+    agent: &AiAgent,
+    tools: &[String],
+    skills_section: Option<&str>,
+) -> AssembledPrompt {
+    assemble_v1(agent, tools, skills_section)
+}
+
+fn assemble_v1(agent: &AiAgent, tools: &[String], skills_section: Option<&str>) -> AssembledPrompt {
     let mut tools = tools.to_vec();
     tools.sort();
     tools.dedup();
@@ -87,6 +105,10 @@ fn assemble_v1(agent: &AiAgent, tools: &[String]) -> AssembledPrompt {
             "## Agent instructions\n{}",
             agent.system_prompt.trim()
         ));
+    }
+
+    if let Some(skills) = skills_section {
+        sections.push(skills.to_string());
     }
 
     let text = sections.join("\n\n");

@@ -112,6 +112,8 @@ pub struct CreateAgentReq {
     pub tools: Vec<String>,
     #[serde(default = "default_true")]
     pub memory_enabled: bool,
+    #[serde(default)]
+    pub params: Option<serde_json::Value>,
 }
 
 fn default_true() -> bool {
@@ -135,6 +137,7 @@ pub async fn admin_create_agent(
         body.temperature,
         body.tools,
         body.memory_enabled,
+        body.params,
     )
     .await?;
     Ok(ApiResponse::success(agent))

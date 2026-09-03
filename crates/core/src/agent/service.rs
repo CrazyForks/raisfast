@@ -341,8 +341,32 @@ async fn run_turn_inner(
     let mut tools = extra_tools.unwrap_or_default();
     register_memory_tools(&mut tools, memory.clone());
     apply_tool_allowlist(&mut tools, agent);
+
+    // M5-A skills: resolve config + skills before building tool_names.
+    let skills_root = crate::agent::skills::skills_root();
+    let skill_enabled = crate::agent::skills::enabled_bundles(agent);
+    let skills_full = !agent
+        .params
+        .as_ref()
+        .and_then(|p| p.get("skills_mode"))
+        .and_then(serde_json::Value::as_str)
+        .is_some_and(|m| m == "compact");
+    // `read_skill` is only meaningful in Compact mode (Full already inlines).
+    if !skill_enabled.is_empty() && !skills_full {
+        tools.register(crate::agent::tools::skills::ReadSkillTool::new(
+            skills_root.clone(),
+            agent.tenant_id.clone(),
+            skill_enabled.clone(),
+        ));
+    }
     let tool_names = tools.names();
-    let assembled = crate::agent::prompt::assemble(agent, &tool_names);
+
+    // Load enabled skills and render the system section.
+    let loaded_skills =
+        crate::agent::skills::load_skills(&skills_root, agent.tenant_id.as_deref(), &skill_enabled);
+    let skills_section = crate::agent::skills::render_skills(&loaded_skills, skills_full);
+    let assembled =
+        crate::agent::prompt::assemble_with_skills(agent, &tool_names, skills_section.as_deref());
     let provider = provider_for(agent, ai)?;
     let engine = TurnEngine::new(
         provider,
@@ -434,6 +458,7 @@ pub async fn create_agent(
     temperature: Option<f64>,
     tools: Vec<String>,
     memory_enabled: bool,
+    params: Option<serde_json::Value>,
 ) -> AppResult<AiAgent> {
     crate::agent::models::ai_agent::create_agent(
         pool,
@@ -446,6 +471,7 @@ pub async fn create_agent(
         temperature,
         tools,
         memory_enabled,
+        params,
     )
     .await
 }

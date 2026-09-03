@@ -39,6 +39,7 @@ pub async fn create_agent(
     temperature: Option<f64>,
     tools: Vec<String>,
     memory_enabled: bool,
+    params: Option<serde_json::Value>,
 ) -> AppResult<AiAgent> {
     let id = crate::utils::id::new_snowflake_id();
     let now = now_utc();
@@ -57,6 +58,7 @@ pub async fn create_agent(
             "max_iterations" => 10i32,
             "tools" => tools,
             "memory_enabled" => memory_enabled,
+            "params" => params,
             "created_at" => &now,
             "updated_at" => &now
         ],

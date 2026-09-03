@@ -8,6 +8,7 @@
 //! `architecture.md §3`, `prompt-engineering.md §5`).
 
 pub mod posts;
+pub mod skills;
 pub mod system;
 
 use raisfast_agent::ToolRegistry;

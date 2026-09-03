@@ -50,6 +50,7 @@ async fn ai_models_roundtrip() {
         None,
         vec!["memory_store".to_string()],
         true,
+        None,
     )
     .await
     .expect("create agent");
