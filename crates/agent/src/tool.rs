@@ -51,6 +51,11 @@ impl ToolRegistry {
         self.tools.push(tool);
     }
 
+    /// Keep only tools whose name satisfies `keep` (in place).
+    pub fn retain(&mut self, keep: impl Fn(&str) -> bool) {
+        self.tools.retain(|t| keep(t.name()));
+    }
+
     /// Schemas for every registered tool, in registration order.
     pub fn specs(&self) -> Vec<ToolSpec> {
         self.tools

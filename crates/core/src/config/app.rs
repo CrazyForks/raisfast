@@ -597,6 +597,9 @@ pub struct AiConfig {
     pub model: Option<String>,
     #[serde(default = "default_ai_timeout_secs")]
     pub timeout_secs: u64,
+    /// Broadcast background/agent turn events on the EventBus (`ai.turn.*`).
+    #[serde(default = "default_true")]
+    pub broadcast_events: bool,
 }
 
 fn default_ai_timeout_secs() -> u64 {
@@ -611,6 +614,7 @@ impl Default for AiConfig {
             api_key: None,
             model: None,
             timeout_secs: default_ai_timeout_secs(),
+            broadcast_events: true,
         }
     }
 }
@@ -634,6 +638,10 @@ impl AiConfig {
                 .ok()
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(defaults.timeout_secs),
+            broadcast_events: env::var("RAISFAST_AI_BROADCAST_EVENTS")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(defaults.broadcast_events),
         }
     }
 }

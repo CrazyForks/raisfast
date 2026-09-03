@@ -21,7 +21,7 @@ JSON="Content-Type: application/json"
 echo "== 1) admin 建 agent =="
 AGENT=$(curl -fsS -X POST "$BASE_URL/api/v1/admin/ai/agents" \
   -H "$AUTH" -H "$JSON" \
-  -d "{\"name\":\"smoke-$(date +%s)\",\"system_prompt\":\"你是助手，记住用户昵称，回答简洁。\",\"provider\":\"openai_compat\",\"model\":\"$MODEL\"}")
+  -d "{\"name\":\"smoke-$(date +%s)\",\"system_prompt\":\"你是助手，记住用户昵称，回答简洁，需要日期用 today 工具。\",\"provider\":\"openai_compat\",\"model\":\"$MODEL\",\"tools\":[\"today\",\"list_posts\"]}")
 echo "$AGENT"
 AGENT_ID=$(printf '%s' "$AGENT" | jq -r '.data.id')
 

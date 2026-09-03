@@ -6,7 +6,8 @@
 //! Provider/base-url/key resolution is MVP env-driven (`RAISFAST_AI_*`) until the
 //! `[ai]` config section lands.
 
-use std::sync::Arc;
+use std::collections::HashSet;
+use std::sync::{Arc, Mutex, OnceLock};
 
 use raisfast_agent::provider::openai::OpenAiCompatProvider;
 use raisfast_agent::{
@@ -23,6 +24,41 @@ use crate::agent::models::{ai_message, ai_session};
 use crate::config::app::AiConfig;
 use crate::errors::app_error::{AppError, AppResult};
 use crate::types::snowflake_id::SnowflakeId;
+
+/// In-process registry of sessions with a running turn. A session found
+/// `running` in the DB but NOT here was left behind by a previous crash/panic
+/// → AgentService recovers it to `open` automatically (single-process BaaS).
+static ACTIVE_TURNS: OnceLock<Mutex<HashSet<i64>>> = OnceLock::new();
+
+fn active_turns() -> &'static Mutex<HashSet<i64>> {
+    ACTIVE_TURNS.get_or_init(|| Mutex::new(HashSet::new()))
+}
+
+/// Returns true when this process may start a turn on `session_id`.
+fn claim_turn(session_id: i64) -> bool {
+    active_turns().lock().unwrap().insert(session_id)
+}
+
+fn release_turn(session_id: i64) {
+    active_turns().lock().unwrap().remove(&session_id);
+}
+
+/// Tool allowlist semantics: memory tools are always available; domain tools
+/// only when named in `ai_agents.tools` (or `"*"`).
+fn apply_tool_allowlist(tools: &mut ToolRegistry, agent: &AiAgent) {
+    let memory = ["memory_store", "memory_recall", "memory_forget"];
+    let allow: Vec<String> = agent
+        .tools
+        .as_array()
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default();
+    let all = allow.iter().any(|n| n == "*");
+    tools.retain(|name| memory.contains(&name) || all || allow.iter().any(|a| a == name));
+}
 
 /// Outcome of a service-level turn.
 #[derive(Debug)]
@@ -181,8 +217,13 @@ pub async fn run_turn(
 ) -> AppResult<AgentTurnResult> {
     let tenant_id = agent.tenant_id.as_deref();
     let session = ai_session::find_session_by_id(pool, session_id, tenant_id).await?;
-    if session.status == "running" {
+    if !claim_turn(session.id.0) {
         return Err(AppError::Conflict("session_busy".into()));
+    }
+    // Recover a session stuck `running` from a previous crash (not in this process).
+    if session.status == "running" {
+        tracing::warn!(session = session.id.0, "recovering stale running session");
+        ai_session::set_session_status(pool, session_id, tenant_id, "open").await?;
     }
 
     ai_session::set_session_status(pool, session_id, tenant_id, "running").await?;
@@ -195,10 +236,12 @@ pub async fn run_turn(
         Ok(r) => r,
         Err(e) => {
             let _ = ai_session::set_session_status(pool, session_id, tenant_id, "open").await;
+            release_turn(session.id.0);
             return Err(e);
         }
     };
     ai_session::set_session_status(pool, session_id, tenant_id, "open").await?;
+    release_turn(session.id.0);
     Ok(result)
 }
 
@@ -218,8 +261,12 @@ pub async fn run_turn_streamed(
 ) -> AppResult<AgentTurnResult> {
     let tenant_id = agent.tenant_id.as_deref();
     let session = ai_session::find_session_by_id(pool, session_id, tenant_id).await?;
-    if session.status == "running" {
+    if !claim_turn(session.id.0) {
         return Err(AppError::Conflict("session_busy".into()));
+    }
+    if session.status == "running" {
+        tracing::warn!(session = session.id.0, "recovering stale running session");
+        ai_session::set_session_status(pool, session_id, tenant_id, "open").await?;
     }
 
     ai_session::set_session_status(pool, session_id, tenant_id, "running").await?;
@@ -249,10 +296,12 @@ pub async fn run_turn_streamed(
         Ok(r) => r,
         Err(e) => {
             let _ = ai_session::set_session_status(pool, session_id, tenant_id, "open").await;
+            release_turn(session.id.0);
             return Err(e);
         }
     };
     ai_session::set_session_status(pool, session_id, tenant_id, "open").await?;
+    release_turn(session.id.0);
     Ok(result)
 }
 
@@ -291,6 +340,7 @@ async fn run_turn_inner(
     let memory = ScopedMemory::new(pool.clone(), agent.tenant_id.clone(), agent.id);
     let mut tools = extra_tools.unwrap_or_default();
     register_memory_tools(&mut tools, memory.clone());
+    apply_tool_allowlist(&mut tools, agent);
     let tool_names = tools.names();
     let assembled = crate::agent::prompt::assemble(agent, &tool_names);
     let provider = provider_for(agent, ai)?;

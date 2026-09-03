@@ -101,6 +101,7 @@ async fn agent_service_turn_end_to_end() {
         api_key: Some("test-key".into()),
         model: None,
         timeout_secs: 10,
+        broadcast_events: false,
     };
 
     let result = ai_service::run_turn(&pool, &ai, &agent, session.id, "你好，记住我叫小明")

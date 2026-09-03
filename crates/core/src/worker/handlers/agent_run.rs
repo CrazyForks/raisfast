@@ -140,27 +140,31 @@ impl JobHandler for AgentRunHandler {
             ai_service::run_turn(&self.pool, &self.config.ai, &agent, session_id, content).await;
         match result {
             Ok(outcome) => {
-                self.broadcast(
-                    "ai.turn.done",
-                    json!({
-                        "agent_id": agent.id.0,
-                        "session_id": session_id.0,
-                        "text": outcome.text,
-                        "iterations": outcome.iterations,
-                        "tool_calls_made": outcome.tool_calls_made,
-                    }),
-                );
+                if self.config.ai.broadcast_events {
+                    self.broadcast(
+                        "ai.turn.done",
+                        json!({
+                            "agent_id": agent.id.0,
+                            "session_id": session_id.0,
+                            "text": outcome.text,
+                            "iterations": outcome.iterations,
+                            "tool_calls_made": outcome.tool_calls_made,
+                        }),
+                    );
+                }
                 Ok(())
             }
             Err(e) => {
-                self.broadcast(
-                    "ai.turn.error",
-                    json!({
-                        "agent_id": agent.id.0,
-                        "session_id": session_id.0,
-                        "message": e.to_string(),
-                    }),
-                );
+                if self.config.ai.broadcast_events {
+                    self.broadcast(
+                        "ai.turn.error",
+                        json!({
+                            "agent_id": agent.id.0,
+                            "session_id": session_id.0,
+                            "message": e.to_string(),
+                        }),
+                    );
+                }
                 Err(e)
             }
         }
