@@ -22,6 +22,12 @@ pub struct LoadedSkill {
     /// Full SKILL.md body (instructions), used by Full mode / read_skill.
     pub instructions: String,
     pub always: bool,
+    /// Declared platform tools this skill wants composed `skill__<tool>`
+    /// wrappers for (from optional frontmatter `tools:`; §12-B).
+    pub tools: Vec<String>,
+    /// `tools` entries to exclude from the execution surface (availability
+    /// removal; `allowed-tools` stays a no-op per §12-C).
+    pub disallowed_tools: Vec<String>,
     /// Absolute path to the skill directory (for read_skill / audit).
     pub dir: PathBuf,
 }
@@ -103,6 +109,8 @@ fn load_one(dir: &Path) -> Result<LoadedSkill, SkillDocError> {
         description: doc.frontmatter.description,
         instructions: doc.body.trim().to_string(),
         always: doc.frontmatter.always,
+        tools: doc.frontmatter.tools,
+        disallowed_tools: doc.frontmatter.disallowed_tools,
         dir: dir.to_path_buf(),
     })
 }
@@ -254,6 +262,8 @@ mod tests {
             description: "say <hi>".into(),
             instructions: "step 1".into(),
             always: false,
+            tools: Vec::new(),
+            disallowed_tools: Vec::new(),
             dir: PathBuf::new(),
         };
         let full = render_skills(&[s.clone()], true).unwrap();

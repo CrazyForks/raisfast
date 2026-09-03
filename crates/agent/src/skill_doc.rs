@@ -21,6 +21,14 @@ pub struct SkillFrontmatter {
     pub tags: Vec<String>,
     /// Keep instructions inlined even in Compact mode.
     pub always: bool,
+    /// Declared platform tools this skill wants composed (`skill__<tool>`)
+    /// wrappers for. Mirrors zeroclaw `SkillTool[kind=builtin]` targets so a
+    /// SKILL.md can opt into a namespaced execution surface. External skills
+    /// that omit the key keep the pure-instruction behavior (§12-B).
+    pub tools: Vec<String>,
+    /// Tools declared in `tools` that must not be exposed (availability
+    /// removal). `allowed-tools` stays a no-op per §12-C.
+    pub disallowed_tools: Vec<String>,
 }
 
 /// A parsed `SKILL.md`.
@@ -65,6 +73,12 @@ impl SkillDocument {
         write_optional(&mut out, "category", self.frontmatter.category.as_deref());
         write_tags(&mut out, &self.frontmatter.tags);
         write_bool(&mut out, "always", self.frontmatter.always);
+        write_list(&mut out, "tools", &self.frontmatter.tools);
+        write_list(
+            &mut out,
+            "disallowed-tools",
+            &self.frontmatter.disallowed_tools,
+        );
         out.push_str("---\n");
         if !self.body.is_empty() {
             if !self.body.starts_with('\n') {
@@ -94,10 +108,19 @@ pub fn split_frontmatter(content: &str) -> Option<(String, String)> {
     None
 }
 
+/// A frontmatter field serialized as a block of `- item` lines (or inline
+/// flow list).
+#[derive(Clone, Copy)]
+enum ListField {
+    Tags,
+    Tools,
+    Disallowed,
+}
+
 fn parse_frontmatter(src: &str) -> Result<SkillFrontmatter, SkillDocError> {
     let mut fm = SkillFrontmatter::default();
     let mut multiline: Option<(String, Vec<String>)> = None;
-    let mut collecting_tags = false;
+    let mut multiline_list_key: Option<ListField> = None;
     // Carve out the nested `slash_options:` block (ported from zeroclaw) so its
     // indented lines never misread as flat keys. Options themselves are not
     // parsed in M5-A (stored-and-ignored).
@@ -110,6 +133,18 @@ fn parse_frontmatter(src: &str) -> Result<SkillFrontmatter, SkillDocError> {
             return;
         }
         assign(fm, key, val);
+    };
+
+    let push_item = |fm: &mut SkillFrontmatter, field: ListField, item: &str| {
+        let item = item.trim().trim_matches('"').trim_matches('\'');
+        if item.is_empty() {
+            return;
+        }
+        match field {
+            ListField::Tags => fm.tags.push(item.to_string()),
+            ListField::Tools => fm.tools.push(item.to_string()),
+            ListField::Disallowed => fm.disallowed_tools.push(item.to_string()),
+        }
     };
 
     for (idx, line) in src.lines().enumerate() {
@@ -128,16 +163,13 @@ fn parse_frontmatter(src: &str) -> Result<SkillFrontmatter, SkillDocError> {
             flush(&mut fm, &key_owned, &parts_owned);
             multiline = None;
         }
-        if collecting_tags {
+        if let Some(field) = multiline_list_key {
             let trimmed = line.trim();
             if let Some(item) = trimmed.strip_prefix("- ") {
-                let tag = item.trim().trim_matches('"').trim_matches('\'');
-                if !tag.is_empty() {
-                    fm.tags.push(tag.to_string());
-                }
+                push_item(&mut fm, field, item);
                 continue;
             }
-            collecting_tags = false;
+            multiline_list_key = None;
         }
         let Some((key, value)) = line.split_once(':') else {
             continue;
@@ -148,16 +180,20 @@ fn parse_frontmatter(src: &str) -> Result<SkillFrontmatter, SkillDocError> {
             multiline = Some((key.to_string(), Vec::new()));
             continue;
         }
-        if key == "tags" {
+        let list_field = match key {
+            "tags" => Some(ListField::Tags),
+            "tools" => Some(ListField::Tools),
+            "disallowed-tools" => Some(ListField::Disallowed),
+            _ => None,
+        };
+        if let Some(field) = list_field {
             if value.is_empty() {
-                collecting_tags = true;
+                multiline_list_key = Some(field);
             } else {
                 let inner = value.trim_start_matches('[').trim_end_matches(']');
-                fm.tags = inner
-                    .split(',')
-                    .map(|t| t.trim().trim_matches('"').trim_matches('\'').to_string())
-                    .filter(|t| !t.is_empty())
-                    .collect();
+                for item in inner.split(',').map(|t| t.trim()).filter(|t| !t.is_empty()) {
+                    push_item(&mut fm, field, item);
+                }
             }
             continue;
         }
@@ -233,10 +269,16 @@ fn write_optional(out: &mut String, key: &str, value: Option<&str>) {
 
 /// Serialize tags as inline flow list; omitted when empty (byte-stable).
 fn write_tags(out: &mut String, tags: &[String]) {
-    if tags.is_empty() {
+    write_list(out, "tags", tags);
+}
+
+/// Serialize a string list as an inline flow list; omitted when empty
+/// (byte-stable).
+fn write_list(out: &mut String, key: &str, items: &[String]) {
+    if items.is_empty() {
         return;
     }
-    let _ = writeln!(out, "tags: [{}]", tags.join(", "));
+    let _ = writeln!(out, "{key}: [{}]", items.join(", "));
 }
 
 /// Serialize a bool flag; omitted when false (byte-stable).
@@ -310,6 +352,35 @@ mod tests {
         let out = d.serialize();
         assert!(out.contains("always: true"));
         assert!(out.contains("license: MIT"));
+    }
+
+    #[test]
+    fn parses_declared_tools_inline_and_block() {
+        let inline = doc(
+            "---\nname: a\ndescription: d\ntools: [list_posts, search_posts]\ndisallowed-tools: [search_posts]\n---\n",
+        );
+        assert_eq!(inline.frontmatter.tools, vec!["list_posts", "search_posts"]);
+        assert_eq!(inline.frontmatter.disallowed_tools, vec!["search_posts"]);
+        let block = doc(
+            "---\nname: a\ndescription: d\ntools:\n  - list_posts\n  - search_posts\ndisallowed-tools:\n  - search_posts\n---\n",
+        );
+        assert_eq!(block.frontmatter.tools, vec!["list_posts", "search_posts"]);
+        assert_eq!(block.frontmatter.disallowed_tools, vec!["search_posts"]);
+    }
+
+    #[test]
+    fn declared_tools_roundtrip_and_absent_stays_byte_stable() {
+        let d = doc(
+            "---\nname: a\ndescription: d\ntools:\n  - list_posts\n  - search_posts\n---\nbody\n",
+        );
+        let out = d.serialize();
+        assert!(out.contains("tools: [list_posts, search_posts]"));
+        assert_eq!(SkillDocument::parse(&out).unwrap(), d, "idempotent");
+
+        let plain = doc("---\nname: a\ndescription: d\ntags: [x]\n---\nbody\n");
+        assert!(plain.frontmatter.tools.is_empty());
+        assert!(plain.frontmatter.disallowed_tools.is_empty());
+        assert_eq!(plain.serialize(), plain.serialize());
     }
 
     #[test]

@@ -351,6 +351,8 @@ async fn run_turn_inner(
         .and_then(|p| p.get("skills_mode"))
         .and_then(serde_json::Value::as_str)
         .is_some_and(|m| m == "compact");
+    let loaded_skills =
+        crate::agent::skills::load_skills(&skills_root, agent.tenant_id.as_deref(), &skill_enabled);
     // `read_skill` is only meaningful in Compact mode (Full already inlines).
     if !skill_enabled.is_empty() && !skills_full {
         tools.register(crate::agent::tools::skills::ReadSkillTool::new(
@@ -359,11 +361,12 @@ async fn run_turn_inner(
             skill_enabled.clone(),
         ));
     }
+    // Composed `skill__<tool>` wrappers for declared, available platform tools
+    // (§12-B): registered after the allowlist so availability is accurate.
+    crate::agent::tools::skills::register_skill_composed(&mut tools, &loaded_skills);
     let tool_names = tools.names();
 
     // Load enabled skills and render the system section.
-    let loaded_skills =
-        crate::agent::skills::load_skills(&skills_root, agent.tenant_id.as_deref(), &skill_enabled);
     let skills_section = crate::agent::skills::render_skills(&loaded_skills, skills_full);
     let assembled =
         crate::agent::prompt::assemble_with_skills(agent, &tool_names, skills_section.as_deref());
