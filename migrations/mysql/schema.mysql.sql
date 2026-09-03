@@ -1438,3 +1438,83 @@ CREATE TABLE IF NOT EXISTS flow_trigger (
     INDEX idx_flow_trigger_kind_event (kind, event_type),
     INDEX idx_flow_trigger_flow (flow_id)
 );
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- AI Agent core (namespace ai_*). See dev-docs/agent/db-schema.md.
+-- Multi-tenant; ids are app-assigned Snowflake (BIGINT). JSON as JSON,
+-- BOOLEAN as TINYINT(1), timestamps DATETIME.
+-- ─────────────────────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS ai_agents (
+    id BIGINT PRIMARY KEY,
+    tenant_id VARCHAR(36) NOT NULL DEFAULT 'default',
+    owner_id BIGINT NULL,
+    name VARCHAR(255) NOT NULL,
+    system_prompt TEXT NOT NULL,
+    provider VARCHAR(64) NOT NULL,
+    model VARCHAR(255) NOT NULL,
+    temperature DOUBLE NULL,
+    max_iterations INT NOT NULL DEFAULT 10,
+    tools JSON NOT NULL,
+    memory_enabled TINYINT(1) NOT NULL DEFAULT 1,
+    params JSON NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE (tenant_id, name),
+    INDEX idx_ai_agents_tenant (tenant_id)
+);
+
+CREATE TABLE IF NOT EXISTS ai_sessions (
+    id BIGINT PRIMARY KEY,
+    tenant_id VARCHAR(36) NOT NULL DEFAULT 'default',
+    agent_id BIGINT NOT NULL,
+    owner_id BIGINT NOT NULL,
+    title VARCHAR(500) NOT NULL DEFAULT '',
+    status VARCHAR(32) NOT NULL DEFAULT 'open',
+    meta JSON NULL,
+    last_seq BIGINT NOT NULL DEFAULT 0,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    last_active_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_ai_sessions_tenant_agent (tenant_id, agent_id),
+    INDEX idx_ai_sessions_owner_active (owner_id, last_active_at)
+);
+
+CREATE TABLE IF NOT EXISTS ai_messages (
+    id BIGINT PRIMARY KEY,
+    tenant_id VARCHAR(36) NOT NULL DEFAULT 'default',
+    session_id BIGINT NOT NULL,
+    seq BIGINT NOT NULL,
+    role VARCHAR(16) NOT NULL,
+    kind VARCHAR(40) NOT NULL DEFAULT 'chat',
+    content TEXT NOT NULL,
+    tool_calls JSON NULL,
+    tool_call_id VARCHAR(128) NULL,
+    tool_name VARCHAR(128) NULL,
+    tool_success TINYINT(1) NULL,
+    tool_error TEXT NULL,
+    tool_elapsed_ms BIGINT NULL,
+    tool_truncated TINYINT(1) NULL,
+    reasoning_content TEXT NULL,
+    call_usage JSON NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (session_id, seq),
+    INDEX idx_ai_messages_session_seq (session_id, seq),
+    INDEX idx_ai_messages_session_role (session_id, role, seq)
+);
+
+CREATE TABLE IF NOT EXISTS ai_memories (
+    id BIGINT PRIMARY KEY,
+    tenant_id VARCHAR(36) NOT NULL DEFAULT 'default',
+    agent_id BIGINT NOT NULL,
+    session_id BIGINT NULL,
+    mem_key VARCHAR(255) NOT NULL,
+    content TEXT NOT NULL,
+    category VARCHAR(40) NOT NULL DEFAULT 'core',
+    importance DOUBLE NOT NULL DEFAULT 0.5,
+    superseded_by BIGINT NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE (tenant_id, agent_id, mem_key),
+    INDEX idx_ai_memories_agent_live (agent_id, superseded_by),
+    INDEX idx_ai_memories_agent_category (agent_id, category)
+);

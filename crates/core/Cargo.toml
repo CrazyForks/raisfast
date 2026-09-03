@@ -220,6 +220,7 @@ utoipa = { version = "5", features = ["axum_extras", "chrono", "uuid"] }
 ts-rs = { version = "12", optional = true, features = ["chrono-impl"] }
 inventory = "0.3"
 raisfast-derive = { path = "../derive" }
+raisfast-agent = { path = "../agent" }
 ferroid = { version = "2.0.0", features = ["snowflake", "atomic", "basic", "std", "alloc"] }
 shell-words = { version = "1.1", optional = true }
 zip = { version = "8.6.0", default-features = false, features = ["deflate-flate2"] }

@@ -1,0 +1,30 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO \"ai_messages\" (\"id\", \"session_id\", \"seq\", \"role\", \"kind\", \"content\", \"tool_calls\", \"tool_call_id\", \"tool_name\", \"tool_success\", \"tool_error\", \"tool_elapsed_ms\", \"tool_truncated\", \"reasoning_content\", \"call_usage\", \"created_at\", \"tenant_id\") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8",
+        "Int8",
+        "Text",
+        "Text",
+        "Text",
+        "Jsonb",
+        "Text",
+        "Text",
+        "Bool",
+        "Text",
+        "Int8",
+        "Bool",
+        "Text",
+        "Jsonb",
+        "Timestamptz",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "3d2e04cc4de52ead86e3fa0d194dc4cf90ba29e84e2e2b26b1819947f0b5afa2"
+}

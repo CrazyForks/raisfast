@@ -21,4 +21,5 @@ pub use memory::{
 };
 pub use messages::{ChatMessage, ChatRole, TokenUsage, ToolCall};
 pub use provider::{ChatRequest, ChatResponse, ModelProvider, ProviderError, StreamEvent, openai};
+pub use tokio_util::sync::CancellationToken;
 pub use tool::{Tool, ToolRegistry, ToolSpec};

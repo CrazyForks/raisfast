@@ -249,6 +249,7 @@ async fn build_app(
         .merge(options::routes(&mut registry, config))
         .merge(tenant::routes(&mut registry, config))
         .merge(crate::handlers::audit::routes(&mut registry, config))
+        .merge(crate::agent::handler::routes(&mut registry, config))
         .merge(crate::webhook::handler::routes(&mut registry, config))
         .merge(crate::content_type::handler::routes(&mut registry, config))
         .merge(crate::integration::routes::routes(&mut registry, config))

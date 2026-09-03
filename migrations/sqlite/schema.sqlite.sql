@@ -1498,3 +1498,83 @@ CREATE TABLE IF NOT EXISTS flow_trigger (
 );
 CREATE INDEX IF NOT EXISTS idx_flow_trigger_kind_event ON flow_trigger(kind, event_type);
 CREATE INDEX IF NOT EXISTS idx_flow_trigger_flow ON flow_trigger(flow_id);
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- AI Agent core (namespace ai_*). See dev-docs/agent/db-schema.md.
+-- Multi-tenant; ids are app-assigned Snowflake (BIGINT). JSON stored as TEXT,
+-- BOOLEAN as INTEGER(0/1), timestamps as UTC TEXT.
+-- ─────────────────────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS ai_agents (
+    id INTEGER PRIMARY KEY,
+    tenant_id TEXT NOT NULL DEFAULT 'default',
+    owner_id INTEGER,
+    name TEXT NOT NULL,
+    system_prompt TEXT NOT NULL DEFAULT '',
+    provider TEXT NOT NULL,
+    model TEXT NOT NULL,
+    temperature REAL,
+    max_iterations INTEGER NOT NULL DEFAULT 10,
+    tools TEXT NOT NULL,
+    memory_enabled INTEGER NOT NULL DEFAULT 1,
+    params TEXT,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+    UNIQUE (tenant_id, name)
+);
+CREATE INDEX IF NOT EXISTS idx_ai_agents_tenant ON ai_agents(tenant_id);
+
+CREATE TABLE IF NOT EXISTS ai_sessions (
+    id INTEGER PRIMARY KEY,
+    tenant_id TEXT NOT NULL DEFAULT 'default',
+    agent_id INTEGER NOT NULL,
+    owner_id INTEGER NOT NULL,
+    title TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'open',
+    meta TEXT,
+    last_seq INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+    last_active_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_ai_sessions_tenant_agent ON ai_sessions(tenant_id, agent_id);
+CREATE INDEX IF NOT EXISTS idx_ai_sessions_owner_active ON ai_sessions(owner_id, last_active_at);
+
+CREATE TABLE IF NOT EXISTS ai_messages (
+    id INTEGER PRIMARY KEY,
+    tenant_id TEXT NOT NULL DEFAULT 'default',
+    session_id INTEGER NOT NULL,
+    seq INTEGER NOT NULL,
+    role TEXT NOT NULL,
+    kind TEXT NOT NULL DEFAULT 'chat',
+    content TEXT NOT NULL DEFAULT '',
+    tool_calls TEXT,
+    tool_call_id TEXT,
+    tool_name TEXT,
+    tool_success INTEGER,
+    tool_error TEXT,
+    tool_elapsed_ms INTEGER,
+    tool_truncated INTEGER,
+    reasoning_content TEXT,
+    call_usage TEXT,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+    UNIQUE (session_id, seq)
+);
+CREATE INDEX IF NOT EXISTS idx_ai_messages_session_seq ON ai_messages(session_id, seq);
+CREATE INDEX IF NOT EXISTS idx_ai_messages_session_role ON ai_messages(session_id, role, seq);
+
+CREATE TABLE IF NOT EXISTS ai_memories (
+    id INTEGER PRIMARY KEY,
+    tenant_id TEXT NOT NULL DEFAULT 'default',
+    agent_id INTEGER NOT NULL,
+    session_id INTEGER,
+    mem_key TEXT NOT NULL,
+    content TEXT NOT NULL,
+    category TEXT NOT NULL DEFAULT 'core',
+    importance REAL NOT NULL DEFAULT 0.5,
+    superseded_by INTEGER,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+    UNIQUE (tenant_id, agent_id, mem_key)
+);
+CREATE INDEX IF NOT EXISTS idx_ai_memories_agent_live ON ai_memories(agent_id, superseded_by);
+CREATE INDEX IF NOT EXISTS idx_ai_memories_agent_category ON ai_memories(agent_id, category);

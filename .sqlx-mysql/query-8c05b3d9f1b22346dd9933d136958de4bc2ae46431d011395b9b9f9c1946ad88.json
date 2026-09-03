@@ -1,0 +1,12 @@
+{
+  "db_name": "MySQL",
+  "query": "INSERT INTO `ai_memories` (`id`, `agent_id`, `session_id`, `mem_key`, `content`, `category`, `importance`, `created_at`, `updated_at`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 9
+    },
+    "nullable": []
+  },
+  "hash": "8c05b3d9f1b22346dd9933d136958de4bc2ae46431d011395b9b9f9c1946ad88"
+}

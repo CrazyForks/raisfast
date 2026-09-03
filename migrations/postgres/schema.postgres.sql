@@ -1500,3 +1500,89 @@ CREATE TABLE IF NOT EXISTS flow_trigger (
 );
 CREATE INDEX IF NOT EXISTS idx_flow_trigger_kind_event ON flow_trigger(kind, event_type);
 CREATE INDEX IF NOT EXISTS idx_flow_trigger_flow ON flow_trigger(flow_id);
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- AI Agent core (namespace ai_*). See dev-docs/agent/db-schema.md.
+-- Multi-tenant: every table is filtered by tenant_id; ids are Snowflake (BIGINT).
+-- ─────────────────────────────────────────────────────────────────────────────
+
+-- An agent definition (provider/model/system_prompt/tool allowlist/memory).
+CREATE TABLE IF NOT EXISTS ai_agents (
+    id BIGINT PRIMARY KEY,
+    tenant_id TEXT NOT NULL DEFAULT 'default',
+    owner_id BIGINT,
+    name TEXT NOT NULL,
+    system_prompt TEXT NOT NULL DEFAULT '',
+    provider TEXT NOT NULL,
+    model TEXT NOT NULL,
+    temperature DOUBLE PRECISION,
+    max_iterations INTEGER NOT NULL DEFAULT 10,
+    tools JSONB NOT NULL,
+    memory_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    params JSONB,
+    created_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW(),
+    UNIQUE (tenant_id, name)
+);
+CREATE INDEX IF NOT EXISTS idx_ai_agents_tenant ON ai_agents(tenant_id);
+
+-- A conversation session bound to an agent + owner.
+CREATE TABLE IF NOT EXISTS ai_sessions (
+    id BIGINT PRIMARY KEY,
+    tenant_id TEXT NOT NULL DEFAULT 'default',
+    agent_id BIGINT NOT NULL,
+    owner_id BIGINT NOT NULL,
+    title TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'open',
+    meta JSONB,
+    last_seq BIGINT NOT NULL DEFAULT 0,
+    created_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW(),
+    last_active_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_ai_sessions_tenant_agent ON ai_sessions(tenant_id, agent_id);
+CREATE INDEX IF NOT EXISTS idx_ai_sessions_owner_active ON ai_sessions(owner_id, last_active_at);
+
+-- Append-only conversation event log (externalized session). role: system/user/
+-- assistant/tool/meta. kind: chat/assistant_tool_calls/tool_result/turn:meta/
+-- context:summary/context:reset. usage on every assistant row.
+CREATE TABLE IF NOT EXISTS ai_messages (
+    id BIGINT PRIMARY KEY,
+    tenant_id TEXT NOT NULL DEFAULT 'default',
+    session_id BIGINT NOT NULL,
+    seq BIGINT NOT NULL,
+    role TEXT NOT NULL,
+    kind TEXT NOT NULL DEFAULT 'chat',
+    content TEXT NOT NULL DEFAULT '',
+    tool_calls JSONB,
+    tool_call_id TEXT,
+    tool_name TEXT,
+    tool_success BOOLEAN,
+    tool_error TEXT,
+    tool_elapsed_ms BIGINT,
+    tool_truncated BOOLEAN,
+    reasoning_content TEXT,
+    call_usage JSONB,
+    created_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW(),
+    UNIQUE (session_id, seq)
+);
+CREATE INDEX IF NOT EXISTS idx_ai_messages_session_seq ON ai_messages(session_id, seq);
+CREATE INDEX IF NOT EXISTS idx_ai_messages_session_role ON ai_messages(session_id, role, seq);
+
+-- Agent long-term memory (ScopedMemory target; tenant+agent is the ownership scope).
+CREATE TABLE IF NOT EXISTS ai_memories (
+    id BIGINT PRIMARY KEY,
+    tenant_id TEXT NOT NULL DEFAULT 'default',
+    agent_id BIGINT NOT NULL,
+    session_id BIGINT,
+    mem_key TEXT NOT NULL,
+    content TEXT NOT NULL,
+    category TEXT NOT NULL DEFAULT 'core',
+    importance DOUBLE PRECISION NOT NULL DEFAULT 0.5,
+    superseded_by BIGINT,
+    created_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW(),
+    UNIQUE (tenant_id, agent_id, mem_key)
+);
+CREATE INDEX IF NOT EXISTS idx_ai_memories_agent_live ON ai_memories(agent_id, superseded_by);
+CREATE INDEX IF NOT EXISTS idx_ai_memories_agent_category ON ai_memories(agent_id, category);

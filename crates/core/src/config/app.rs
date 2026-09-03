@@ -177,6 +177,9 @@ pub struct AppConfig {
     /// MCP (Model Context Protocol) server configuration
     #[serde(default)]
     pub mcp: McpConfig,
+    /// AI agent runtime configuration
+    #[serde(default)]
+    pub ai: AiConfig,
     #[serde(default)]
     pub integration: IntegrationConfig,
     #[serde(default)]
@@ -577,6 +580,62 @@ impl McpConfig {
 
 fn default_mcp_local_tenant() -> String {
     crate::constants::DEFAULT_TENANT.to_string()
+}
+
+/// AI agent runtime configuration (OpenAI-compatible provider defaults).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AiConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    /// Provider API root, e.g. `https://api.openai.com/v1` or `http://localhost:11434/v1`.
+    #[serde(default)]
+    pub base_url: Option<String>,
+    #[serde(default)]
+    pub api_key: Option<String>,
+    /// Default model when the agent row doesn't pin one.
+    #[serde(default)]
+    pub model: Option<String>,
+    #[serde(default = "default_ai_timeout_secs")]
+    pub timeout_secs: u64,
+}
+
+fn default_ai_timeout_secs() -> u64 {
+    120
+}
+
+impl Default for AiConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            base_url: None,
+            api_key: None,
+            model: None,
+            timeout_secs: default_ai_timeout_secs(),
+        }
+    }
+}
+
+impl AiConfig {
+    pub fn from_env() -> Self {
+        let defaults = Self::default();
+        Self {
+            enabled: env::var("RAISFAST_AI_ENABLED")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(defaults.enabled),
+            base_url: env::var("RAISFAST_AI_BASE_URL")
+                .ok()
+                .filter(|v| !v.is_empty()),
+            api_key: env::var("RAISFAST_AI_API_KEY")
+                .ok()
+                .filter(|v| !v.is_empty()),
+            model: env::var("RAISFAST_AI_MODEL").ok().filter(|v| !v.is_empty()),
+            timeout_secs: env::var("RAISFAST_AI_TIMEOUT_SECS")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(defaults.timeout_secs),
+        }
+    }
 }
 
 /// Integration Plane configuration.
@@ -1260,6 +1319,7 @@ impl AppConfig {
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(false),
             mcp: McpConfig::from_env(),
+            ai: AiConfig::from_env(),
             integration: IntegrationConfig::from_env(),
             apps: AppsConfig::from_env(),
             oauth: crate::config::oauth::OAuthConfig::from_env(),
@@ -1456,6 +1516,7 @@ impl AppConfig {
             graphql_enabled: false,
             websocket_enabled: false,
             mcp: McpConfig::default(),
+            ai: AiConfig::default(),
             integration: IntegrationConfig::default(),
             apps: AppsConfig::default(),
             oauth: crate::config::oauth::OAuthConfig {

@@ -9,6 +9,7 @@
 use std::sync::Arc;
 
 use serde_json::Value;
+use tokio_util::sync::CancellationToken;
 
 use crate::memory::{Memory, render_memory_context};
 use crate::messages::{ChatMessage, ChatRole, TokenUsage};
@@ -59,6 +60,10 @@ pub struct TurnOutcome {
     pub iterations: usize,
     pub tool_calls_made: usize,
     pub usage: Option<TokenUsage>,
+    /// One entry per LLM call, aligned with the appended assistant rows.
+    pub per_call_usage: Vec<TokenUsage>,
+    /// True when the turn was cancelled (partial state should be persisted).
+    pub cancelled: bool,
 }
 
 /// A model + tool registry + config bound for repeated turns.
@@ -68,6 +73,7 @@ pub struct TurnEngine {
     tools: Arc<ToolRegistry>,
     cfg: TurnConfig,
     memory: Option<Arc<dyn Memory>>,
+    cancel: Option<CancellationToken>,
 }
 
 impl TurnEngine {
@@ -83,6 +89,7 @@ impl TurnEngine {
             tools,
             cfg,
             memory: None,
+            cancel: None,
         }
     }
 
@@ -91,6 +98,19 @@ impl TurnEngine {
     pub fn with_memory(mut self, memory: Arc<dyn Memory>) -> Self {
         self.memory = Some(memory);
         self
+    }
+
+    /// Attach a cancellation token: when cancelled the turn stops at the next
+    /// checkpoint and returns a partial outcome (`cancelled = true`).
+    pub fn with_cancel(mut self, cancel: CancellationToken) -> Self {
+        self.cancel = Some(cancel);
+        self
+    }
+
+    fn cancelled(&self) -> bool {
+        self.cancel
+            .as_ref()
+            .is_some_and(CancellationToken::is_cancelled)
     }
 
     /// Run one turn: append `user`, loop until terminal or `max_iterations`.
@@ -155,6 +175,11 @@ impl TurnEngine {
         let mut narration: Option<String> = None;
 
         loop {
+            // Cancellation is a first-class checkpoint between iterations.
+            if self.cancelled() {
+                outcome.cancelled = true;
+                break;
+            }
             if outcome.iterations >= self.cfg.max_iterations {
                 if outcome.text.is_empty() {
                     outcome.text = narration
@@ -199,18 +224,30 @@ impl TurnEngine {
                 }
             };
 
-            if let Some(u) = resp.usage {
-                match &mut outcome.usage {
-                    Some(acc) => acc.accumulate(u),
-                    None => outcome.usage = Some(u),
+            // Per-iteration usage aligned with the assistant rows appended below.
+            let call_usage = match resp.usage {
+                Some(u) => {
+                    match &mut outcome.usage {
+                        Some(acc) => acc.accumulate(u),
+                        None => outcome.usage = Some(u),
+                    }
+                    u
                 }
-            }
+                None => TokenUsage::default(),
+            };
+            outcome.per_call_usage.push(call_usage);
 
             // Assistant text (any iteration) is narration; terminal if no tools.
             let text = resp.text.clone().filter(|t| !t.trim().is_empty());
             if !streaming && let Some(t) = &text {
                 narration = Some(t.clone());
                 outcome.events.push(TurnEvent::Text { text: t.clone() });
+            }
+
+            // Don't start a new tool round after cancellation fired mid-call.
+            if self.cancelled() {
+                outcome.cancelled = true;
+                break;
             }
 
             if !resp.has_tool_calls() {
@@ -220,6 +257,9 @@ impl TurnEngine {
                     .unwrap_or_default()
                     .trim()
                     .to_string();
+                // The terminal assistant message is part of the canonical
+                // history (needed for multi-turn continuity and persistence).
+                history.push(ChatMessage::assistant(text.clone(), None));
                 break;
             }
 
@@ -549,6 +589,26 @@ mod tests {
             .any(|e| matches!(e, TurnEvent::ToolResult { name, output } if name == "add" && output == "3")));
         // Whole-batch Text events are not emitted in streamed mode.
         assert!(!seen.iter().any(|e| matches!(e, TurnEvent::Text { .. })));
+    }
+
+    #[tokio::test]
+    async fn pre_cancelled_turn_returns_partial_without_calling_model() {
+        let provider = Arc::new(ScriptedProvider {
+            responses: Mutex::new(VecDeque::from([text_response("不应被调用")])),
+        });
+        let cancel = CancellationToken::new();
+        cancel.cancel();
+        let engine = engine_with(vec![Arc::new(AddTool)], provider).with_cancel(cancel);
+
+        let mut history = Vec::new();
+        let outcome = engine.run(&mut history, None, "hello").await.unwrap();
+        assert!(outcome.cancelled, "turn marked cancelled");
+        assert_eq!(outcome.iterations, 0, "no model call happened");
+        // Only the user message was appended → service persists the partial (user row only).
+        assert_eq!(
+            history.iter().filter(|m| m.role == ChatRole::User).count(),
+            1
+        );
     }
 
     #[tokio::test]

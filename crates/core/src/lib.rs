@@ -17,6 +17,7 @@ mod macros;
 #[cfg(feature = "export-types")]
 pub mod export_type;
 
+pub mod agent;
 pub mod app;
 pub mod apps;
 pub mod cache;
