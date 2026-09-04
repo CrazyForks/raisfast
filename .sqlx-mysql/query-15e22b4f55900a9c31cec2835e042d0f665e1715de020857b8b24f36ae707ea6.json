@@ -1,0 +1,12 @@
+{
+  "db_name": "MySQL",
+  "query": "INSERT INTO `ai_sessions` (`id`, `agent_id`, `user_id`, `title`, `status`, `last_seq`, `created_at`, `updated_at`, `last_active_at`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 9
+    },
+    "nullable": []
+  },
+  "hash": "15e22b4f55900a9c31cec2835e042d0f665e1715de020857b8b24f36ae707ea6"
+}

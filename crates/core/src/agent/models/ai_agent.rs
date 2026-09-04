@@ -12,7 +12,7 @@ use crate::utils::tz::{Timestamp, now_utc};
 pub struct AiAgent {
     pub id: SnowflakeId,
     pub tenant_id: Option<String>,
-    pub owner_id: Option<SnowflakeId>,
+    pub user_id: Option<SnowflakeId>,
     pub name: String,
     pub system_prompt: String,
     pub provider: String,
@@ -31,7 +31,7 @@ pub struct AiAgent {
 pub async fn create_agent(
     pool: &crate::db::Pool,
     tenant_id: Option<&str>,
-    owner_id: Option<SnowflakeId>,
+    user_id: Option<SnowflakeId>,
     name: &str,
     system_prompt: &str,
     provider: &str,
@@ -49,7 +49,7 @@ pub async fn create_agent(
         "ai_agents",
         [
             "id" => id,
-            "owner_id" => owner_id,
+            "user_id" => user_id,
             "name" => name,
             "system_prompt" => system_prompt,
             "provider" => provider,

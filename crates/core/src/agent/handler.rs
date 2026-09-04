@@ -281,7 +281,7 @@ pub async fn get_messages(
     let owner = current_owner(&auth)?;
     let id = crate::types::snowflake_id::parse_id(&id)?;
     let session = ai_service::find_session(&state.pool, id, auth.tenant_id()).await?;
-    if session.owner_id != owner {
+    if session.user_id != owner {
         return Err(AppError::ForbiddenOwnership);
     }
     let messages = ai_service::list_messages(
@@ -310,7 +310,7 @@ pub async fn compact_session(
     let owner = current_owner(&auth)?;
     let id = crate::types::snowflake_id::parse_id(&id)?;
     let session = ai_service::find_session(&state.pool, id, auth.tenant_id()).await?;
-    if session.owner_id != owner {
+    if session.user_id != owner {
         return Err(AppError::ForbiddenOwnership);
     }
     let agent = ai_service::find_agent(&state.pool, session.agent_id, auth.tenant_id()).await?;
@@ -339,7 +339,7 @@ pub async fn run_turn(
     let owner = current_owner(&auth)?;
     let id = crate::types::snowflake_id::parse_id(&id)?;
     let session = ai_service::find_session(&state.pool, id, auth.tenant_id()).await?;
-    if session.owner_id != owner {
+    if session.user_id != owner {
         return Err(AppError::ForbiddenOwnership);
     }
     let agent = ai_service::find_agent(&state.pool, session.agent_id, auth.tenant_id()).await?;

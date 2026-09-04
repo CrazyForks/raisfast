@@ -18,14 +18,21 @@ pub struct ScopedMemory {
     pool: crate::db::Pool,
     tenant: Option<String>,
     agent: SnowflakeId,
+    user: Option<SnowflakeId>,
 }
 
 impl ScopedMemory {
-    pub fn new(pool: crate::db::Pool, tenant: Option<String>, agent: SnowflakeId) -> Arc<Self> {
+    pub fn new(
+        pool: crate::db::Pool,
+        tenant: Option<String>,
+        agent: SnowflakeId,
+        user: Option<SnowflakeId>,
+    ) -> Arc<Self> {
         Arc::new(Self {
             pool,
             tenant,
             agent,
+            user,
         })
     }
 
@@ -45,6 +52,7 @@ impl Memory for ScopedMemory {
             &self.pool,
             self.tenant(),
             self.agent,
+            self.user,
             key,
             content,
             "core",
@@ -62,24 +70,31 @@ impl Memory for ScopedMemory {
         limit: usize,
     ) -> Result<Vec<MemoryEntry>, MemoryError> {
         let limit = limit.clamp(1, 50) as i64;
-        ai_memory::recall_memories(&self.pool, self.agent, self.tenant(), query, limit)
-            .await
-            .map(|rows| {
-                rows.into_iter()
-                    // Host-managed tiers (daily logs) never surface as model
-                    // memory; only durable Core facts are recallable/injected.
-                    .filter(|m| m.category == "core")
-                    .map(|m| MemoryEntry {
-                        key: m.key,
-                        content: m.content,
-                    })
-                    .collect()
-            })
-            .map_err(|e| MemoryError::Recall(e.to_string()))
+        ai_memory::recall_memories(
+            &self.pool,
+            self.agent,
+            self.user,
+            self.tenant(),
+            query,
+            limit,
+        )
+        .await
+        .map(|rows| {
+            rows.into_iter()
+                // Host-managed tiers (daily logs) never surface as model
+                // memory; only durable Core facts are recallable/injected.
+                .filter(|m| m.category == "core")
+                .map(|m| MemoryEntry {
+                    key: m.key,
+                    content: m.content,
+                })
+                .collect()
+        })
+        .map_err(|e| MemoryError::Recall(e.to_string()))
     }
 
     async fn forget(&self, key: &str) -> Result<bool, MemoryError> {
-        ai_memory::forget_memory(&self.pool, self.agent, key, self.tenant())
+        ai_memory::forget_memory(&self.pool, self.agent, self.user, key, self.tenant())
             .await
             .map_err(|e| MemoryError::Forget(e.to_string()))
     }

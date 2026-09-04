@@ -167,7 +167,12 @@ async fn ai_models_roundtrip() {
     assert_eq!(sess.last_seq, seq);
 
     // memory via ScopedMemory + keyword recall
-    let memory = ScopedMemory::new(pool.clone(), Some(tenant_id.clone()), agent.id);
+    let memory = ScopedMemory::new(
+        pool.clone(),
+        Some(tenant_id.clone()),
+        agent.id,
+        Some(agent.id),
+    );
     memory
         .store("nickname", "小明")
         .await
@@ -175,7 +180,7 @@ async fn ai_models_roundtrip() {
     let hits = memory.recall(Some("小明"), 5).await.expect("memory recall");
     assert_eq!(hits.len(), 1);
     assert_eq!(hits[0].key, "nickname");
-    let recent = ai_memory::recall_memories(&pool, agent.id, Some(&tenant_id), None, 5)
+    let recent = ai_memory::recall_memories(&pool, agent.id, None, Some(&tenant_id), None, 5)
         .await
         .expect("model recall");
     assert!(!recent.is_empty());
@@ -223,6 +228,7 @@ async fn memory_budget_evicts_by_importance_and_spares_conversation() {
             &pool,
             Some(&tenant_id),
             agent.id,
+            None,
             &format!("k{}", i + 1),
             &format!("core fact {}", i + 1),
             "core",
@@ -237,6 +243,7 @@ async fn memory_budget_evicts_by_importance_and_spares_conversation() {
         &pool,
         Some(&tenant_id),
         agent.id,
+        None,
         "pinned-rule",
         "pinned low-value rule",
         "core",
@@ -251,6 +258,7 @@ async fn memory_budget_evicts_by_importance_and_spares_conversation() {
             &pool,
             Some(&tenant_id),
             agent.id,
+            None,
             &format!("c{i}"),
             "chatter",
             "conversation",
@@ -266,17 +274,29 @@ async fn memory_budget_evicts_by_importance_and_spares_conversation() {
         core_max_bytes: 0,
         daily_max_rows: 0,
     };
+    let all_core: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM ai_memories WHERE agent_id=$1 AND category='core'",
+    )
+    .bind(agent.id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    eprintln!("core rows before compact: {all_core}");
     let report =
-        ai_memory::compact_category_to_budget(&pool, Some(&tenant_id), agent.id, "core", cfg)
+        ai_memory::compact_category_to_budget(&pool, Some(&tenant_id), agent.id, None, "core", cfg)
             .await
             .expect("compact core");
+    eprintln!(
+        "report count={} bytes={}",
+        report.evicted_by_count, report.evicted_by_bytes
+    );
     assert_eq!(
         report.evicted_by_count, 4,
         "four lowest-value non-pinned core rows evicted (pinned counts toward the row cap)"
     );
     assert_eq!(report.evicted_by_bytes, 0);
 
-    let live = ai_memory::recall_memories(&pool, agent.id, Some(&tenant_id), None, 100)
+    let live = ai_memory::recall_memories(&pool, agent.id, None, Some(&tenant_id), None, 100)
         .await
         .expect("recall");
     let mut core_keys: Vec<&str> = live
@@ -302,6 +322,7 @@ async fn memory_budget_evicts_by_importance_and_spares_conversation() {
             &pool,
             Some(&tenant_id),
             agent.id,
+            None,
             &format!("d{}", i + 1),
             "day log",
             "daily",
@@ -320,6 +341,7 @@ async fn memory_budget_evicts_by_importance_and_spares_conversation() {
         &pool,
         Some(&tenant_id),
         agent.id,
+        None,
         "daily",
         daily_cfg,
     )
@@ -327,7 +349,7 @@ async fn memory_budget_evicts_by_importance_and_spares_conversation() {
     .expect("compact daily");
     assert_eq!(d_report.evicted_by_count, 2, "daily trimmed to its row cap");
     let daily_keys: Vec<String> =
-        ai_memory::recall_memories(&pool, agent.id, Some(&tenant_id), None, 100)
+        ai_memory::recall_memories(&pool, agent.id, None, Some(&tenant_id), None, 100)
             .await
             .expect("recall daily")
             .into_iter()
@@ -349,4 +371,79 @@ async fn memory_budget_evicts_by_importance_and_spares_conversation() {
     ai_agent::delete_agent(&pool, agent.id, Some(&tenant_id))
         .await
         .expect("delete agent");
+}
+
+/// Two users on the same agent/tenant must never see each other's memory.
+#[tokio::test]
+async fn memory_is_isolated_per_user() {
+    let pool = test_pool();
+    let tenant_id = tenant();
+    let agent = ai_agent::create_agent(
+        &pool,
+        Some(&tenant_id),
+        None,
+        "iso-agent",
+        "iso",
+        "openai_compat",
+        "test-model",
+        None,
+        Vec::new(),
+        true,
+        None,
+    )
+    .await
+    .expect("create agent");
+
+    let user_a = raisfast::utils::id::new_snowflake_id();
+    let user_b = raisfast::utils::id::new_snowflake_id();
+
+    ai_memory::store_memory(
+        &pool,
+        Some(&tenant_id),
+        agent.id,
+        Some(user_a),
+        "pref",
+        "爱吃辣",
+        "core",
+        0.8,
+        false,
+    )
+    .await
+    .expect("store a");
+    ai_memory::store_memory(
+        &pool,
+        Some(&tenant_id),
+        agent.id,
+        Some(user_b),
+        "pref",
+        "不吃辣",
+        "core",
+        0.8,
+        false,
+    )
+    .await
+    .expect("store b");
+
+    let ra = ai_memory::recall_memories(&pool, agent.id, Some(user_a), Some(&tenant_id), None, 10)
+        .await
+        .expect("recall a");
+    let rb = ai_memory::recall_memories(&pool, agent.id, Some(user_b), Some(&tenant_id), None, 10)
+        .await
+        .expect("recall b");
+
+    assert_eq!(ra.len(), 1);
+    assert_eq!(rb.len(), 1);
+    assert!(ra[0].content.contains("爱吃辣"));
+    assert!(rb[0].content.contains("不吃辣"));
+    assert!(ra[0].key == rb[0].key, "same logical key, different users");
+
+    // cleanup
+    sqlx::query("DELETE FROM ai_memories WHERE tenant_id = $1")
+        .bind(&tenant_id)
+        .execute(&pool)
+        .await
+        .expect("clean");
+    ai_agent::delete_agent(&pool, agent.id, Some(&tenant_id))
+        .await
+        .expect("del");
 }

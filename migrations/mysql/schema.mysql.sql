@@ -1447,7 +1447,7 @@ CREATE TABLE IF NOT EXISTS flow_trigger (
 CREATE TABLE IF NOT EXISTS ai_agents (
     id BIGINT PRIMARY KEY,
     tenant_id VARCHAR(36) NOT NULL DEFAULT 'default',
-    owner_id BIGINT NULL,
+    user_id BIGINT NULL,
     name VARCHAR(255) NOT NULL,
     system_prompt TEXT NOT NULL,
     provider VARCHAR(64) NOT NULL,
@@ -1467,7 +1467,7 @@ CREATE TABLE IF NOT EXISTS ai_sessions (
     id BIGINT PRIMARY KEY,
     tenant_id VARCHAR(36) NOT NULL DEFAULT 'default',
     agent_id BIGINT NOT NULL,
-    owner_id BIGINT NOT NULL,
+    user_id BIGINT NOT NULL,
     title VARCHAR(500) NOT NULL DEFAULT '',
     status VARCHAR(32) NOT NULL DEFAULT 'open',
     meta JSON NULL,
@@ -1476,7 +1476,7 @@ CREATE TABLE IF NOT EXISTS ai_sessions (
     updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     last_active_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     INDEX idx_ai_sessions_tenant_agent (tenant_id, agent_id),
-    INDEX idx_ai_sessions_owner_active (owner_id, last_active_at)
+    INDEX idx_ai_sessions_owner_active (user_id, last_active_at)
 );
 
 CREATE TABLE IF NOT EXISTS ai_messages (
@@ -1506,6 +1506,7 @@ CREATE TABLE IF NOT EXISTS ai_memories (
     id BIGINT PRIMARY KEY,
     tenant_id VARCHAR(36) NOT NULL DEFAULT 'default',
     agent_id BIGINT NOT NULL,
+    user_id BIGINT,
     session_id BIGINT NULL,
     mem_key VARCHAR(255) NOT NULL,
     content TEXT NOT NULL,
@@ -1515,7 +1516,7 @@ CREATE TABLE IF NOT EXISTS ai_memories (
     pinned BOOLEAN NOT NULL DEFAULT FALSE,
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    UNIQUE (tenant_id, agent_id, mem_key),
+    UNIQUE (tenant_id, agent_id, user_id, mem_key),
     INDEX idx_ai_memories_agent_live (agent_id, superseded_by),
     INDEX idx_ai_memories_agent_category (agent_id, category)
 );

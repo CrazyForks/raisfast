@@ -422,9 +422,15 @@ async fn run_turn_inner(
         ai_message::list_messages_after(pool, session_id, tenant_id, None, 10_000).await?;
     let mut history: Vec<ChatMessage> = existing.iter().filter_map(row_to_chat_message).collect();
 
+    // Session owner = the memory user: all long-term memory is scoped
+    // (tenant, agent, user) so different users never share facts.
+    let session_owner =
+        crate::agent::models::ai_session::find_session_by_id(pool, session_id, tenant_id).await?;
+    let memory_user: Option<SnowflakeId> = Some(session_owner.user_id);
+
     // Memory-tier hygiene (zeroclaw budget.rs semantics): keep core/daily rows
     // within configured caps. Best effort — eviction failures never fail a turn.
-    memory_hygiene(pool, ai, agent.id, tenant_id).await;
+    memory_hygiene(pool, ai, agent.id, tenant_id, memory_user).await;
     // We always send an assembled framework system prompt (agent/system_prompt
     // is embedded inside it), so the engine always inserts one leading System.
     let had_system = true;
@@ -440,7 +446,7 @@ async fn run_turn_inner(
     seq += 1;
 
     // Build the engine with a scoped memory handle + its tools.
-    let memory = ScopedMemory::new(pool.clone(), agent.tenant_id.clone(), agent.id);
+    let memory = ScopedMemory::new(pool.clone(), agent.tenant_id.clone(), agent.id, memory_user);
     let mut tools = extra_tools.unwrap_or_default();
     register_memory_tools(&mut tools, memory.clone());
     apply_tool_allowlist(&mut tools, agent);
@@ -571,6 +577,7 @@ async fn run_turn_inner(
             ai,
             agent,
             tenant_id,
+            memory_user,
             &existing,
             prior_cover,
             cover_seq,
@@ -709,7 +716,7 @@ async fn run_turn_inner(
     )
     .await?;
     ai_session::advance_last_seq(pool, session_id, tenant_id, seq).await?;
-    touch_daily_log(pool, agent, tenant_id).await;
+    touch_daily_log(pool, agent, tenant_id, memory_user).await;
 
     Ok(AgentTurnResult {
         text: outcome.text,
@@ -812,19 +819,19 @@ pub async fn update_agent(
     crate::agent::models::ai_agent::find_agent_by_id(pool, id, tenant_id).await
 }
 
-/// Create a session owned by `owner_id` on an agent.
+/// Create a session owned by `user_id` on an agent.
 pub async fn create_session(
     pool: &crate::db::Pool,
     tenant: Option<String>,
     agent_id: SnowflakeId,
-    owner_id: SnowflakeId,
+    user_id: SnowflakeId,
     title: &str,
 ) -> AppResult<AiSession> {
     crate::agent::models::ai_session::create_session(
         pool,
         tenant.as_deref(),
         agent_id,
-        owner_id,
+        user_id,
         title,
     )
     .await
@@ -839,15 +846,15 @@ pub async fn find_session(
     crate::agent::models::ai_session::find_session_by_id(pool, id, tenant).await
 }
 
-/// Sessions of one agent owned by `owner_id`.
+/// Sessions of one agent owned by `user_id`.
 pub async fn list_my_sessions(
     pool: &crate::db::Pool,
     tenant: Option<&str>,
     agent_id: SnowflakeId,
-    owner_id: SnowflakeId,
+    user_id: SnowflakeId,
 ) -> AppResult<Vec<AiSession>> {
     let all = crate::agent::models::ai_session::list_sessions(pool, tenant, agent_id).await?;
-    Ok(all.into_iter().filter(|s| s.owner_id == owner_id).collect())
+    Ok(all.into_iter().filter(|s| s.user_id == user_id).collect())
 }
 
 /// Replay slice of the session log.
@@ -869,6 +876,7 @@ async fn memory_hygiene(
     ai: &AiConfig,
     agent_id: SnowflakeId,
     tenant: Option<&str>,
+    user: Option<SnowflakeId>,
 ) {
     use crate::agent::models::ai_memory::MemoryBudgetConfig;
     let budget = MemoryBudgetConfig {
@@ -881,7 +889,7 @@ async fn memory_hygiene(
     }
     for category in ["core", "daily"] {
         match crate::agent::models::ai_memory::compact_category_to_budget(
-            pool, tenant, agent_id, category, budget,
+            pool, tenant, agent_id, user, category, budget,
         )
         .await
         {
@@ -1007,6 +1015,7 @@ async fn consolidate_folded_memory(
     ai: &AiConfig,
     agent: &AiAgent,
     tenant: Option<&str>,
+    user: Option<SnowflakeId>,
     slice_text: &str,
 ) -> AppResult<()> {
     let provider = provider_for(agent, ai)?;
@@ -1053,7 +1062,7 @@ async fn consolidate_folded_memory(
     let mut existing_norms: Vec<String> = if list.is_empty() {
         Vec::new()
     } else {
-        crate::agent::models::ai_memory::recall_memories(pool, agent.id, tenant, None, 1_000)
+        crate::agent::models::ai_memory::recall_memories(pool, agent.id, user, tenant, None, 1_000)
             .await?
             .into_iter()
             .filter(|m| m.category == "core")
@@ -1092,7 +1101,7 @@ async fn consolidate_folded_memory(
         // LLM wording/numbering drift) upserts instead of piling duplicates.
         let key = format!("fact_{}", &sha256_hex(&norm)[..12]);
         if let Err(e) = crate::agent::models::ai_memory::store_memory(
-            pool, tenant, agent.id, &key, content, "core", importance, false,
+            pool, tenant, agent.id, user, &key, content, "core", importance, false,
         )
         .await
         {
@@ -1113,11 +1122,13 @@ async fn consolidate_folded_memory(
 
 /// Extract durable facts from rows whose `seq` falls in `(prior_cover,
 /// new_cover]` — i.e. exactly the turns this fold took out of the window.
+#[allow(clippy::too_many_arguments)]
 async fn consolidate_folded_range(
     pool: &crate::db::Pool,
     ai: &AiConfig,
     agent: &AiAgent,
     tenant: Option<&str>,
+    user: Option<SnowflakeId>,
     existing: &[AiMessage],
     prior_cover: i64,
     new_cover: i64,
@@ -1130,7 +1141,7 @@ async fn consolidate_folded_range(
         .collect();
     if !rows.is_empty() {
         let text = crate::agent::context::fold_text(&rows);
-        consolidate_folded_memory(pool, ai, agent, tenant, &text).await?;
+        consolidate_folded_memory(pool, ai, agent, tenant, user, &text).await?;
     }
     Ok(())
 }
@@ -1170,6 +1181,9 @@ pub async fn compact_session(
         .unwrap_or(8_000);
     let prev_ctx = latest_ctx_row(&existing);
     let prior_cover = prev_ctx.as_ref().map_or(0, |p| p.cover_seq);
+    let session_owner =
+        crate::agent::models::ai_session::find_session_by_id(pool, session_id, tenant).await?;
+    let compact_user: Option<SnowflakeId> = Some(session_owner.user_id);
     let (cover, summary, folded_now) =
         ensure_ctx_window(ai, agent, &existing, prev_ctx, 0, tail, true).await?;
     if folded_now && let Some(text) = summary.as_deref() {
@@ -1188,9 +1202,17 @@ pub async fn compact_session(
         // Manual compact also consolidates the freshly folded turns into Core
         // memory (same semantics as the automatic fold path).
         if ai.memory_consolidate
-            && let Err(e) =
-                consolidate_folded_range(pool, ai, agent, tenant, &existing, prior_cover, cover)
-                    .await
+            && let Err(e) = consolidate_folded_range(
+                pool,
+                ai,
+                agent,
+                tenant,
+                compact_user,
+                &existing,
+                prior_cover,
+                cover,
+            )
+            .await
         {
             tracing::warn!(session = session_id.0, error = %e, "memory consolidation failed");
         } else if !ai.memory_consolidate {
@@ -1346,13 +1368,18 @@ async fn ensure_ctx_window(
 /// Host-managed daily session log (zeroclaw `Daily` tier): one row per agent
 /// per day, auto-updated after each turn; never surfaced via model recall and
 /// subject to the `daily_max_rows` budget. Not model-initiated.
-async fn touch_daily_log(pool: &crate::db::Pool, agent: &AiAgent, tenant: Option<&str>) {
+async fn touch_daily_log(
+    pool: &crate::db::Pool,
+    agent: &AiAgent,
+    tenant: Option<&str>,
+    user: Option<SnowflakeId>,
+) {
     let now = crate::utils::tz::now_utc();
     let date = now.format("%Y-%m-%d").to_string();
     let key = format!("daily_{date}");
     let content = format!("{date} 当日会话活跃记录（host 自动维护）");
     if let Err(e) = crate::agent::models::ai_memory::store_memory(
-        pool, tenant, agent.id, &key, &content, "daily", 0.3, false,
+        pool, tenant, agent.id, user, &key, &content, "daily", 0.3, false,
     )
     .await
     {

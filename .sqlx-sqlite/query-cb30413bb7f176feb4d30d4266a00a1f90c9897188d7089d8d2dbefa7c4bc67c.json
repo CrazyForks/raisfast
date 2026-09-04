@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO ai_memories (id, agent_id, user_id, session_id, mem_key, content, category, importance, pinned, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 11
+    },
+    "nullable": []
+  },
+  "hash": "cb30413bb7f176feb4d30d4266a00a1f90c9897188d7089d8d2dbefa7c4bc67c"
+}

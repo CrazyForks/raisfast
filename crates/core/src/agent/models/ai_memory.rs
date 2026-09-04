@@ -31,18 +31,19 @@ pub struct AiMemory {
     pub updated_at: Timestamp,
 }
 
-/// Find a memory row by (agent, key).
+/// Find a live row scoped to (agent, user, key).
 pub async fn find_memory_by_key(
     pool: &crate::db::Pool,
     agent_id: SnowflakeId,
+    user_id: Option<SnowflakeId>,
     key: &str,
     tenant_id: Option<&str>,
 ) -> AppResult<Option<AiMemory>> {
+    let (clause, _) = scope_clause(tenant_id, user_id, 3);
     let sql = format!(
-        "SELECT {MEMORY_COLS} FROM ai_memories WHERE agent_id = {} AND mem_key = {}{}",
+        "SELECT {MEMORY_COLS} FROM ai_memories WHERE agent_id = {} AND mem_key = {}{clause}",
         crate::db::Driver::ph(1),
-        crate::db::Driver::ph(2),
-        tenant_filter(tenant_id, 3)
+        crate::db::Driver::ph(2)
     );
     let mut q = sqlx::query_as::<_, AiMemory>(crate::db::safe_sql(&sql))
         .bind(agent_id)
@@ -50,22 +51,26 @@ pub async fn find_memory_by_key(
     if let Some(tid) = tenant_id {
         q = q.bind(tid);
     }
+    if let Some(uid) = user_id {
+        q = q.bind(uid);
+    }
     Ok(q.fetch_optional(pool).await?)
 }
 
-/// Upsert by (tenant, agent, key): update the live row content or insert.
+/// Upsert by (tenant, agent, user, key): update the live row content or insert.
 #[allow(clippy::too_many_arguments)]
 pub async fn store_memory(
     pool: &crate::db::Pool,
     tenant_id: Option<&str>,
     agent_id: SnowflakeId,
+    user_id: Option<SnowflakeId>,
     key: &str,
     content: &str,
     category: &str,
     importance: f64,
     pinned: bool,
 ) -> AppResult<AiMemory> {
-    if let Some(existing) = find_memory_by_key(pool, agent_id, key, tenant_id).await? {
+    if let Some(existing) = find_memory_by_key(pool, agent_id, user_id, key, tenant_id).await? {
         let now = now_utc();
         let result = raisfast_derive::crud_update!(
             pool,
@@ -86,6 +91,7 @@ pub async fn store_memory(
         [
             "id" => id,
             "agent_id" => agent_id,
+            "user_id" => user_id,
             "session_id" => None::<SnowflakeId>,
             "mem_key" => key,
             "content" => content,
@@ -97,18 +103,18 @@ pub async fn store_memory(
         ],
         tenant: tenant_id
     )?;
-    match find_memory_by_key(pool, agent_id, key, tenant_id).await? {
+    match find_memory_by_key(pool, agent_id, user_id, key, tenant_id).await? {
         Some(m) => Ok(m),
         None => Err(AppError::not_found("ai_memory")),
     }
 }
 
-/// Keyword recall over live rows. `query = None` returns most recent first.
-/// Keyword matching is portable `LIKE` (case-sensitive on PG/MySQL); a proper
-/// keyword/BM25 rank is a later enhancement.
+/// Keyword recall over live rows, scoped to one user. `query = None` returns
+/// most recent first.
 pub async fn recall_memories(
     pool: &crate::db::Pool,
     agent_id: SnowflakeId,
+    user_id: Option<SnowflakeId>,
     tenant_id: Option<&str>,
     query: Option<&str>,
     limit: i64,
@@ -122,11 +128,8 @@ pub async fn recall_memories(
         "SELECT {MEMORY_COLS} FROM ai_memories WHERE agent_id = {} AND superseded_by IS NULL",
         crate::db::Driver::ph(1)
     );
-    let mut n = 2;
-    if tenant_id.is_some() {
-        sql.push_str(&format!(" AND tenant_id = {}", crate::db::Driver::ph(n)));
-        n += 1;
-    }
+    let (tail, mut n) = scope_clause(tenant_id, user_id, 2);
+    sql.push_str(&tail);
     if keyword.is_some() {
         sql.push_str(&format!(
             " AND (mem_key LIKE {} OR content LIKE {})",
@@ -144,24 +147,28 @@ pub async fn recall_memories(
     if let Some(tid) = tenant_id {
         q = q.bind(tid);
     }
+    if let Some(uid) = user_id {
+        q = q.bind(uid);
+    }
     if let Some(pat) = &keyword {
         q = q.bind(pat.as_str()).bind(pat.as_str());
     }
     Ok(q.bind(limit).fetch_all(pool).await?)
 }
 
-/// Delete a memory row by (agent, key). Returns whether a row was removed.
+/// Delete a memory row scoped to (agent, user, key).
 pub async fn forget_memory(
     pool: &crate::db::Pool,
     agent_id: SnowflakeId,
+    user_id: Option<SnowflakeId>,
     key: &str,
     tenant_id: Option<&str>,
 ) -> AppResult<bool> {
+    let (clause, _) = scope_clause(tenant_id, user_id, 3);
     let sql = format!(
-        "DELETE FROM ai_memories WHERE agent_id = {} AND mem_key = {}{}",
+        "DELETE FROM ai_memories WHERE agent_id = {} AND mem_key = {}{clause}",
         crate::db::Driver::ph(1),
-        crate::db::Driver::ph(2),
-        tenant_filter(tenant_id, 3)
+        crate::db::Driver::ph(2)
     );
     let mut q = sqlx::query(crate::db::safe_sql(&sql))
         .bind(agent_id)
@@ -169,14 +176,30 @@ pub async fn forget_memory(
     if let Some(tid) = tenant_id {
         q = q.bind(tid);
     }
+    if let Some(uid) = user_id {
+        q = q.bind(uid);
+    }
     Ok(q.execute(pool).await?.rows_affected() > 0)
 }
 
-/// `" AND tenant_id = {ph}"` for `Some`, `""` for `None`.
-fn tenant_filter(tenant_id: Option<&str>, start_index: usize) -> String {
-    tenant_id
-        .map(|_| format!(" AND tenant_id = {}", crate::db::Driver::ph(start_index)))
-        .unwrap_or_default()
+/// Optional scope clause ` AND tenant_id = ? AND user_id = ?` (either/both).
+/// Returns the next free placeholder index.
+fn scope_clause(
+    tenant_id: Option<&str>,
+    user_id: Option<SnowflakeId>,
+    start_index: usize,
+) -> (String, usize) {
+    let mut out = String::new();
+    let mut n = start_index;
+    if tenant_id.is_some() {
+        out.push_str(&format!(" AND tenant_id = {}", crate::db::Driver::ph(n)));
+        n += 1;
+    }
+    if user_id.is_some() {
+        out.push_str(&format!(" AND user_id = {}", crate::db::Driver::ph(n)));
+        n += 1;
+    }
+    (out, n)
 }
 
 /// Memory-tier budget (port of zeroclaw `budget.rs` caps): row and byte caps
@@ -207,25 +230,34 @@ pub struct BudgetReport {
     pub evicted_by_bytes: i64,
 }
 
-fn live_scope_sql(tenant_id: Option<&str>, start_index: usize) -> String {
-    // start_index is the placeholder slot for `category`; agent goes next, then
-    // the optional tenant filter.
-    let agent_ph = crate::db::Driver::ph(start_index + 1);
-    let mut sql = format!(
-        " WHERE category = {} AND agent_id = {agent_ph} AND superseded_by IS NULL",
-        crate::db::Driver::ph(start_index)
+fn live_scope(
+    tenant_id: Option<&str>,
+    user_id: Option<SnowflakeId>,
+    start_index: usize,
+) -> (String, usize) {
+    let mut out = format!(
+        " WHERE category = {} AND agent_id = {} AND superseded_by IS NULL",
+        crate::db::Driver::ph(start_index),
+        crate::db::Driver::ph(start_index + 1)
     );
-    sql.push_str(&tenant_filter(tenant_id, start_index + 2));
-    sql
+    let mut n = start_index + 2;
+    if tenant_id.is_some() {
+        out.push_str(&format!(" AND tenant_id = {}", crate::db::Driver::ph(n)));
+        n += 1;
+    }
+    if user_id.is_some() {
+        out.push_str(&format!(" AND user_id = {}", crate::db::Driver::ph(n)));
+        n += 1;
+    }
+    (out, n)
 }
 
-/// Compact one category to its configured budget (lowest `importance` first,
-/// ties broken by `created_at`). Live rows = `superseded_by IS NULL`; rows that
-/// were superseded are never budget-evicted (they are soft-hidden history).
+/// Compact one category to its configured budget, scoped to (agent, user).
 pub async fn compact_category_to_budget(
     pool: &crate::db::Pool,
     tenant_id: Option<&str>,
     agent_id: SnowflakeId,
+    user_id: Option<SnowflakeId>,
     category: &str,
     cfg: MemoryBudgetConfig,
 ) -> AppResult<BudgetReport> {
@@ -237,10 +269,10 @@ pub async fn compact_category_to_budget(
 
     // ── row cap ─────────────────────────────────────────────────────────────
     if max_rows > 0 {
-        let current = count_live(pool, tenant_id, agent_id, category).await?;
+        let current = count_live(pool, tenant_id, agent_id, user_id, category).await?;
         if current > max_rows {
             let excess = current - max_rows;
-            let ids = evictable_ids(pool, tenant_id, agent_id, category, excess).await?;
+            let ids = evictable_ids(pool, tenant_id, agent_id, user_id, category, excess).await?;
             report.evicted_by_count += delete_ids(pool, &ids).await? as i64;
         }
     }
@@ -248,11 +280,11 @@ pub async fn compact_category_to_budget(
     // ── byte cap: evict one row at a time until under budget ───────────────
     if max_bytes > 0 {
         loop {
-            let current_bytes = live_bytes(pool, tenant_id, agent_id, category).await?;
+            let current_bytes = live_bytes(pool, tenant_id, agent_id, user_id, category).await?;
             if current_bytes <= max_bytes {
                 break;
             }
-            let ids = evictable_ids(pool, tenant_id, agent_id, category, 1).await?;
+            let ids = evictable_ids(pool, tenant_id, agent_id, user_id, category, 1).await?;
             if ids.is_empty() {
                 break;
             }
@@ -266,17 +298,21 @@ async fn count_live(
     pool: &crate::db::Pool,
     tenant_id: Option<&str>,
     agent_id: SnowflakeId,
+    user_id: Option<SnowflakeId>,
     category: &str,
 ) -> AppResult<i64> {
+    let (clause, _) = live_scope(tenant_id, user_id, 1);
     let sql = format!(
-        "SELECT {} FROM ai_memories{}",
-        crate::db::Driver::cast_int("COUNT(*)"),
-        live_scope_sql(tenant_id, 1)
+        "SELECT {} FROM ai_memories{clause}",
+        crate::db::Driver::cast_int("COUNT(*)")
     );
     let mut q = sqlx::query_scalar::<_, i64>(crate::db::safe_sql(&sql)).bind(category);
     q = q.bind(agent_id);
     if let Some(tid) = tenant_id {
         q = q.bind(tid);
+    }
+    if let Some(uid) = user_id {
+        q = q.bind(uid);
     }
     Ok(q.fetch_one(pool).await?)
 }
@@ -285,41 +321,46 @@ async fn live_bytes(
     pool: &crate::db::Pool,
     tenant_id: Option<&str>,
     agent_id: SnowflakeId,
+    user_id: Option<SnowflakeId>,
     category: &str,
 ) -> AppResult<i64> {
+    let (clause, _) = live_scope(tenant_id, user_id, 1);
     let sql = format!(
-        "SELECT {} FROM ai_memories{}",
-        crate::db::Driver::cast_int("COALESCE(SUM(LENGTH(content)), 0)"),
-        live_scope_sql(tenant_id, 1)
+        "SELECT {} FROM ai_memories{clause}",
+        crate::db::Driver::cast_int("COALESCE(SUM(LENGTH(content)), 0)")
     );
     let mut q = sqlx::query_scalar::<_, i64>(crate::db::safe_sql(&sql)).bind(category);
     q = q.bind(agent_id);
     if let Some(tid) = tenant_id {
         q = q.bind(tid);
     }
+    if let Some(uid) = user_id {
+        q = q.bind(uid);
+    }
     Ok(q.fetch_one(pool).await?)
 }
 
-/// Lowest-value live rows (importance asc, created_at asc), up to `limit`.
+/// Lowest-value live rows for (agent, user), up to `limit`.
 async fn evictable_ids(
     pool: &crate::db::Pool,
     tenant_id: Option<&str>,
     agent_id: SnowflakeId,
+    user_id: Option<SnowflakeId>,
     category: &str,
     limit: i64,
 ) -> AppResult<Vec<SnowflakeId>> {
-    // Placeholder slots: category(1), agent(2), tenant(3 if present); the LIMIT
-    // placeholder follows the last scope bind.
-    let limit_ph = crate::db::Driver::ph(if tenant_id.is_some() { 4 } else { 3 });
+    let (clause, n) = live_scope(tenant_id, user_id, 1);
+    let limit_ph = crate::db::Driver::ph(n);
     let sql = format!(
-        "SELECT id FROM ai_memories{} AND pinned = FALSE ORDER BY importance ASC, created_at ASC LIMIT {}",
-        live_scope_sql(tenant_id, 1),
-        limit_ph
+        "SELECT id FROM ai_memories{clause} AND pinned = FALSE ORDER BY importance ASC, created_at ASC LIMIT {limit_ph}"
     );
     let mut q = sqlx::query_scalar::<_, i64>(crate::db::safe_sql(&sql)).bind(category);
     q = q.bind(agent_id);
     if let Some(tid) = tenant_id {
         q = q.bind(tid);
+    }
+    if let Some(uid) = user_id {
+        q = q.bind(uid);
     }
     Ok(q.bind(limit)
         .fetch_all(pool)

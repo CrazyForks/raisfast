@@ -1510,7 +1510,7 @@ CREATE INDEX IF NOT EXISTS idx_flow_trigger_flow ON flow_trigger(flow_id);
 CREATE TABLE IF NOT EXISTS ai_agents (
     id BIGINT PRIMARY KEY,
     tenant_id TEXT NOT NULL DEFAULT 'default',
-    owner_id BIGINT,
+    user_id BIGINT,
     name TEXT NOT NULL,
     system_prompt TEXT NOT NULL DEFAULT '',
     provider TEXT NOT NULL,
@@ -1531,7 +1531,7 @@ CREATE TABLE IF NOT EXISTS ai_sessions (
     id BIGINT PRIMARY KEY,
     tenant_id TEXT NOT NULL DEFAULT 'default',
     agent_id BIGINT NOT NULL,
-    owner_id BIGINT NOT NULL,
+    user_id BIGINT NOT NULL,
     title TEXT NOT NULL DEFAULT '',
     status TEXT NOT NULL DEFAULT 'open',
     meta JSONB,
@@ -1541,7 +1541,7 @@ CREATE TABLE IF NOT EXISTS ai_sessions (
     last_active_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_ai_sessions_tenant_agent ON ai_sessions(tenant_id, agent_id);
-CREATE INDEX IF NOT EXISTS idx_ai_sessions_owner_active ON ai_sessions(owner_id, last_active_at);
+CREATE INDEX IF NOT EXISTS idx_ai_sessions_owner_active ON ai_sessions(user_id, last_active_at);
 
 -- Append-only conversation event log (externalized session). role: system/user/
 -- assistant/tool/meta. kind: chat/assistant_tool_calls/tool_result/turn:meta/
@@ -1574,6 +1574,7 @@ CREATE TABLE IF NOT EXISTS ai_memories (
     id BIGINT PRIMARY KEY,
     tenant_id TEXT NOT NULL DEFAULT 'default',
     agent_id BIGINT NOT NULL,
+    user_id BIGINT,
     session_id BIGINT,
     mem_key TEXT NOT NULL,
     content TEXT NOT NULL,
@@ -1583,7 +1584,7 @@ CREATE TABLE IF NOT EXISTS ai_memories (
     pinned BOOLEAN NOT NULL DEFAULT FALSE,
     created_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW(),
-    UNIQUE (tenant_id, agent_id, mem_key)
+    UNIQUE (tenant_id, agent_id, user_id, mem_key)
 );
 CREATE INDEX IF NOT EXISTS idx_ai_memories_agent_live ON ai_memories(agent_id, superseded_by);
 CREATE INDEX IF NOT EXISTS idx_ai_memories_agent_category ON ai_memories(agent_id, category);

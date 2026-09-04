@@ -15,7 +15,7 @@ pub struct AiSession {
     pub id: SnowflakeId,
     pub tenant_id: Option<String>,
     pub agent_id: SnowflakeId,
-    pub owner_id: SnowflakeId,
+    pub user_id: SnowflakeId,
     pub title: String,
     pub status: String,
     pub meta: Option<serde_json::Value>,
@@ -31,7 +31,7 @@ pub async fn create_session(
     pool: &crate::db::Pool,
     tenant_id: Option<&str>,
     agent_id: SnowflakeId,
-    owner_id: SnowflakeId,
+    user_id: SnowflakeId,
     title: &str,
 ) -> AppResult<AiSession> {
     let id = crate::utils::id::new_snowflake_id();
@@ -42,7 +42,7 @@ pub async fn create_session(
         [
             "id" => id,
             "agent_id" => agent_id,
-            "owner_id" => owner_id,
+            "user_id" => user_id,
             "title" => title,
             "status" => "open",
             "last_seq" => 0i64,
@@ -78,7 +78,7 @@ pub async fn list_sessions(
     agent_id: SnowflakeId,
 ) -> AppResult<Vec<AiSession>> {
     let sql = format!(
-        "SELECT id, tenant_id, agent_id, owner_id, title, status, meta, last_seq, \
+        "SELECT id, tenant_id, agent_id, user_id, title, status, meta, last_seq, \
          created_at, updated_at, last_active_at FROM ai_sessions \
          WHERE agent_id = {}{} ORDER BY last_active_at DESC",
         crate::db::Driver::ph(1),

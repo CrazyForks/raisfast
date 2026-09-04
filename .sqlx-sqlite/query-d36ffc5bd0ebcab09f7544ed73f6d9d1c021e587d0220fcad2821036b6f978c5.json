@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO ai_agents (id, user_id, name, system_prompt, provider, model, temperature, max_iterations, tools, memory_enabled, params, created_at, updated_at, tenant_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 14
+    },
+    "nullable": []
+  },
+  "hash": "d36ffc5bd0ebcab09f7544ed73f6d9d1c021e587d0220fcad2821036b6f978c5"
+}

@@ -128,7 +128,7 @@ impl JobHandler for AgentRunHandler {
                     &self.pool,
                     Some(tenant),
                     agent_id,
-                    agent.owner_id.unwrap_or(agent_id),
+                    agent.user_id.unwrap_or(agent_id),
                     "scheduled",
                 )
                 .await?
