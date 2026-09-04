@@ -109,6 +109,24 @@ pub async fn set_session_status(
     AppError::expect_affected(&result, "ai_session")
 }
 
+/// Replace the session `meta` JSON (e.g. durable context-fold state `ctx`).
+pub async fn update_session_meta(
+    pool: &crate::db::Pool,
+    id: SnowflakeId,
+    tenant_id: Option<&str>,
+    meta: serde_json::Value,
+) -> AppResult<()> {
+    let now = now_utc();
+    let result = raisfast_derive::crud_update!(
+        pool,
+        "ai_sessions",
+        bind: ["meta" => meta, "updated_at" => &now],
+        where: ("id", id),
+        tenant: tenant_id
+    )?;
+    AppError::expect_affected(&result, "ai_session")
+}
+
 /// Idempotent cursor advance: only ever moves forward.
 pub async fn advance_last_seq(
     pool: &crate::db::Pool,

@@ -86,6 +86,10 @@ Handler → Service → Model (SQL)
 - **Primary keys:** Snowflake ID (ferroid). See "SnowflakeId Encoding" below for the wire format.
 - **Auth:** JWT (HS256) with short-lived access tokens + DB-stored refresh tokens.
 - **Write lock:** All transactions go through `acquire_write()` (tokio Mutex) to serialize SQLite writes and eliminate `SQLITE_BUSY` tail latency.
+- **No design without a mature reference.** Behavioral design must not be invented from a clean slate. Every new proposal ships a **reference matrix** (in the doc/commit that introduces it): label each decision either
+  - `[照抄 <source>]` — cite the concrete file/symbol copied (e.g. `third/zeroclaw/crates/.../skill_tool.rs`), or
+  - `[自造]` — self-built, and say why no precedent applies (host-specific persistence, our BaaS shape, etc.).
+  Document-tag convention already in `dev-docs/agent/glossary.md`: `[零]` = zeroclaw-derived, `[自造]` = host-owned. Deviations from a cited reference are allowed only as an **explicitly flagged, reversible choice** (state the delta and the risk), never silently. When unsure whether a reference exists, stop and ask before proposing.
 
 ## SnowflakeId Encoding (id encryption on the wire)
 

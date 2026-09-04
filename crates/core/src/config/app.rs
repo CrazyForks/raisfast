@@ -606,6 +606,21 @@ pub struct AiConfig {
     /// allowlist names it can call it.
     #[serde(default)]
     pub allow_shell: bool,
+    /// Memory tier budgets (zeroclaw `budget.rs` semantics). `0` = unbounded.
+    /// Env: `RAISFAST_AI_MEMORY_CORE_MAX_ROWS` / `..._CORE_MAX_BYTES` /
+    /// `..._DAILY_MAX_ROWS`. Conversation rows are never budget-evicted.
+    #[serde(default)]
+    pub memory_core_max_rows: i64,
+    #[serde(default)]
+    pub memory_core_max_bytes: i64,
+    #[serde(default)]
+    pub memory_daily_max_rows: i64,
+    /// Replay token budget for one session turn (`0` = disabled). When the raw
+    /// transcript would exceed it, the oldest turns are folded into a durable
+    /// summary (`ai_sessions.meta.ctx`) via one summarization call and only the
+    /// recent tail + summary are replayed (zeroclaw consolidation semantics).
+    #[serde(default)]
+    pub context_budget_tokens: i64,
 }
 
 fn default_ai_timeout_secs() -> u64 {
@@ -622,6 +637,10 @@ impl Default for AiConfig {
             timeout_secs: default_ai_timeout_secs(),
             broadcast_events: true,
             allow_shell: false,
+            memory_core_max_rows: 0,
+            memory_core_max_bytes: 0,
+            memory_daily_max_rows: 0,
+            context_budget_tokens: 0,
         }
     }
 }
@@ -653,6 +672,22 @@ impl AiConfig {
                 .ok()
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(false),
+            memory_core_max_rows: env::var("RAISFAST_AI_MEMORY_CORE_MAX_ROWS")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(0),
+            memory_core_max_bytes: env::var("RAISFAST_AI_MEMORY_CORE_MAX_BYTES")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(0),
+            memory_daily_max_rows: env::var("RAISFAST_AI_MEMORY_DAILY_MAX_ROWS")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(0),
+            context_budget_tokens: env::var("RAISFAST_AI_CONTEXT_BUDGET_TOKENS")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(0),
         }
     }
 }

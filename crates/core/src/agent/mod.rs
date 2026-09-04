@@ -4,6 +4,7 @@
 //! with its table models kept in [`self::models`] for cohesion.
 //! Full design: `dev-docs/agent/`.
 
+pub mod context;
 pub mod handler;
 pub mod memory_sql;
 pub mod models;

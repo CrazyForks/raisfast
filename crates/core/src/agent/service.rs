@@ -320,8 +320,35 @@ async fn run_turn_inner(
     // Load existing transcript (meta/system rows skipped) for continuity.
     let existing =
         ai_message::list_messages_after(pool, session_id, tenant_id, None, 10_000).await?;
-    let mut history: Vec<ChatMessage> = existing.iter().filter_map(row_to_chat_message).collect();
+
+    // Context window (LLM consolidation, default off): fold oldest whole turns
+    // beyond the token budget into a durable summary replayed as a leading
+    // context block. `cover_seq` > 0 means a prefix is already folded.
+    let (cover_seq, ctx_summary) =
+        ensure_ctx_window(pool, ai, agent, session_id, tenant_id, &existing).await?;
+    let mut history: Vec<ChatMessage> = existing
+        .iter()
+        .filter(|r| r.seq > cover_seq)
+        .filter_map(row_to_chat_message)
+        .collect();
+    if let Some(text) = ctx_summary {
+        history.insert(
+            0,
+            ChatMessage {
+                role: ChatRole::User,
+                content: Some(format!(
+                    "（以下是较早对话的自动摘要；需要找回摘要前的细节时用 memory_recall 或明确提问）\n{text}"
+                )),
+                tool_calls: None,
+                tool_call_id: None,
+            },
+        );
+    }
     let old_len = history.len();
+
+    // Memory-tier hygiene (zeroclaw budget.rs semantics): keep core/daily rows
+    // within configured caps. Best effort — eviction failures never fail a turn.
+    memory_hygiene(pool, ai, agent.id, tenant_id).await;
     // We always send an assembled framework system prompt (agent/system_prompt
     // is embedded inside it), so the engine always inserts one leading System.
     let had_system = true;
@@ -590,6 +617,171 @@ pub async fn list_messages(
 ) -> AppResult<Vec<AiMessage>> {
     crate::agent::models::ai_message::list_messages_after(pool, session_id, tenant, since, limit)
         .await
+}
+
+/// Best-effort memory-tier budget compaction (`core`/`daily`), run once per
+/// turn. Failures are logged and never fail the turn (hygiene semantics).
+async fn memory_hygiene(
+    pool: &crate::db::Pool,
+    ai: &AiConfig,
+    agent_id: SnowflakeId,
+    tenant: Option<&str>,
+) {
+    use crate::agent::models::ai_memory::MemoryBudgetConfig;
+    let budget = MemoryBudgetConfig {
+        core_max_rows: ai.memory_core_max_rows,
+        core_max_bytes: ai.memory_core_max_bytes,
+        daily_max_rows: ai.memory_daily_max_rows,
+    };
+    if budget.core_max_rows <= 0 && budget.core_max_bytes <= 0 && budget.daily_max_rows <= 0 {
+        return;
+    }
+    for category in ["core", "daily"] {
+        match crate::agent::models::ai_memory::compact_category_to_budget(
+            pool, tenant, agent_id, category, budget,
+        )
+        .await
+        {
+            Ok(report) => {
+                if report.evicted_by_count > 0 || report.evicted_by_bytes > 0 {
+                    tracing::info!(
+                        agent = agent_id.0,
+                        category,
+                        evicted_by_count = report.evicted_by_count,
+                        evicted_by_bytes = report.evicted_by_bytes,
+                        "memory budget compaction"
+                    );
+                }
+            }
+            Err(e) => {
+                tracing::warn!(agent = agent_id.0, category, error = %e, "memory budget compaction failed")
+            }
+        }
+    }
+}
+
+/// Summarize a folded transcript slice with one provider call (temperature 0).
+/// Fails turn-friendly: caller degrades to no-folding on any error.
+async fn summarize_transcript(ai: &AiConfig, agent: &AiAgent, combined: &str) -> AppResult<String> {
+    let provider = provider_for(agent, ai)?;
+    let messages = [ChatMessage {
+        role: ChatRole::User,
+        content: Some(format!(
+            "把下面较早的对话（可能已含摘要）压缩为中文要点，保留：用户偏好与承诺、明确的决策/规则/策略、关键数字、值得长期记住的工具结果。若原文含编号/代号（如 ALPHA-1、事项N），必须逐条保留每个编号及其内容、不要合并或概括成同一句。不要遗漏可能影响后续回答的事实。输出 ≤12 行紧凑要点，不要开头客套。\n\n{combined}"
+        )),
+        tool_calls: None,
+        tool_call_id: None,
+    }];
+    let request = raisfast_agent::provider::ChatRequest {
+        messages: &messages,
+        tools: None,
+        temperature: Some(0.0),
+    };
+    let response = provider
+        .chat(&request, &agent.model)
+        .await
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("context summarize failed: {e}")))?;
+    response
+        .text
+        .filter(|t| !t.trim().is_empty())
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("context summarize returned empty")))
+}
+
+/// Context-window decision (default off when `context_budget_tokens == 0`).
+/// Returns `(cover_seq, summary_text)`: `cover_seq > 0` means older rows are
+/// folded and `summary_text` is the durable context block to replay first.
+///
+/// Reference: zeroclaw consolidation semantics; state persisted on the session
+/// (`meta.ctx`) — host-owned `[自造]` durability, no transcript rewrite.
+async fn ensure_ctx_window(
+    pool: &crate::db::Pool,
+    ai: &AiConfig,
+    agent: &AiAgent,
+    session_id: SnowflakeId,
+    tenant_id: Option<&str>,
+    existing: &[AiMessage],
+) -> AppResult<(i64, Option<String>)> {
+    if ai.context_budget_tokens <= 0 {
+        return Ok((0, None));
+    }
+    use crate::agent::context::{CtxState, RowMeta, fold_text, select_cover};
+
+    let is_conv = |r: &AiMessage| matches!(r.role.as_str(), "user" | "assistant" | "tool");
+    let session =
+        crate::agent::models::ai_session::find_session_by_id(pool, session_id, tenant_id).await?;
+    let prev: Option<CtxState> = session
+        .meta
+        .as_ref()
+        .and_then(|m| m.get("ctx"))
+        .and_then(|v| serde_json::from_value(v.clone()).ok());
+
+    let budget_chars = (ai.context_budget_tokens.max(1) as usize) * 4;
+    let ctx_overhead = prev.as_ref().map_or(0, |p| p.text.len() + 64);
+    let base: Vec<&AiMessage> = existing
+        .iter()
+        .filter(|r| r.seq > prev.as_ref().map_or(0, |p| p.cover_seq) && is_conv(r))
+        .collect();
+    let meta: Vec<RowMeta> = base
+        .iter()
+        .map(|r| RowMeta {
+            seq: r.seq,
+            is_user: r.role == "user",
+            len: r
+                .content
+                .len()
+                .saturating_add(r.tool_name.as_deref().map_or(0, |s| s.len() + 16))
+                .saturating_add(r.tool_error.as_deref().map_or(0, |s| s.len() + 16)),
+        })
+        .collect();
+
+    let eff_budget = budget_chars.saturating_sub(ctx_overhead);
+    let Some(cov) = select_cover(&meta, eff_budget) else {
+        // Fits now: replay any existing fold as the leading block.
+        return Ok((
+            prev.as_ref().map_or(0, |p| p.cover_seq),
+            prev.filter(|p| p.cover_seq > 0).map(|p| p.text),
+        ));
+    };
+
+    // Fold base[0..=cov] (plus the previous summary if any) into one new summary.
+    let slice: Vec<(String, String)> = base[..=cov]
+        .iter()
+        .map(|r| (r.role.clone(), r.content.clone()))
+        .collect();
+    let slice_text = fold_text(&slice);
+    let combined = match &prev {
+        Some(p) if !p.text.trim().is_empty() => format!("{}\n---\n{}", p.text, slice_text),
+        _ => slice_text,
+    };
+    let summary = match summarize_transcript(ai, agent, &combined).await {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::warn!(session = session_id.0, error = %e, "context fold summarize failed; keeping full replay");
+            return Ok((
+                prev.as_ref().map_or(0, |p| p.cover_seq),
+                prev.filter(|p| p.cover_seq > 0).map(|p| p.text),
+            ));
+        }
+    };
+
+    let new_cover = base[cov].seq;
+    let state = CtxState {
+        cover_seq: new_cover,
+        text: summary.clone(),
+    };
+    let mut meta_json = session
+        .meta
+        .clone()
+        .unwrap_or_else(|| serde_json::json!({}));
+    if let Some(obj) = meta_json.as_object_mut() {
+        obj.insert(
+            "ctx".to_string(),
+            serde_json::to_value(&state).unwrap_or(serde_json::Value::Null),
+        );
+    }
+    crate::agent::models::ai_session::update_session_meta(pool, session_id, tenant_id, meta_json)
+        .await?;
+    Ok((new_cover, Some(summary)))
 }
 
 /// Daily usage of one agent over the last `days` (default 30, clamped to 1-90).

@@ -192,3 +192,145 @@ async fn ai_models_roundtrip() {
         .await
         .expect("delete agent");
 }
+
+/// Memory-tier budget eviction against a live DB (port of zeroclaw budget.rs):
+/// core trimmed to row cap by ascending importance; conversation rows untouched;
+/// daily trimmed to its own row cap.
+#[tokio::test]
+async fn memory_budget_evicts_by_importance_and_spares_conversation() {
+    let pool = test_pool();
+    let tenant_id = tenant();
+
+    let agent = ai_agent::create_agent(
+        &pool,
+        Some(&tenant_id),
+        None,
+        "budget-agent",
+        "mem budget test",
+        "openai_compat",
+        "test-model",
+        None,
+        Vec::new(),
+        true,
+        None,
+    )
+    .await
+    .expect("create agent");
+
+    // Five core rows, importance 0.1..=0.5 (k1 lowest, k5 highest).
+    for (i, imp) in [0.1, 0.2, 0.3, 0.4, 0.5].iter().enumerate() {
+        ai_memory::store_memory(
+            &pool,
+            Some(&tenant_id),
+            agent.id,
+            &format!("k{}", i + 1),
+            &format!("core fact {}", i + 1),
+            "core",
+            *imp,
+        )
+        .await
+        .expect("store core row");
+    }
+    // Three conversation rows (never budget-managed).
+    for i in 1..=3 {
+        ai_memory::store_memory(
+            &pool,
+            Some(&tenant_id),
+            agent.id,
+            &format!("c{i}"),
+            "chatter",
+            "conversation",
+            0.5,
+        )
+        .await
+        .expect("store conversation row");
+    }
+
+    let cfg = ai_memory::MemoryBudgetConfig {
+        core_max_rows: 2,
+        core_max_bytes: 0,
+        daily_max_rows: 0,
+    };
+    let report =
+        ai_memory::compact_category_to_budget(&pool, Some(&tenant_id), agent.id, "core", cfg)
+            .await
+            .expect("compact core");
+    assert_eq!(
+        report.evicted_by_count, 3,
+        "three lowest-value core rows evicted"
+    );
+    assert_eq!(report.evicted_by_bytes, 0);
+
+    let live = ai_memory::recall_memories(&pool, agent.id, Some(&tenant_id), None, 100)
+        .await
+        .expect("recall");
+    let mut core_keys: Vec<&str> = live
+        .iter()
+        .filter(|m| m.category == "core")
+        .map(|m| m.key.as_str())
+        .collect();
+    core_keys.sort_unstable();
+    assert_eq!(
+        core_keys,
+        vec!["k4", "k5"],
+        "highest-importance rows survive"
+    );
+    let conversation_count = live.iter().filter(|m| m.category == "conversation").count();
+    assert_eq!(
+        conversation_count, 3,
+        "conversation rows are never budget-evicted"
+    );
+
+    // Daily cap operates independently on its own rows.
+    for (i, imp) in [0.1, 0.2, 0.3].iter().enumerate() {
+        ai_memory::store_memory(
+            &pool,
+            Some(&tenant_id),
+            agent.id,
+            &format!("d{}", i + 1),
+            "day log",
+            "daily",
+            *imp,
+        )
+        .await
+        .expect("store daily row");
+    }
+    let daily_cfg = ai_memory::MemoryBudgetConfig {
+        core_max_rows: 0,
+        core_max_bytes: 0,
+        daily_max_rows: 1,
+    };
+    let d_report = ai_memory::compact_category_to_budget(
+        &pool,
+        Some(&tenant_id),
+        agent.id,
+        "daily",
+        daily_cfg,
+    )
+    .await
+    .expect("compact daily");
+    assert_eq!(d_report.evicted_by_count, 2, "daily trimmed to its row cap");
+    let daily_keys: Vec<String> =
+        ai_memory::recall_memories(&pool, agent.id, Some(&tenant_id), None, 100)
+            .await
+            .expect("recall daily")
+            .into_iter()
+            .filter(|m| m.category == "daily")
+            .map(|m| m.key)
+            .collect();
+    assert_eq!(
+        daily_keys,
+        vec!["d3"],
+        "only the highest-value daily row remains"
+    );
+
+    // cleanup
+    sqlx::query("DELETE FROM ai_memories WHERE tenant_id = $1")
+        .bind(&tenant_id)
+        .execute(&pool)
+        .await
+        .expect("clean memories");
+    ai_agent::delete_agent(&pool, agent.id, Some(&tenant_id))
+        .await
+        .expect("delete agent");
+}
