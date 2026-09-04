@@ -9,7 +9,7 @@ use crate::types::snowflake_id::SnowflakeId;
 use crate::utils::tz::{Timestamp, now_utc};
 
 /// Row/column list used by hand-written reads (kept in one place).
-const MEMORY_COLS: &str = "id, tenant_id, agent_id, session_id, mem_key, content, category, \
+const MEMORY_COLS: &str = "id, tenant_id, agent_id, user_id, session_id, mem_key, content, category, \
     importance, superseded_by, pinned, created_at, updated_at";
 
 /// One memory row.
@@ -18,6 +18,7 @@ pub struct AiMemory {
     pub id: SnowflakeId,
     pub tenant_id: Option<String>,
     pub agent_id: SnowflakeId,
+    pub user_id: Option<SnowflakeId>,
     pub session_id: Option<SnowflakeId>,
     #[sqlx(rename = "mem_key")]
     pub key: String,

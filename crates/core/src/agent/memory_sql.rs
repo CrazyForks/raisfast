@@ -66,6 +66,9 @@ impl Memory for ScopedMemory {
             .await
             .map(|rows| {
                 rows.into_iter()
+                    // Host-managed tiers (daily logs) never surface as model
+                    // memory; only durable Core facts are recallable/injected.
+                    .filter(|m| m.category == "core")
                     .map(|m| MemoryEntry {
                         key: m.key,
                         content: m.content,

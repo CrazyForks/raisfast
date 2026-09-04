@@ -709,6 +709,7 @@ async fn run_turn_inner(
     )
     .await?;
     ai_session::advance_last_seq(pool, session_id, tenant_id, seq).await?;
+    touch_daily_log(pool, agent, tenant_id).await;
 
     Ok(AgentTurnResult {
         text: outcome.text,
@@ -1340,6 +1341,23 @@ async fn ensure_ctx_window(
 
     let new_cover = base[cov].seq;
     Ok((new_cover, Some(summary), true))
+}
+
+/// Host-managed daily session log (zeroclaw `Daily` tier): one row per agent
+/// per day, auto-updated after each turn; never surfaced via model recall and
+/// subject to the `daily_max_rows` budget. Not model-initiated.
+async fn touch_daily_log(pool: &crate::db::Pool, agent: &AiAgent, tenant: Option<&str>) {
+    let now = crate::utils::tz::now_utc();
+    let date = now.format("%Y-%m-%d").to_string();
+    let key = format!("daily_{date}");
+    let content = format!("{date} 当日会话活跃记录（host 自动维护）");
+    if let Err(e) = crate::agent::models::ai_memory::store_memory(
+        pool, tenant, agent.id, &key, &content, "daily", 0.3, false,
+    )
+    .await
+    {
+        tracing::warn!(agent = agent.id.0, error = %e, "daily log update failed");
+    }
 }
 
 /// Daily usage of one agent over the last `days` (default 30, clamped to 1-90).
