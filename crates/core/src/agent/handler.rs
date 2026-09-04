@@ -343,7 +343,7 @@ pub async fn run_turn(
         return Err(AppError::ForbiddenOwnership);
     }
     let agent = ai_service::find_agent(&state.pool, session.agent_id, auth.tenant_id()).await?;
-    let extra_tools = crate::agent::tools::build_domain_tools(&state, &auth);
+    let extra_tools = crate::agent::tools::build_domain_tools(&state, &auth).await;
 
     let pool = state.pool.clone();
     let ai_cfg = state.config.ai.clone();

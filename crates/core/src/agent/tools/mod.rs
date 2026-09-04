@@ -8,6 +8,8 @@
 //! `architecture.md §3`, `prompt-engineering.md §5`).
 
 pub mod files;
+#[cfg(feature = "mcp")]
+pub mod mcp;
 pub mod posts;
 pub mod script;
 pub mod shell;
@@ -22,7 +24,7 @@ use crate::middleware::auth::AuthUser;
 /// Build the domain tool registry for one turn from the agent's actor.
 /// Every available domain tool is registered here; the per-agent allowlist
 /// (`ai_agents.tools`) is applied later by `AgentService`.
-pub fn build_domain_tools(state: &AppState, auth: &AuthUser) -> ToolRegistry {
+pub async fn build_domain_tools(state: &AppState, auth: &AuthUser) -> ToolRegistry {
     let mut registry = ToolRegistry::new();
     posts::register(&mut registry, state, auth);
     system::register(&mut registry, state, auth);
@@ -33,6 +35,10 @@ pub fn build_domain_tools(state: &AppState, auth: &AuthUser) -> ToolRegistry {
     // by the `tools` allowlist like every other domain tool.
     if state.config.ai.allow_shell {
         shell::register(&mut registry, auth);
+    }
+    #[cfg(feature = "mcp")]
+    {
+        mcp::register_mcp_tools(&mut registry, &state.config.ai.mcp_servers).await;
     }
     registry
 }

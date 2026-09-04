@@ -37,6 +37,8 @@ pub mod handlers;
 pub mod integration;
 #[cfg(feature = "mcp")]
 pub mod mcp;
+#[cfg(feature = "mcp")]
+pub mod mcp_client;
 pub mod middleware;
 pub mod models;
 pub mod notifier;

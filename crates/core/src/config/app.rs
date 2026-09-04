@@ -632,6 +632,10 @@ pub struct AiConfig {
     pub context_window_map: Option<serde_json::Value>,
     #[serde(default)]
     pub context_output_reserve: i64,
+    /// Admin-configured external MCP servers to expose to agents as tools.
+    /// JSON array of `{name, command, args}` (env `RAISFAST_AI_MCP_SERVERS`).
+    #[serde(default)]
+    pub mcp_servers: Vec<serde_json::Value>,
     /// Consolidate folded transcript turns into Core memory facts (zeroclaw
     /// classify/consolidation). Env `RAISFAST_AI_MEMORY_CONSOLIDATE` (default
     /// false); runs one extraction LLM call per fold.
@@ -660,6 +664,7 @@ impl Default for AiConfig {
             context_window_fallback: 0,
             context_window_map: None,
             context_output_reserve: 0,
+            mcp_servers: Vec::new(),
         }
     }
 }
@@ -719,6 +724,11 @@ impl AiConfig {
                 .ok()
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(0),
+            mcp_servers: env::var("RAISFAST_AI_MCP_SERVERS")
+                .ok()
+                .filter(|v| !v.is_empty())
+                .and_then(|v| serde_json::from_str(&v).ok())
+                .unwrap_or_default(),
         }
     }
 }
