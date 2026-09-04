@@ -51,6 +51,25 @@ impl VirtualFs {
     #[must_use]
     pub fn new(config: &AppConfig, plugin_id: &str, permissions: &Permissions) -> Self {
         let root = PathBuf::from(&config.plugin_vfs_root).join(plugin_id);
+        Self::new_at(
+            root,
+            config.plugin_vfs_max_file_size,
+            config.plugin_vfs_max_total_size,
+            permissions,
+        )
+    }
+
+    /// Create a VFS instance rooted at an explicit directory (not the plugin
+    /// vfs root). Same escape/quota/read-write semantics as [`Self::new`];
+    /// used by non-plugin consumers (e.g. agent file tools with their own
+    /// workspace dir). Automatically creates `root`.
+    #[must_use]
+    pub fn new_at(
+        root: PathBuf,
+        max_file_size: usize,
+        max_total_size: usize,
+        permissions: &Permissions,
+    ) -> Self {
         let can_read = permissions
             .filesystem
             .iter()
@@ -59,10 +78,11 @@ impl VirtualFs {
             .filesystem
             .iter()
             .any(|p| p == "write" || p == "read-write" || p == "*");
+        let _ = std::fs::create_dir_all(&root);
         Self {
             root,
-            max_file_size: config.plugin_vfs_max_file_size,
-            max_total_size: config.plugin_vfs_max_total_size,
+            max_file_size,
+            max_total_size,
             can_read,
             can_write,
         }

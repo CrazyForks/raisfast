@@ -600,6 +600,12 @@ pub struct AiConfig {
     /// Broadcast background/agent turn events on the EventBus (`ai.turn.*`).
     #[serde(default = "default_true")]
     pub broadcast_events: bool,
+    /// Master switch for the `run_shell` agent tool. Default `false` (default
+    /// closed): the tool is not even registered until an operator sets
+    /// `RAISFAST_AI_ALLOW_SHELL=true`, and even then only agents whose `tools`
+    /// allowlist names it can call it.
+    #[serde(default)]
+    pub allow_shell: bool,
 }
 
 fn default_ai_timeout_secs() -> u64 {
@@ -615,6 +621,7 @@ impl Default for AiConfig {
             model: None,
             timeout_secs: default_ai_timeout_secs(),
             broadcast_events: true,
+            allow_shell: false,
         }
     }
 }
@@ -642,6 +649,10 @@ impl AiConfig {
                 .ok()
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(defaults.broadcast_events),
+            allow_shell: env::var("RAISFAST_AI_ALLOW_SHELL")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(false),
         }
     }
 }

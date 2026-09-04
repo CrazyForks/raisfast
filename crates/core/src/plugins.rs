@@ -1056,12 +1056,17 @@ impl PluginManager {
     }
 
     /// Execute an inline script and capture its JSON return value (flow script
-    /// nodes). Same load/call/unload + zero-state-leakage model as
-    /// [`Self::run_inline_script`], but uses each engine's value-returning
-    /// filter path. The code must export `func_name`, which receives the input
-    /// as a JSON string and returns a JSON string.
+    /// nodes, sandboxed code tools). Same load/call/unload + zero-state-leakage
+    /// model as [`Self::run_inline_script`], but uses each engine's
+    /// value-returning filter path.
     ///
-    /// v1 supports `js`; lua/rhai return a clear not-wired error.
+    /// Export conventions (function `func_name`):
+    /// - `js`: ESM `export function main(__in)` — `__in` is the JSON **string**
+    ///   of the input; return a JSON-serializable value.
+    /// - `rhai`: top-level `fn main(input)` — `input` is the value (map);
+    ///   return a value.
+    /// - `lua`: `Plugin = { main = function(input) ... end }` — `input` is the
+    ///   value (table); return a table/string/number.
     pub async fn run_inline_script_value(
         &self,
         runtime: &str,
@@ -1098,8 +1103,41 @@ impl PluginManager {
                 self.js_engine.unload_plugin(id).await;
                 result
             }
+            #[cfg(feature = "plugin-lua")]
+            "lua" => {
+                let sdk_source = sdk_v1::get_sdk_source("lua", "v1").ok_or_else(|| {
+                    AppError::Internal(anyhow::anyhow!("SDK source for lua/v1 not found"))
+                })?;
+                self.lua_engine
+                    .load_plugin(id, code, permissions, std::path::Path::new("."), sdk_source)
+                    .await
+                    .map_err(|e| AppError::Internal(anyhow::anyhow!("load inline lua: {e}")))?;
+                let result = self
+                    .lua_engine
+                    .call_filter::<serde_json::Value>(id, func_name, data, None)
+                    .await
+                    .map_err(|e| AppError::Internal(anyhow::anyhow!("exec inline lua: {e}")))
+                    .map(|v| v.unwrap_or(serde_json::Value::Null));
+                self.lua_engine.unload_plugin(id).await;
+                result
+            }
+            #[cfg(feature = "plugin-rhai")]
+            "rhai" => {
+                self.rhai_engine
+                    .load_plugin(id, code, permissions, std::path::Path::new("."), "")
+                    .await
+                    .map_err(|e| AppError::Internal(anyhow::anyhow!("load inline rhai: {e}")))?;
+                let result = self
+                    .rhai_engine
+                    .call_filter::<serde_json::Value>(id, func_name, data, None)
+                    .await
+                    .map_err(|e| AppError::Internal(anyhow::anyhow!("exec inline rhai: {e}")))
+                    .map(|v| v.unwrap_or(serde_json::Value::Null));
+                self.rhai_engine.unload_plugin(id).await;
+                result
+            }
             other => Err(AppError::BadRequest(format!(
-                "script runtime '{other}' 尚未接入 flow（v1 支持 js）"
+                "script runtime '{other}' 未接入（v1 支持 js/lua/rhai）"
             ))),
         }
     }
@@ -2356,6 +2394,58 @@ export function main(__in) {
             .await
             .unwrap();
         assert_eq!(out["sum"], 5, "script return value: {out}");
+    }
+
+    #[cfg(feature = "plugin-rhai")]
+    #[tokio::test]
+    async fn inline_script_value_rhai_returns() {
+        let config = test_config();
+        let mgr = PluginManager::new(config).await;
+        let code = r#"
+fn main(input) {
+    input.a + input.b
+}
+"#;
+        let data = serde_json::json!({"a": 2, "b": 3});
+        let out = mgr
+            .run_inline_script_value(
+                "rhai",
+                "__test_inline_rhai",
+                code,
+                "main",
+                &data,
+                Permissions::default(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(out, serde_json::json!(5), "rhai script return value: {out}");
+    }
+
+    #[cfg(feature = "plugin-lua")]
+    #[tokio::test]
+    async fn inline_script_value_lua_returns() {
+        let config = test_config();
+        let mgr = PluginManager::new(config).await;
+        let code = r#"
+Plugin = {
+    main = function(input)
+        return { sum = input.a + input.b }
+    end
+}
+"#;
+        let data = serde_json::json!({"a": 2, "b": 3});
+        let out = mgr
+            .run_inline_script_value(
+                "lua",
+                "__test_inline_lua",
+                code,
+                "main",
+                &data,
+                Permissions::default(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(out["sum"], 5, "lua script return value: {out}");
     }
 
     #[tokio::test]
