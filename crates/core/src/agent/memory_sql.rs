@@ -49,6 +49,7 @@ impl Memory for ScopedMemory {
             content,
             "core",
             importance_for("core", content),
+            false,
         )
         .await
         .map(|_| ())

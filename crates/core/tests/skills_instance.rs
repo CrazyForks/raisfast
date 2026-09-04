@@ -74,6 +74,7 @@ fn ai() -> AiConfig {
         model: None,
         timeout_secs: 10,
         broadcast_events: false,
+        ..AiConfig::default()
     }
 }
 

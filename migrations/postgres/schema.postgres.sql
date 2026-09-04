@@ -1580,6 +1580,7 @@ CREATE TABLE IF NOT EXISTS ai_memories (
     category TEXT NOT NULL DEFAULT 'core',
     importance DOUBLE PRECISION NOT NULL DEFAULT 0.5,
     superseded_by BIGINT,
+    pinned BOOLEAN NOT NULL DEFAULT FALSE,
     created_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW(),
     UNIQUE (tenant_id, agent_id, mem_key)

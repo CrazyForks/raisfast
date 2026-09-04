@@ -227,10 +227,24 @@ async fn memory_budget_evicts_by_importance_and_spares_conversation() {
             &format!("core fact {}", i + 1),
             "core",
             *imp,
+            false,
         )
         .await
         .expect("store core row");
     }
+    // One pinned core row with the lowest importance: must survive eviction.
+    ai_memory::store_memory(
+        &pool,
+        Some(&tenant_id),
+        agent.id,
+        "pinned-rule",
+        "pinned low-value rule",
+        "core",
+        0.05,
+        true,
+    )
+    .await
+    .expect("store pinned row");
     // Three conversation rows (never budget-managed).
     for i in 1..=3 {
         ai_memory::store_memory(
@@ -241,6 +255,7 @@ async fn memory_budget_evicts_by_importance_and_spares_conversation() {
             "chatter",
             "conversation",
             0.5,
+            false,
         )
         .await
         .expect("store conversation row");
@@ -256,8 +271,8 @@ async fn memory_budget_evicts_by_importance_and_spares_conversation() {
             .await
             .expect("compact core");
     assert_eq!(
-        report.evicted_by_count, 3,
-        "three lowest-value core rows evicted"
+        report.evicted_by_count, 4,
+        "four lowest-value non-pinned core rows evicted (pinned counts toward the row cap)"
     );
     assert_eq!(report.evicted_by_bytes, 0);
 
@@ -272,8 +287,8 @@ async fn memory_budget_evicts_by_importance_and_spares_conversation() {
     core_keys.sort_unstable();
     assert_eq!(
         core_keys,
-        vec!["k4", "k5"],
-        "highest-importance rows survive"
+        vec!["k5", "pinned-rule"],
+        "highest-importance rows + pinned low-value row survive"
     );
     let conversation_count = live.iter().filter(|m| m.category == "conversation").count();
     assert_eq!(
@@ -291,6 +306,7 @@ async fn memory_budget_evicts_by_importance_and_spares_conversation() {
             "day log",
             "daily",
             *imp,
+            false,
         )
         .await
         .expect("store daily row");

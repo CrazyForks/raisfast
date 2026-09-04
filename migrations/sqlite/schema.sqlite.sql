@@ -1572,6 +1572,7 @@ CREATE TABLE IF NOT EXISTS ai_memories (
     category TEXT NOT NULL DEFAULT 'core',
     importance REAL NOT NULL DEFAULT 0.5,
     superseded_by INTEGER,
+    pinned INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
     updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
     UNIQUE (tenant_id, agent_id, mem_key)

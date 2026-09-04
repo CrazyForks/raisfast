@@ -10,7 +10,7 @@ use crate::utils::tz::{Timestamp, now_utc};
 
 /// Row/column list used by hand-written reads (kept in one place).
 const MEMORY_COLS: &str = "id, tenant_id, agent_id, session_id, mem_key, content, category, \
-    importance, superseded_by, created_at, updated_at";
+    importance, superseded_by, pinned, created_at, updated_at";
 
 /// One memory row.
 #[derive(Debug, Serialize, Deserialize, Clone, sqlx::FromRow)]
@@ -25,6 +25,7 @@ pub struct AiMemory {
     pub category: String,
     pub importance: f64,
     pub superseded_by: Option<SnowflakeId>,
+    pub pinned: bool,
     pub created_at: Timestamp,
     pub updated_at: Timestamp,
 }
@@ -52,6 +53,7 @@ pub async fn find_memory_by_key(
 }
 
 /// Upsert by (tenant, agent, key): update the live row content or insert.
+#[allow(clippy::too_many_arguments)]
 pub async fn store_memory(
     pool: &crate::db::Pool,
     tenant_id: Option<&str>,
@@ -60,6 +62,7 @@ pub async fn store_memory(
     content: &str,
     category: &str,
     importance: f64,
+    pinned: bool,
 ) -> AppResult<AiMemory> {
     if let Some(existing) = find_memory_by_key(pool, agent_id, key, tenant_id).await? {
         let now = now_utc();
@@ -87,6 +90,7 @@ pub async fn store_memory(
             "content" => content,
             "category" => category,
             "importance" => importance,
+            "pinned" => pinned,
             "created_at" => &now,
             "updated_at" => &now
         ],
@@ -307,7 +311,7 @@ async fn evictable_ids(
     // placeholder follows the last scope bind.
     let limit_ph = crate::db::Driver::ph(if tenant_id.is_some() { 4 } else { 3 });
     let sql = format!(
-        "SELECT id FROM ai_memories{} ORDER BY importance ASC, created_at ASC LIMIT {}",
+        "SELECT id FROM ai_memories{} AND pinned = FALSE ORDER BY importance ASC, created_at ASC LIMIT {}",
         live_scope_sql(tenant_id, 1),
         limit_ph
     );

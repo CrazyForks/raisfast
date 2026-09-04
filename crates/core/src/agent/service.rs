@@ -538,6 +538,7 @@ async fn run_turn_inner(
         (trigger, tail)
     });
     let prev_ctx = latest_ctx_row(&existing);
+    let prior_cover = prev_ctx.as_ref().map_or(0, |p| p.cover_seq);
     let (cover_seq, ctx_summary, folded_now) = match ctx_params {
         Some((trigger, tail)) if trigger > 0 => {
             ensure_ctx_window(ai, agent, &existing, prev_ctx, trigger, tail, false).await?
@@ -559,6 +560,29 @@ async fn run_turn_inner(
         )
         .await?;
         seq += 1;
+    }
+    // Memory consolidation (zeroclaw classify/consolidation): the turns just
+    // folded leave the transcript window — extract durable facts into Core
+    // memory so they stay recallable. Optional (RAISFAST_AI_MEMORY_CONSOLIDATE).
+    if folded_now
+        && ai.memory_consolidate
+        && let Err(e) = consolidate_folded_range(
+            pool,
+            ai,
+            agent,
+            tenant_id,
+            &existing,
+            prior_cover,
+            cover_seq,
+        )
+        .await
+    {
+        tracing::warn!(session = session_id.0, error = %e, "memory consolidation failed");
+    } else if folded_now && !ai.memory_consolidate {
+        tracing::warn!(
+            session = session_id.0,
+            "turn folded but memory consolidation disabled; set RAISFAST_AI_MEMORY_CONSOLIDATE=true"
+        );
     }
     if cover_seq > 0 {
         history = existing
@@ -908,6 +932,32 @@ fn sha256_hex(s: &str) -> String {
     out
 }
 
+fn normalize_memory_text(s: &str) -> String {
+    let mut out = s.to_ascii_lowercase();
+    if let Ok(re) = regex::Regex::new(r"alpha[-_ ]?[0-9]+") {
+        out = re.replace_all(&out, "").into_owned();
+    }
+    // Identity normalization for dedupe only: keep letters/digits, drop
+    // whitespace + punctuation so identical facts differing only in spacing or
+    // 标点 compare equal. Content stored is never rewritten.
+    if let Ok(re) = regex::Regex::new(r"[^\p{L}\p{N}]+") {
+        out = re.replace_all(&out, "").into_owned();
+    }
+    out
+}
+
+/// Near-duplicate check across already-stored Core rows: identical normalized
+/// text, or one strongly contained in the other (LLM wording variants of the
+/// same fact) — prevents repeated fold passes from stacking duplicates.
+fn memory_text_duplicate(existing: &[String], norm: &str) -> bool {
+    if norm.is_empty() {
+        return true;
+    }
+    existing
+        .iter()
+        .any(|e| e == norm || (e.len() > 20 && (e.contains(norm) || norm.contains(e))))
+}
+
 fn epoch_snapshot_for(
     agent: &AiAgent,
     tool_names: &[String],
@@ -948,6 +998,142 @@ fn epoch_reason(stored: &EpochSnapshot, current: &EpochSnapshot) -> &'static str
     }
 }
 
+/// Consolidate a folded transcript slice into durable Core memory facts
+/// (zeroclaw classify/consolidation). One extraction LLM call; failures degrade
+/// to a warn and never fail the turn.
+async fn consolidate_folded_memory(
+    pool: &crate::db::Pool,
+    ai: &AiConfig,
+    agent: &AiAgent,
+    tenant: Option<&str>,
+    slice_text: &str,
+) -> AppResult<()> {
+    let provider = provider_for(agent, ai)?;
+    let messages = [ChatMessage {
+        role: ChatRole::User,
+        content: Some(format!(
+            "从下面的对话中抽取值得长期记住的用户偏好/决策/规则/政策/事实（含关键数字）。\
+             如果没有任何值得长期记住的内容，直接返回 []，不要编造，不要保存寒暄、一次性计算或临时任务（宁缺毋滥）。\
+             不要抽取助手关于自身机制/工具使用的自述（如「我不使用主动存储」「系统自动归纳」）、对话过程性描述（谁说了什么、编号递进）。\
+             多轮重复陈述的同一件事必须合并为一条（key 取同一标识），不要按轮次生成多条。\
+             content 只写事实本身（一句可直接使用的规则/偏好），不要把\"规则 ALPHA\"、\"ALPHA-1至N为同一内容\"等编号/重复性说明或括号注释写进 content。\
+             只输出 JSON 数组，每项为 {{\"key\": 简短英文驼峰标识, \"content\": 一句话事实, \"importance\": 0到1数字}}，\
+             最多 8 项，importance 低于 0.6 的不要包含，不要输出其它文字。\n\n{slice_text}"
+        )),
+        tool_calls: None,
+        tool_call_id: None,
+    }];
+    let request = raisfast_agent::provider::ChatRequest {
+        messages: &messages,
+        tools: None,
+        temperature: Some(0.0),
+    };
+    let response = provider
+        .chat(&request, &agent.model)
+        .await
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("memory consolidate failed: {e}")))?;
+    let Some(text) = response.text.filter(|t| !t.trim().is_empty()) else {
+        return Ok(());
+    };
+    let trimmed = text
+        .trim()
+        .trim_start_matches("```json")
+        .trim_end_matches("```")
+        .trim();
+    let Ok(items) = serde_json::from_str::<serde_json::Value>(trimmed) else {
+        tracing::warn!("memory consolidate: could not parse LLM output");
+        return Ok(());
+    };
+    let Some(list) = items.as_array() else {
+        return Ok(());
+    };
+    tracing::info!(n = list.len(), "memory consolidate: LLM extracted items");
+
+    let mut existing_norms: Vec<String> = if list.is_empty() {
+        Vec::new()
+    } else {
+        crate::agent::models::ai_memory::recall_memories(pool, agent.id, tenant, None, 1_000)
+            .await?
+            .into_iter()
+            .filter(|m| m.category == "core")
+            .map(|m| normalize_memory_text(&m.content))
+            .collect()
+    };
+    let mut seen_content = std::collections::HashSet::new();
+    let mut stored = 0usize;
+    let mut skipped_low = 0usize;
+    let mut skipped_dup = 0usize;
+    for item in list.iter().take(8) {
+        let Some(content) = item.get("content").and_then(serde_json::Value::as_str) else {
+            continue;
+        };
+        let content = content.trim();
+        if content.is_empty() {
+            continue;
+        }
+        let importance = item
+            .get("importance")
+            .and_then(serde_json::Value::as_f64)
+            .unwrap_or_else(|| crate::agent::memory_sql::importance_for("core", content))
+            .clamp(0.0, 1.0);
+        // Low-value / fabricated entries are discarded defensively: not every
+        // folded conversation deserves durable memory.
+        if importance < 0.6 {
+            skipped_low += 1;
+            continue;
+        }
+        let norm = normalize_memory_text(content);
+        if !seen_content.insert(norm.clone()) || memory_text_duplicate(&existing_norms, &norm) {
+            skipped_dup += 1;
+            continue;
+        }
+        // Deterministic key from normalized content: same fact (even under
+        // LLM wording/numbering drift) upserts instead of piling duplicates.
+        let key = format!("fact_{}", &sha256_hex(&norm)[..12]);
+        if let Err(e) = crate::agent::models::ai_memory::store_memory(
+            pool, tenant, agent.id, &key, content, "core", importance, false,
+        )
+        .await
+        {
+            tracing::warn!(key = %key, error = %e, "memory consolidate store failed");
+            continue;
+        }
+        existing_norms.push(norm);
+        stored += 1;
+    }
+    tracing::info!(
+        stored,
+        skipped_low,
+        skipped_dup,
+        "memory consolidation finished"
+    );
+    Ok(())
+}
+
+/// Extract durable facts from rows whose `seq` falls in `(prior_cover,
+/// new_cover]` — i.e. exactly the turns this fold took out of the window.
+async fn consolidate_folded_range(
+    pool: &crate::db::Pool,
+    ai: &AiConfig,
+    agent: &AiAgent,
+    tenant: Option<&str>,
+    existing: &[AiMessage],
+    prior_cover: i64,
+    new_cover: i64,
+) -> AppResult<()> {
+    let is_conv = |r: &AiMessage| matches!(r.role.as_str(), "user" | "assistant" | "tool");
+    let rows: Vec<(String, String)> = existing
+        .iter()
+        .filter(|r| r.seq > prior_cover && r.seq <= new_cover && is_conv(r))
+        .map(|r| (r.role.clone(), r.content.clone()))
+        .collect();
+    if !rows.is_empty() {
+        let text = crate::agent::context::fold_text(&rows);
+        consolidate_folded_memory(pool, ai, agent, tenant, &text).await?;
+    }
+    Ok(())
+}
+
 /// Latest durable fold state from the transcript (`context:summary` rows are
 /// the single source; the newest row wins). Returns `None` when never folded.
 fn latest_ctx_row(rows: &[AiMessage]) -> Option<crate::agent::context::CtxState> {
@@ -982,6 +1168,7 @@ pub async fn compact_session(
         })
         .unwrap_or(8_000);
     let prev_ctx = latest_ctx_row(&existing);
+    let prior_cover = prev_ctx.as_ref().map_or(0, |p| p.cover_seq);
     let (cover, summary, folded_now) =
         ensure_ctx_window(ai, agent, &existing, prev_ctx, 0, tail, true).await?;
     if folded_now && let Some(text) = summary.as_deref() {
@@ -997,6 +1184,20 @@ pub async fn compact_session(
             &base_message_in(session_id, marker_seq, "meta", "context:summary", &content),
         )
         .await?;
+        // Manual compact also consolidates the freshly folded turns into Core
+        // memory (same semantics as the automatic fold path).
+        if ai.memory_consolidate
+            && let Err(e) =
+                consolidate_folded_range(pool, ai, agent, tenant, &existing, prior_cover, cover)
+                    .await
+        {
+            tracing::warn!(session = session_id.0, error = %e, "memory consolidation failed");
+        } else if !ai.memory_consolidate {
+            tracing::warn!(
+                session = session_id.0,
+                "compact folded but memory consolidation disabled; set RAISFAST_AI_MEMORY_CONSOLIDATE=true"
+            );
+        }
     }
     Ok((cover > 0).then(|| (cover, summary.unwrap_or_default())))
 }
@@ -1088,14 +1289,31 @@ async fn ensure_ctx_window(
 
     // Keep only the newest suffix that fits `preserve_recent` (tail budget).
     let eff_tail = tail_chars.saturating_sub(ctx_chars);
-    let Some(cov) = select_cover(&meta, eff_tail) else {
-        // Everything already fits the tail budget (or a single turn is bigger
-        // than the budget — kept whole, engine needs whole turns for tool pairs).
-        return Ok((
-            prev.as_ref().map_or(0, |p| p.cover_seq),
-            prev.filter(|p| p.cover_seq > 0).map(|p| p.text),
-            false,
-        ));
+    let cov = match select_cover(&meta, eff_tail) {
+        Some(c) => c,
+        None if force => {
+            // Manual compact: fold everything older than the newest whole turn
+            // even when the transcript would otherwise fit the tail budget.
+            match meta.iter().rposition(|r| r.is_user) {
+                Some(last_user) if last_user > 0 => last_user - 1,
+                _ => {
+                    return Ok((
+                        prev.as_ref().map_or(0, |p| p.cover_seq),
+                        prev.filter(|p| p.cover_seq > 0).map(|p| p.text),
+                        false,
+                    ));
+                }
+            }
+        }
+        None => {
+            // Everything already fits the tail budget (or a single turn is bigger
+            // than the budget — kept whole, engine needs whole turns for tool pairs).
+            return Ok((
+                prev.as_ref().map_or(0, |p| p.cover_seq),
+                prev.filter(|p| p.cover_seq > 0).map(|p| p.text),
+                false,
+            ));
+        }
     };
 
     // Fold base[0..=cov] (plus the previous summary if any) into one new summary.

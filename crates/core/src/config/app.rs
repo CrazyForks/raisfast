@@ -632,6 +632,11 @@ pub struct AiConfig {
     pub context_window_map: Option<serde_json::Value>,
     #[serde(default)]
     pub context_output_reserve: i64,
+    /// Consolidate folded transcript turns into Core memory facts (zeroclaw
+    /// classify/consolidation). Env `RAISFAST_AI_MEMORY_CONSOLIDATE` (default
+    /// false); runs one extraction LLM call per fold.
+    #[serde(default)]
+    pub memory_consolidate: bool,
 }
 
 fn default_ai_timeout_secs() -> u64 {
@@ -651,6 +656,7 @@ impl Default for AiConfig {
             memory_core_max_rows: 0,
             memory_core_max_bytes: 0,
             memory_daily_max_rows: 0,
+            memory_consolidate: false,
             context_window_fallback: 0,
             context_window_map: None,
             context_output_reserve: 0,
@@ -697,6 +703,10 @@ impl AiConfig {
                 .ok()
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(0),
+            memory_consolidate: env::var("RAISFAST_AI_MEMORY_CONSOLIDATE")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(false),
             context_window_fallback: env::var("RAISFAST_AI_CONTEXT_WINDOW_FALLBACK")
                 .ok()
                 .and_then(|v| v.parse().ok())
