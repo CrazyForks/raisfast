@@ -423,13 +423,32 @@ struct OpenAiUsage {
     prompt_tokens: Option<u64>,
     #[serde(default)]
     completion_tokens: Option<u64>,
+    /// DeepSeek field for auto KV-cache hits.
+    #[serde(default)]
+    prompt_cache_hit_tokens: Option<u64>,
+    /// OpenAI field (non-streaming chat completions): `prompt_tokens_details.cached_tokens`.
+    #[serde(default)]
+    prompt_tokens_details: Option<PromptTokensDetails>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct PromptTokensDetails {
+    #[serde(default)]
+    cached_tokens: Option<u64>,
 }
 
 impl From<OpenAiUsage> for TokenUsage {
     fn from(u: OpenAiUsage) -> Self {
+        let cache_read = u.prompt_cache_hit_tokens.or_else(|| {
+            u.prompt_tokens_details
+                .as_ref()
+                .and_then(|d| d.cached_tokens)
+        });
         Self {
             input_tokens: u.prompt_tokens,
             output_tokens: u.completion_tokens,
+            cache_read,
+            cache_write: None,
         }
     }
 }

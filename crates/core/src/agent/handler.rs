@@ -58,6 +58,17 @@ pub fn routes(
         r,
         registry,
         _config.api_restful,
+        "/admin/ai/agents/{id}",
+        put,
+        admin_update_agent,
+        "system",
+        "admin/ai/agents",
+        "admin"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        _config.api_restful,
         "/ai/agents/{agent_id}/sessions",
         post,
         create_session,
@@ -97,6 +108,17 @@ pub fn routes(
         "system",
         "admin/ai/agents/usage",
         "admin"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        _config.api_restful,
+        "/ai/sessions/{id}/compact",
+        post,
+        compact_session,
+        "system",
+        "ai/sessions/compact",
+        "authed"
     );
     reg_route!(
         r,
@@ -276,6 +298,35 @@ pub async fn get_messages(
 #[derive(Deserialize)]
 pub struct TurnReq {
     pub content: String,
+}
+
+/// `POST /api/v1/ai/sessions/{id}/compact` — manual LLM compaction (opencode
+/// `/compact` analog). Folds the oldest turns into a durable summary now.
+pub async fn compact_session(
+    auth: AuthUser,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> AppResult<ApiResponse<serde_json::Value>> {
+    let owner = current_owner(&auth)?;
+    let id = crate::types::snowflake_id::parse_id(&id)?;
+    let session = ai_service::find_session(&state.pool, id, auth.tenant_id()).await?;
+    if session.owner_id != owner {
+        return Err(AppError::ForbiddenOwnership);
+    }
+    let agent = ai_service::find_agent(&state.pool, session.agent_id, auth.tenant_id()).await?;
+    let result = ai_service::compact_session(
+        &state.pool,
+        &state.config.ai,
+        &agent,
+        session.id,
+        auth.tenant_id(),
+    )
+    .await?;
+    Ok(ApiResponse::success(json!({
+        "compacted": result.is_some(),
+        "cover_seq": result.as_ref().map(|(c, _)| c),
+        "summary": result.map(|(_, s)| s),
+    })))
 }
 
 /// `POST /api/v1/ai/sessions/{id}/turns` — streamed SSE of one turn.

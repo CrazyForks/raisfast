@@ -2,7 +2,7 @@
 #
 # 真实模型冒烟：transcript 上下文折叠（LLM consolidation）
 # 前提：
-#   - 服务以 RAISFAST_AI_CONTEXT_BUDGET_TOKENS=<较小值，如 350> 启动（触发折叠）
+#   - 服务配置模型窗口以触发折叠：RAISFAST_AI_CONTEXT_WINDOW_FALLBACK=<窗口token，如 8192>（0=关）；可选 RAISFAST_AI_MODEL_CONTEXT_JSON='{"<model>": <窗口>}' 精确到模型、RAISFAST_AI_CONTEXT_OUTPUT_RESERVE=输出预留
 #   - BASE_URL · RAISFAST_ADMIN_TOKEN · RAISFAST_AI_BASE_URL/API_KEY/MODEL
 #   - (可选) RAISFAST_DB_URL：PG URL，用于断言 ai_sessions.meta.ctx 已持久化
 # 观测点：多轮长对话后，模型仍能引用最早确立的事项（摘要保留事实）；meta.ctx 写入。
@@ -69,7 +69,7 @@ fi
 # 持久化断言（sqlite 优先；RAISFAST_SQLITE_DB 覆盖默认路径）
 DB_FILE="${RAISFAST_SQLITE_DB:-storage/db/raisfast.db}"
 if command -v sqlite3 >/dev/null 2>&1 && [ -f "$DB_FILE" ]; then
-  CTX=$(sqlite3 "$DB_FILE" "SELECT meta->>'ctx' FROM ai_sessions WHERE title='ctx-smoke-$TS' ORDER BY updated_at DESC LIMIT 1" 2>/dev/null || true)
+  CTX=$(sqlite3 "$DB_FILE" "SELECT m.content FROM ai_messages m JOIN ai_sessions s ON s.id=m.session_id WHERE m.kind='context:summary' AND s.title='ctx-smoke-$TS' ORDER BY m.seq DESC LIMIT 1" 2>/dev/null || true)
   if [ -n "$CTX" ] && [ "$CTX" != "null" ] && [ "$CTX" != "" ]; then
     COVER=$(printf '%s' "$CTX" | grep -oE '"cover_seq":[0-9]+' | head -1 | grep -oE '[0-9]+' || true)
     NCNT=$(printf '%s' "$CTX" | grep -o '编号[0-9]' | wc -l | tr -d ' ')

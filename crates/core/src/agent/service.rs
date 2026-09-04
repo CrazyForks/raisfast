@@ -86,8 +86,106 @@ fn provider_for(agent: &AiAgent, ai: &AiConfig) -> AppResult<Arc<dyn ModelProvid
     )))
 }
 
+/// Model context window (tokens), zeroclaw config semantics: per-model map
+/// (`RAISFAST_AI_MODEL_CONTEXT_JSON`) wins; otherwise the operator fallback
+/// (`RAISFAST_AI_CONTEXT_WINDOW_FALLBACK`). `None` = windowing disabled.
+fn model_context_window(agent: &AiAgent, ai: &AiConfig) -> Option<i64> {
+    let window = ai
+        .context_window_map
+        .as_ref()
+        .and_then(|m| m.get(&agent.model))
+        .and_then(serde_json::Value::as_i64)
+        .or(Some(ai.context_window_fallback))
+        .unwrap_or(0);
+    (window > 0).then_some(window)
+}
+
+/// Rough tokens consumed by the tool schemas sent to the model.
+fn tool_overhead_tokens(tools: &ToolRegistry) -> i64 {
+    let mut chars = 0usize;
+    for spec in tools.specs() {
+        chars += spec.name.len() + spec.description.len();
+        chars += serde_json::to_string(&spec.parameters).map_or(0, |s| s.len());
+    }
+    (chars / 4) as i64
+}
+
 fn turn_error(e: TurnError) -> AppError {
     AppError::Internal(anyhow::anyhow!(e.to_string()))
+}
+
+/// Heuristic context-overflow detection (provider error wording varies).
+fn is_context_overflow(e: &AppError) -> bool {
+    let s = e.to_string().to_ascii_lowercase();
+    [
+        "maximum context",
+        "context length",
+        "context_length_exceeded",
+        "reduce the length",
+        "token limit",
+        "too many tokens",
+        "maximum tokens",
+    ]
+    .iter()
+    .any(|k| s.contains(k))
+}
+
+/// Rough tokens of one chat message (chars/4; tool payload serialized).
+fn estimate_message_tokens(m: &ChatMessage) -> usize {
+    let mut chars = m.content.as_deref().map_or(0, |s| s.chars().count());
+    chars += m.tool_call_id.as_deref().map_or(0, |s| s.len() / 4);
+    if let Some(calls) = &m.tool_calls {
+        chars += serde_json::to_string(calls).map_or(0, |s| s.len() / 4);
+    }
+    chars.div_ceil(4) + 1
+}
+
+/// Emergency overflow recovery (zeroclaw loop semantics): drop oldest messages
+/// until the estimate fits `target` tokens, then prepend a breadcrumb. Never
+/// empties the history and never leaves a dangling tool/assistant prefix.
+fn trim_history_to_budget(history: &mut Vec<ChatMessage>, target: usize) -> bool {
+    if history.len() <= 1 {
+        return false;
+    }
+    let mut est: usize = history.iter().map(estimate_message_tokens).sum();
+    if est <= target {
+        return false;
+    }
+    let original = history.len();
+    while history.len() > 1 && est > target {
+        history.remove(0);
+        est = history.iter().map(estimate_message_tokens).sum();
+    }
+    // Cut any orphaned tool/assistant prefix down to the next user/system turn.
+    while !history.is_empty() && !matches!(history[0].role, ChatRole::User | ChatRole::System) {
+        history.remove(0);
+        est = history.iter().map(estimate_message_tokens).sum();
+    }
+    if history.len() >= original {
+        return false;
+    }
+    if let Some(first) = history.first()
+        && first
+            .content
+            .as_deref()
+            .is_some_and(|c| c.contains("自动摘要") || c.contains("自动裁剪"))
+    {
+        return true;
+    }
+    history.insert(
+        0,
+        ChatMessage {
+            role: ChatRole::User,
+            content: Some(
+                "（为适应上下文上限，较早对话已被自动裁剪；需要时可先用 memory_recall 检索已记忆内容）"
+                    .to_string(),
+            ),
+            tool_calls: None,
+            tool_call_id: None,
+        },
+    );
+    let _ = est;
+    true
 }
 
 /// Map a stored row back to the flat engine message (meta/system skipped).
@@ -181,6 +279,8 @@ async fn persist_delta(
                 row.usage = Some(json!({
                     "input": u.input_tokens,
                     "output": u.output_tokens,
+                    "cache_read": u.cache_read,
+                    "cache_write": u.cache_write,
                 }));
             }
             usage_idx += 1;
@@ -320,31 +420,7 @@ async fn run_turn_inner(
     // Load existing transcript (meta/system rows skipped) for continuity.
     let existing =
         ai_message::list_messages_after(pool, session_id, tenant_id, None, 10_000).await?;
-
-    // Context window (LLM consolidation, default off): fold oldest whole turns
-    // beyond the token budget into a durable summary replayed as a leading
-    // context block. `cover_seq` > 0 means a prefix is already folded.
-    let (cover_seq, ctx_summary) =
-        ensure_ctx_window(pool, ai, agent, session_id, tenant_id, &existing).await?;
-    let mut history: Vec<ChatMessage> = existing
-        .iter()
-        .filter(|r| r.seq > cover_seq)
-        .filter_map(row_to_chat_message)
-        .collect();
-    if let Some(text) = ctx_summary {
-        history.insert(
-            0,
-            ChatMessage {
-                role: ChatRole::User,
-                content: Some(format!(
-                    "（以下是较早对话的自动摘要；需要找回摘要前的细节时用 memory_recall 或明确提问）\n{text}"
-                )),
-                tool_calls: None,
-                tool_call_id: None,
-            },
-        );
-    }
-    let old_len = history.len();
+    let mut history: Vec<ChatMessage> = existing.iter().filter_map(row_to_chat_message).collect();
 
     // Memory-tier hygiene (zeroclaw budget.rs semantics): keep core/daily rows
     // within configured caps. Best effort — eviction failures never fail a turn.
@@ -397,6 +473,115 @@ async fn run_turn_inner(
     let skills_section = crate::agent::skills::render_skills(&loaded_skills, skills_full);
     let assembled =
         crate::agent::prompt::assemble_with_skills(agent, &tool_names, skills_section.as_deref());
+
+    // Mini Epoch (opencode context-epoch): when context windowing is on,
+    // fingerprint the inputs behind the system text and persist a stable
+    // baseline; rebuild (and record why) only when a fingerprint changes.
+    let mut epoch_event: Option<(bool, &'static str)> = None;
+    if model_context_window(agent, ai).is_some() {
+        let cur = epoch_snapshot_for(agent, &tool_names, &loaded_skills);
+        let session =
+            crate::agent::models::ai_session::find_session_by_id(pool, session_id, tenant_id)
+                .await?;
+        let stored: Option<EpochState> = session
+            .meta
+            .as_ref()
+            .and_then(|m| m.get("epoch"))
+            .and_then(|v| serde_json::from_value(v.clone()).ok());
+        let (reused, reason) = match &stored {
+            Some(e) if e.snapshot == cur => (true, "reuse"),
+            Some(e) => (false, epoch_reason(&e.snapshot, &cur)),
+            None => (false, "first"),
+        };
+        if !reused {
+            let state = EpochState {
+                baseline: assembled.text.clone(),
+                snapshot: cur,
+                baseline_seq: existing.last().map_or(0, |r| r.seq),
+            };
+            let mut meta = session
+                .meta
+                .clone()
+                .unwrap_or_else(|| serde_json::json!({}));
+            if let Some(o) = meta.as_object_mut() {
+                o.insert(
+                    "epoch".to_string(),
+                    serde_json::to_value(&state).unwrap_or(serde_json::Value::Null),
+                );
+            }
+            crate::agent::models::ai_session::update_session_meta(
+                pool, session_id, tenant_id, meta,
+            )
+            .await?;
+            tracing::info!(session = session_id.0, reason, "context epoch rebuilt");
+        }
+        epoch_event = Some((reused, reason));
+    }
+
+    // Context-window fold decision (opencode compaction semantics): usable =
+    // window − reserve; folding triggers when estimated history exceeds
+    // `usable − (system+tools+user)`; the retained tail budget is opencode's
+    // `preserve_recent = clamp(2k, 15k, usable*0.25)`.
+    let ctx_params = model_context_window(agent, ai).map(|window| {
+        let reserve = if ai.context_output_reserve > 0 {
+            ai.context_output_reserve.min(window * 9 / 10)
+        } else {
+            let auto = (window / 10).max(20_000);
+            auto.min(window * 9 / 10)
+        };
+        let usable = window - reserve;
+        let overhead = (assembled.system_chars as i64) / 4
+            + tool_overhead_tokens(&tools)
+            + (user.chars().count() as i64) / 4;
+        let trigger = usable - overhead;
+        let tail = (usable * 25 / 100).clamp(2_000, 15_000);
+        (trigger, tail)
+    });
+    let prev_ctx = latest_ctx_row(&existing);
+    let (cover_seq, ctx_summary, folded_now) = match ctx_params {
+        Some((trigger, tail)) if trigger > 0 => {
+            ensure_ctx_window(ai, agent, &existing, prev_ctx, trigger, tail, false).await?
+        }
+        _ => (0, None, false),
+    };
+    // Persist the fold as an observable transcript row (opencode compaction
+    // shape: the canonical `context:summary` message), then advance seq.
+    if folded_now && let Some(text) = ctx_summary.as_deref() {
+        let state = crate::agent::context::CtxState {
+            cover_seq,
+            text: text.to_string(),
+        };
+        let content = serde_json::to_string(&state).unwrap_or_else(|_| text.to_string());
+        ai_message::append_message(
+            pool,
+            tenant_id,
+            &base_message_in(session_id, seq, "meta", "context:summary", &content),
+        )
+        .await?;
+        seq += 1;
+    }
+    if cover_seq > 0 {
+        history = existing
+            .iter()
+            .filter(|r| r.seq > cover_seq)
+            .filter_map(row_to_chat_message)
+            .collect();
+        if let Some(text) = ctx_summary {
+            history.insert(
+                0,
+                ChatMessage {
+                    role: ChatRole::User,
+                    content: Some(format!(
+                        "（以下是较早对话的自动摘要；需要找回摘要前的细节时用 memory_recall 或明确提问）\n{text}"
+                    )),
+                    tool_calls: None,
+                    tool_call_id: None,
+                },
+            );
+        }
+    }
+    let mut old_len = history.len();
+
     let provider = provider_for(agent, ai)?;
     let engine = TurnEngine::new(
         provider,
@@ -413,15 +598,42 @@ async fn run_turn_inner(
         engine = engine.with_cancel(c);
     }
 
-    let outcome = match emitter.take() {
-        Some(mut cb) => engine
-            .run_streamed(&mut history, Some(&assembled.text), user, &mut cb)
-            .await
-            .map_err(turn_error)?,
-        None => engine
-            .run(&mut history, Some(&assembled.text), user)
-            .await
-            .map_err(turn_error)?,
+    // Context overflow fallback (zeroclaw loop recovery): if the provider
+    // still rejects on context length (estimation drift), drop oldest whole
+    // messages and retry once — no summarization in this path.
+    let mut overflow_trimmed = false;
+    let outcome = loop {
+        let result = match emitter.as_mut() {
+            Some(cb) => engine
+                .run_streamed(&mut history, Some(&assembled.text), user, cb)
+                .await
+                .map_err(turn_error),
+            None => engine
+                .run(&mut history, Some(&assembled.text), user)
+                .await
+                .map_err(turn_error),
+        };
+        match result {
+            Ok(outcome) => break outcome,
+            Err(e) => {
+                let Some(window) = model_context_window(agent, ai) else {
+                    return Err(e);
+                };
+                if overflow_trimmed || !is_context_overflow(&e) {
+                    return Err(e);
+                }
+                let target = (window as usize) * 8 / 10;
+                if !trim_history_to_budget(&mut history, target) {
+                    return Err(e);
+                }
+                old_len = history.len();
+                overflow_trimmed = true;
+                tracing::warn!(
+                    session = session_id.0,
+                    "context overflow: dropped old turns and retrying"
+                );
+            }
+        }
     };
 
     // Two-phase (2): persist assistant/tool rows appended by the engine.
@@ -458,6 +670,12 @@ async fn run_turn_inner(
         "usage_total": outcome.usage.as_ref().map(|u| json!({
             "input": u.input_tokens,
             "output": u.output_tokens,
+            "cache_read": u.cache_read,
+            "cache_write": u.cache_write,
+        })),
+        "epoch": epoch_event.map(|(reused, reason)| json!({
+            "reused": reused,
+            "reason": reason,
         })),
     });
     ai_message::append_message(
@@ -660,6 +878,129 @@ async fn memory_hygiene(
     }
 }
 
+/// Durable system-baseline state (mini Epoch, opencode context-epoch shape).
+/// `snapshot` fingerprints every input that produces the system text; when it
+/// changes we rebuild `baseline` and record a coarse rebuild reason.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
+struct EpochSnapshot {
+    template: u32,
+    agent: String,
+    tools: String,
+    skills: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+struct EpochState {
+    baseline: String,
+    snapshot: EpochSnapshot,
+    baseline_seq: i64,
+}
+
+fn sha256_hex(s: &str) -> String {
+    use sha2::Digest;
+    let mut hasher = sha2::Sha256::new();
+    hasher.update(s.as_bytes());
+    let digest = hasher.finalize();
+    let mut out = String::with_capacity(64);
+    for b in digest {
+        out.push_str(&format!("{b:02x}"));
+    }
+    out
+}
+
+fn epoch_snapshot_for(
+    agent: &AiAgent,
+    tool_names: &[String],
+    loaded_skills: &[crate::agent::skills::LoadedSkill],
+) -> EpochSnapshot {
+    let mut tools: Vec<String> = tool_names.to_vec();
+    tools.sort();
+    let skills_fp: String = loaded_skills
+        .iter()
+        .map(|sk| {
+            format!(
+                "{}:{}",
+                sk.name,
+                sha256_hex(&format!("{}||{}", sk.instructions, sk.tools.join(",")))
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("|");
+    EpochSnapshot {
+        template: crate::agent::prompt::PromptRegistry.current_version(),
+        agent: sha256_hex(&format!("{}||{}", agent.name, agent.system_prompt)),
+        tools: sha256_hex(&tools.join(",")),
+        skills: sha256_hex(&skills_fp),
+    }
+}
+
+fn epoch_reason(stored: &EpochSnapshot, current: &EpochSnapshot) -> &'static str {
+    if stored.agent != current.agent {
+        "agent"
+    } else if stored.tools != current.tools {
+        "tools"
+    } else if stored.skills != current.skills {
+        "skills"
+    } else if stored.template != current.template {
+        "template"
+    } else {
+        "unknown"
+    }
+}
+
+/// Latest durable fold state from the transcript (`context:summary` rows are
+/// the single source; the newest row wins). Returns `None` when never folded.
+fn latest_ctx_row(rows: &[AiMessage]) -> Option<crate::agent::context::CtxState> {
+    rows.iter()
+        .filter(|r| r.kind == "context:summary")
+        .filter_map(|r| serde_json::from_str::<crate::agent::context::CtxState>(&r.content).ok())
+        .next_back()
+}
+
+/// Manual compaction (`POST /ai/sessions/{id}/compact`): force a fold with the
+/// model-window tail budget regardless of the trigger. Returns the new
+/// `(cover_seq, summary)` or `None` when there was nothing to compact. Also
+/// persists an observable `context:summary` transcript row when folded.
+pub async fn compact_session(
+    pool: &crate::db::Pool,
+    ai: &AiConfig,
+    agent: &AiAgent,
+    session_id: SnowflakeId,
+    tenant: Option<&str>,
+) -> AppResult<Option<(i64, String)>> {
+    let existing = ai_message::list_messages_after(pool, session_id, tenant, None, 10_000).await?;
+    let tail = model_context_window(agent, ai)
+        .map(|window| {
+            let reserve = if ai.context_output_reserve > 0 {
+                ai.context_output_reserve.min(window * 9 / 10)
+            } else {
+                let auto = (window / 10).max(20_000);
+                auto.min(window * 9 / 10)
+            };
+            let usable = window - reserve;
+            (usable * 25 / 100).clamp(2_000, 15_000)
+        })
+        .unwrap_or(8_000);
+    let prev_ctx = latest_ctx_row(&existing);
+    let (cover, summary, folded_now) =
+        ensure_ctx_window(ai, agent, &existing, prev_ctx, 0, tail, true).await?;
+    if folded_now && let Some(text) = summary.as_deref() {
+        let marker_seq = ai_message::next_seq(pool, session_id, tenant).await?;
+        let state = crate::agent::context::CtxState {
+            cover_seq: cover,
+            text: text.to_string(),
+        };
+        let content = serde_json::to_string(&state).unwrap_or_else(|_| text.to_string());
+        ai_message::append_message(
+            pool,
+            tenant,
+            &base_message_in(session_id, marker_seq, "meta", "context:summary", &content),
+        )
+        .await?;
+    }
+    Ok((cover > 0).then(|| (cover, summary.unwrap_or_default())))
+}
+
 /// Summarize a folded transcript slice with one provider call (temperature 0).
 /// Fails turn-friendly: caller degrades to no-folding on any error.
 async fn summarize_transcript(ai: &AiConfig, agent: &AiAgent, combined: &str) -> AppResult<String> {
@@ -687,36 +1028,37 @@ async fn summarize_transcript(ai: &AiConfig, agent: &AiAgent, combined: &str) ->
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("context summarize returned empty")))
 }
 
-/// Context-window decision (default off when `context_budget_tokens == 0`).
-/// Returns `(cover_seq, summary_text)`: `cover_seq > 0` means older rows are
-/// folded and `summary_text` is the durable context block to replay first.
+/// Context-window decision (opencode compaction semantics adapted to our
+/// append-only replay). `trigger_tokens`: fold when estimated history exceeds
+/// usable-minus-overhead; `tail_tokens`: keep only the newest suffix that fits
+/// `preserve_recent` (opencode `clamp(2k,15k, usable*0.25)`). Returns
+/// `(cover_seq, summary_text, folded_now)`: `cover_seq > 0` means older rows
+/// are folded, `summary_text` is the durable context block replayed first and
+/// `folded_now` signals the caller to persist the `context:summary` row.
 ///
-/// Reference: zeroclaw consolidation semantics; state persisted on the session
-/// (`meta.ctx`) — host-owned `[自造]` durability, no transcript rewrite.
+/// Reference: opencode `session/compaction.ts select()` + zeroclaw
+/// consolidation; the canonical fold row (`context:summary`) is host-owned and
+/// persisted by the caller (single source, opencode compaction shape).
+#[allow(clippy::too_many_arguments)]
 async fn ensure_ctx_window(
-    pool: &crate::db::Pool,
     ai: &AiConfig,
     agent: &AiAgent,
-    session_id: SnowflakeId,
-    tenant_id: Option<&str>,
     existing: &[AiMessage],
-) -> AppResult<(i64, Option<String>)> {
-    if ai.context_budget_tokens <= 0 {
-        return Ok((0, None));
+    prev: Option<crate::agent::context::CtxState>,
+    trigger_tokens: i64,
+    tail_tokens: i64,
+    force: bool,
+) -> AppResult<(i64, Option<String>, bool)> {
+    if !force && trigger_tokens <= 0 {
+        return Ok((0, None, false));
     }
-    use crate::agent::context::{CtxState, RowMeta, fold_text, select_cover};
+    use crate::agent::context::{RowMeta, fold_text, select_cover};
 
     let is_conv = |r: &AiMessage| matches!(r.role.as_str(), "user" | "assistant" | "tool");
-    let session =
-        crate::agent::models::ai_session::find_session_by_id(pool, session_id, tenant_id).await?;
-    let prev: Option<CtxState> = session
-        .meta
-        .as_ref()
-        .and_then(|m| m.get("ctx"))
-        .and_then(|v| serde_json::from_value(v.clone()).ok());
+    let ctx_chars = prev.as_ref().map_or(0, |p| p.text.len() + 64);
 
-    let budget_chars = (ai.context_budget_tokens.max(1) as usize) * 4;
-    let ctx_overhead = prev.as_ref().map_or(0, |p| p.text.len() + 64);
+    let trigger_chars = (trigger_tokens.max(0) as usize) * 4;
+    let tail_chars = (tail_tokens.max(1_000) as usize) * 4;
     let base: Vec<&AiMessage> = existing
         .iter()
         .filter(|r| r.seq > prev.as_ref().map_or(0, |p| p.cover_seq) && is_conv(r))
@@ -733,13 +1075,26 @@ async fn ensure_ctx_window(
                 .saturating_add(r.tool_error.as_deref().map_or(0, |s| s.len() + 16)),
         })
         .collect();
+    let history_chars: usize = meta.iter().map(|r| r.len).sum();
 
-    let eff_budget = budget_chars.saturating_sub(ctx_overhead);
-    let Some(cov) = select_cover(&meta, eff_budget) else {
-        // Fits now: replay any existing fold as the leading block.
+    // No fold needed unless history (+existing ctx) exceeds the trigger.
+    if !force && history_chars + ctx_chars <= trigger_chars {
         return Ok((
             prev.as_ref().map_or(0, |p| p.cover_seq),
             prev.filter(|p| p.cover_seq > 0).map(|p| p.text),
+            false,
+        ));
+    }
+
+    // Keep only the newest suffix that fits `preserve_recent` (tail budget).
+    let eff_tail = tail_chars.saturating_sub(ctx_chars);
+    let Some(cov) = select_cover(&meta, eff_tail) else {
+        // Everything already fits the tail budget (or a single turn is bigger
+        // than the budget — kept whole, engine needs whole turns for tool pairs).
+        return Ok((
+            prev.as_ref().map_or(0, |p| p.cover_seq),
+            prev.filter(|p| p.cover_seq > 0).map(|p| p.text),
+            false,
         ));
     };
 
@@ -756,32 +1111,17 @@ async fn ensure_ctx_window(
     let summary = match summarize_transcript(ai, agent, &combined).await {
         Ok(s) => s,
         Err(e) => {
-            tracing::warn!(session = session_id.0, error = %e, "context fold summarize failed; keeping full replay");
+            tracing::warn!(error = %e, "context fold summarize failed; keeping full replay");
             return Ok((
                 prev.as_ref().map_or(0, |p| p.cover_seq),
                 prev.filter(|p| p.cover_seq > 0).map(|p| p.text),
+                false,
             ));
         }
     };
 
     let new_cover = base[cov].seq;
-    let state = CtxState {
-        cover_seq: new_cover,
-        text: summary.clone(),
-    };
-    let mut meta_json = session
-        .meta
-        .clone()
-        .unwrap_or_else(|| serde_json::json!({}));
-    if let Some(obj) = meta_json.as_object_mut() {
-        obj.insert(
-            "ctx".to_string(),
-            serde_json::to_value(&state).unwrap_or(serde_json::Value::Null),
-        );
-    }
-    crate::agent::models::ai_session::update_session_meta(pool, session_id, tenant_id, meta_json)
-        .await?;
-    Ok((new_cover, Some(summary)))
+    Ok((new_cover, Some(summary), true))
 }
 
 /// Daily usage of one agent over the last `days` (default 30, clamped to 1-90).
@@ -794,6 +1134,8 @@ pub struct AgentUsageDay {
     pub input_tokens: i64,
     pub output_tokens: i64,
     pub tool_calls: i64,
+    /// Discounted prompt-cache hit input tokens reported by the provider.
+    pub cache_read_tokens: i64,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -804,6 +1146,7 @@ pub struct AgentUsageReport {
     pub total_input_tokens: i64,
     pub total_output_tokens: i64,
     pub total_tool_calls: i64,
+    pub total_cache_read_tokens: i64,
     pub daily: Vec<AgentUsageDay>,
 }
 
@@ -839,6 +1182,10 @@ pub async fn usage_report(
             .get("tool_calls_made")
             .and_then(serde_json::Value::as_i64)
             .unwrap_or(0);
+        let cache_read = usage
+            .and_then(|u| u.get("cache_read"))
+            .and_then(serde_json::Value::as_i64)
+            .unwrap_or(0);
         let date = row.created_at.format("%Y-%m-%d").to_string();
         let bucket = buckets.entry(date.clone()).or_insert(AgentUsageDay {
             date,
@@ -846,11 +1193,13 @@ pub async fn usage_report(
             input_tokens: 0,
             output_tokens: 0,
             tool_calls: 0,
+            cache_read_tokens: 0,
         });
         bucket.turns += 1;
         bucket.input_tokens += input;
         bucket.output_tokens += output;
         bucket.tool_calls += tool_calls;
+        bucket.cache_read_tokens += cache_read;
     }
 
     let mut report = AgentUsageReport {
@@ -860,6 +1209,7 @@ pub async fn usage_report(
         total_input_tokens: 0,
         total_output_tokens: 0,
         total_tool_calls: 0,
+        total_cache_read_tokens: 0,
         daily: buckets.into_values().collect(),
     };
     for day in &report.daily {
@@ -867,6 +1217,7 @@ pub async fn usage_report(
         report.total_input_tokens += day.input_tokens;
         report.total_output_tokens += day.output_tokens;
         report.total_tool_calls += day.tool_calls;
+        report.total_cache_read_tokens += day.cache_read_tokens;
     }
     Ok(report)
 }

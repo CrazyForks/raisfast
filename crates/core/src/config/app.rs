@@ -615,12 +615,23 @@ pub struct AiConfig {
     pub memory_core_max_bytes: i64,
     #[serde(default)]
     pub memory_daily_max_rows: i64,
-    /// Replay token budget for one session turn (`0` = disabled). When the raw
-    /// transcript would exceed it, the oldest turns are folded into a durable
-    /// summary (`ai_sessions.meta.ctx`) via one summarization call and only the
-    /// recent tail + summary are replayed (zeroclaw consolidation semantics).
+    /// Context-window driven replay budget (zeroclaw `context_window` +
+    /// `recovery_budget = window*9/10` semantics; proactive fold is our
+    /// evolution). `0` = windowing disabled.
+    ///
+    /// - `RAISFAST_AI_CONTEXT_WINDOW_FALLBACK`: window tokens when the model is
+    ///   not in the map (default 0 = off).
+    /// - `RAISFAST_AI_MODEL_CONTEXT_JSON`: per-model overrides
+    ///   `{"deepseek-v4-flash": 65536, ...}` (authoritative when present).
+    /// - `RAISFAST_AI_CONTEXT_OUTPUT_RESERVE`: explicit reserve override;
+    ///   `0` (default) = auto formula `min(max(window*10%, 20_000), window*90%)`
+    ///   (opencode `reserved`/COMPACTION_BUFFER semantics with a 20k floor).
     #[serde(default)]
-    pub context_budget_tokens: i64,
+    pub context_window_fallback: i64,
+    #[serde(default)]
+    pub context_window_map: Option<serde_json::Value>,
+    #[serde(default)]
+    pub context_output_reserve: i64,
 }
 
 fn default_ai_timeout_secs() -> u64 {
@@ -640,7 +651,9 @@ impl Default for AiConfig {
             memory_core_max_rows: 0,
             memory_core_max_bytes: 0,
             memory_daily_max_rows: 0,
-            context_budget_tokens: 0,
+            context_window_fallback: 0,
+            context_window_map: None,
+            context_output_reserve: 0,
         }
     }
 }
@@ -684,7 +697,15 @@ impl AiConfig {
                 .ok()
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(0),
-            context_budget_tokens: env::var("RAISFAST_AI_CONTEXT_BUDGET_TOKENS")
+            context_window_fallback: env::var("RAISFAST_AI_CONTEXT_WINDOW_FALLBACK")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(0),
+            context_window_map: env::var("RAISFAST_AI_MODEL_CONTEXT_JSON")
+                .ok()
+                .filter(|v| !v.is_empty())
+                .and_then(|v| serde_json::from_str(&v).ok()),
+            context_output_reserve: env::var("RAISFAST_AI_CONTEXT_OUTPUT_RESERVE")
                 .ok()
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(0),

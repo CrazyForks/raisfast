@@ -106,8 +106,8 @@ pub fn fold_text(rows: &[(String, String)]) -> String {
             _ => "assistant",
         };
         let mut line = content.trim().to_string();
-        if line.len() > 1_200 {
-            let mut boundary = 1_200;
+        if line.len() > 2_000 {
+            let mut boundary = 2_000;
             while boundary > 0 && !line.is_char_boundary(boundary) {
                 boundary -= 1;
             }

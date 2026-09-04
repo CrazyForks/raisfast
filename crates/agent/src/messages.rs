@@ -36,12 +36,18 @@ pub struct ToolCall {
 pub struct TokenUsage {
     pub input_tokens: Option<u64>,
     pub output_tokens: Option<u64>,
+    /// Prompt-cache hits reported by the provider (discounted input).
+    pub cache_read: Option<u64>,
+    /// Tokens written into the provider cache on this call.
+    pub cache_write: Option<u64>,
 }
 
 impl TokenUsage {
     pub fn accumulate(&mut self, other: TokenUsage) {
         self.input_tokens = add(self.input_tokens, other.input_tokens);
         self.output_tokens = add(self.output_tokens, other.output_tokens);
+        self.cache_read = add(self.cache_read, other.cache_read);
+        self.cache_write = add(self.cache_write, other.cache_write);
     }
 }
 
