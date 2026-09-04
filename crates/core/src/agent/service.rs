@@ -6,7 +6,7 @@
 //! Provider/base-url/key resolution is MVP env-driven (`RAISFAST_AI_*`) until the
 //! `[ai]` config section lands.
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use raisfast_agent::provider::openai::OpenAiCompatProvider;
@@ -590,4 +590,91 @@ pub async fn list_messages(
 ) -> AppResult<Vec<AiMessage>> {
     crate::agent::models::ai_message::list_messages_after(pool, session_id, tenant, since, limit)
         .await
+}
+
+/// Daily usage of one agent over the last `days` (default 30, clamped to 1-90).
+/// Aggregated from `turn:meta` rows (`usage_total`/`tool_calls_made`), one row
+/// per completed or cancelled turn — no schema/JSON-extraction per dialect.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct AgentUsageDay {
+    pub date: String,
+    pub turns: i64,
+    pub input_tokens: i64,
+    pub output_tokens: i64,
+    pub tool_calls: i64,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct AgentUsageReport {
+    pub agent_id: SnowflakeId,
+    pub days: i64,
+    pub total_turns: i64,
+    pub total_input_tokens: i64,
+    pub total_output_tokens: i64,
+    pub total_tool_calls: i64,
+    pub daily: Vec<AgentUsageDay>,
+}
+
+pub async fn usage_report(
+    pool: &crate::db::Pool,
+    tenant: Option<&str>,
+    agent_id: SnowflakeId,
+    days: i64,
+) -> AppResult<AgentUsageReport> {
+    let days = days.clamp(1, 90);
+    let to = crate::utils::tz::now_utc();
+    let from = to - chrono::Duration::days(days);
+    let rows =
+        ai_message::agent_turn_meta_rows(pool, tenant, agent_id, Some(from), Some(to)).await?;
+
+    let mut buckets: BTreeMap<String, AgentUsageDay> = BTreeMap::new();
+    for row in &rows {
+        let Ok(meta) = serde_json::from_str::<serde_json::Value>(&row.content) else {
+            continue;
+        };
+        let usage = meta
+            .get("usage_total")
+            .and_then(serde_json::Value::as_object);
+        let input = usage
+            .and_then(|u| u.get("input"))
+            .and_then(serde_json::Value::as_i64)
+            .unwrap_or(0);
+        let output = usage
+            .and_then(|u| u.get("output"))
+            .and_then(serde_json::Value::as_i64)
+            .unwrap_or(0);
+        let tool_calls = meta
+            .get("tool_calls_made")
+            .and_then(serde_json::Value::as_i64)
+            .unwrap_or(0);
+        let date = row.created_at.format("%Y-%m-%d").to_string();
+        let bucket = buckets.entry(date.clone()).or_insert(AgentUsageDay {
+            date,
+            turns: 0,
+            input_tokens: 0,
+            output_tokens: 0,
+            tool_calls: 0,
+        });
+        bucket.turns += 1;
+        bucket.input_tokens += input;
+        bucket.output_tokens += output;
+        bucket.tool_calls += tool_calls;
+    }
+
+    let mut report = AgentUsageReport {
+        agent_id,
+        days,
+        total_turns: 0,
+        total_input_tokens: 0,
+        total_output_tokens: 0,
+        total_tool_calls: 0,
+        daily: buckets.into_values().collect(),
+    };
+    for day in &report.daily {
+        report.total_turns += day.turns;
+        report.total_input_tokens += day.input_tokens;
+        report.total_output_tokens += day.output_tokens;
+        report.total_tool_calls += day.tool_calls;
+    }
+    Ok(report)
 }

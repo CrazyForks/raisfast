@@ -87,6 +87,17 @@ pub fn routes(
         "ai/sessions",
         "authed"
     );
+    let r = reg_route!(
+        r,
+        registry,
+        _config.api_restful,
+        "/admin/ai/agents/{id}/usage",
+        get,
+        admin_agent_usage,
+        "system",
+        "admin/ai/agents/usage",
+        "admin"
+    );
     reg_route!(
         r,
         registry,
@@ -163,6 +174,32 @@ pub async fn admin_list_agents(
     auth.ensure_admin()?;
     let agents = ai_service::list_agents(&state.pool, auth.tenant_id()).await?;
     Ok(ApiResponse::success(agents))
+}
+
+#[derive(Deserialize)]
+pub struct UsageQuery {
+    /// Days of history to aggregate (default 30, clamped 1-90).
+    #[serde(default = "default_usage_days")]
+    pub days: i64,
+}
+
+fn default_usage_days() -> i64 {
+    30
+}
+
+/// `GET /admin/ai/agents/{id}/usage` — daily LLM usage aggregation.
+pub async fn admin_agent_usage(
+    auth: AuthUser,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Query(q): Query<UsageQuery>,
+) -> AppResult<ApiResponse<crate::agent::service::AgentUsageReport>> {
+    auth.ensure_admin()?;
+    let id = crate::types::snowflake_id::parse_id(&id)?;
+    // Agent must exist in this tenant before aggregating its usage.
+    let _agent = ai_service::find_agent(&state.pool, id, auth.tenant_id()).await?;
+    let report = ai_service::usage_report(&state.pool, auth.tenant_id(), id, q.days).await?;
+    Ok(ApiResponse::success(report))
 }
 
 #[derive(Deserialize)]

@@ -155,3 +155,54 @@ fn tenant_filter(tenant_id: Option<&str>, start_index: usize) -> String {
         .map(|_| format!(" AND tenant_id = {}", crate::db::Driver::ph(start_index)))
         .unwrap_or_default()
 }
+
+/// One `turn:meta` row of an agent (used by usage aggregation). Every completed
+/// or cancelled turn appends exactly one such row carrying `usage_total`,
+/// `tool_calls_made` and `iterations`.
+#[derive(Debug, sqlx::FromRow)]
+pub struct TurnMetaRow {
+    pub created_at: Timestamp,
+    pub content: String,
+}
+
+/// All `turn:meta` rows across an agent's sessions, optionally windowed to
+/// `[from, to)`. Portable join (no dialect JSON extraction): per-row JSON is
+/// aggregated in Rust by the service layer.
+pub async fn agent_turn_meta_rows(
+    pool: &crate::db::Pool,
+    tenant_id: Option<&str>,
+    agent_id: SnowflakeId,
+    from: Option<Timestamp>,
+    to: Option<Timestamp>,
+) -> AppResult<Vec<TurnMetaRow>> {
+    let mut conditions: Vec<&str> = Vec::new();
+    if tenant_id.is_some() {
+        conditions.push("m.tenant_id = ");
+    }
+    if from.is_some() {
+        conditions.push("m.created_at >= ");
+    }
+    if to.is_some() {
+        conditions.push("m.created_at < ");
+    }
+    let mut sql = format!(
+        "SELECT m.created_at, m.content FROM ai_messages m JOIN ai_sessions s ON s.id = m.session_id \
+         WHERE m.kind = 'turn:meta' AND s.agent_id = {}",
+        crate::db::Driver::ph(1)
+    );
+    for (i, cond) in conditions.iter().enumerate() {
+        sql.push_str(&format!(" AND {cond}{}", crate::db::Driver::ph(i + 2)));
+    }
+    sql.push_str(" ORDER BY m.created_at ASC LIMIT 100000");
+    let mut q = sqlx::query_as::<_, TurnMetaRow>(crate::db::safe_sql(&sql)).bind(agent_id);
+    if let Some(tid) = tenant_id {
+        q = q.bind(tid);
+    }
+    if let Some(f) = from {
+        q = q.bind(f);
+    }
+    if let Some(t) = to {
+        q = q.bind(t);
+    }
+    Ok(q.fetch_all(pool).await?)
+}
