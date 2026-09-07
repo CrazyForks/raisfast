@@ -296,7 +296,9 @@ fn extract_path(url: &str) -> String {
         .to_string()
 }
 
-fn is_private_host(host: &str) -> bool {
+/// SSRF guard shared with the flows `http` node: blocks localhost and
+/// private/link-local ranges ([自造复用] — same rules as the plugin host).
+pub(crate) fn is_private_host(host: &str) -> bool {
     let lower = host.to_lowercase();
     if lower.is_empty() {
         return false;

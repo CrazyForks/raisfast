@@ -71,7 +71,7 @@ fn extract_refs(path: &str, v: &Value, out: &mut Vec<FoundRef>) {
 }
 
 /// Transitive upstream ancestors of `id` (via in-edges closure), `id` excluded.
-fn ancestors_of(graph: &Graph, id: &str) -> HashSet<String> {
+pub(crate) fn ancestors_of(graph: &Graph, id: &str) -> HashSet<String> {
     let mut seen: HashSet<String> = HashSet::new();
     let mut queue: Vec<String> = Vec::new();
     if let Some(idx) = graph.in_edges.get(id) {
@@ -101,6 +101,23 @@ pub fn lint_graph(graph: &Graph) -> AppResult<()> {
     for (id, node) in &graph.nodes {
         if node.data.kind == super::nodes::T_START {
             continue; // start has no in-edges; refs here would be self/invalid anyway
+        }
+        // Iteration: the `body` subtree follows body laws (§6) — lint it
+        // separately; the rest (e.g. the `items` ref) uses outer laws.
+        if node.data.kind == super::nodes::T_ITERATION {
+            let mut outer_cfg = node.data.config.clone();
+            if let Some(obj) = outer_cfg.as_object_mut() {
+                obj.remove("body");
+            }
+            let mut refs: Vec<FoundRef> = Vec::new();
+            extract_refs("config", &outer_cfg, &mut refs);
+            extract_refs("modifiers", &node.data.modifiers, &mut refs);
+            let ancestors = ancestors_of(graph, id);
+            for r in refs {
+                check_ref(graph, id, &ancestors, &r)?;
+            }
+            lint_iteration_body(graph, id)?;
+            continue;
         }
         let mut refs: Vec<FoundRef> = Vec::new();
         extract_refs("config", &node.data.config, &mut refs);
@@ -155,6 +172,110 @@ pub fn lint_graph(graph: &Graph) -> AppResult<()> {
                         }
                     }
                 }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// One reference against the three laws on `graph` (existence / upstream /
+/// declaration). Shared by the main pass and the iteration body pass.
+fn check_ref(graph: &Graph, id: &str, ancestors: &HashSet<String>, r: &FoundRef) -> AppResult<()> {
+    let Some((ns, _rest)) = r.selector.split_once('.') else {
+        return Ok(()); // degenerate token — runtime concern
+    };
+    if RESERVED_NS.contains(&ns) || ns.is_empty() {
+        return Ok(());
+    }
+    if !graph.nodes.contains_key(ns) {
+        return Err(AppError::BadRequest(format!(
+            "lint: 节点 '{id}' 引用了不存在的节点 '{ns}'（{}）",
+            r.path
+        )));
+    }
+    if ns == id {
+        return Err(AppError::BadRequest(format!(
+            "lint: 节点 '{id}' 不能引用自身输出（{}）",
+            r.path
+        )));
+    }
+    if !ancestors.contains(ns) {
+        return Err(AppError::BadRequest(format!(
+            "lint: 节点 '{id}' 引用了非上游节点 '{ns}'（{}）— 引用目标必须是已执行的上游",
+            r.path
+        )));
+    }
+    if let Some((_, rest)) = r.selector.split_once('.') {
+        let field = rest.split('.').next().unwrap_or_default();
+        if !field.is_empty()
+            && let Some(n) = graph.nodes.get(ns)
+        {
+            let declared = super::nodes::declared_output_fields(&n.data.kind, &n.data.config);
+            if !declared.is_empty() && !declared.iter().any(|f| f == field) {
+                return Err(AppError::BadRequest(format!(
+                    "lint: 节点 '{id}' 引用了 '{ns}.{field}'，但目标只声明输出 {}（{}）",
+                    declared.join("/"),
+                    r.path
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Lint an iteration body (iteration-node.md §6): body refs follow
+/// `body ancestors ∪ {item} ∪ iteration-node outer ancestors`; a body node
+/// id colliding with an outer ancestor id is rejected (seed-merge shadowing).
+fn lint_iteration_body(outer: &Graph, iter_id: &str) -> AppResult<()> {
+    let Some(iter_node) = outer.nodes.get(iter_id) else {
+        return Ok(());
+    };
+    let Ok(cfg) =
+        serde_json::from_value::<super::nodes::IterationConfig>(iter_node.data.config.clone())
+    else {
+        return Ok(()); // shape errors surface in validate_node
+    };
+    let Some(body_value) = cfg.body else {
+        return Ok(());
+    };
+    let body = super::graph::parse_graph(&body_value)?;
+    let outer_ancestors = ancestors_of(outer, iter_id);
+
+    for bid in body.nodes.keys() {
+        if outer_ancestors.contains(bid) {
+            return Err(AppError::BadRequest(format!(
+                "lint: 迭代 body 节点 id '{bid}' 与外层祖先撞名（seed 合并会被遮蔽）"
+            )));
+        }
+    }
+
+    for (bid, bnode) in &body.nodes {
+        if bnode.data.kind == super::nodes::T_START {
+            continue;
+        }
+        let mut refs: Vec<FoundRef> = Vec::new();
+        extract_refs("body.config", &bnode.data.config, &mut refs);
+        extract_refs("body.modifiers", &bnode.data.modifiers, &mut refs);
+        if refs.is_empty() {
+            continue;
+        }
+        let body_ancestors = ancestors_of(&body, bid);
+        for r in refs {
+            let Some((ns, _)) = r.selector.split_once('.') else {
+                continue;
+            };
+            if ns == "item" || ns.is_empty() || RESERVED_NS.contains(&ns) {
+                continue;
+            }
+            if body.nodes.contains_key(ns) {
+                check_ref(&body, bid, &body_ancestors, &r)?;
+            } else if outer.nodes.contains_key(ns) {
+                check_ref(outer, bid, &outer_ancestors, &r)?;
+            } else {
+                return Err(AppError::BadRequest(format!(
+                    "lint: 迭代 body 节点 '{bid}' 引用了不存在的节点 '{ns}'（{}）",
+                    r.path
+                )));
             }
         }
     }

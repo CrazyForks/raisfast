@@ -52,6 +52,11 @@ pub struct NodeState {
     pub usage: Option<Value>,
     #[serde(default)]
     pub latency_ms: Option<i64>,
+    /// Iteration progress (iteration-node.md §2): `{"results": [...null-padded...]}`
+    /// — per-item results; holes = pending. Kept across abort so retry/resume
+    /// skips completed items.
+    #[serde(default)]
+    pub progress: Option<Value>,
 }
 
 /// `modifiers.retry` config.
@@ -261,11 +266,11 @@ pub async fn run_persisted(
                 persist.persist(snap).await?;
                 let cfg: BranchConfig = serde_json::from_value(node.data.config.clone())
                     .map_err(|e| AppError::BadRequest(format!("branch config: {e}")))?;
-                let handle = pick_branch(&cfg, &snap.pool)?;
-                mark_node_success(snap, &id, json!({"handle": handle}));
+                let (handle, trace) = pick_branch_traced(&cfg, &snap.pool)?;
+                mark_node_success(snap, &id, json!({"handle": handle, "trace": trace}));
                 fan_out_after_branch(graph, snap, &id, Some(handle.as_str()), &mut queue)?;
             }
-            nodes::T_SCRIPT | nodes::T_EGRESS | nodes::T_LLM => {
+            nodes::T_SCRIPT | nodes::T_EGRESS | nodes::T_LLM | nodes::T_HTTP | nodes::T_CT => {
                 let mods: NodeModifiers =
                     serde_json::from_value(node.data.modifiers.clone()).unwrap_or_default();
                 let attempts = mods
@@ -279,7 +284,10 @@ pub async fn run_persisted(
                 // manual runs reach the first script without extra wiring.
                 // `llm` reads variables through message templates instead and
                 // ignores the fed input (llm-node.md W5) — feed it nothing.
-                let input = if node.data.kind == nodes::T_LLM {
+                let input = if matches!(
+                    node.data.kind.as_str(),
+                    nodes::T_LLM | nodes::T_HTTP | nodes::T_CT | nodes::T_ITERATION
+                ) {
                     Value::Object(serde_json::Map::new())
                 } else {
                     let has_explicit_input = node.data.config.get("input").is_some();
@@ -303,7 +311,7 @@ pub async fn run_persisted(
                         match resolve_inputs(&node.data.config, &snap.pool) {
                             Ok(v) => v,
                             Err(e) => {
-                                fail(snap, &id, e.to_string());
+                                fail(snap, &id, json!({"message": e.to_string()}));
                                 continue;
                             }
                         }
@@ -342,47 +350,40 @@ pub async fn run_persisted(
                         fan_out_exec(graph, snap, &id, &mut queue, false)?;
                     }
                     None => {
-                        let msg = last_error.unwrap_or_default();
-                        let strategy = mods.on_error_strategy.as_deref().unwrap_or("fail");
-                        match strategy {
-                            "error_output" => {
-                                let out = json!({"error": msg});
-                                let st = snap.node_states.entry(id.clone()).or_default();
-                                st.status = N_ERROR_OUTPUT.to_string();
-                                st.error = Some(json!({"message": msg}));
-                                st.output = Some(out.clone());
-                                snap.pool
-                                    .entry(id.clone())
-                                    .or_default()
-                                    .insert("output".to_string(), out);
-                                fan_out_exec(graph, snap, &id, &mut queue, true)?;
-                            }
-                            "default_value" => {
-                                let out = mods.default_outputs.clone().unwrap_or(Value::Null);
-                                let st = snap.node_states.entry(id.clone()).or_default();
-                                st.status = N_ERROR_OUTPUT.to_string();
-                                st.error = Some(json!({"message": msg}));
-                                st.output = Some(out.clone());
-                                if out.is_object() || out.is_array() {
-                                    snap.pool
-                                        .entry(id.clone())
-                                        .or_default()
-                                        .insert("output".to_string(), out);
-                                }
-                                fan_out_exec(graph, snap, &id, &mut queue, false)?;
-                            }
-                            _ if mods.continue_on_error => {
-                                // Fail the node but pass the run through (downstream
-                                // continues; its inputs still resolve upstream).
-                                let st = snap.node_states.entry(id.clone()).or_default();
-                                st.status = N_FAILED.to_string();
-                                st.error = Some(json!({"message": msg}));
-                                fan_out_after_run(graph, snap, &id, &mut queue)?;
-                            }
-                            _ => {
-                                fail(snap, &id, msg);
-                            }
+                        let err = json!({"message": last_error.unwrap_or_default()});
+                        dispatch_node_failure(graph, snap, &id, &mods, err, &mut queue)?;
+                    }
+                }
+            }
+            nodes::T_ITERATION => {
+                let mods: NodeModifiers =
+                    serde_json::from_value(node.data.modifiers.clone()).unwrap_or_default();
+                let attempts = mods
+                    .retry
+                    .as_ref()
+                    .and_then(|r| r.attempts)
+                    .unwrap_or(1)
+                    .max(1);
+                let mut last_err: Option<Value> = None;
+                for i in 1..=attempts {
+                    // Claim before each attempt (A.3); progress from prior
+                    // attempts survives so completed items are skipped.
+                    set_in_progress(snap, &id, i);
+                    persist.persist(snap).await?;
+                    match run_iteration(graph, snap, &id, node, exec, persist).await {
+                        Ok(()) => {
+                            last_err = None;
+                            break;
                         }
+                        Err(e) => last_err = Some(e),
+                    }
+                }
+                match last_err {
+                    None => {
+                        fan_out_exec(graph, snap, &id, &mut queue, false)?;
+                    }
+                    Some(e) => {
+                        dispatch_node_failure(graph, snap, &id, &mods, e, &mut queue)?;
                     }
                 }
             }
@@ -400,7 +401,11 @@ pub async fn run_persisted(
                 break;
             }
             other => {
-                fail(snap, &id, format!("unsupported node type '{other}'"));
+                fail(
+                    snap,
+                    &id,
+                    json!({"message": format!("unsupported node type '{other}'")}),
+                );
             }
         }
         persist.persist(snap).await?;
@@ -444,11 +449,213 @@ fn finish_success(snap: &mut Snapshot, id: &str, outputs: Value) {
     snap.status = S_SUCCESS.to_string();
 }
 
-fn fail(snap: &mut Snapshot, id: &str, msg: String) {
+/// Iteration executor (iteration-node.md §2). Drives N body-graph instances
+/// over the resolved items array; bodies share a read-only ancestor-filtered
+/// clone of the outer pool (merged at seed — bounded by `concurrency` live
+/// copies, id collisions are rejected by lint); results fill by index.
+/// Progress persists every K items; abort carries structured context
+/// `{message, failed_index, item_value}` into the unified failure dispatch.
+///
+/// # Errors
+/// Returns a structured error payload (NOT AppError) so the caller routes it
+/// through `dispatch_node_failure`.
+async fn run_iteration(
+    graph: &Graph,
+    snap: &mut Snapshot,
+    id: &str,
+    node: &GraphNode,
+    exec: &dyn NodeExecutor,
+    persist: &dyn Persist,
+) -> Result<(), Value> {
+    let cfg: nodes::IterationConfig = serde_json::from_value(node.data.config.clone())
+        .map_err(|e| json!({"message": format!("iteration config: {e}")}))?;
+
+    // 1. Resolve items against the OUTER pool.
+    let items_val =
+        resolve(&cfg.items, &snap.pool).map_err(|e| json!({"message": e.to_string()}))?;
+    let Some(arr) = items_val.as_array() else {
+        return Err(json!({"message": "iteration: items 须解析为数组"}));
+    };
+    let max_items = cfg.max_items.unwrap_or(nodes::ITER_MAX_ITEMS);
+    if arr.len() as i64 > max_items {
+        return Err(
+            json!({"message": format!("iteration: items {} 超上限 {max_items}", arr.len())}),
+        );
+    }
+    let total = arr.len();
+
+    // 2. Body graph (no-lint parse; publish lint handles refs with the
+    //    outer-ancestor exception).
+    let body_value = cfg.body.clone().unwrap_or_else(|| json!({}));
+    let body_graph = super::graph::parse_graph(&body_value)
+        .map_err(|e| json!({"message": format!("iteration body: {e}")}))?;
+
+    // 3. Ancestor-filtered parent pool (read-only whitelist by construction).
+    let ancestors = super::lint::ancestors_of(graph, id);
+    let parent_pool: Pool = snap
+        .pool
+        .iter()
+        .filter(|(ns, _)| ancestors.contains(ns.as_str()))
+        .map(|(ns, v)| (ns.clone(), v.clone()))
+        .collect();
+
+    // 4. Progress (per-item results, null = pending).
+    let mut results: Vec<Value> = snap
+        .node_states
+        .get(id)
+        .and_then(|st| st.progress.clone())
+        .and_then(|p| p.get("results").and_then(Value::as_array).cloned())
+        .unwrap_or_default();
+    results.resize(total, Value::Null);
+
+    let skip_mode = cfg.on_item_error.as_deref() == Some("skip");
+    let concurrency = cfg
+        .concurrency
+        .unwrap_or(1)
+        .clamp(1, nodes::ITER_MAX_CONCURRENCY) as usize;
+    let pending: Vec<usize> = (0..total).filter(|&i| results[i].is_null()).collect();
+
+    // 5. Run bodies, semaphore-limited; results fill by index.
+    let sem = std::sync::Arc::new(tokio::sync::Semaphore::new(concurrency));
+    let mut since_persist: usize = 0;
+    const PERSIST_EVERY: usize = 20;
+    let mut first_fail: Option<(usize, Value)> = None;
+
+    let body_graph = std::sync::Arc::new(body_graph);
+    let mut stream = futures::stream::iter(pending)
+        .map(|i| {
+            let sem = sem.clone();
+            let body_graph = body_graph.clone();
+            let parent = parent_pool.clone();
+            let item = arr[i].clone();
+            async move {
+                let _permit = sem.acquire().await;
+                let mut body_snap = Snapshot::new();
+                let mut item_ns = std::collections::HashMap::new();
+                item_ns.insert("value".to_string(), item.clone());
+                item_ns.insert("index".to_string(), json!(i));
+                item_ns.insert("total".to_string(), json!(total));
+                // Seed: ancestor clone + item ns (ids cannot collide — lint).
+                let mut pool = parent;
+                pool.insert("item".to_string(), item_ns);
+                body_snap.pool = pool;
+                let _ = run_persisted(&body_graph, &mut body_snap, exec, &NoopPersist).await;
+                // run_persisted returns Ok on body failure too — the verdict
+                // lives in the snapshot status (S_FAILED/S_WAITING ≠ success).
+                let ok = body_snap.status == S_SUCCESS;
+                (i, ok, body_snap.outputs)
+            }
+        })
+        .buffer_unordered(concurrency);
+
+    use futures::StreamExt;
+    while let Some((i, ok, outputs)) = stream.next().await {
+        if ok {
+            results[i] = outputs.unwrap_or(Value::Null);
+        } else if skip_mode {
+            results[i] = json!({"ok": false, "index": i});
+        } else {
+            // abort: stop starting new work (stream drop cancels the rest),
+            // record structured context, keep completed progress.
+            first_fail = Some((
+                i,
+                json!({
+                    "message": "iteration: 项执行失败（abort）",
+                    "failed_index": i,
+                    "item_value": arr[i],
+                }),
+            ));
+            break;
+        }
+        since_persist += 1;
+        if since_persist >= PERSIST_EVERY {
+            since_persist = 0;
+            if let Some(st) = snap.node_states.get_mut(id) {
+                st.progress = Some(json!({ "results": results }));
+            }
+            let _ = persist.persist(snap).await;
+        }
+    }
+    drop(stream);
+
+    // 6. Persist final progress state (abort keeps completed items for retry).
+    if let Some(st) = snap.node_states.get_mut(id) {
+        st.progress = Some(json!({ "results": results }));
+    }
+    let _ = persist.persist(snap).await;
+
+    if let Some((_, err)) = first_fail {
+        return Err(err);
+    }
+
+    // 7. Success.
+    mark_node_success(snap, id, json!({ "items": results, "count": total }));
+    if let Some(st) = snap.node_states.get_mut(id) {
+        st.progress = None;
+    }
+    Ok(())
+}
+
+/// Unified node-failure dispatch (C1.4 strategies). `err` is a structured
+/// payload (`{"message": ...}` for plain exec errors; iteration abort adds
+/// `failed_index` / `item_value`). error_output writes the whole payload into
+/// the pool so downstream refs reach `{{#x.error.failed_index#}}` etc.
+pub(crate) fn dispatch_node_failure(
+    graph: &Graph,
+    snap: &mut Snapshot,
+    id: &str,
+    mods: &NodeModifiers,
+    err: Value,
+    queue: &mut VecDeque<String>,
+) -> AppResult<()> {
+    let strategy = mods.on_error_strategy.as_deref().unwrap_or("fail");
+    match strategy {
+        "error_output" => {
+            let out = json!({ "error": err });
+            let st = snap.node_states.entry(id.to_string()).or_default();
+            st.status = N_ERROR_OUTPUT.to_string();
+            st.error = Some(err);
+            st.output = Some(out.clone());
+            snap.pool
+                .entry(id.to_string())
+                .or_default()
+                .insert("output".to_string(), out);
+            fan_out_exec(graph, snap, id, queue, true)?;
+        }
+        "default_value" => {
+            let out = mods.default_outputs.clone().unwrap_or(Value::Null);
+            let st = snap.node_states.entry(id.to_string()).or_default();
+            st.status = N_ERROR_OUTPUT.to_string();
+            st.error = Some(err);
+            st.output = Some(out.clone());
+            if out.is_object() || out.is_array() {
+                snap.pool
+                    .entry(id.to_string())
+                    .or_default()
+                    .insert("output".to_string(), out);
+            }
+            fan_out_exec(graph, snap, id, queue, false)?;
+        }
+        _ if mods.continue_on_error => {
+            // Fail the node but pass the run through (downstream continues;
+            // its inputs still resolve upstream).
+            let st = snap.node_states.entry(id.to_string()).or_default();
+            st.status = N_FAILED.to_string();
+            st.error = Some(err);
+            fan_out_after_run(graph, snap, id, queue)?;
+        }
+        _ => {
+            fail(snap, id, err);
+        }
+    }
+    Ok(())
+}
+
+fn fail(snap: &mut Snapshot, id: &str, err: Value) {
     let st = snap.node_states.entry(id.to_string()).or_default();
     st.status = N_FAILED.to_string();
-    st.error = Some(json!({"message": msg}));
-    snap.error = Some(json!({"node_id": id, "message": msg}));
+    st.error = Some(err.clone());
+    snap.error = Some(json!({"node_id": id, "error": err}));
     snap.status = S_FAILED.to_string();
 }
 
@@ -636,7 +843,12 @@ fn resume_completed(
             fan_out_after_branch(graph, snap, id, handle.as_deref(), queue)?;
         }
         nodes::T_END => {}
-        nodes::T_SCRIPT | nodes::T_EGRESS | nodes::T_LLM => {
+        nodes::T_SCRIPT
+        | nodes::T_EGRESS
+        | nodes::T_LLM
+        | nodes::T_HTTP
+        | nodes::T_CT
+        | nodes::T_ITERATION => {
             // Same verdict fan-out as the live path: a succeeded exec node
             // skips its error_out edges (they were Skipped in the prior pass).
             fan_out_exec(graph, snap, id, queue, false)?;
@@ -733,14 +945,27 @@ fn resolve_end_outputs(node: &GraphNode, snap: &Snapshot) -> AppResult<Value> {
     Ok(Value::Object(out))
 }
 
-fn pick_branch(cfg: &BranchConfig, pool: &Pool) -> AppResult<String> {
+/// Same verdict as pick_branch plus a per-rule evaluation trace (why this
+/// handle — observability for "为什么走了 else").
+fn pick_branch_traced(cfg: &BranchConfig, pool: &Pool) -> AppResult<(String, Value)> {
+    let mut trace = Vec::new();
     for rule in &cfg.branches {
         let matched = eval_condition(&rule.when, pool)?;
+        trace.push(json!({
+            "handle": rule.handle.clone().unwrap_or_default(),
+            "label": rule.label.clone(),
+            "matched": matched,
+        }));
         if matched {
-            return Ok(rule.handle.clone().unwrap_or_default());
+            let handle = rule.handle.clone().unwrap_or_default();
+            return Ok((handle, Value::Array(trace)));
         }
     }
-    Ok(cfg.else_handle.clone().unwrap_or_default())
+    trace.push(json!({ "handle": cfg.else_handle.clone().unwrap_or_default(), "label": "else", "matched": true }));
+    Ok((
+        cfg.else_handle.clone().unwrap_or_default(),
+        Value::Array(trace),
+    ))
 }
 
 /// Structured condition `{op, var, value}` or a literal bool. Expression
@@ -781,17 +1006,20 @@ fn eval_op(op: &str, left: &Value, right: &Value) -> AppResult<bool> {
             .as_array()
             .map(|a| a.iter().any(|x| equalish(x, left)))
             .unwrap_or(false),
+        // String ops: the right side is stringified (numbers included — a
+        // numeric value like 123 compares as "123", never as "" which made
+        // contains/starts_with/ends_with trivially true).
         "contains" => left
             .as_str()
-            .map(|s| s.contains(right.as_str().unwrap_or_default()))
+            .map(|s| s.contains(&stringify(right)))
             .unwrap_or(false),
         "starts_with" => left
             .as_str()
-            .map(|s| s.starts_with(right.as_str().unwrap_or_default()))
+            .map(|s| s.starts_with(&stringify(right)))
             .unwrap_or(false),
         "ends_with" => left
             .as_str()
-            .map(|s| s.ends_with(right.as_str().unwrap_or_default()))
+            .map(|s| s.ends_with(&stringify(right)))
             .unwrap_or(false),
         "and" | "or" | "not" => {
             return Err(AppError::BadRequest(format!(
@@ -801,6 +1029,16 @@ fn eval_op(op: &str, left: &Value, right: &Value) -> AppResult<bool> {
         _ => num_cmp(op).unwrap_or(false),
     };
     Ok(r)
+}
+
+/// Text form of a condition value for string operators: strings as-is,
+/// numbers/bools via their literal form, null empty.
+fn stringify(v: &Value) -> String {
+    match v {
+        Value::String(s) => s.clone(),
+        Value::Null => String::new(),
+        other => other.to_string(),
+    }
 }
 
 fn equalish(a: &Value, b: &Value) -> bool {
@@ -1081,7 +1319,7 @@ mod tests {
         assert_eq!(snap.node_states["e1"].status, N_ERROR_OUTPUT);
         assert_eq!(snap.node_states["ok_end"].status, N_SKIPPED);
         assert_eq!(snap.node_states["err_end"].status, N_SUCCESS);
-        assert!(snap.pool["e1"]["output"]["error"].is_string());
+        assert_eq!(snap.pool["e1"]["output"]["error"]["message"], "flaky boom");
     }
 
     #[tokio::test]
@@ -1327,6 +1565,295 @@ mod tests {
             42
         );
         assert_eq!(snap.node_states["e1"].latency_ms, Some(7));
+    }
+
+    fn iter_body() -> Value {
+        json!({
+            "nodes": [
+                {"id": "bstart", "data": {"type": "start", "config": {}}},
+                {"id": "s1", "data": {"type": "script", "config": {"language": "js", "code": "1"}}},
+                {"id": "bend", "data": {"type": "end", "config": {
+                    "outputs": [{"key": "v", "value": {"ref": ["s1", "stub"]}}]
+                }}}
+            ],
+            "edges": [
+                {"source": "bstart", "sourceHandle": "out", "target": "s1"},
+                {"source": "s1", "sourceHandle": "out", "target": "bend"}
+            ]
+        })
+    }
+    fn iter_node(items: Value, mut extra: Value) -> Value {
+        let mut cfg = json!({ "items": items, "body": iter_body() });
+        if let (Some(c), Some(e)) = (cfg.as_object_mut(), extra.as_object_mut()) {
+            for (k, v) in e.iter() {
+                c.insert(k.clone(), v.clone());
+            }
+        }
+        json!({"id": "iter", "data": {"type": "iteration", "config": cfg}})
+    }
+
+    #[tokio::test]
+    async fn iteration_serial_collects_in_index_order() {
+        let g = graph_of(def(
+            json!([
+                node("start", "start", json!({})),
+                iter_node(json!({"literal": [3, 1, 2]}), json!({})),
+                node(
+                    "end",
+                    "end",
+                    json!({"outputs": [{"key": "all", "value": {"ref": ["iter", "items"]}}]})
+                )
+            ]),
+            json!([edge("start", "out", "iter"), edge("iter", "out", "end")]),
+        ));
+        let mut snap = Snapshot::new();
+        snap.pool.insert("start".into(), HashMap::new());
+        run(&g, &mut snap, &StubExec).await.unwrap();
+        assert_eq!(snap.status, S_SUCCESS);
+        let items = snap.outputs.unwrap()["all"].as_array().unwrap().clone();
+        assert_eq!(items.len(), 3);
+        assert_eq!(items[0], json!({"v": true}));
+        assert_eq!(snap.node_states["iter"].progress, None, "成功后进度清空");
+    }
+
+    #[tokio::test]
+    async fn iteration_concurrency_preserves_index_order() {
+        let g = graph_of(def(
+            json!([
+                node("start", "start", json!({})),
+                iter_node(
+                    json!({"literal": [0, 1, 2, 3, 4, 5]}),
+                    json!({"concurrency": 3})
+                ),
+                node("end", "end", json!({}))
+            ]),
+            json!([edge("start", "out", "iter"), edge("iter", "out", "end")]),
+        ));
+        let mut snap = Snapshot::new();
+        snap.pool.insert("start".into(), HashMap::new());
+        run(&g, &mut snap, &StubExec).await.unwrap();
+        let out = snap.node_states["iter"].output.as_ref().unwrap();
+        let items = out["items"].as_array().unwrap();
+        for (i, v) in items.iter().enumerate() {
+            assert_eq!(v[&"v"], json!(true), "index {i} 保序");
+        }
+        assert_eq!(out["count"], 6);
+    }
+
+    /// Executor that fails bodies whose item index == fail_at; counts calls.
+    struct ItemFailExec {
+        fail_at: usize,
+        calls: std::sync::atomic::AtomicUsize,
+    }
+    #[async_trait]
+    impl NodeExecutor for ItemFailExec {
+        async fn exec(
+            &self,
+            _node: &GraphNode,
+            _input: Value,
+            pool: &Pool,
+        ) -> AppResult<ExecOutcome> {
+            self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let idx = pool
+                .get("item")
+                .and_then(|m| m.get("index"))
+                .and_then(Value::as_i64)
+                .unwrap_or(-1);
+            if idx as usize == self.fail_at {
+                Err(AppError::Internal(anyhow::anyhow!("item boom")))
+            } else {
+                Ok(ExecOutcome {
+                    output: json!({"stub": true}),
+                    usage: None,
+                    latency_ms: None,
+                })
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn iteration_skip_mode_marks_failed_items() {
+        let g = graph_of(def(
+            json!([
+                node("start", "start", json!({})),
+                iter_node(
+                    json!({"literal": [0, 1, 2]}),
+                    json!({"on_item_error": "skip"})
+                ),
+                node("end", "end", json!({}))
+            ]),
+            json!([edge("start", "out", "iter"), edge("iter", "out", "end")]),
+        ));
+        let mut snap = Snapshot::new();
+        snap.pool.insert("start".into(), HashMap::new());
+        let exec = ItemFailExec {
+            fail_at: 1,
+            calls: Default::default(),
+        };
+        run(&g, &mut snap, &exec).await.unwrap();
+        assert_eq!(snap.status, S_SUCCESS, "skip 模式不失败");
+        let items = snap.node_states["iter"].output.as_ref().unwrap()["items"]
+            .as_array()
+            .unwrap()
+            .clone();
+        assert_eq!(items[0], json!({"v": true}));
+        assert_eq!(items[1], json!({"ok": false, "index": 1}));
+        assert_eq!(items[2], json!({"v": true}));
+    }
+
+    #[tokio::test]
+    async fn iteration_abort_carries_structured_context_via_error_output() {
+        let g = graph_of(def(
+            json!([
+                node("start", "start", json!({})),
+                node_m(
+                    "iter",
+                    "iteration",
+                    json!({ "items": {"literal": [7, 8]}, "body": iter_body() }),
+                    json!({"on_error_strategy": "error_output"})
+                ),
+                node("ok_end", "end", json!({"outputs": []})),
+                node("err_end", "end", json!({"outputs": []}))
+            ]),
+            json!([
+                edge("start", "out", "iter"),
+                edge("iter", "out", "ok_end"),
+                edge("iter", "error_out", "err_end")
+            ]),
+        ));
+        let mut snap = Snapshot::new();
+        snap.pool.insert("start".into(), HashMap::new());
+        let exec = ItemFailExec {
+            fail_at: 1,
+            calls: Default::default(),
+        };
+        run(&g, &mut snap, &exec).await.unwrap();
+        assert_eq!(snap.status, S_SUCCESS);
+        assert_eq!(snap.node_states["iter"].status, N_ERROR_OUTPUT);
+        let err = &snap.pool["iter"]["output"]["error"];
+        assert_eq!(err["failed_index"], 1, "结构化失败上下文可达");
+        assert_eq!(err["item_value"], 8);
+        assert_eq!(snap.node_states["err_end"].status, N_SUCCESS);
+    }
+
+    #[tokio::test]
+    async fn iteration_progress_resume_skips_completed_items() {
+        let g = graph_of(def(
+            json!([
+                node("start", "start", json!({})),
+                iter_node(json!({"literal": [0, 1, 2]}), json!({})),
+                node("end", "end", json!({}))
+            ]),
+            json!([edge("start", "out", "iter"), edge("iter", "out", "end")]),
+        ));
+        let mut snap = Snapshot::new();
+        snap.pool.insert("start".into(), HashMap::new());
+        // Simulate a crash after item 0 completed: progress has result[0].
+        {
+            let st = snap.node_states.entry("iter".into()).or_default();
+            st.progress = Some(json!({ "results": [json!({"v": true}), null, null] }));
+        }
+        let exec = ItemFailExec {
+            fail_at: 999,
+            calls: Default::default(),
+        };
+        run(&g, &mut snap, &exec).await.unwrap();
+        assert_eq!(snap.status, S_SUCCESS);
+        // bodies executed only for the 2 pending items (progress skipped #0)
+        assert_eq!(
+            exec.calls.load(std::sync::atomic::Ordering::SeqCst),
+            2,
+            "已完成项不重放"
+        );
+        let items = snap.node_states["iter"].output.as_ref().unwrap()["items"]
+            .as_array()
+            .unwrap()
+            .clone();
+        assert_eq!(items[0], json!({"v": true}));
+    }
+
+    #[tokio::test]
+    async fn branch_string_op_with_numeric_value_not_always_true() {
+        // contains 123 (number) must compare against "123", not ""
+        let g = graph_of(def(
+            json!([
+                node("start", "start", json!({})),
+                node(
+                    "br",
+                    "branch",
+                    json!({
+                        "branches": [
+                            {"handle": "yes", "when": {"op": "contains", "var": {"ref": ["start", "msg"]}, "value": 123}},
+                            {"handle": "no", "when": false}
+                        ],
+                        "else_handle": "else"
+                    })
+                ),
+                node("na", "end", json!({"outputs": []})),
+                node("nb", "end", json!({"outputs": []}))
+            ]),
+            json!([
+                edge("start", "out", "br"),
+                edge("br", "yes", "na"),
+                edge("br", "else", "nb")
+            ]),
+        ));
+        let mut snap = Snapshot::new();
+        let mut si = HashMap::new();
+        si.insert("msg".into(), json!("hello world"));
+        snap.pool.insert("start".into(), si);
+        run(&g, &mut snap, &StubExec).await.unwrap();
+        assert_eq!(
+            snap.node_states["na"].status, N_SKIPPED,
+            "数字 123 不再恒真命中 contains"
+        );
+
+        let mut snap2 = Snapshot::new();
+        let mut si2 = HashMap::new();
+        si2.insert("msg".into(), json!("code 123 ok"));
+        snap2.pool.insert("start".into(), si2);
+        run(&g, &mut snap2, &StubExec).await.unwrap();
+        assert_eq!(
+            snap2.node_states["na"].status, N_SUCCESS,
+            "字符串化后的数字正常命中"
+        );
+    }
+
+    #[tokio::test]
+    async fn branch_output_carries_evaluation_trace() {
+        let g = graph_of(def(
+            json!([
+                node("start", "start", json!({})),
+                node(
+                    "br",
+                    "branch",
+                    json!({
+                        "branches": [
+                            {"handle": "big", "when": {"op": ">", "var": {"ref": ["start", "n"]}, "value": 90}},
+                            {"handle": "mid", "when": {"op": ">", "var": {"ref": ["start", "n"]}, "value": 60}}
+                        ],
+                        "else_handle": "else"
+                    })
+                ),
+                node("e", "end", json!({"outputs": []}))
+            ]),
+            json!([
+                edge("start", "out", "br"),
+                edge("br", "mid", "e"),
+                edge("br", "else", "e")
+            ]),
+        ));
+        let mut snap = Snapshot::new();
+        let mut si = HashMap::new();
+        si.insert("n".into(), json!(75));
+        snap.pool.insert("start".into(), si);
+        run(&g, &mut snap, &StubExec).await.unwrap();
+        let out = snap.node_states["br"].output.as_ref().unwrap();
+        assert_eq!(out["handle"], "mid");
+        let trace = out["trace"].as_array().unwrap();
+        assert_eq!(trace.len(), 2, "短路：命中后不再评估");
+        assert_eq!(trace[0]["matched"], false);
+        assert_eq!(trace[1]["matched"], true);
     }
 
     #[test]

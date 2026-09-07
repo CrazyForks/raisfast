@@ -263,6 +263,13 @@ pub async fn build_app_state(
     .await?;
     crate::apps::set_shared(apps_registry.clone());
 
+    // Shared CT runtime for the flows `ct` node (registry + repository).
+    crate::flows::ct::set_shared_ct(std::sync::Arc::new(crate::flows::ct::CtRuntime {
+        registry: ct_registry.clone(),
+        protocols: protocol_registry.clone(),
+        repo: crate::content_type::repository::ContentRepository::new(pool.clone()),
+    }));
+
     let ct_tables: Vec<String> = ct_registry
         .all()
         .iter()

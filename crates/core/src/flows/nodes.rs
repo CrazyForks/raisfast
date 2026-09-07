@@ -46,6 +46,9 @@ pub const T_EGRESS: &str = "egress";
 pub const T_BRANCH: &str = "branch";
 pub const T_AWAIT: &str = "await";
 pub const T_LLM: &str = "llm";
+pub const T_HTTP: &str = "http";
+pub const T_CT: &str = "ct";
+pub const T_ITERATION: &str = "iteration";
 
 #[cfg_attr(feature = "export-types", derive(ts_rs::TS))]
 #[derive(Debug, Clone, Deserialize)]
@@ -215,6 +218,159 @@ pub struct AwaitConfig {
     pub events: Option<Vec<Value>>,
 }
 
+/// `iteration` node config (iteration-node.md §1). `body` is a graph
+/// definition ({nodes, edges}) isomorphic to the main graph: exactly one
+/// start (no params) and exactly one end (single collection point).
+#[cfg_attr(feature = "export-types", derive(ts_rs::TS))]
+#[derive(Debug, Clone, Deserialize)]
+pub struct IterationConfig {
+    /// ValueExpr resolving to the array to iterate (usually `{"ref": [...]}`).
+    #[cfg_attr(feature = "export-types", ts(type = "unknown"))]
+    pub items: Value,
+    #[serde(default)]
+    #[cfg_attr(feature = "export-types", ts(type = "number"))]
+    pub concurrency: Option<i64>,
+    #[serde(default)]
+    pub on_item_error: Option<String>,
+    #[serde(default)]
+    #[cfg_attr(feature = "export-types", ts(type = "number"))]
+    pub max_items: Option<i64>,
+    #[serde(default)]
+    #[cfg_attr(feature = "export-types", ts(type = "unknown"))]
+    pub body: Option<Value>,
+}
+
+/// Item-error semantics: `abort` (default) fails the node; `skip` records
+/// `{ok:false, index}` and continues.
+pub const ITER_ITEM_ERRORS: &[&str] = &["abort", "skip"];
+
+/// Hard cap on items per run (iteration-node.md §1).
+pub const ITER_MAX_ITEMS: i64 = 5000;
+
+/// Max parallel bodies.
+pub const ITER_MAX_CONCURRENCY: i64 = 20;
+
+/// Max iteration nesting depth (self included; iteration-node.md §6).
+pub const ITER_MAX_DEPTH: usize = 3;
+
+/// Static nesting depth of iteration nodes inside a body config (recursive).
+/// Sequential iterations on the same graph do NOT nest — only bodies count.
+fn iteration_body_depth(body: &Value) -> usize {
+    body.get("nodes")
+        .and_then(Value::as_array)
+        .map(|ns| {
+            ns.iter()
+                .filter_map(|n| {
+                    let kind = n.get("data")?.get("type")?.as_str()?;
+                    if kind != "iteration" {
+                        return None;
+                    }
+                    let cfg = n.get("data")?.get("config")?;
+                    Some(1 + iteration_body_depth(cfg.get("body").unwrap_or(&Value::Null)))
+                })
+                .max()
+                .unwrap_or(0)
+        })
+        .unwrap_or(0)
+}
+
+/// One filter row of a `ct` node: `value` is a C3.1 template.
+#[cfg_attr(feature = "export-types", derive(ts_rs::TS))]
+#[derive(Debug, Clone, Deserialize)]
+pub struct CtFilterRow {
+    pub field: String,
+    pub op: String,
+    #[serde(default)]
+    pub value: String,
+}
+
+/// One payload field of a `ct` node (`insert`/`update`): `value` is a template.
+#[cfg_attr(feature = "export-types", derive(ts_rs::TS))]
+#[derive(Debug, Clone, Deserialize)]
+pub struct CtSetRow {
+    pub field: String,
+    #[serde(default)]
+    pub value: String,
+}
+
+/// `ct` node config — first-class CRUD on a content type (tenant isolation
+/// and soft-delete/ownable protocols inherited from the CT repository).
+#[cfg_attr(feature = "export-types", derive(ts_rs::TS))]
+#[derive(Debug, Clone, Deserialize)]
+pub struct CtConfig {
+    /// Content-type plural name.
+    pub content_type: String,
+    pub op: String,
+    #[serde(default)]
+    pub filters: Vec<CtFilterRow>,
+    #[serde(default)]
+    pub sort: Option<String>,
+    /// Record id (template) — required for `update` / `delete`.
+    #[serde(default)]
+    pub id: Option<String>,
+    /// Payload rows for `insert` / `update`.
+    #[serde(default)]
+    pub values: Vec<CtSetRow>,
+    #[serde(default)]
+    #[cfg_attr(feature = "export-types", ts(type = "number"))]
+    pub page: Option<i64>,
+    #[serde(default)]
+    #[cfg_attr(feature = "export-types", ts(type = "number"))]
+    pub page_size: Option<i64>,
+}
+
+/// Operations allowed on the `ct` node.
+pub const CT_OPS: &[&str] = &[
+    "find_one",
+    "find_page",
+    "count",
+    "insert",
+    "update",
+    "delete",
+];
+
+/// Filter operators exposed to flow authors (subset of repository FilterOp).
+pub const CT_FILTER_OPS: &[&str] = &["eq", "ne", "gt", "gte", "lt", "lte", "contains", "like"];
+
+/// Max rows a `find_page` may return in one run (safety cap).
+pub const CT_MAX_PAGE_SIZE: i64 = 100;
+
+/// One header/query row of an `http` node: `value` is a C3.1 template
+/// (`{{#ns.field#}}` refs allowed).
+#[cfg_attr(feature = "export-types", derive(ts_rs::TS))]
+#[derive(Debug, Clone, Deserialize)]
+pub struct HttpKeyValue {
+    pub key: String,
+    #[serde(default)]
+    pub value: String,
+}
+
+/// `http` node config (n8n HTTP Request shape): method/url/headers/query/body
+/// all render C3.1 templates before the request fires.
+#[cfg_attr(feature = "export-types", derive(ts_rs::TS))]
+#[derive(Debug, Clone, Deserialize)]
+pub struct HttpConfig {
+    #[serde(default = "default_http_method")]
+    pub method: String,
+    pub url: String,
+    #[serde(default)]
+    pub headers: Vec<HttpKeyValue>,
+    #[serde(default)]
+    pub query: Vec<HttpKeyValue>,
+    #[serde(default)]
+    pub body: Option<String>,
+    #[serde(default)]
+    #[cfg_attr(feature = "export-types", ts(type = "number"))]
+    pub timeout_ms: Option<i64>,
+}
+
+fn default_http_method() -> String {
+    "GET".to_string()
+}
+
+/// Methods allowed on the `http` node.
+pub const HTTP_METHODS: &[&str] = &["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"];
+
 /// One chat message of an `llm` node: `text` is a C3.1 template (`{{#ns.name#}}`).
 #[cfg_attr(feature = "export-types", derive(ts_rs::TS))]
 #[derive(Debug, Clone, Deserialize)]
@@ -281,6 +437,23 @@ pub fn declared_output_fields(kind: &str, config: &Value) -> Vec<String> {
             "latency_ms".into(),
         ],
         T_AWAIT => vec!["resume".into()],
+        T_HTTP => vec![
+            "status".into(),
+            "json".into(),
+            "body".into(),
+            "latency_ms".into(),
+        ],
+        T_ITERATION => vec!["items".into(), "count".into()],
+        T_CT => {
+            let op = config.get("op").and_then(Value::as_str).unwrap_or("");
+            match op {
+                "find_one" | "insert" | "update" => vec!["record".into()],
+                "find_page" => vec!["items".into(), "total".into()],
+                "count" => vec!["total".into()],
+                "delete" => vec!["affected".into()],
+                _ => Vec::new(),
+            }
+        }
         T_BRANCH => vec!["handle".into()],
         _ => Vec::new(),
     }
@@ -461,6 +634,186 @@ pub fn validate_node(kind: &str, _version: i64, config: &Value) -> AppResult<()>
         T_AWAIT => {
             let _c: AwaitConfig = serde_json::from_value(config.clone()).map_err(type_error)?;
         }
+        T_ITERATION => {
+            let c: IterationConfig = serde_json::from_value(config.clone()).map_err(type_error)?;
+            if c.items.get("ref").is_none() && c.items.get("literal").is_none() {
+                return Err(AppError::BadRequest(
+                    "iteration: items 须为 ValueExpr（ref 或 literal）".into(),
+                ));
+            }
+            if let Some(e) = &c.on_item_error
+                && !ITER_ITEM_ERRORS.contains(&e.as_str())
+            {
+                return Err(AppError::BadRequest(format!(
+                    "iteration: on_item_error '{}' 非法（{}）",
+                    e,
+                    ITER_ITEM_ERRORS.join("/")
+                )));
+            }
+            if c.concurrency
+                .is_some_and(|v| !(1..=ITER_MAX_CONCURRENCY).contains(&v))
+            {
+                return Err(AppError::BadRequest(format!(
+                    "iteration: concurrency 须在 1..={ITER_MAX_CONCURRENCY}"
+                )));
+            }
+            if c.max_items
+                .is_some_and(|v| !(1..=ITER_MAX_ITEMS).contains(&v))
+            {
+                return Err(AppError::BadRequest(format!(
+                    "iteration: max_items 须在 1..={ITER_MAX_ITEMS}"
+                )));
+            }
+            // Body structural checks: exactly one start (no params) + one end.
+            // Reference lint with the outer-ancestor exception runs in
+            // lint_graph (iteration-node.md §6).
+            let Some(body) = &c.body else {
+                return Err(AppError::BadRequest("iteration: body 不能为空".into()));
+            };
+            let count_kind = |kind: &str| -> usize {
+                body.get("nodes")
+                    .and_then(Value::as_array)
+                    .map(|ns| {
+                        ns.iter()
+                            .filter(|n| {
+                                n.get("data")
+                                    .and_then(|d| d.get("type"))
+                                    .and_then(Value::as_str)
+                                    == Some(kind)
+                            })
+                            .count()
+                    })
+                    .unwrap_or(0)
+            };
+            if count_kind("start") != 1 || count_kind("end") != 1 {
+                return Err(AppError::BadRequest(
+                    "iteration: body 必须恰好一个 start（无参数）和一个 end".into(),
+                ));
+            }
+            if body
+                .get("nodes")
+                .and_then(Value::as_array)
+                .is_none_or(|ns| ns.is_empty())
+            {
+                return Err(AppError::BadRequest(
+                    "iteration: body.nodes 不能为空".into(),
+                ));
+            }
+            // Nesting depth (self + bodies) — static, publish-time.
+            if 1 + iteration_body_depth(body) > ITER_MAX_DEPTH {
+                return Err(AppError::BadRequest(format!(
+                    "iteration: 嵌套深度超上限 {ITER_MAX_DEPTH}"
+                )));
+            }
+            // await inside a body cannot park (NoopPersist) — reject at publish
+            // instead of failing every item at runtime.
+            if body
+                .get("nodes")
+                .and_then(Value::as_array)
+                .is_some_and(|ns| {
+                    ns.iter().any(|n| {
+                        n.get("data")
+                            .and_then(|d| d.get("type"))
+                            .and_then(Value::as_str)
+                            == Some("await")
+                    })
+                })
+            {
+                return Err(AppError::BadRequest(
+                    "iteration: 循环体内暂不支持 await（等待语义需外层配合，见 iteration-node.md）"
+                        .into(),
+                ));
+            }
+        }
+        T_CT => {
+            let c: CtConfig = serde_json::from_value(config.clone()).map_err(type_error)?;
+            if c.content_type.trim().is_empty() {
+                return Err(AppError::BadRequest("ct: content_type 不能为空".into()));
+            }
+            if !CT_OPS.contains(&c.op.as_str()) {
+                return Err(AppError::BadRequest(format!(
+                    "ct: op '{}' 非法（允许: {}）",
+                    c.op,
+                    CT_OPS.join("/")
+                )));
+            }
+            if matches!(c.op.as_str(), "update" | "delete")
+                && c.id.as_deref().is_none_or(|v| v.trim().is_empty())
+            {
+                return Err(AppError::BadRequest(format!("ct: op '{}' 需要 id", c.op)));
+            }
+            for f in &c.filters {
+                if !crate::db::driver::is_safe_identifier(&f.field) {
+                    return Err(AppError::BadRequest(format!(
+                        "ct: filters.field '{}' 非法标识符",
+                        f.field
+                    )));
+                }
+                if !CT_FILTER_OPS.contains(&f.op.as_str()) {
+                    return Err(AppError::BadRequest(format!(
+                        "ct: filters.op '{}' 非法（允许: {}）",
+                        f.op,
+                        CT_FILTER_OPS.join("/")
+                    )));
+                }
+            }
+            for v in &c.values {
+                if !crate::db::driver::is_safe_identifier(&v.field) {
+                    return Err(AppError::BadRequest(format!(
+                        "ct: values.field '{}' 非法标识符",
+                        v.field
+                    )));
+                }
+            }
+            if let Some(sort) = &c.sort {
+                let field = sort.trim_start_matches('-');
+                if !crate::db::driver::is_safe_identifier(field) || field.is_empty() {
+                    return Err(AppError::BadRequest(format!(
+                        "ct: sort '{}' 非法（field 或 -field）",
+                        sort
+                    )));
+                }
+            }
+            if c.page.is_some_and(|p| p < 1) || c.page_size.is_some_and(|p| p < 1) {
+                return Err(AppError::BadRequest("ct: page/page_size 须 ≥1".into()));
+            }
+            if c.page_size.is_some_and(|p| p > CT_MAX_PAGE_SIZE) {
+                return Err(AppError::BadRequest(format!(
+                    "ct: page_size 上限 {CT_MAX_PAGE_SIZE}"
+                )));
+            }
+        }
+        T_HTTP => {
+            let c: HttpConfig = serde_json::from_value(config.clone()).map_err(type_error)?;
+            if !HTTP_METHODS.contains(&c.method.as_str()) {
+                return Err(AppError::BadRequest(format!(
+                    "http: method '{}' 非法（允许: {}）",
+                    c.method,
+                    HTTP_METHODS.join("/")
+                )));
+            }
+            let url = c.url.trim();
+            if url.is_empty() {
+                return Err(AppError::BadRequest("http: url 不能为空".into()));
+            }
+            if !(url.starts_with("http://") || url.starts_with("https://")) {
+                return Err(AppError::BadRequest(
+                    "http: url 须以 http:// 或 https:// 开头".into(),
+                ));
+            }
+            for (where_, rows) in [("headers", &c.headers), ("query", &c.query)] {
+                for r in rows {
+                    if r.key.trim().is_empty() {
+                        return Err(AppError::BadRequest(format!(
+                            "http: {where_}[].key 不能为空"
+                        )));
+                    }
+                }
+            }
+            if c.timeout_ms.is_some_and(|t| t < 1) {
+                return Err(AppError::BadRequest("http: timeout_ms 须为 ≥1".into()));
+            }
+        }
         T_LLM => {
             let c: LlmConfig = serde_json::from_value(config.clone()).map_err(type_error)?;
             if c.messages.is_empty() {
@@ -533,6 +886,9 @@ pub enum NodeKind {
     Branch,
     Await,
     Llm,
+    Http,
+    Ct,
+    Iteration,
 }
 
 /// TS-only union of every node's config shape (editor drives panels off it).
@@ -550,6 +906,9 @@ pub enum NodeConfigVariant {
     Branch(BranchConfig),
     Await(AwaitConfig),
     Llm(LlmConfig),
+    Http(HttpConfig),
+    Ct(CtConfig),
+    Iteration(IterationConfig),
 }
 
 /// TS-only union for ValueExpr (literal | ref selector | expr string).
@@ -666,6 +1025,169 @@ mod tests {
             "params": [{"variable": "q", "label": "Q", "type": "text-input"}]
         });
         assert!(validate_node(T_START, 1, &bad4).is_err());
+    }
+
+    fn iter_body_with(inner_body: Value) -> Value {
+        json!({
+            "nodes": [
+                {"id": "bstart", "data": {"type": "start", "config": {}}},
+                {"id": "it", "data": {"type": "iteration", "config": {
+                    "items": {"literal": [1]},
+                    "body": inner_body
+                }}},
+                {"id": "bend", "data": {"type": "end", "config": {"outputs": []}}}
+            ],
+            "edges": [
+                {"source": "bstart", "sourceHandle": "out", "target": "it"},
+                {"source": "it", "sourceHandle": "out", "target": "bend"}
+            ]
+        })
+    }
+    fn leaf_body() -> Value {
+        json!({
+            "nodes": [
+                {"id": "bstart", "data": {"type": "start", "config": {}}},
+                {"id": "bend", "data": {"type": "end", "config": {"outputs": []}}}
+            ],
+            "edges": [{"source": "bstart", "sourceHandle": "out", "target": "bend"}]
+        })
+    }
+
+    #[test]
+    fn iteration_nesting_depth_and_await_rules() {
+        // depth 3 (self + 2 nested bodies) OK
+        let d3 = iter_body_with(iter_body_with(leaf_body()));
+        assert!(
+            validate_node(
+                T_ITERATION,
+                1,
+                &json!({"items": {"literal": [1]}, "body": d3})
+            )
+            .is_ok()
+        );
+
+        // depth 4 rejected
+        let d4 = iter_body_with(iter_body_with(iter_body_with(leaf_body())));
+        let err = validate_node(
+            T_ITERATION,
+            1,
+            &json!({"items": {"literal": [1]}, "body": d4}),
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("嵌套深度"), "{err}");
+
+        // await inside body rejected at publish
+        let with_await = json!({
+            "nodes": [
+                {"id": "bstart", "data": {"type": "start", "config": {}}},
+                {"id": "w", "data": {"type": "await", "config": {"kind": "approval"}}},
+                {"id": "bend", "data": {"type": "end", "config": {"outputs": []}}}
+            ],
+            "edges": [
+                {"source": "bstart", "sourceHandle": "out", "target": "w"},
+                {"source": "w", "sourceHandle": "out", "target": "bend"}
+            ]
+        });
+        let err = validate_node(
+            T_ITERATION,
+            1,
+            &json!({"items": {"literal": [1]}, "body": with_await}),
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("await"), "{err}");
+    }
+
+    #[test]
+    fn iteration_config_validation() {
+        let body = json!({
+            "nodes": [
+                {"id": "start", "data": {"type": "start", "config": {}}},
+                {"id": "e", "data": {"type": "end", "config": {"outputs": []}}}
+            ],
+            "edges": [{"source": "start", "sourceHandle": "out", "target": "e"}]
+        });
+        let ok = json!({
+            "items": {"ref": ["http_1", "json", "data"]},
+            "concurrency": 5,
+            "on_item_error": "skip",
+            "body": body
+        });
+        assert!(validate_node(T_ITERATION, 1, &ok).is_ok());
+
+        // items must be a ValueExpr
+        assert!(validate_node(T_ITERATION, 1, &json!({"items": "x", "body": body})).is_err());
+        // bad on_item_error / concurrency / max_items
+        for bad in [
+            json!({"items": {"ref": ["a"]}, "on_item_error": "ignore", "body": body}),
+            json!({"items": {"ref": ["a"]}, "concurrency": 0, "body": body}),
+            json!({"items": {"ref": ["a"]}, "concurrency": 21, "body": body}),
+            json!({"items": {"ref": ["a"]}, "max_items": 0, "body": body}),
+            json!({"items": {"ref": ["a"]}, "max_items": 999999, "body": body}),
+        ] {
+            assert!(validate_node(T_ITERATION, 1, &bad).is_err(), "{bad}");
+        }
+        // missing body / zero start / two ends
+        assert!(validate_node(T_ITERATION, 1, &json!({"items": {"ref": ["a"]}})).is_err());
+        let two_ends = json!({
+            "nodes": [
+                {"id": "start", "data": {"type": "start", "config": {}}},
+                {"id": "e1", "data": {"type": "end", "config": {"outputs": []}}},
+                {"id": "e2", "data": {"type": "end", "config": {"outputs": []}}}
+            ],
+            "edges": []
+        });
+        assert!(
+            validate_node(
+                T_ITERATION,
+                1,
+                &json!({"items": {"ref": ["a"]}, "body": two_ends})
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn http_config_validation() {
+        let ok = json!({
+            "method": "POST",
+            "url": "https://api.example.com/{{#start.uid#}}",
+            "headers": [{"key": "Authorization", "value": "Bearer x"}],
+            "query": [{"key": "q", "value": "{{#start.q#}}"}],
+            "body": "{\"k\": 1}",
+            "timeout_ms": 5000
+        });
+        assert!(validate_node(T_HTTP, 1, &ok).is_ok());
+
+        assert!(
+            validate_node(
+                T_HTTP,
+                1,
+                &json!({"method": "FETCH", "url": "https://x.io"})
+            )
+            .is_err(),
+            "非法 method"
+        );
+        assert!(
+            validate_node(T_HTTP, 1, &json!({"method": "GET", "url": ""})).is_err(),
+            "空 url"
+        );
+        assert!(
+            validate_node(T_HTTP, 1, &json!({"method": "GET", "url": "ftp://x.io"})).is_err(),
+            "非 http scheme"
+        );
+        assert!(
+            validate_node(T_HTTP, 1, &json!({"method": "GET", "url": "https://x.io", "headers": [{"key": "", "value": "1"}]})).is_err(),
+            "空 header key"
+        );
+        assert!(
+            validate_node(
+                T_HTTP,
+                1,
+                &json!({"method": "GET", "url": "https://x.io", "timeout_ms": 0})
+            )
+            .is_err(),
+            "timeout < 1"
+        );
     }
 
     #[test]

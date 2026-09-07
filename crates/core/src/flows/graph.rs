@@ -109,7 +109,11 @@ fn read_edge(e: &Value) -> AppResult<Edge> {
 ///
 /// `BadRequest` on unknown node type/version, malformed config, duplicate ids,
 /// dangling edge, or not exactly one start with no incoming edges.
-pub fn load_graph(graph_value: &Value) -> AppResult<Graph> {
+/// Parse + structural validation WITHOUT the reference lint. Used by the
+/// iteration arm at runtime (body refs follow the outer-ancestor exception
+/// the main-graph lint cannot know — iteration-node.md §6; publish-time
+/// `lint_graph` handles body references with the proper exception).
+pub fn parse_graph(graph_value: &Value) -> AppResult<Graph> {
     let nodes_val = graph_value
         .get("nodes")
         .and_then(Value::as_array)
@@ -226,10 +230,15 @@ pub fn load_graph(graph_value: &Value) -> AppResult<Graph> {
         start: start_id,
     };
 
+    Ok(graph)
+}
+
+/// Parse + validate + reference-lint (publish / test-run entry).
+pub fn load_graph(graph_value: &Value) -> AppResult<Graph> {
+    let graph = parse_graph(graph_value)?;
     // Reference lint (design D4): existence + upstream laws on every
     // template / ValueExpr ref in configs and modifiers.
     super::lint::lint_graph(&graph)?;
-
     Ok(graph)
 }
 

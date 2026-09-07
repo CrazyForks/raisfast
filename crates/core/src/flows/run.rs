@@ -102,6 +102,7 @@ pub async fn run_flow_latest(
         plane,
         plugins,
         llm: None,
+        tenant_id: Some(flow.tenant_id.clone()),
     };
     execute_instance(pool, instance_id, &exec).await?;
     model::find_instance_by_id(pool, instance_id).await
@@ -167,6 +168,7 @@ pub async fn run_definition_latest(
         plane,
         plugins,
         llm: None,
+        tenant_id: Some(flow.tenant_id.clone()),
     };
     engine::run_persisted(&graph, &mut snap, &exec, &persist).await?;
     record_node_runs(pool, instance_id, &graph, &snap).await?;
@@ -517,6 +519,7 @@ mod tests {
                 attempt: 1,
                 usage: None,
                 latency_ms: None,
+                progress: None,
             },
         );
         let snap_json = serde_json::to_value(&snap).unwrap();

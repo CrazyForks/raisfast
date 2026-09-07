@@ -25,6 +25,8 @@ use super::nodes::{self, EgressConfig, ScriptConfig};
 pub struct FlowsExec {
     pub plane: Option<Arc<IntegrationPlane>>,
     pub plugins: Option<Arc<PluginManager>>,
+    /// Per-run tenant for tenant-scoped executors (`ct` node).
+    pub tenant_id: Option<String>,
     /// Injected LLM provider override (tests); production falls back to the
     /// shared `[ai]` runtime (llm-node.md §3, W1).
     pub llm: Option<LlmRuntime>,
@@ -149,6 +151,8 @@ impl NodeExecutor for FlowsExec {
     ) -> AppResult<ExecOutcome> {
         match node.data.kind.as_str() {
             nodes::T_SCRIPT => self.run_script(node, input).await,
+            nodes::T_HTTP => super::http::run_http(node, pool).await,
+            nodes::T_CT => super::ct::run_ct(node, pool, self.tenant_id.as_deref()).await,
             nodes::T_LLM => {
                 let runtime = match &self.llm {
                     Some(rt) => super::llm::LlmRuntime {
@@ -217,6 +221,7 @@ mod tests {
             plane: None,
             plugins: None,
             llm: None,
+            tenant_id: None,
         };
         let err = exec
             .exec(
@@ -235,6 +240,7 @@ mod tests {
             plane: None,
             plugins: None,
             llm: None,
+            tenant_id: None,
         };
         let err = exec
             .exec(
@@ -256,6 +262,7 @@ mod tests {
             plane: None,
             plugins: None,
             llm: None,
+            tenant_id: None,
         };
         let err = exec
             .exec(

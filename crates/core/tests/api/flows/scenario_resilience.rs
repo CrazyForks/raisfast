@@ -152,6 +152,7 @@ async fn durable_resume_does_not_rerun_completed_nodes() {
             attempt: 1,
             usage: None,
             latency_ms: None,
+            progress: None,
         },
     );
     model::upsert_snapshot(&pool, flow_id, &serde_json::to_value(&snap).unwrap())

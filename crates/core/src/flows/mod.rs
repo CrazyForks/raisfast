@@ -14,11 +14,13 @@
 //!
 //! 设计文档：`dev-docs/workflow/`（README 为地图，contracts.md 为冻结契约，db-schema.md 为表）。
 
+pub mod ct;
 pub mod engine;
 pub mod exec;
 pub mod expr;
 pub mod graph;
 pub mod handler;
+pub mod http;
 pub mod lint;
 pub mod llm;
 pub mod model;
@@ -47,6 +49,12 @@ crate::export_types!(
     nodes::AwaitConfig,
     nodes::LlmMessage,
     nodes::LlmConfig,
+    nodes::HttpConfig,
+    nodes::HttpKeyValue,
+    nodes::CtConfig,
+    nodes::IterationConfig,
+    nodes::CtFilterRow,
+    nodes::CtSetRow,
     nodes::NodeConfigVariant,
     nodes::ValueExpr,
     nodes::NodeKind,
