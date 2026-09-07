@@ -1500,6 +1500,25 @@ CREATE TABLE IF NOT EXISTS flow_trigger (
 CREATE INDEX IF NOT EXISTS idx_flow_trigger_kind_event ON flow_trigger(kind, event_type);
 CREATE INDEX IF NOT EXISTS idx_flow_trigger_flow ON flow_trigger(flow_id);
 
+-- Await claim ledger (dev-docs/workflow/await-node.md §3): one `open` row per
+-- parked await node; resume closes it conditionally (idempotency, 409 on race).
+CREATE TABLE IF NOT EXISTS flow_resume (
+    id INTEGER PRIMARY KEY,
+    instance_id INTEGER NOT NULL,
+    node_id TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'open',
+    token_hash TEXT UNIQUE,
+    token_enc TEXT,
+    resume_until TEXT,
+    payload TEXT,
+    resumed_by INTEGER,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_flow_resume_instance_node ON flow_resume(instance_id, node_id);
+CREATE INDEX IF NOT EXISTS idx_flow_resume_expiry ON flow_resume(status, resume_until);
+
 -- ─────────────────────────────────────────────────────────────────────────────
 -- AI Agent core (namespace ai_*). See dev-docs/agent/db-schema.md.
 -- Multi-tenant; ids are app-assigned Snowflake (BIGINT). JSON stored as TEXT,

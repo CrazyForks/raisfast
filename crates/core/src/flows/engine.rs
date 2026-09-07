@@ -133,16 +133,22 @@ impl Snapshot {
     }
 }
 
-/// Complete the head waiting node with `payload` and resume the run.
-pub fn resume_snapshot(snap: &mut Snapshot, payload: Option<Value>) -> AppResult<()> {
+/// Complete the head waiting node with the normalized resume `payload`,
+/// routed through `handle` when the awaiting node has decision ports
+/// (await-node.md §4: approval → approve/reject; timeout sweep → timeout).
+pub fn resume_snapshot(snap: &mut Snapshot, payload: Value, handle: Option<&str>) -> AppResult<()> {
     let Some(node) = snap.waiting_nodes.first().cloned() else {
         return Err(AppError::BadRequest("实例没有等待中的节点".into()));
     };
     snap.waiting_nodes.retain(|n| *n != node);
-    let payload = payload.unwrap_or(Value::Null);
     let st = snap.node_states.entry(node.clone()).or_default();
     st.status = N_SUCCESS.to_string();
-    st.output = Some(payload.clone());
+    // The chosen handle is persisted in the output so the resume-pass replay
+    // (`resume_completed`) re-routes identically (same trick as branch nodes).
+    st.output = Some(match handle {
+        Some(h) => json!({"handle": h, "resume": payload.clone()}),
+        None => payload.clone(),
+    });
     st.attempt += 1;
     let ns = snap.pool.entry(node.clone()).or_default();
     ns.insert("resume".to_string(), payload);
@@ -269,6 +275,23 @@ pub async fn run_persisted(
                 let (handle, trace) = pick_branch_traced(&cfg, &snap.pool)?;
                 mark_node_success(snap, &id, json!({"handle": handle, "trace": trace}));
                 fan_out_after_branch(graph, snap, &id, Some(handle.as_str()), &mut queue)?;
+            }
+            nodes::T_TRANSFORM => {
+                // Declarative reshape (transform-node.md): resolve each
+                // assignment's ValueExpr (literal/ref/expr with the cleaning
+                // functions) and flatten the object into the namespace.
+                // Deterministic + side-effect-free: engine arm like branch —
+                // no executor, no claim/at-least-once concerns.
+                set_in_progress(snap, &id, attempt);
+                persist.persist(snap).await?;
+                let cfg: nodes::TransformConfig = serde_json::from_value(node.data.config.clone())
+                    .map_err(|e| AppError::BadRequest(format!("transform config: {e}")))?;
+                let mut out = serde_json::Map::new();
+                for a in &cfg.assignments {
+                    out.insert(a.key.clone(), resolve(&a.value, &snap.pool)?);
+                }
+                mark_node_success(snap, &id, Value::Object(out));
+                fan_out_after_run(graph, snap, &id, &mut queue)?;
             }
             nodes::T_SCRIPT | nodes::T_EGRESS | nodes::T_LLM | nodes::T_HTTP | nodes::T_CT => {
                 let mods: NodeModifiers =
@@ -842,6 +865,26 @@ fn resume_completed(
                 .map(str::to_string);
             fan_out_after_branch(graph, snap, id, handle.as_deref(), queue)?;
         }
+        nodes::T_AWAIT => {
+            // Decision ports (await-node.md §4): the chosen handle was
+            // persisted by `resume_snapshot`; replay routes through it.
+            // Single-port kinds (form/event) recorded no handle → all edges.
+            let handle = snap
+                .node_states
+                .get(id)
+                .and_then(|s| s.output.as_ref())
+                .and_then(|o| o.get("handle"))
+                .and_then(Value::as_str)
+                .map(str::to_string);
+            match handle.as_deref() {
+                Some(h) => {
+                    fan_out_after_branch(graph, snap, id, Some(h), queue)?;
+                }
+                None => {
+                    fan_out_after_run(graph, snap, id, queue)?;
+                }
+            }
+        }
         nodes::T_END => {}
         nodes::T_SCRIPT
         | nodes::T_EGRESS
@@ -880,15 +923,22 @@ fn resume_error_output(
 
 // ── value resolution (literal/ref; expr → P1.7) ──────────────────────────
 
-fn resolve(raw: &Value, pool: &Pool) -> AppResult<Value> {
+/// Resolve a ValueExpr (`{ref:[…]}` / `{literal}`) against the pool. Shared
+/// with the await correlation resolution at park time (await-node.md §7).
+pub(crate) fn resolve(raw: &Value, pool: &Pool) -> AppResult<Value> {
     if let Some(arr) = raw.get("ref").and_then(Value::as_array) {
         return resolve_ref(arr, pool);
     }
     if let Some(v) = raw.get("literal") {
         return Ok(v.clone());
     }
+    if let Some(e) = raw.get("expr").and_then(Value::as_str) {
+        // C1.2 third state, now wired (transform-node.md): typed evaluation
+        // with the cleaning-function set.
+        return super::expr::eval_value(e, pool);
+    }
     if raw.get("expr").is_some() {
-        return Err(AppError::BadRequest("expr 求值尚未接线（P1.7）".into()));
+        return Err(AppError::BadRequest("expr 须为字符串".into()));
     }
     Ok(raw.clone())
 }
@@ -1429,7 +1479,7 @@ mod tests {
         assert_eq!(snap.node_states["e1"].status, N_ERROR_OUTPUT);
         let calls_after_first = always_fail.calls.load(std::sync::atomic::Ordering::SeqCst);
 
-        resume_snapshot(&mut snap, Some(json!({"approved": true}))).unwrap();
+        resume_snapshot(&mut snap, json!({"approved": true}), None).unwrap();
         run(&g, &mut snap, &always_fail).await.unwrap();
         assert_eq!(snap.status, S_SUCCESS);
         assert_eq!(
@@ -1901,13 +1951,109 @@ mod tests {
         assert_eq!(snap.node_states["gate"].status, N_WAITING);
         assert!(snap.waiting_nodes.contains(&"gate".to_string()));
 
-        // Resume: complete the gate with an approval payload.
-        resume_snapshot(&mut snap, Some(json!({"approved": true}))).unwrap();
+        // Resume: complete the gate with an approval payload (form kind: no handle).
+        resume_snapshot(&mut snap, json!({"approved": true}), None).unwrap();
         assert_eq!(snap.status, S_RUNNING);
         run(&g, &mut snap, &StubExec).await.unwrap();
         assert_eq!(snap.status, S_SUCCESS);
         assert_eq!(snap.node_states["gate"].status, N_SUCCESS);
         assert_eq!(snap.node_states["end"].status, N_SUCCESS);
         assert_eq!(snap.outputs.unwrap()["ok"], true);
+    }
+
+    #[tokio::test]
+    async fn await_custom_action_ports_route_by_fired_action() {
+        // Dify-faithful shape (await-node.md §12.2): arbitrary custom actions,
+        // each id = output handle; the third action proves ports aren't
+        // limited to approve/reject.
+        let g = graph_of(def(
+            json!([
+                node("start", "start", json!({})),
+                node(
+                    "gate",
+                    "await",
+                    json!({"kind": "human", "actions": [
+                        {"id": "approve", "title": "通过"},
+                        {"id": "reject", "title": "驳回"},
+                        {"id": "escalate", "title": "升级主管"}
+                    ]})
+                ),
+                node(
+                    "ok_end",
+                    "end",
+                    json!({"outputs": [{"key": "v", "value": {"ref": ["gate", "resume", "note"]}}]})
+                ),
+                node(
+                    "rej_end",
+                    "end",
+                    json!({"outputs": [{"key": "v", "value": {"literal": "rejected"}}]})
+                ),
+                node(
+                    "esc_end",
+                    "end",
+                    json!({"outputs": [{"key": "v", "value": {"literal": "escalated"}}]})
+                )
+            ]),
+            json!([
+                edge("start", "out", "gate"),
+                edge("gate", "approve", "ok_end"),
+                edge("gate", "reject", "rej_end"),
+                edge("gate", "escalate", "esc_end")
+            ]),
+        ));
+
+        // Fire the custom "escalate" action: only its edge is taken.
+        let mut snap = Snapshot::new();
+        snap.pool.insert("start".into(), HashMap::new());
+        run(&g, &mut snap, &StubExec).await.unwrap();
+        assert_eq!(snap.status, S_WAITING);
+        resume_snapshot(&mut snap, json!({"note": "vip"}), Some("escalate")).unwrap();
+        run(&g, &mut snap, &StubExec).await.unwrap();
+        assert_eq!(snap.status, S_SUCCESS);
+        assert_eq!(snap.node_states["ok_end"].status, N_SKIPPED);
+        assert_eq!(snap.node_states["rej_end"].status, N_SKIPPED);
+        assert_eq!(snap.node_states["esc_end"].status, N_SUCCESS);
+        assert_eq!(snap.outputs.unwrap()["v"], "escalated");
+
+        // Fire "approve": the other arms skip.
+        let mut snap2 = Snapshot::new();
+        snap2.pool.insert("start".into(), HashMap::new());
+        run(&g, &mut snap2, &StubExec).await.unwrap();
+        resume_snapshot(&mut snap2, json!({"note": "ok"}), Some("approve")).unwrap();
+        run(&g, &mut snap2, &StubExec).await.unwrap();
+        assert_eq!(snap2.node_states["rej_end"].status, N_SKIPPED);
+        assert_eq!(snap2.node_states["esc_end"].status, N_SKIPPED);
+        assert_eq!(snap2.node_states["ok_end"].status, N_SUCCESS);
+    }
+
+    #[tokio::test]
+    async fn await_timeout_port_routes_when_wired() {
+        let g = graph_of(def(
+            json!([
+                node("start", "start", json!({})),
+                node(
+                    "gate",
+                    "await",
+                    json!({"kind": "human", "timeout_secs": 60})
+                ),
+                node(
+                    "late_end",
+                    "end",
+                    json!({"outputs": [{"key": "t", "value": {"ref": ["gate", "resume", "timeout"]}}]})
+                )
+            ]),
+            json!([
+                edge("start", "out", "gate"),
+                edge("gate", "timeout", "late_end")
+            ]),
+        ));
+        let mut snap = Snapshot::new();
+        snap.pool.insert("start".into(), HashMap::new());
+        run(&g, &mut snap, &StubExec).await.unwrap();
+        resume_snapshot(&mut snap, json!({"timeout": true}), Some(nodes::H_TIMEOUT)).unwrap();
+        run(&g, &mut snap, &StubExec).await.unwrap();
+        assert_eq!(snap.status, S_SUCCESS);
+        assert_eq!(snap.node_states["late_end"].status, N_SUCCESS);
+        assert_eq!(snap.outputs.unwrap()["t"], true);
     }
 }

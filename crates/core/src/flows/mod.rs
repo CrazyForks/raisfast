@@ -14,8 +14,10 @@
 //!
 //! 设计文档：`dev-docs/workflow/`（README 为地图，contracts.md 为冻结契约，db-schema.md 为表）。
 
+pub mod await_infra;
 pub mod ct;
 pub mod engine;
+pub mod events;
 pub mod exec;
 pub mod expr;
 pub mod graph;
@@ -47,6 +49,11 @@ crate::export_types!(
     nodes::BranchRule,
     nodes::BranchConfig,
     nodes::AwaitConfig,
+    nodes::AwaitInputField,
+    nodes::AwaitAction,
+    nodes::ResumeEnvelope,
+    nodes::TransformConfig,
+    nodes::TransformAssignment,
     nodes::LlmMessage,
     nodes::LlmConfig,
     nodes::HttpConfig,

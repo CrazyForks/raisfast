@@ -205,6 +205,31 @@ pub async fn find_instances_by_trigger_page(
     Ok((rows, total))
 }
 
+/// Mark an instance parked on an await node (await-node.md §5): denormalized
+/// waiting metadata for the approval task list + timeout sweeper.
+pub async fn set_instance_waiting(
+    pool: &crate::db::Pool,
+    id: SnowflakeId,
+    waiting_kind: &str,
+    resume_until: Option<Timestamp>,
+) -> AppResult<()> {
+    let sql = format!(
+        "UPDATE flow_instance SET status = 'waiting', waiting_kind = {}, \
+         waiting_needed = 1, waiting_received = 0, resume_until = {}, finished_at = NULL \
+         WHERE id = {}",
+        Driver::ph(1),
+        Driver::ph(2),
+        Driver::ph(3)
+    );
+    sqlx::query(crate::db::safe_sql(&sql))
+        .bind(waiting_kind)
+        .bind(resume_until)
+        .bind(*id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
 /// Update instance terminal/running status + optional finished_at.
 #[allow(clippy::too_many_arguments)]
 pub async fn update_instance_status(
@@ -217,7 +242,8 @@ pub async fn update_instance_status(
 ) -> AppResult<()> {
     let sql = format!(
         "UPDATE flow_instance SET status = {}, has_exceptions = {}, error = {}, \
-         finished_at = {}, waiting_kind = NULL WHERE id = {}",
+         finished_at = {}, waiting_kind = NULL, waiting_needed = NULL, \
+         waiting_received = 0, resume_until = NULL WHERE id = {}",
         Driver::ph(1),
         Driver::ph(2),
         Driver::ph(3),
@@ -246,7 +272,8 @@ pub async fn finalize_instance(
 ) -> AppResult<()> {
     let sql = format!(
         "UPDATE flow_instance SET status = {}, has_exceptions = {}, outputs = {}, error = {}, \
-         finished_at = {}, waiting_kind = NULL WHERE id = {}",
+         finished_at = {}, waiting_kind = NULL, waiting_needed = NULL, \
+         waiting_received = 0, resume_until = NULL WHERE id = {}",
         Driver::ph(1),
         Driver::ph(2),
         Driver::ph(3),

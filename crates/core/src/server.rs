@@ -159,6 +159,13 @@ async fn build_app(
         let _supervisor = plane.ensure_supervisor();
     }
 
+    // C4 workflow.* events ride the global bus (SSE / plugins / webhooks).
+    crate::flows::events::set_bus(eventbus.clone());
+
+    // Await-node background infra (timeout sweeper) — one indexed scan per
+    // minute when nothing is parked (await-node.md §5).
+    crate::flows::await_infra::spawn(pool, state.integration.clone(), Some(state.plugins.clone()));
+
     let cors = build_cors(config);
     let mut api_v1 = axum::Router::new();
 

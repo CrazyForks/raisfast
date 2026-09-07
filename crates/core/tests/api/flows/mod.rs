@@ -8,3 +8,4 @@ pub mod helpers;
 pub mod scenario_await;
 pub mod scenario_control_flow;
 pub mod scenario_resilience;
+pub mod scenario_transform;

@@ -320,4 +320,26 @@ mod tests {
         // Unrelated path is not matched.
         assert_eq!(map.lookup("POST", "/api/v1/plugins/chat/other"), None);
     }
+
+    #[test]
+    fn admin_perm_pattern_routes_resolve_explicitly() {
+        // flows-style admin routes register an explicit "admin" perm
+        // (dev-docs/workflow/await-node.md §0): the guard hits the registered
+        // admin branch directly instead of relying on the /admin/ path-prefix
+        // fallback. Unregistered /admin/* paths still fall back to that check.
+        let map = RoutePermissionMap::from_routes(&[
+            ri("POST", "/api/v1/admin/flows/instances/{id}/resume", "admin"),
+            ri("POST", "/api/v1/admin/flows", "admin"),
+        ]);
+        assert_eq!(
+            map.lookup("POST", "/api/v1/admin/flows/instances/123/resume"),
+            Some("admin")
+        );
+        assert_eq!(map.lookup("POST", "/api/v1/admin/flows"), Some("admin"));
+        assert_eq!(
+            map.lookup("POST", "/api/v1/admin/flows/unregistered"),
+            None,
+            "no perm → path-prefix fallback (hard admin) applies"
+        );
+    }
 }

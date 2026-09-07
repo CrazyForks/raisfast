@@ -12,6 +12,7 @@ pub mod flow_api_key;
 pub mod flow_instance;
 pub mod flow_instance_snapshot;
 pub mod flow_node_run;
+pub mod flow_resume;
 pub mod flow_trigger;
 pub mod flow_version;
 
@@ -29,10 +30,15 @@ pub use flow_api_key::{
 };
 pub use flow_instance::{
     FlowInstance, finalize_instance, find_instance_by_id, find_instances_by_trigger_page,
-    find_instances_page, insert_flow_instance, update_instance_status,
+    find_instances_page, insert_flow_instance, set_instance_waiting, update_instance_status,
 };
 pub use flow_instance_snapshot::{delete_snapshot, find_snapshot, upsert_snapshot};
 pub use flow_node_run::{FlowNodeRun, find_node_runs, record_node_run};
+pub use flow_resume::{
+    FlowResume, claim as claim_flow_resume, ensure_open as ensure_flow_resume_open,
+    find_expired_open as find_expired_flow_resumes, find_open as find_open_flow_resume,
+    find_open_by_token_hash, set_token as set_flow_resume_token,
+};
 pub use flow_trigger::{
     FlowTrigger, create as create_flow_trigger, delete as delete_flow_trigger,
     find_by_id as find_flow_trigger_by_id, list as list_flow_triggers,

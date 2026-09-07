@@ -6,7 +6,7 @@
 //! tolerated (extra=allow) so frontend can carry display fields; required keys
 //! and value shapes are enforced.
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::errors::app_error::{AppError, AppResult};
@@ -38,6 +38,34 @@ pub const H_IN: &str = "in";
 pub const H_OUT: &str = "out";
 pub const H_ERROR_OUT: &str = "error_out";
 
+/// Await approval-kind output handles (await-node.md §4; Dify UserAction
+/// id=output-handle). Human action ports come from `config.actions` (any id);
+/// `timeout` is the built-in extra port when `timeout_secs` is set.
+pub const H_TIMEOUT: &str = "timeout";
+
+/// Default action when no `actions` are declared (Dify's
+/// `_DEFAULT_SUBMIT_ACTION = {id: "submit", title: "Submit"}`).
+pub const AWAIT_DEFAULT_ACTION: &str = "submit";
+
+/// Human input field types (Dify FormInputConfig subset).
+pub const AWAIT_INPUT_TYPES: &[&str] = &["string", "number", "boolean", "select"];
+
+/// Action id / title limits (Dify `_IDENTIFIER_PATTERN` max 20; title ≤ 100).
+pub const AWAIT_ACTION_ID_MAX: usize = 20;
+pub const AWAIT_ACTION_TITLE_MAX: usize = 100;
+
+/// `action` id must match (Dify's identifier rule): letter/underscore start.
+#[must_use]
+pub fn is_valid_action_id(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= AWAIT_ACTION_ID_MAX
+        && id
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+        && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
 /// Known node types for v1.
 pub const T_START: &str = "start";
 pub const T_END: &str = "end";
@@ -45,6 +73,7 @@ pub const T_SCRIPT: &str = "script";
 pub const T_EGRESS: &str = "egress";
 pub const T_BRANCH: &str = "branch";
 pub const T_AWAIT: &str = "await";
+pub const T_TRANSFORM: &str = "transform";
 pub const T_LLM: &str = "llm";
 pub const T_HTTP: &str = "http";
 pub const T_CT: &str = "ct";
@@ -201,21 +230,137 @@ pub struct BranchConfig {
     pub else_handle: Option<String>,
 }
 
+/// `transform` node assignment (transform-node.md §2.1): `key` becomes a
+/// namespace field of the node; `value` is a full ValueExpr (literal/ref/
+/// expr with the cleaning-function set).
+#[cfg_attr(feature = "export-types", derive(ts_rs::TS))]
+#[derive(Debug, Clone, Deserialize)]
+pub struct TransformAssignment {
+    pub key: String,
+    #[cfg_attr(feature = "export-types", ts(type = "unknown"))]
+    pub value: Value,
+}
+
+#[cfg_attr(feature = "export-types", derive(ts_rs::TS))]
+#[derive(Debug, Clone, Deserialize)]
+pub struct TransformConfig {
+    #[serde(default)]
+    pub assignments: Vec<TransformAssignment>,
+}
+
 #[cfg_attr(feature = "export-types", derive(ts_rs::TS))]
 #[derive(Debug, Clone, Deserialize)]
 pub struct AwaitConfig {
-    pub kind: String,
+    /// Display text shown to the actor at resume time — a `{{#…#}}`
+    /// template interpolated against the run pool before the parked state
+    /// surfaces (Dify `HumanInputNodeData.form_content`).
     #[serde(default)]
-    #[cfg_attr(feature = "export-types", ts(type = "unknown"))]
-    pub form: Option<Value>,
+    pub form_content: String,
+    /// Data-collection fields (Dify `FormInputConfig`, scoped to
+    /// string/number/boolean/select with constant options).
     #[serde(default)]
-    pub approvers: Option<String>,
+    pub inputs: Vec<AwaitInputField>,
+    /// Custom action buttons (Dify `UserActionConfig`): each `id` IS an
+    /// output handle the author wires; `title` is the button text. Empty
+    /// actions default to a single `submit` action (Dify's default).
+    #[serde(default)]
+    pub actions: Vec<AwaitAction>,
+    /// Soft routing only (task list / notification audience) — NOT an authz
+    /// boundary (await-node.md §6). Admin auth guards the resume endpoint;
+    /// the public resume token guards the callback endpoint.
+    #[serde(default)]
+    pub approvers: Vec<String>,
     #[serde(default)]
     #[cfg_attr(feature = "export-types", ts(type = "number"))]
     pub timeout_secs: Option<i64>,
+}
+
+#[cfg_attr(feature = "export-types", derive(ts_rs::TS))]
+#[derive(Debug, Clone, Deserialize)]
+pub struct AwaitInputField {
+    pub name: String,
+    #[serde(default)]
+    pub label: String,
+    /// string | number | boolean | select
+    #[serde(default = "default_input_type")]
+    pub r#type: String,
+    #[serde(default)]
+    pub required: bool,
+    /// select options (constant; `type=select` requires non-empty).
+    #[serde(default)]
+    pub options: Vec<String>,
+}
+
+fn default_input_type() -> String {
+    "string".into()
+}
+
+#[cfg_attr(feature = "export-types", derive(ts_rs::TS))]
+#[derive(Debug, Clone, Deserialize)]
+pub struct AwaitAction {
+    /// Identifier + output handle (Dify: id "also serves as the identifiers
+    /// of output handle"). Must satisfy `H_IDENT_MAX`-length identifier rules.
+    pub id: String,
+    /// Button text shown to the actor (≤ `TITLE_MAX` chars, like Dify).
+    #[serde(default)]
+    pub title: String,
+}
+
+impl AwaitConfig {
+    /// Effective actions with the Dify default injected when none declared.
+    #[must_use]
+    pub fn effective_actions(&self) -> Vec<AwaitAction> {
+        if self.actions.is_empty() {
+            vec![AwaitAction {
+                id: AWAIT_DEFAULT_ACTION.into(),
+                title: "Submit".into(),
+            }]
+        } else {
+            self.actions.clone()
+        }
+    }
+}
+
+/// Resume request body (await-node.md §2.2): which action fired plus any
+/// collected input data. Trigger-agnostic — admin UI, external systems
+/// (public token endpoint) and the timeout sweeper all funnel into the same
+/// shape. The await node never knows or cares WHO resumed it.
+#[cfg_attr(feature = "export-types", derive(ts_rs::TS))]
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ResumeEnvelope {
+    /// Which action fired — routes through its output handle.
+    pub action: String,
+    /// The typed input values collected from the actor.
     #[serde(default)]
     #[cfg_attr(feature = "export-types", ts(type = "unknown"))]
-    pub events: Option<Vec<Value>>,
+    pub data: Option<Value>,
+}
+
+impl ResumeEnvelope {
+    /// Field-level validation (non-empty action).
+    ///
+    /// # Errors
+    ///
+    /// `BadRequest` when `action` is empty.
+    pub fn validate(&self) -> crate::errors::app_error::AppResult<()> {
+        if self.action.trim().is_empty() {
+            return Err(crate::errors::app_error::AppError::BadRequest(
+                "resume: action 不能为空".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    /// Normalize into `(pool payload, output handle)` (await-node.md §2.3/§4):
+    /// the fired action routes through its handle with the collected data
+    /// landing under `resume`.
+    #[must_use]
+    pub fn normalize(&self) -> (Value, Option<String>) {
+        (
+            self.data.clone().unwrap_or(Value::Null),
+            Some(self.action.clone()),
+        )
+    }
 }
 
 /// `iteration` node config (iteration-node.md §1). `body` is a graph
@@ -455,6 +600,12 @@ pub fn declared_output_fields(kind: &str, config: &Value) -> Vec<String> {
             }
         }
         T_BRANCH => vec!["handle".into()],
+        T_TRANSFORM => {
+            let Ok(c) = serde_json::from_value::<TransformConfig>(config.clone()) else {
+                return Vec::new();
+            };
+            c.assignments.into_iter().map(|a| a.key).collect()
+        }
         _ => Vec::new(),
     }
 }
@@ -631,8 +782,109 @@ pub fn validate_node(kind: &str, _version: i64, config: &Value) -> AppResult<()>
                 return Err(AppError::BadRequest("branch: 至少一个 branches".into()));
             }
         }
+        T_TRANSFORM => {
+            let c: TransformConfig = serde_json::from_value(config.clone()).map_err(type_error)?;
+            if c.assignments.is_empty() {
+                return Err(AppError::BadRequest(
+                    "transform: 至少一条 assignments".into(),
+                ));
+            }
+            let mut keys = std::collections::HashSet::new();
+            for a in &c.assignments {
+                if !is_valid_action_id(&a.key) {
+                    return Err(AppError::BadRequest(format!(
+                        "transform: key '{}' 非法（字母/下划线开头，≤20 字符）",
+                        a.key
+                    )));
+                }
+                if !keys.insert(a.key.clone()) {
+                    return Err(AppError::BadRequest(format!(
+                        "transform: key 重复: {}",
+                        a.key
+                    )));
+                }
+                // ValueExpr shape sanity: ref must be a string array; expr a
+                // string (full lint of ref existence runs in lint_graph).
+                if let Some(arr) = a.value.get("ref") {
+                    let ok = arr
+                        .as_array()
+                        .is_some_and(|xs| xs.iter().all(Value::is_string));
+                    if !ok {
+                        return Err(AppError::BadRequest(format!(
+                            "transform: assignments['{}'].value.ref 须为字符串数组",
+                            a.key
+                        )));
+                    }
+                } else if a.value.get("expr").is_some()
+                    && !a.value.get("expr").is_some_and(|v| v.is_string())
+                {
+                    return Err(AppError::BadRequest(format!(
+                        "transform: assignments['{}'].value.expr 须为字符串",
+                        a.key
+                    )));
+                }
+            }
+        }
         T_AWAIT => {
-            let _c: AwaitConfig = serde_json::from_value(config.clone()).map_err(type_error)?;
+            let c: AwaitConfig = serde_json::from_value(config.clone()).map_err(type_error)?;
+            if c.timeout_secs.is_some_and(|t| t < 1) {
+                return Err(AppError::BadRequest(
+                    "await: timeout_secs 须为 ≥1 的整数".into(),
+                ));
+            }
+            // Actions: valid unique ids; title length (Dify UserActionConfig).
+            let mut ids = std::collections::HashSet::new();
+            for a in &c.actions {
+                if !is_valid_action_id(&a.id) {
+                    return Err(AppError::BadRequest(format!(
+                        "await: action id '{}' 非法（字母/下划线开头，≤{} 字符）",
+                        a.id, AWAIT_ACTION_ID_MAX
+                    )));
+                }
+                if a.id == H_TIMEOUT {
+                    return Err(AppError::BadRequest(format!(
+                        "await: action id 不能用保留名 '{H_TIMEOUT}'（与内置超时端口冲突）"
+                    )));
+                }
+                if !ids.insert(a.id.clone()) {
+                    return Err(AppError::BadRequest(format!(
+                        "await: action id 重复: {}",
+                        a.id
+                    )));
+                }
+                if a.title.chars().count() > AWAIT_ACTION_TITLE_MAX {
+                    return Err(AppError::BadRequest(format!(
+                        "await: action '{}' 的 title 超 {} 字符",
+                        a.id, AWAIT_ACTION_TITLE_MAX
+                    )));
+                }
+            }
+            // Inputs: unique non-empty names; type vocabulary; select
+            // requires options (Dify's duplicated output_variable_name
+            // validator + FormInputType subset).
+            let mut names = std::collections::HashSet::new();
+            for f in &c.inputs {
+                if f.name.trim().is_empty() || !names.insert(f.name.clone()) {
+                    return Err(AppError::BadRequest(format!(
+                        "await: inputs 名称重复或为空: {}",
+                        f.name
+                    )));
+                }
+                if !AWAIT_INPUT_TYPES.contains(&f.r#type.as_str()) {
+                    return Err(AppError::BadRequest(format!(
+                        "await: inputs['{}'].type '{}' 非法（{}）",
+                        f.name,
+                        f.r#type,
+                        AWAIT_INPUT_TYPES.join(" | ")
+                    )));
+                }
+                if f.r#type == "select" && f.options.is_empty() {
+                    return Err(AppError::BadRequest(format!(
+                        "await: inputs['{}'] type=select 须配置非空 options",
+                        f.name
+                    )));
+                }
+            }
         }
         T_ITERATION => {
             let c: IterationConfig = serde_json::from_value(config.clone()).map_err(type_error)?;

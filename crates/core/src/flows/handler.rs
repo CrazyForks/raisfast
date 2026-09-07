@@ -113,7 +113,8 @@ pub fn routes(
         post,
         create_flow,
         "flows",
-        "admin/flows"
+        "admin/flows",
+        "admin"
     );
     let r = reg_route!(
         r,
@@ -123,7 +124,8 @@ pub fn routes(
         get,
         list_flows,
         "flows",
-        "admin/flows"
+        "admin/flows",
+        "admin"
     );
     let r = reg_route!(
         r,
@@ -133,7 +135,8 @@ pub fn routes(
         get,
         list_flows_page,
         "flows",
-        "admin/flows"
+        "admin/flows",
+        "admin"
     );
     let r = reg_route!(
         r,
@@ -143,7 +146,8 @@ pub fn routes(
         get,
         get_flow,
         "flows",
-        "admin/flows"
+        "admin/flows",
+        "admin"
     );
     let r = reg_route!(
         r,
@@ -153,7 +157,8 @@ pub fn routes(
         put,
         update_flow,
         "flows",
-        "admin/flows"
+        "admin/flows",
+        "admin"
     );
     let r = reg_route!(
         r,
@@ -163,7 +168,8 @@ pub fn routes(
         delete,
         delete_flow,
         "flows",
-        "admin/flows"
+        "admin/flows",
+        "admin"
     );
     let r = reg_route!(
         r,
@@ -173,7 +179,8 @@ pub fn routes(
         post,
         run_flow,
         "flows",
-        "admin/flows"
+        "admin/flows",
+        "admin"
     );
     let r = reg_route!(
         r,
@@ -183,7 +190,8 @@ pub fn routes(
         post,
         test_flow,
         "flows",
-        "admin/flows"
+        "admin/flows",
+        "admin"
     );
     let r = reg_route!(
         r,
@@ -193,7 +201,8 @@ pub fn routes(
         post,
         publish_flow,
         "flows",
-        "admin/flows"
+        "admin/flows",
+        "admin"
     );
     let r = reg_route!(
         r,
@@ -203,7 +212,8 @@ pub fn routes(
         get,
         list_public_api_logs,
         "flows",
-        "admin/flows"
+        "admin/flows",
+        "admin"
     );
     let r = reg_route!(
         r,
@@ -213,7 +223,8 @@ pub fn routes(
         get,
         list_flow_apis,
         "flows",
-        "admin/flows"
+        "admin/flows",
+        "admin"
     );
     let r = reg_route!(
         r,
@@ -223,7 +234,8 @@ pub fn routes(
         get,
         flow_api_status,
         "flows",
-        "admin/flows"
+        "admin/flows",
+        "admin"
     );
     let r = reg_route!(
         r,
@@ -233,7 +245,8 @@ pub fn routes(
         post,
         enable_flow_api,
         "flows",
-        "admin/flows"
+        "admin/flows",
+        "admin"
     );
     let r = reg_route!(
         r,
@@ -243,7 +256,8 @@ pub fn routes(
         post,
         rotate_flow_api,
         "flows",
-        "admin/flows"
+        "admin/flows",
+        "admin"
     );
     let r = reg_route!(
         r,
@@ -253,7 +267,8 @@ pub fn routes(
         post,
         rotate_slug_api,
         "flows",
-        "admin/flows"
+        "admin/flows",
+        "admin"
     );
     let r = reg_route!(
         r,
@@ -263,7 +278,8 @@ pub fn routes(
         post,
         disable_flow_api,
         "flows",
-        "admin/flows"
+        "admin/flows",
+        "admin"
     );
     let r = reg_route!(
         r,
@@ -273,7 +289,8 @@ pub fn routes(
         post,
         delete_flow_api,
         "flows",
-        "admin/flows"
+        "admin/flows",
+        "admin"
     );
     let r = reg_route!(
         r,
@@ -294,7 +311,8 @@ pub fn routes(
         get,
         list_versions,
         "flows",
-        "admin/flows"
+        "admin/flows",
+        "admin"
     );
     let r = reg_route!(
         r,
@@ -304,7 +322,8 @@ pub fn routes(
         post,
         rollback_version,
         "flows",
-        "admin/flows"
+        "admin/flows",
+        "admin"
     );
     let r = reg_route!(
         r,
@@ -314,7 +333,8 @@ pub fn routes(
         get,
         list_flow_triggers,
         "flows",
-        "admin/flows"
+        "admin/flows",
+        "admin"
     );
     let r = reg_route!(
         r,
@@ -324,7 +344,8 @@ pub fn routes(
         post,
         create_flow_trigger,
         "flows",
-        "admin/flows"
+        "admin/flows",
+        "admin"
     );
     let r = reg_route!(
         r,
@@ -334,7 +355,8 @@ pub fn routes(
         post,
         enable_flow_trigger,
         "flows",
-        "admin/flows"
+        "admin/flows",
+        "admin"
     );
     let r = reg_route!(
         r,
@@ -344,7 +366,8 @@ pub fn routes(
         post,
         disable_flow_trigger,
         "flows",
-        "admin/flows"
+        "admin/flows",
+        "admin"
     );
     let r = reg_route!(
         r,
@@ -354,7 +377,8 @@ pub fn routes(
         delete,
         delete_flow_trigger,
         "flows",
-        "admin/flows"
+        "admin/flows",
+        "admin"
     );
     let r = reg_route!(
         r,
@@ -364,7 +388,8 @@ pub fn routes(
         get,
         list_instances,
         "flows",
-        "admin/flows"
+        "admin/flows",
+        "admin"
     );
     let r = reg_route!(
         r,
@@ -374,7 +399,8 @@ pub fn routes(
         get,
         get_instance,
         "flows",
-        "admin/flows"
+        "admin/flows",
+        "admin"
     );
     let r = reg_route!(
         r,
@@ -384,7 +410,8 @@ pub fn routes(
         get,
         list_node_runs,
         "flows",
-        "admin/flows"
+        "admin/flows",
+        "admin"
     );
     let r = reg_route!(
         r,
@@ -394,7 +421,8 @@ pub fn routes(
         post,
         stop_instance,
         "flows",
-        "admin/flows"
+        "admin/flows",
+        "admin"
     );
     let r = reg_route!(
         r,
@@ -404,7 +432,41 @@ pub fn routes(
         post,
         resume_instance,
         "flows",
-        "admin/flows"
+        "admin/flows",
+        "admin"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        restful,
+        "/admin/flows/instances/{id}/waiting",
+        get,
+        instance_waiting,
+        "flows",
+        "admin/flows",
+        "admin"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        restful,
+        "/flows/resume/{token}",
+        post,
+        public_resume,
+        "flows",
+        "flows/resume",
+        "public"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        restful,
+        "/admin/flows/instances/{id}/events",
+        get,
+        instance_events,
+        "flows",
+        "admin/flows",
+        "admin"
     );
     let _ = restful;
     r
@@ -413,9 +475,19 @@ pub fn routes(
 #[cfg_attr(feature = "export-types", derive(ts_rs::TS))]
 #[derive(Debug, Deserialize)]
 pub struct ResumeReq {
+    pub action: String,
     #[serde(default)]
     #[cfg_attr(feature = "export-types", ts(type = "unknown"))]
-    pub payload: Option<Value>,
+    pub data: Option<Value>,
+}
+
+impl ResumeReq {
+    fn envelope(&self) -> super::nodes::ResumeEnvelope {
+        super::nodes::ResumeEnvelope {
+            action: self.action.clone(),
+            data: self.data.clone(),
+        }
+    }
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -485,14 +557,143 @@ fn default_page_size() -> i64 {
 async fn resume_instance(
     State(state): State<AppState>,
     Path(id): Path<String>,
+    user: crate::middleware::auth::AuthUser,
     Json(req): Json<ResumeReq>,
 ) -> AppResult<ApiResponse<Value>> {
     let instance_id = parse_id(id)?;
-    super::run::resume_instance(&state.pool, instance_id, req.payload).await?;
+    let resumed_by = user.user_id().map(crate::types::snowflake_id::SnowflakeId);
+    super::run::resume_instance(
+        &state.pool,
+        state.integration.clone(),
+        Some(state.plugins.clone()),
+        instance_id,
+        &req.envelope(),
+        resumed_by,
+    )
+    .await?;
     let done = model::find_instance_by_id(&state.pool, instance_id).await?;
     Ok(ApiResponse::success(
         serde_json::to_value(&done).unwrap_or_default(),
     ))
+}
+
+/// What the resume UI needs about a parked await node (kind/form/approvers),
+/// resolved from the instance's locked version — draft edits never change
+/// the contract of an in-flight approval. Mints the public resume token on
+/// first sight so the panel can hand the callback URL out.
+#[utoipa::path(get, path = "/admin/flows/instances/{id}/waiting")]
+async fn instance_waiting(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> AppResult<ApiResponse<Value>> {
+    let instance_id = parse_id(id)?;
+    let mut info = super::run::waiting_info(&state.pool, instance_id).await?;
+    if let Some(node_id) = info.get("node_id").and_then(Value::as_str) {
+        let token = ensure_resume_token(&state, instance_id, node_id).await?;
+        if let Some(t) = token {
+            info["resume_path"] = Value::String(format!("/api/v1/flows/resume/{t}"));
+        }
+    }
+    Ok(ApiResponse::success(info))
+}
+
+/// C4.1 instance event stream: the global workflow.* bus filtered to one
+/// instance. Weak replay promise (C4.3): reconnecting clients should re-query
+/// the instance status — events cover the live window only.
+async fn instance_events(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> AppResult<
+    axum::response::sse::Sse<
+        impl tokio_stream::Stream<Item = Result<axum::response::sse::Event, std::convert::Infallible>>,
+    >,
+> {
+    use tokio_stream::StreamExt as _;
+    let instance_id = parse_id(id)?;
+    let rx = state.eventbus.subscribe();
+    let want = instance_id.to_string();
+    let stream = tokio_stream::wrappers::BroadcastStream::new(rx).filter_map(move |result| {
+        let event = match result {
+            Ok(e) => e,
+            Err(tokio_stream::wrappers::errors::BroadcastStreamRecvError::Lagged(n)) => {
+                tracing::warn!("instance-events client lagged, skipped {n}");
+                return None;
+            }
+        };
+        let crate::event::Event::Custom {
+            event_type, data, ..
+        } = event.as_ref()
+        else {
+            return None;
+        };
+        if !event_type.starts_with("workflow.") {
+            return None;
+        }
+        if data.get("instance_id").and_then(Value::as_str) != Some(want.as_str()) {
+            return None;
+        }
+        let body = serde_json::to_string(data).unwrap_or_default();
+        Some(Ok(axum::response::sse::Event::default()
+            .event(event_type.clone())
+            .data(body)))
+    });
+    Ok(axum::response::sse::Sse::new(stream).keep_alive(
+        axum::response::sse::KeepAlive::new()
+            .interval(std::time::Duration::from_secs(30))
+            .text("ping"),
+    ))
+}
+
+/// Mint-once public resume token for a parked claim (n8n wait webhook /
+/// Dify recipient access_token): returns the PLAINTEXT token; stores only
+/// sha256 (lookup) + AES-GCM ciphertext (later display).
+async fn ensure_resume_token(
+    state: &AppState,
+    instance_id: SnowflakeId,
+    node_id: &str,
+) -> AppResult<Option<String>> {
+    let Some(row) = model::find_open_flow_resume(&state.pool, instance_id, node_id).await? else {
+        return Ok(None);
+    };
+    if let Some(enc) = row.token_enc.as_deref() {
+        return decrypt_token(&state.config, enc).map(Some);
+    }
+    let token = crate::utils::id::random_hex(24);
+    model::set_flow_resume_token(
+        &state.pool,
+        row.id,
+        &token_hash(&token),
+        &encrypt_token(&state.config, &token)?,
+    )
+    .await?;
+    Ok(Some(token))
+}
+
+/// Public callback resume (n8n-style): the token IS the authorization — no
+/// admin auth, no instance ids leaked. Whoever holds the URL resumes the
+/// parked node with `{action, data}`.
+async fn public_resume(
+    State(state): State<AppState>,
+    Path(token): Path<String>,
+    Json(req): Json<ResumeReq>,
+) -> AppResult<Json<Value>> {
+    let Some(row) = model::find_open_by_token_hash(&state.pool, &token_hash(&token)).await? else {
+        return Err(AppError::not_found("flow_resume"));
+    };
+    super::run::resume_instance(
+        &state.pool,
+        state.integration.clone(),
+        Some(state.plugins.clone()),
+        row.instance_id,
+        &req.envelope(),
+        None,
+    )
+    .await?;
+    let done = model::find_instance_by_id(&state.pool, row.instance_id).await?;
+    Ok(Json(serde_json::json!({
+        "status": done.status,
+        "instance_id": done.id,
+    })))
 }
 
 /// Create a flow with its first published version (definition validated).
