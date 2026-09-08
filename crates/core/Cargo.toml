@@ -10,7 +10,7 @@ homepage = "https://github.com/raisfast/raisfast"
 license = "Apache-2.0"
 
 [features]
-default = ["db-sqlite", "search-tantivy", "plugin-js", "plugin-lua", "plugin-rhai", "openapi", "proxy", "tunnel", "mcp", "integration-stream"]
+default = ["db-sqlite", "search-tantivy", "kb", "plugin-js", "plugin-lua", "plugin-rhai", "openapi", "proxy", "tunnel", "mcp", "integration-stream"]
 
 # ── Database backend (pick exactly one) ────────────────────────────
 db-sqlite  = ["sqlx/sqlite"]
@@ -32,6 +32,10 @@ integration-imap = ["async-imap", "mail-parser", "native-tls", "tokio-native-tls
 
 # ── Search engine ────────────────────────────────────────────────────
 search-tantivy = ["tantivy"]
+
+# ── Knowledge base vector backends ──────────────────────────────────
+kb-qdrant = ["dep:qdrant-client"]
+kb = ["kb-qdrant"]
 
 # ── TLS (HTTPS) ─────────────────────────────────────────────────────
 tls = ["axum-server", "tokio-rustls"]
@@ -179,6 +183,14 @@ notify = { version = "8", features = ["macos_kqueue"] }
 
 # Search engine (optional)
 tantivy = { version = "0.26", optional = true }
+
+# Knowledge base vector backend (optional)
+qdrant-client = { version = "1.15", optional = true }
+
+# Knowledge base document processing (kb-technical-design §3/§15)
+anydoc = "0.2"
+similar = "2"
+text-splitter = { version = "0.32", features = ["markdown"] }
 
 # TLS (optional, for HTTPS)
 axum-server = { version = "0.7", features = ["tls-rustls"], optional = true }

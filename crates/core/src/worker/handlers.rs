@@ -31,6 +31,9 @@ pub struct HandlerDeps {
     pub sms_sender: Arc<dyn SmsSender>,
     pub plugins: Arc<crate::plugins::PluginManager>,
     pub emitter: crate::event::EventEmitter,
+    /// KB runtime singletons (storage rebuilt for worker use); `None` when
+    /// the knowledge base is disabled.
+    pub kb: Option<(Arc<crate::kb::KbRuntime>, Arc<dyn crate::storage::Storage>)>,
 }
 
 /// Inventory entry for a builtin cron handler. Handlers self-register via
@@ -71,6 +74,7 @@ pub mod ingress_orphan_scan;
 pub mod ingress_pull;
 pub mod ingress_retry;
 pub mod itg_egress_cleanup;
+pub mod kb;
 pub mod order_expire;
 pub mod payment_expire;
 pub mod payment_reconcile;
@@ -98,6 +102,7 @@ pub fn register_all(deps: HandlerDeps) -> JobHandlerRegistry {
         sms_sender,
         plugins,
         emitter,
+        kb,
     } = deps;
 
     // Clones for the inventory loop (single-use values moved into handlers above).
@@ -220,6 +225,36 @@ pub fn register_all(deps: HandlerDeps) -> JobHandlerRegistry {
         &agent_run::META,
     );
 
+    if let Some((kb_runtime, kb_storage)) = kb {
+        registry.register(
+            "kb_process_document",
+            Box::new(kb::KbProcessDocumentHandler::new(
+                pool.clone(),
+                kb_runtime.clone(),
+                kb_storage.clone(),
+                config.clone(),
+                emitter.clone(),
+            )),
+        );
+        registry.register(
+            "kb_distill_wiki",
+            Box::new(kb::KbDistillWikiHandler::new(
+                pool.clone(),
+                kb_runtime.clone(),
+                kb_storage.clone(),
+                config.clone(),
+                emitter.clone(),
+            )),
+        );
+        registry.register(
+            "kb_rebuild_vector_index",
+            Box::new(kb::KbRebuildVectorIndexHandler::new(
+                pool.clone(),
+                kb_runtime,
+            )),
+        );
+    }
+
     // ── Cron handlers: collected from inventory self-registration ───────────
     // Every `register_cron_handler!(...)` call in a handler file is collected here.
     for entry in inventory::iter::<CronHandlerEntry> {
@@ -232,6 +267,7 @@ pub fn register_all(deps: HandlerDeps) -> JobHandlerRegistry {
             sms_sender: loop_sms.clone(),
             plugins: plugins.clone(),
             emitter: loop_emitter.clone(),
+            kb: None,
         };
         let handler = (entry.factory)(&deps);
         registry.register_with_meta(entry.meta.id, handler, entry.meta);

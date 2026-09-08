@@ -129,6 +129,19 @@ pub enum Job {
     },
     ReconcilePayments,
     ProcessWalletOutbox,
+    KbProcessDocument {
+        doc_id: SnowflakeId,
+        tenant_id: String,
+    },
+    KbRebuildVectorIndex {
+        kb_id: SnowflakeId,
+        tenant_id: String,
+    },
+    KbDistillWiki {
+        kb_id: SnowflakeId,
+        doc_ids: Vec<i64>,
+        tenant_id: String,
+    },
     /// Custom job type, supports arbitrary `job_type` + JSON payload
     ///
     /// When no built-in Handler matches, WorkerRunner falls back to plugin dispatch.
@@ -159,6 +172,9 @@ impl Job {
             Job::RetryPaymentCallback { .. } => "retry_payment_callback",
             Job::ReconcilePayments => "reconcile_payments",
             Job::ProcessWalletOutbox => "process_wallet_outbox",
+            Job::KbProcessDocument { .. } => "kb_process_document",
+            Job::KbRebuildVectorIndex { .. } => "kb_rebuild_vector_index",
+            Job::KbDistillWiki { .. } => "kb_distill_wiki",
             Job::Custom { job_type, .. } => job_type,
         }
     }

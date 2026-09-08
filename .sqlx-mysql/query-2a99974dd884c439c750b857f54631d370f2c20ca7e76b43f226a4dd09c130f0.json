@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO order_items (id, order_id, product_id, variant_id, title, description, sku, unit_price, quantity, subtotal, tax_amount, cover_url, attributes, created_at, tenant_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 15
+    },
+    "nullable": []
+  },
+  "hash": "2a99974dd884c439c750b857f54631d370f2c20ca7e76b43f226a4dd09c130f0"
+}

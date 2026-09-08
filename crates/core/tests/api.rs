@@ -109,6 +109,7 @@ async fn build_test_app(pool: raisfast::db::Pool) -> (axum::Router, AppState) {
         jwt_decoding_key: jsonwebtoken::DecodingKey::from_secret(config.jwt_secret.as_bytes()),
         plugins: test_plugins.clone(),
         eventbus: shared_bus.clone(),
+        kb_runtime: None,
         post_service: {
             Arc::new(raisfast::services::post::PostServiceImpl::new(
                 Arc::new(pool.clone()),

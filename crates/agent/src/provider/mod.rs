@@ -78,6 +78,17 @@ pub trait ModelProvider: Send + Sync {
         model: &str,
     ) -> Result<ChatResponse, ProviderError>;
 
+    /// Text embeddings via the OpenAI-compatible `POST {base}/embeddings`
+    /// wire protocol (`{"model","input":[...]}` →
+    /// `{"data":[{"embedding":[...],"index"}]}`). Implementations must
+    /// return one vector per input text, in input order.
+    async fn embed(&self, _texts: &[&str], _model: &str) -> Result<Vec<Vec<f32>>, ProviderError> {
+        Err(ProviderError::Config(format!(
+            "provider {} does not support embeddings",
+            self.name()
+        )))
+    }
+
     /// Streaming variant: feed incremental events to `on_event` while the
     /// response is produced, and return the fully assembled response.
     /// Default = non-streaming `chat` replayed as a single batch of events.

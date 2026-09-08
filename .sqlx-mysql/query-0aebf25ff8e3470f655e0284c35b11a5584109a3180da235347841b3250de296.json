@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO product_categories (id, name, slug, description, cover_image, meta_title, meta_description, og_title, og_description, og_image, parent_id, sort_order, created_by, updated_by, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 16
+    },
+    "nullable": []
+  },
+  "hash": "0aebf25ff8e3470f655e0284c35b11a5584109a3180da235347841b3250de296"
+}

@@ -35,6 +35,7 @@ pub mod flows;
 pub mod graphql;
 pub mod handlers;
 pub mod integration;
+pub mod kb;
 #[cfg(feature = "mcp")]
 pub mod mcp;
 #[cfg(feature = "mcp")]
@@ -135,6 +136,8 @@ pub struct AppState {
     pub user_address_service: Arc<dyn crate::services::user_address::UserAddressService>,
     pub payment_service: Arc<dyn crate::services::payment::PaymentService>,
     pub search: Arc<dyn SearchEngine>,
+    /// Knowledge-base runtime singletons; `None` when KB disabled (M2+).
+    pub kb_runtime: Option<Arc<crate::kb::KbRuntime>>,
     pub content_type_registry: Arc<ContentTypeRegistry>,
     pub emitter: crate::event::EventEmitter,
     pub protocol_registry: Arc<crate::protocols::ProtocolRegistry>,
@@ -426,6 +429,13 @@ pub async fn build_app_state(
     svc_builder.register(storage.clone());
     let services = svc_builder.build();
 
+    let kb_runtime = match crate::kb::build_kb_runtime(&config) {
+        Ok(rt) => rt,
+        Err(e) => {
+            return Err(anyhow::anyhow!("knowledge base config invalid (D6): {e}"));
+        }
+    };
+
     let state = AppState {
         pool: pool.clone(),
         config: Arc::new(config.clone()),
@@ -450,6 +460,7 @@ pub async fn build_app_state(
         user_address_service,
         payment_service,
         search,
+        kb_runtime,
         content_type_registry: ct_registry,
         emitter,
         protocol_registry,

@@ -53,6 +53,12 @@ impl JobEnqueuer {
                     post_ids: vec![post_id],
                 })]
             }
+            Event::KbDocumentCreated(data) => {
+                vec![NewJob::from(Job::KbProcessDocument {
+                    doc_id: data.id,
+                    tenant_id: data.tenant_id.clone(),
+                })]
+            }
             Event::PostUpdated(data) => {
                 let post_id: i64 = *data.id;
                 vec![NewJob::from(Job::RebuildSearchIndex {

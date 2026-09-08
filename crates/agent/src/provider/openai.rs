@@ -20,6 +20,22 @@ use crate::tool::ToolSpec;
 /// `POST {base_url}/chat/completions`.
 const ENDPOINT: &str = "chat/completions";
 
+/// `POST {base_url}/embeddings` (OpenAI-compatible embeddings wire protocol).
+const EMBEDDINGS_ENDPOINT: &str = "embeddings";
+
+/// Wire shape of the `/embeddings` response (`data[i].embedding` + `index`).
+#[derive(Debug, Deserialize)]
+struct OpenAiEmbeddingResponse {
+    data: Vec<OpenAiEmbeddingData>,
+}
+
+#[derive(Debug, Deserialize)]
+struct OpenAiEmbeddingData {
+    embedding: Vec<f32>,
+    #[serde(default)]
+    index: usize,
+}
+
 pub struct OpenAiCompatProvider {
     http: reqwest::Client,
     base_url: String,
@@ -137,6 +153,26 @@ impl ModelProvider for OpenAiCompatProvider {
             usage: state.usage.map(TokenUsage::from),
         })
     }
+    async fn embed(&self, texts: &[&str], model: &str) -> Result<Vec<Vec<f32>>, ProviderError> {
+        if texts.is_empty() {
+            return Ok(Vec::new());
+        }
+        let body = serde_json::json!({ "model": model, "input": texts });
+        let text = self.send_json_to(EMBEDDINGS_ENDPOINT, &body).await?;
+        let parsed: OpenAiEmbeddingResponse = serde_json::from_str(&text)
+            .map_err(|e| ProviderError::Parse(format!("{e}: {text}")))?;
+        let mut data = parsed.data;
+        if data.len() != texts.len() {
+            return Err(ProviderError::Parse(format!(
+                "embedding count mismatch: sent {} texts, got {} vectors",
+                texts.len(),
+                data.len()
+            )));
+        }
+        // Servers may return entries out of order; honor the `index` field.
+        data.sort_by_key(|d| d.index);
+        Ok(data.into_iter().map(|d| d.embedding).collect())
+    }
 }
 
 impl OpenAiCompatProvider {
@@ -182,7 +218,12 @@ impl OpenAiCompatProvider {
     }
 
     async fn send_json(&self, body: &Value) -> Result<String, ProviderError> {
-        let url = format!("{}/{}", self.base_url.trim_end_matches('/'), ENDPOINT);
+        self.send_json_to(ENDPOINT, body).await
+    }
+
+    /// POST a JSON body to `{base_url}/{path}` with optional bearer auth.
+    async fn send_json_to(&self, path: &str, body: &Value) -> Result<String, ProviderError> {
+        let url = format!("{}/{}", self.base_url.trim_end_matches('/'), path);
         let mut http_req = self.http.post(&url).json(body);
         if let Some(key) = &self.api_key {
             http_req = http_req.bearer_auth(key);

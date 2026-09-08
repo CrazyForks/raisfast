@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO orders (id, user_id, order_no, subtotal, discount_amount, shipping_amount, total_amount, currency, buyer_name, buyer_phone, buyer_email, shipping_address, remark, tax_amount, coupon_id, shipping_address_id, billing_address_id, created_at, updated_at, tenant_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 20
+    },
+    "nullable": []
+  },
+  "hash": "97829829cd0cb4cba104522aaadacdef534b7bed029494180df79eeb01d11b86"
+}

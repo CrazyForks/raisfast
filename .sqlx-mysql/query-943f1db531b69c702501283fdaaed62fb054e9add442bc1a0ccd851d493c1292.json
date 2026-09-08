@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO products (id, category_id, title, description, cover_url, product_type, fulfillment_type, delivery_hook, weight, price, currency, attributes, sort_order, slug, content, image_ids, original_price, specs, unit, min_purchase, max_purchase, virtual_sales, meta_title, meta_description, og_title, og_description, og_image, stock, cost_price, sale_price, has_variants, created_at, updated_at, tenant_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31, ?32, ?33, ?34)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 34
+    },
+    "nullable": []
+  },
+  "hash": "943f1db531b69c702501283fdaaed62fb054e9add442bc1a0ccd851d493c1292"
+}

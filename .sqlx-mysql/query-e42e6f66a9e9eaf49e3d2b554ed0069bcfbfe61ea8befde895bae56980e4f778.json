@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO sms_codes (id, phone, code, purpose, expires_at, ip_address, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 7
+    },
+    "nullable": []
+  },
+  "hash": "e42e6f66a9e9eaf49e3d2b554ed0069bcfbfe61ea8befde895bae56980e4f778"
+}

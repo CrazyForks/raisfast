@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO oauth_accounts (id, user_id, provider, provider_user_id, email, display_name, avatar_url, access_token, refresh_token, token_expires_at, profile, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 13
+    },
+    "nullable": []
+  },
+  "hash": "57c76d4195d5a4778ffdd1374bd9160013287aa0cbbab8c5204b5dbe3e54a3c3"
+}

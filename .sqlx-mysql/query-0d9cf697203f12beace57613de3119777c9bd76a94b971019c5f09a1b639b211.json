@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO payment_refunds (id, payment_order_id, order_id, user_id, amount, currency, reason, provider_refund_id, status, payment_tx_id, metadata, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 13
+    },
+    "nullable": []
+  },
+  "hash": "0d9cf697203f12beace57613de3119777c9bd76a94b971019c5f09a1b639b211"
+}

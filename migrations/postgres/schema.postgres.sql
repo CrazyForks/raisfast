@@ -1608,3 +1608,126 @@ CREATE TABLE IF NOT EXISTS ai_memories (
 );
 CREATE INDEX IF NOT EXISTS idx_ai_memories_agent_live ON ai_memories(agent_id, superseded_by);
 CREATE INDEX IF NOT EXISTS idx_ai_memories_agent_category ON ai_memories(agent_id, category);
+
+-- ── Knowledge base (kb-technical-design §2) ─────────────────────────
+CREATE TABLE IF NOT EXISTS kb_knowledge_bases (
+    id BIGINT PRIMARY KEY,
+    tenant_id TEXT NOT NULL DEFAULT 'default',
+    name TEXT NOT NULL,
+    slug TEXT NOT NULL,
+    kind TEXT NOT NULL DEFAULT 'document',
+    indexing_strategy JSONB,
+    chunking_config JSONB,
+    embedding_model TEXT,
+    embedding_dim INTEGER,
+    status TEXT NOT NULL DEFAULT 'active',
+    created_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_kb_knowledge_bases_slug ON kb_knowledge_bases(slug);
+CREATE INDEX IF NOT EXISTS idx_kb_knowledge_bases_kind ON kb_knowledge_bases(kind, status);
+
+CREATE TABLE IF NOT EXISTS kb_documents (
+    id BIGINT PRIMARY KEY,
+    kb_id BIGINT NOT NULL,
+    tenant_id TEXT NOT NULL DEFAULT 'default',
+    title TEXT NOT NULL,
+    source TEXT NOT NULL DEFAULT 'upload',
+    storage_key TEXT,
+    mime_type TEXT,
+    size BIGINT NOT NULL DEFAULT 0,
+    parse_format TEXT NOT NULL DEFAULT 'markdown',
+    status TEXT NOT NULL DEFAULT 'pending',
+    error TEXT,
+    chunk_count INTEGER NOT NULL DEFAULT 0,
+    created_by BIGINT,
+    created_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_kb_documents_kb ON kb_documents(kb_id, status);
+
+CREATE TABLE IF NOT EXISTS kb_chunks (
+    id BIGINT PRIMARY KEY,
+    kb_id BIGINT NOT NULL,
+    doc_id BIGINT,
+    faq_id BIGINT,
+    wiki_page_id BIGINT,
+    kind TEXT NOT NULL DEFAULT 'document',
+    parent_id BIGINT,
+    seq INTEGER NOT NULL DEFAULT 0,
+    content TEXT NOT NULL,
+    breadcrumb TEXT,
+    byte_start INTEGER NOT NULL DEFAULT 0,
+    byte_end INTEGER NOT NULL DEFAULT 0,
+    questions JSONB,
+    embedding BYTEA,
+    embedding_model TEXT,
+    status TEXT NOT NULL DEFAULT 'active',
+    created_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_kb_chunks_doc ON kb_chunks(doc_id);
+CREATE INDEX IF NOT EXISTS idx_kb_chunks_parent ON kb_chunks(parent_id);
+CREATE INDEX IF NOT EXISTS idx_kb_chunks_kind ON kb_chunks(kb_id, kind, status);
+
+CREATE TABLE IF NOT EXISTS kb_wiki_pages (
+    id BIGINT PRIMARY KEY,
+    kb_id BIGINT NOT NULL,
+    tenant_id TEXT NOT NULL DEFAULT 'default',
+    title TEXT NOT NULL,
+    slug TEXT NOT NULL,
+    folder TEXT,
+    status TEXT NOT NULL DEFAULT 'draft',
+    content TEXT NOT NULL,
+    summary TEXT,
+    linked_page_ids JSONB,
+    current_revision BIGINT NOT NULL DEFAULT 1,
+    reviewed_by BIGINT,
+    created_by BIGINT,
+    created_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_kb_wiki_pages_kb ON kb_wiki_pages(kb_id, status);
+
+CREATE TABLE IF NOT EXISTS kb_wiki_sources (
+    id BIGINT PRIMARY KEY,
+    page_id BIGINT NOT NULL,
+    page_revision BIGINT NOT NULL DEFAULT 1,
+    doc_id BIGINT NOT NULL,
+    chunk_id BIGINT,
+    span_start INTEGER NOT NULL DEFAULT 0,
+    span_end INTEGER NOT NULL DEFAULT 0,
+    created_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_kb_wiki_sources_page ON kb_wiki_sources(page_id, page_revision);
+CREATE INDEX IF NOT EXISTS idx_kb_wiki_sources_doc ON kb_wiki_sources(doc_id);
+
+CREATE TABLE IF NOT EXISTS kb_faqs (
+    id BIGINT PRIMARY KEY,
+    kb_id BIGINT NOT NULL,
+    tenant_id TEXT NOT NULL DEFAULT 'default',
+    standard_question TEXT NOT NULL,
+    similar_questions JSONB,
+    answers JSONB NOT NULL,
+    tags JSONB,
+    enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    hit_count BIGINT NOT NULL DEFAULT 0,
+    created_by BIGINT,
+    created_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_kb_faqs_kb ON kb_faqs(kb_id, enabled);
+
+CREATE TABLE IF NOT EXISTS kb_query_logs (
+    id BIGINT PRIMARY KEY,
+    kb_id BIGINT,
+    question TEXT NOT NULL,
+    answer TEXT,
+    cited_units JSONB,
+    status TEXT NOT NULL DEFAULT 'answered',
+    top_score DOUBLE PRECISION,
+    feedback INTEGER,
+    user_id BIGINT,
+    created_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_kb_query_logs_status ON kb_query_logs(status, created_at);

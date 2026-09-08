@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO kb_documents (id, kb_id, tenant_id, title, source, storage_key, mime_type, size, created_by, created_at, tenant_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 11
+    },
+    "nullable": []
+  },
+  "hash": "42c239c023850cd8c0b7be15683e71b209eb382669358ab79762ed23198fbdfb"
+}

@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO taggings (id, tag_id, taggable_type, taggable_id, tenant_id) VALUES (?1, ?2, ?3, ?4, ?5)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 5
+    },
+    "nullable": []
+  },
+  "hash": "5e9605bd63329bb489428f0a91cb86cf05f8c670c4760ce727add4a53a77a75d"
+}

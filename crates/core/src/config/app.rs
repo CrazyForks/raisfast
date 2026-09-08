@@ -180,6 +180,9 @@ pub struct AppConfig {
     /// AI agent runtime configuration
     #[serde(default)]
     pub ai: AiConfig,
+    /// Knowledge base (KB) configuration
+    #[serde(default)]
+    pub kb: KbConfig,
     #[serde(default)]
     pub integration: IntegrationConfig,
     #[serde(default)]
@@ -641,6 +644,15 @@ pub struct AiConfig {
     /// false); runs one extraction LLM call per fold.
     #[serde(default)]
     pub memory_consolidate: bool,
+    /// Embedding model for vector indexing (OpenAI-compatible `/embeddings`).
+    /// Env `RAISFAST_AI_EMBEDDING_MODEL`. Required when the knowledge base
+    /// feature is enabled (D6 startup validation, kb-technical-design §4.1).
+    #[serde(default)]
+    pub embedding_model: Option<String>,
+    /// Dimension of `embedding_model` vectors. Env `RAISFAST_AI_EMBEDDING_DIM`.
+    /// Required together with `embedding_model` when KB is enabled.
+    #[serde(default)]
+    pub embedding_dim: Option<u32>,
 }
 
 fn default_ai_timeout_secs() -> u64 {
@@ -665,6 +677,8 @@ impl Default for AiConfig {
             context_window_map: None,
             context_output_reserve: 0,
             mcp_servers: Vec::new(),
+            embedding_model: None,
+            embedding_dim: None,
         }
     }
 }
@@ -729,6 +743,139 @@ impl AiConfig {
                 .filter(|v| !v.is_empty())
                 .and_then(|v| serde_json::from_str(&v).ok())
                 .unwrap_or_default(),
+            embedding_model: env::var("RAISFAST_AI_EMBEDDING_MODEL")
+                .ok()
+                .filter(|v| !v.is_empty()),
+            embedding_dim: env::var("RAISFAST_AI_EMBEDDING_DIM")
+                .ok()
+                .filter(|v| !v.is_empty())
+                .and_then(|v| v.parse().ok()),
+        }
+    }
+}
+
+/// Knowledge base (KB) configuration.
+///
+/// | Env | Type | Default | Description |
+/// |-----|------|---------|-------------|
+/// | `RAISFAST_KB_ENABLED` | bool | `false` | Master switch for the KB subsystem |
+/// | `RAISFAST_KB_VECTOR_BACKEND` | `qdrant`\|`bruteforce` | `qdrant` | Vector index backend (kb-technical-design §4.2) |
+/// | `RAISFAST_KB_QDRANT_URL` | string | — | Qdrant gRPC endpoint (e.g. `http://localhost:6334`); required when backend=qdrant |
+/// | `RAISFAST_KB_QDRANT_API_KEY` | string | — | Optional Qdrant API key |
+/// | `RAISFAST_KB_QDRANT_PREFIX` | string | `kb` | Collection name prefix; collections are `{prefix}_{kb_id}` (one per KB) |
+/// | `RAISFAST_KB_TOP_K` | u32 | `10` | Candidates per recall path (pre-fusion) |
+/// | `RAISFAST_KB_WIKI_BOOST` | f32 | `1.3` | wiki_page unit score multiplier (WK same value) |
+/// | `RAISFAST_KB_FALLBACK_THRESHOLD` | f32 | `0.3` | Below this top score → "not covered" (no generation) |
+/// | `RAISFAST_KB_CONTEXT_TOKEN_BUDGET` | u32 | `4000` | S8 context assembly budget (chars/4 estimate) |
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KbConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_kb_vector_backend")]
+    pub vector_backend: String,
+    #[serde(default)]
+    pub qdrant_url: Option<String>,
+    #[serde(default)]
+    pub qdrant_api_key: Option<String>,
+    #[serde(default = "default_kb_qdrant_prefix")]
+    pub qdrant_prefix: String,
+    /// Candidates each recall path returns (BM25 / dense), pre-fusion.
+    /// Env `RAISFAST_KB_TOP_K` (default 10).
+    #[serde(default = "default_kb_top_k")]
+    pub top_k: u32,
+    /// Score multiplier for `wiki_page` units after rerank
+    /// [抄WK:wiki_boost.go 常量同值]. Env `RAISFAST_KB_WIKI_BOOST` (default 1.3).
+    #[serde(default = "default_kb_wiki_boost")]
+    pub wiki_boost: f32,
+    /// S11 fallback threshold: below this top score the KB reports
+    /// "not covered" instead of generating. Env `RAISFAST_KB_FALLBACK_THRESHOLD`
+    /// (default 0.3, calibrate via E2E eval).
+    #[serde(default = "default_kb_fallback_threshold")]
+    pub fallback_threshold: f32,
+    /// S8 context budget in estimated tokens (chars/4 heuristic,
+    /// [抄RF:glossary U 估算]). Env `RAISFAST_KB_CONTEXT_TOKEN_BUDGET` (default 4000).
+    #[serde(default = "default_kb_context_budget")]
+    pub context_budget_tokens: u32,
+}
+
+fn default_kb_top_k() -> u32 {
+    10
+}
+
+fn default_kb_wiki_boost() -> f32 {
+    1.3
+}
+
+fn default_kb_fallback_threshold() -> f32 {
+    0.3
+}
+
+fn default_kb_context_budget() -> u32 {
+    4000
+}
+
+fn default_kb_vector_backend() -> String {
+    "qdrant".to_string()
+}
+
+fn default_kb_qdrant_prefix() -> String {
+    "kb".to_string()
+}
+
+impl Default for KbConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            vector_backend: default_kb_vector_backend(),
+            qdrant_url: None,
+            qdrant_api_key: None,
+            qdrant_prefix: default_kb_qdrant_prefix(),
+            top_k: default_kb_top_k(),
+            wiki_boost: default_kb_wiki_boost(),
+            fallback_threshold: default_kb_fallback_threshold(),
+            context_budget_tokens: default_kb_context_budget(),
+        }
+    }
+}
+
+impl KbConfig {
+    pub fn from_env() -> Self {
+        let defaults = Self::default();
+        Self {
+            enabled: env::var("RAISFAST_KB_ENABLED")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(defaults.enabled),
+            vector_backend: env::var("RAISFAST_KB_VECTOR_BACKEND")
+                .ok()
+                .filter(|v| !v.is_empty())
+                .unwrap_or(defaults.vector_backend),
+            qdrant_url: env::var("RAISFAST_KB_QDRANT_URL")
+                .ok()
+                .filter(|v| !v.is_empty()),
+            qdrant_api_key: env::var("RAISFAST_KB_QDRANT_API_KEY")
+                .ok()
+                .filter(|v| !v.is_empty()),
+            qdrant_prefix: env::var("RAISFAST_KB_QDRANT_PREFIX")
+                .ok()
+                .filter(|v| !v.is_empty())
+                .unwrap_or(defaults.qdrant_prefix),
+            top_k: env::var("RAISFAST_KB_TOP_K")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(defaults.top_k),
+            wiki_boost: env::var("RAISFAST_KB_WIKI_BOOST")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(defaults.wiki_boost),
+            fallback_threshold: env::var("RAISFAST_KB_FALLBACK_THRESHOLD")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(defaults.fallback_threshold),
+            context_budget_tokens: env::var("RAISFAST_KB_CONTEXT_TOKEN_BUDGET")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(defaults.context_budget_tokens),
         }
     }
 }
@@ -1415,6 +1562,7 @@ impl AppConfig {
                 .unwrap_or(false),
             mcp: McpConfig::from_env(),
             ai: AiConfig::from_env(),
+            kb: KbConfig::from_env(),
             integration: IntegrationConfig::from_env(),
             apps: AppsConfig::from_env(),
             oauth: crate::config::oauth::OAuthConfig::from_env(),
@@ -1612,6 +1760,7 @@ impl AppConfig {
             websocket_enabled: false,
             mcp: McpConfig::default(),
             ai: AiConfig::default(),
+            kb: KbConfig::default(),
             integration: IntegrationConfig::default(),
             apps: AppsConfig::default(),
             oauth: crate::config::oauth::OAuthConfig {

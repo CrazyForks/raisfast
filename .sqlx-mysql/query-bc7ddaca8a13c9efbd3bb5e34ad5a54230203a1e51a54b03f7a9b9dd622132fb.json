@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO shipping_templates (id, name, type, first_unit, first_price, additional_unit, additional_price, free_shipping_amount, regions, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 11
+    },
+    "nullable": []
+  },
+  "hash": "bc7ddaca8a13c9efbd3bb5e34ad5a54230203a1e51a54b03f7a9b9dd622132fb"
+}

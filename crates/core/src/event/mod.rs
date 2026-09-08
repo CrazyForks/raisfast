@@ -190,6 +190,20 @@ pub enum Event {
     #[event(table = "media", event_name = "media.deleted")]
     MediaDeleted(Media),
 
+    // ── Knowledge base ──
+    #[event(table = "kb_documents", event_name = "kb_document.created")]
+    KbDocumentCreated(crate::kb::models::document::KbDocument),
+    #[event(table = "kb_documents", event_name = "kb_document.ready")]
+    KbDocumentReady(crate::kb::models::document::KbDocument),
+    #[event(table = "kb_documents", event_name = "kb_document.failed")]
+    KbDocumentFailed(crate::kb::models::document::KbDocument),
+    #[event(table = "kb_documents", event_name = "kb_document.deleted")]
+    KbDocumentDeleted(crate::kb::models::document::KbDocument),
+    #[event(table = "kb_wiki_pages", event_name = "kb_wiki_page.published")]
+    KbWikiPagePublished(crate::kb::models::wiki_page::KbWikiPage),
+    #[event(table = "kb_wiki_pages", event_name = "kb_wiki_page.updated")]
+    KbWikiPageUpdated(crate::kb::models::wiki_page::KbWikiPage),
+
     // ── Auth ──
     #[event(table = "users", event_name = "user.password_reset_requested")]
     PasswordResetRequested {

@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO oauth_states (id, provider, code_verifier, user_id, expires_at, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 6
+    },
+    "nullable": []
+  },
+  "hash": "295429ee6c6e6a6a53e2942286825522d8a6d4ae3cd90d12955d9083b4532ca9"
+}

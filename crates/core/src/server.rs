@@ -142,6 +142,11 @@ async fn build_app(
 
     if config.worker_enabled {
         let cache_for_workers: Arc<dyn crate::cache::CacheStore> = Arc::new(MemoryCache::new());
+        let kb_for_workers = state.kb_runtime.clone().and_then(|rt| {
+            crate::storage::create_storage(config)
+                .ok()
+                .map(|storage| (rt, storage))
+        });
         state.handler_registry = spawn_workers(
             worker_pool,
             &eventbus,
@@ -149,6 +154,7 @@ async fn build_app(
             state.plugins.clone(),
             state.search.clone(),
             cache_for_workers,
+            kb_for_workers,
         )
         .await;
     }
@@ -257,6 +263,7 @@ async fn build_app(
         .merge(tenant::routes(&mut registry, config))
         .merge(crate::handlers::audit::routes(&mut registry, config))
         .merge(crate::agent::handler::routes(&mut registry, config))
+        .merge(crate::kb::handler::routes(&mut registry, config))
         .merge(crate::webhook::handler::routes(&mut registry, config))
         .merge(crate::content_type::handler::routes(&mut registry, config))
         .merge(crate::integration::routes::routes(&mut registry, config))
@@ -1004,6 +1011,7 @@ pub fn spawn_webhook_subscriber(
 }
 
 /// Spawn the Worker subsystem (CronScheduler + JobEnqueuer + WorkerRunner)
+#[allow(clippy::too_many_arguments)]
 async fn spawn_workers(
     pool: crate::db::Pool,
     eventbus: &crate::eventbus::EventBus,
@@ -1011,6 +1019,7 @@ async fn spawn_workers(
     plugins: Arc<crate::plugins::PluginManager>,
     search: Arc<dyn crate::search::SearchEngine>,
     cache: Arc<dyn crate::cache::CacheStore>,
+    kb: Option<(Arc<crate::kb::KbRuntime>, Arc<dyn crate::storage::Storage>)>,
 ) -> Arc<crate::worker::JobHandlerRegistry> {
     use crate::worker::{
         CronScheduler, DefaultJobQueue, JobEnqueuer, PluginCronDispatcher, StuckJobSweeper,
@@ -1041,6 +1050,7 @@ async fn spawn_workers(
             sms_sender: crate::notifier::build_sms_sender(config),
             plugins: plugins.clone(),
             emitter: crate::event::EventEmitter::eventbus_only(eventbus.clone()),
+            kb,
         },
     ));
 

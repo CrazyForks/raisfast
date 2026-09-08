@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO payment_orders (id, user_id, order_id, title, amount, currency, channel_id, provider, reference_type, reference_id, return_url, idempotency_key, client_ip, client_language, client_country, client_user_agent, channel_selected_by, metadata, created_at, updated_at, tenant_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 21
+    },
+    "nullable": []
+  },
+  "hash": "b8c1052e2e35b3c762d36e1123d9b0ec18617974eea17f926a4ea4064549854f"
+}

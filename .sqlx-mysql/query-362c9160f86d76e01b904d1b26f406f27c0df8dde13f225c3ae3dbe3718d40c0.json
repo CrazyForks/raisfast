@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO product_favorites (id, user_id, product_id, created_at) VALUES (?1, ?2, ?3, ?4)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 4
+    },
+    "nullable": []
+  },
+  "hash": "362c9160f86d76e01b904d1b26f406f27c0df8dde13f225c3ae3dbe3718d40c0"
+}
