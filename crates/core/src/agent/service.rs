@@ -851,6 +851,124 @@ pub async fn update_agent(
     crate::agent::models::ai_agent::find_agent_by_id(pool, id, tenant_id).await
 }
 
+/// Delete an agent and cascade its sessions, messages and memories
+/// (service-level cascade, db-schema §8).
+pub async fn delete_agent(
+    pool: &crate::db::Pool,
+    tenant_id: Option<&str>,
+    id: SnowflakeId,
+) -> AppResult<()> {
+    // Tenant-scoped existence check first so a missing agent 404s instead of
+    // silently deleting nothing.
+    crate::agent::models::ai_agent::find_agent_by_id(pool, id, tenant_id).await?;
+    crate::agent::models::ai_agent::delete_agent_cascade(pool, id, tenant_id).await
+}
+
+/// List memories of an agent (admin view, cross-user by default).
+pub async fn list_agent_memories(
+    pool: &crate::db::Pool,
+    tenant_id: Option<&str>,
+    agent_id: SnowflakeId,
+    user_id: Option<SnowflakeId>,
+    category: Option<&str>,
+    query: Option<&str>,
+    limit: i64,
+) -> AppResult<Vec<crate::agent::models::ai_memory::AiMemory>> {
+    crate::agent::models::ai_memory::admin_list_memories(
+        pool, tenant_id, agent_id, user_id, category, query, limit,
+    )
+    .await
+}
+
+/// Upsert a memory by (agent, user, key) — admin entry point. `user_id`
+/// `None` targets the platform-level row of the agent.
+#[allow(clippy::too_many_arguments)]
+pub async fn upsert_agent_memory(
+    pool: &crate::db::Pool,
+    tenant_id: Option<&str>,
+    agent_id: SnowflakeId,
+    user_id: Option<SnowflakeId>,
+    key: &str,
+    content: &str,
+    category: &str,
+    importance: f64,
+) -> AppResult<crate::agent::models::ai_memory::AiMemory> {
+    crate::agent::models::ai_memory::store_memory(
+        pool,
+        tenant_id,
+        agent_id,
+        user_id,
+        key,
+        content,
+        category,
+        importance.clamp(0.0, 1.0),
+        false,
+    )
+    .await
+}
+
+/// Update one memory row by id (content/category/importance/pinned).
+#[allow(clippy::too_many_arguments)]
+pub async fn update_agent_memory(
+    pool: &crate::db::Pool,
+    tenant_id: Option<&str>,
+    agent_id: SnowflakeId,
+    id: SnowflakeId,
+    content: &str,
+    category: &str,
+    importance: f64,
+    pinned: bool,
+) -> AppResult<()> {
+    crate::agent::models::ai_memory::update_memory_by_id(
+        pool,
+        tenant_id,
+        agent_id,
+        id,
+        content,
+        category,
+        importance.clamp(0.0, 1.0),
+        pinned,
+    )
+    .await
+}
+
+/// Delete one memory row by id.
+pub async fn delete_agent_memory(
+    pool: &crate::db::Pool,
+    tenant_id: Option<&str>,
+    agent_id: SnowflakeId,
+    id: SnowflakeId,
+) -> AppResult<()> {
+    crate::agent::models::ai_memory::delete_memory_by_id(pool, tenant_id, agent_id, id).await
+}
+
+/// Admin listing of all sessions of a tenant (cross agent/user).
+pub async fn admin_list_sessions(
+    pool: &crate::db::Pool,
+    tenant_id: Option<&str>,
+    agent_id: Option<SnowflakeId>,
+    user_id: Option<SnowflakeId>,
+    status: Option<&str>,
+    limit: i64,
+    offset: i64,
+) -> AppResult<(Vec<AiSession>, i64)> {
+    crate::agent::models::ai_session::admin_list_sessions(
+        pool, tenant_id, agent_id, user_id, status, limit, offset,
+    )
+    .await
+}
+
+/// Delete a session and its messages (admin, tenant-scoped).
+pub async fn delete_session(
+    pool: &crate::db::Pool,
+    tenant_id: Option<&str>,
+    id: SnowflakeId,
+) -> AppResult<()> {
+    // Tenant-scoped existence check first so a missing session 404s.
+    crate::agent::models::ai_session::find_session_by_id(pool, id, tenant_id).await?;
+    crate::agent::models::ai_session::delete_session_cascade(pool, id, tenant_id).await
+}
+
 /// Create a session owned by `user_id` on an agent.
 pub async fn create_session(
     pool: &crate::db::Pool,

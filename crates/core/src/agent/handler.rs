@@ -69,6 +69,28 @@ pub fn routes(
         r,
         registry,
         _config.api_restful,
+        "/admin/ai/agents/{id}",
+        get,
+        admin_get_agent,
+        "system",
+        "admin/ai/agents",
+        "admin"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        _config.api_restful,
+        "/admin/ai/agents/{id}",
+        delete,
+        admin_delete_agent,
+        "system",
+        "admin/ai/agents",
+        "admin"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        _config.api_restful,
         "/ai/agents/{agent_id}/sessions",
         post,
         create_session,
@@ -119,6 +141,127 @@ pub fn routes(
         "system",
         "ai/sessions/compact",
         "authed"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        _config.api_restful,
+        "/admin/ai/agents/{id}/memories",
+        get,
+        admin_list_memories,
+        "system",
+        "admin/ai/agents",
+        "admin"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        _config.api_restful,
+        "/admin/ai/agents/{id}/memories",
+        post,
+        admin_upsert_memory,
+        "system",
+        "admin/ai/agents",
+        "admin"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        _config.api_restful,
+        "/admin/ai/agents/{id}/memories/{mid}",
+        put,
+        admin_update_memory,
+        "system",
+        "admin/ai/agents",
+        "admin"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        _config.api_restful,
+        "/admin/ai/agents/{id}/memories/{mid}",
+        delete,
+        admin_delete_memory,
+        "system",
+        "admin/ai/agents",
+        "admin"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        _config.api_restful,
+        "/admin/ai/skills",
+        get,
+        admin_list_skills,
+        "system",
+        "admin/ai/skills",
+        "admin"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        _config.api_restful,
+        "/admin/ai/skills",
+        post,
+        admin_create_skill,
+        "system",
+        "admin/ai/skills",
+        "admin"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        _config.api_restful,
+        "/admin/ai/skills/{name}",
+        put,
+        admin_update_skill,
+        "system",
+        "admin/ai/skills",
+        "admin"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        _config.api_restful,
+        "/admin/ai/skills/{name}",
+        delete,
+        admin_delete_skill,
+        "system",
+        "admin/ai/skills",
+        "admin"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        _config.api_restful,
+        "/admin/ai/sessions",
+        get,
+        admin_list_sessions,
+        "system",
+        "admin/ai/sessions",
+        "admin"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        _config.api_restful,
+        "/admin/ai/sessions/{id}",
+        delete,
+        admin_delete_session,
+        "system",
+        "admin/ai/sessions",
+        "admin"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        _config.api_restful,
+        "/admin/ai/sessions/{id}/messages",
+        get,
+        admin_session_messages,
+        "system",
+        "admin/ai/sessions",
+        "admin"
     );
     reg_route!(
         r,
@@ -189,13 +332,42 @@ pub async fn admin_update_agent(
     Ok(ApiResponse::success(agent))
 }
 
+/// `GET /admin/ai/agents/{id}` — single agent detail (tenant-scoped).
+pub async fn admin_get_agent(
+    auth: AuthUser,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> AppResult<ApiResponse<crate::agent::models::ai_agent::AiAgent>> {
+    auth.ensure_admin()?;
+    let id = crate::types::snowflake_id::parse_id(&id)?;
+    let agent = ai_service::find_agent(&state.pool, id, auth.tenant_id()).await?;
+    Ok(ApiResponse::success(agent))
+}
+
+/// `DELETE /admin/ai/agents/{id}` — delete an agent, cascading sessions,
+/// messages and memories (service-level cascade).
+pub async fn admin_delete_agent(
+    auth: AuthUser,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> AppResult<ApiResponse<()>> {
+    auth.ensure_admin()?;
+    let id = crate::types::snowflake_id::parse_id(&id)?;
+    crate::agent::service::delete_agent(&state.pool, auth.tenant_id(), id).await?;
+    Ok(ApiResponse::success(()))
+}
+
 pub async fn admin_list_agents(
     auth: AuthUser,
     State(state): State<AppState>,
-) -> AppResult<ApiResponse<Vec<crate::agent::models::ai_agent::AiAgent>>> {
+    Query(mut params): Query<crate::utils::pagination::PaginationParams>,
+) -> AppResult<
+    ApiResponse<crate::errors::response::PaginatedData<crate::agent::models::ai_agent::AiAgent>>,
+> {
     auth.ensure_admin()?;
+    params.sanitize();
     let agents = ai_service::list_agents(&state.pool, auth.tenant_id()).await?;
-    Ok(ApiResponse::success(agents))
+    Ok(params.paginate_in_memory(agents))
 }
 
 #[derive(Deserialize)]
@@ -228,6 +400,277 @@ pub async fn admin_agent_usage(
 pub struct CreateSessionReq {
     #[serde(default)]
     pub title: Option<String>,
+}
+
+// ── admin memory management ─────────────────────────────────────────────────
+
+#[derive(Deserialize)]
+pub struct MemoryListQuery {
+    #[serde(default)]
+    pub q: Option<String>,
+    #[serde(default)]
+    pub category: Option<String>,
+    /// Optional user filter (encoded id string); omit to list cross-user.
+    #[serde(default)]
+    pub user_id: Option<String>,
+    #[serde(default)]
+    pub limit: Option<i64>,
+}
+
+/// `GET /admin/ai/agents/{id}/memories` — list live memories of an agent
+/// (cross-user by default, optional filters).
+pub async fn admin_list_memories(
+    auth: AuthUser,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Query(q): Query<MemoryListQuery>,
+) -> AppResult<ApiResponse<Vec<crate::agent::models::ai_memory::AiMemory>>> {
+    auth.ensure_admin()?;
+    let agent_id = crate::types::snowflake_id::parse_id(&id)?;
+    let _agent = ai_service::find_agent(&state.pool, agent_id, auth.tenant_id()).await?;
+    let user_id = match q.user_id.as_deref() {
+        None | Some("") => None,
+        Some(raw) => Some(crate::types::snowflake_id::parse_id(raw)?),
+    };
+    let memories = ai_service::list_agent_memories(
+        &state.pool,
+        auth.tenant_id(),
+        agent_id,
+        user_id,
+        q.category.as_deref().filter(|c| !c.is_empty()),
+        q.q.as_deref(),
+        q.limit.unwrap_or(200).clamp(1, 1000),
+    )
+    .await?;
+    Ok(ApiResponse::success(memories))
+}
+
+#[derive(Deserialize)]
+pub struct UpsertMemoryReq {
+    pub key: String,
+    pub content: String,
+    #[serde(default = "default_memory_category")]
+    pub category: String,
+    #[serde(default = "default_memory_importance")]
+    pub importance: f64,
+    /// Optional target user (encoded id string); omit for platform-level row.
+    #[serde(default)]
+    pub user_id: Option<String>,
+}
+
+fn default_memory_category() -> String {
+    "core".to_string()
+}
+
+fn default_memory_importance() -> f64 {
+    0.5
+}
+
+/// `POST /admin/ai/agents/{id}/memories` — upsert by (agent, user, key).
+pub async fn admin_upsert_memory(
+    auth: AuthUser,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(body): Json<UpsertMemoryReq>,
+) -> AppResult<ApiResponse<crate::agent::models::ai_memory::AiMemory>> {
+    auth.ensure_admin()?;
+    let agent_id = crate::types::snowflake_id::parse_id(&id)?;
+    let _agent = ai_service::find_agent(&state.pool, agent_id, auth.tenant_id()).await?;
+    let key = body.key.trim();
+    if key.is_empty() || body.content.trim().is_empty() {
+        return Err(AppError::BadRequest(
+            "memory key and content must not be empty".to_string(),
+        ));
+    }
+    let user_id = match body.user_id.as_deref() {
+        None | Some("") => None,
+        Some(raw) => Some(crate::types::snowflake_id::parse_id(raw)?),
+    };
+    let memory = ai_service::upsert_agent_memory(
+        &state.pool,
+        auth.tenant_id(),
+        agent_id,
+        user_id,
+        key,
+        body.content.trim(),
+        body.category.trim(),
+        body.importance,
+    )
+    .await?;
+    Ok(ApiResponse::success(memory))
+}
+
+#[derive(Deserialize)]
+pub struct UpdateMemoryReq {
+    pub content: String,
+    pub category: String,
+    pub importance: f64,
+    pub pinned: bool,
+}
+
+/// `PUT /admin/ai/agents/{id}/memories/{mid}` — edit one row by id.
+pub async fn admin_update_memory(
+    auth: AuthUser,
+    State(state): State<AppState>,
+    Path((id, mid)): Path<(String, String)>,
+    Json(body): Json<UpdateMemoryReq>,
+) -> AppResult<ApiResponse<()>> {
+    auth.ensure_admin()?;
+    let agent_id = crate::types::snowflake_id::parse_id(&id)?;
+    let memory_id = crate::types::snowflake_id::parse_id(&mid)?;
+    if body.content.trim().is_empty() {
+        return Err(AppError::BadRequest(
+            "memory content must not be empty".to_string(),
+        ));
+    }
+    ai_service::update_agent_memory(
+        &state.pool,
+        auth.tenant_id(),
+        agent_id,
+        memory_id,
+        body.content.trim(),
+        body.category.trim(),
+        body.importance,
+        body.pinned,
+    )
+    .await?;
+    Ok(ApiResponse::success(()))
+}
+
+/// `DELETE /admin/ai/agents/{id}/memories/{mid}` — delete one row by id.
+pub async fn admin_delete_memory(
+    auth: AuthUser,
+    State(state): State<AppState>,
+    Path((id, mid)): Path<(String, String)>,
+) -> AppResult<ApiResponse<()>> {
+    auth.ensure_admin()?;
+    let agent_id = crate::types::snowflake_id::parse_id(&id)?;
+    let memory_id = crate::types::snowflake_id::parse_id(&mid)?;
+    ai_service::delete_agent_memory(&state.pool, auth.tenant_id(), agent_id, memory_id).await?;
+    Ok(ApiResponse::success(()))
+}
+
+// ── admin skills management ─────────────────────────────────────────────────
+
+#[derive(Deserialize)]
+pub struct SkillScopeQuery {
+    /// `platform` (default `tenant` = current admin tenant).
+    #[serde(default)]
+    pub scope: Option<String>,
+}
+
+fn skill_scope(raw: Option<&str>) -> String {
+    match raw {
+        None | Some("") => "tenant".to_string(),
+        Some(s) => s.to_string(),
+    }
+}
+
+/// `GET /admin/ai/skills` — list skills of both layers for this tenant.
+pub async fn admin_list_skills(
+    auth: AuthUser,
+) -> AppResult<ApiResponse<Vec<crate::agent::skills::admin::AdminSkill>>> {
+    auth.ensure_admin()?;
+    let skills = crate::agent::skills::admin::list_skills(
+        &crate::agent::skills::skills_root(),
+        auth.tenant_id(),
+    )?;
+    Ok(ApiResponse::success(skills))
+}
+
+#[derive(Deserialize)]
+pub struct CreateSkillReq {
+    /// Directory name (slug); also written as frontmatter `name`.
+    pub name: String,
+    pub description: String,
+    #[serde(default)]
+    pub instructions: String,
+    #[serde(default)]
+    pub always: bool,
+    #[serde(default)]
+    pub tools: Vec<String>,
+    #[serde(default)]
+    pub disallowed_tools: Vec<String>,
+    #[serde(default)]
+    pub scope: Option<String>,
+}
+
+/// `POST /admin/ai/skills` — create a skill directory + SKILL.md.
+pub async fn admin_create_skill(
+    auth: AuthUser,
+    Json(body): Json<CreateSkillReq>,
+) -> AppResult<ApiResponse<()>> {
+    auth.ensure_admin()?;
+    let write = crate::agent::skills::admin::SkillWrite {
+        description: body.description,
+        instructions: body.instructions,
+        always: body.always,
+        tools: body.tools,
+        disallowed_tools: body.disallowed_tools,
+    };
+    crate::agent::skills::admin::create_skill(
+        &crate::agent::skills::skills_root(),
+        auth.tenant_id(),
+        &skill_scope(body.scope.as_deref()),
+        body.name.trim(),
+        &write,
+    )?;
+    Ok(ApiResponse::success(()))
+}
+
+#[derive(Deserialize)]
+pub struct UpdateSkillReq {
+    pub description: String,
+    #[serde(default)]
+    pub instructions: String,
+    #[serde(default)]
+    pub always: bool,
+    #[serde(default)]
+    pub tools: Vec<String>,
+    #[serde(default)]
+    pub disallowed_tools: Vec<String>,
+}
+
+/// `PUT /admin/ai/skills/{name}?scope=` — overwrite SKILL.md (extra
+/// frontmatter fields are preserved).
+pub async fn admin_update_skill(
+    auth: AuthUser,
+    Path(name): Path<String>,
+    Query(q): Query<SkillScopeQuery>,
+    Json(body): Json<UpdateSkillReq>,
+) -> AppResult<ApiResponse<()>> {
+    auth.ensure_admin()?;
+    let write = crate::agent::skills::admin::SkillWrite {
+        description: body.description,
+        instructions: body.instructions,
+        always: body.always,
+        tools: body.tools,
+        disallowed_tools: body.disallowed_tools,
+    };
+    crate::agent::skills::admin::update_skill(
+        &crate::agent::skills::skills_root(),
+        auth.tenant_id(),
+        &skill_scope(q.scope.as_deref()),
+        &name,
+        &write,
+    )?;
+    Ok(ApiResponse::success(()))
+}
+
+/// `DELETE /admin/ai/skills/{name}?scope=` — remove a skill directory.
+pub async fn admin_delete_skill(
+    auth: AuthUser,
+    Path(name): Path<String>,
+    Query(q): Query<SkillScopeQuery>,
+) -> AppResult<ApiResponse<()>> {
+    auth.ensure_admin()?;
+    crate::agent::skills::admin::delete_skill(
+        &crate::agent::skills::skills_root(),
+        auth.tenant_id(),
+        &skill_scope(q.scope.as_deref()),
+        &name,
+    )?;
+    Ok(ApiResponse::success(()))
 }
 
 pub async fn create_session(
@@ -287,6 +730,92 @@ pub async fn get_messages(
     let messages = ai_service::list_messages(
         &state.pool,
         session.id,
+        auth.tenant_id(),
+        q.after_seq,
+        q.limit.unwrap_or(200).clamp(1, 1000),
+    )
+    .await?;
+    Ok(ApiResponse::success(messages))
+}
+
+// ── admin sessions management ───────────────────────────────────────────────
+
+#[derive(Deserialize)]
+pub struct AdminSessionQuery {
+    #[serde(default)]
+    pub page: Option<i64>,
+    #[serde(default)]
+    pub page_size: Option<i64>,
+    /// Encoded agent id filter.
+    #[serde(default)]
+    pub agent_id: Option<String>,
+    /// Encoded user id filter.
+    #[serde(default)]
+    pub user_id: Option<String>,
+    /// `open` / `running` / `closed` / `archived`.
+    #[serde(default)]
+    pub status: Option<String>,
+}
+
+/// `GET /admin/ai/sessions` — paginated listing across agents and users.
+pub async fn admin_list_sessions(
+    auth: AuthUser,
+    State(state): State<AppState>,
+    Query(q): Query<AdminSessionQuery>,
+) -> AppResult<
+    ApiResponse<
+        crate::errors::response::PaginatedData<crate::agent::models::ai_session::AiSession>,
+    >,
+> {
+    auth.ensure_admin()?;
+    let params = crate::utils::pagination::PaginationParams::from_options(q.page, q.page_size);
+    let agent_id = match q.agent_id.as_deref() {
+        None | Some("") => None,
+        Some(raw) => Some(crate::types::snowflake_id::parse_id(raw)?),
+    };
+    let user_id = match q.user_id.as_deref() {
+        None | Some("") => None,
+        Some(raw) => Some(crate::types::snowflake_id::parse_id(raw)?),
+    };
+    let (items, total) = ai_service::admin_list_sessions(
+        &state.pool,
+        auth.tenant_id(),
+        agent_id,
+        user_id,
+        q.status.as_deref().filter(|s| !s.is_empty()),
+        params.page_size,
+        params.offset(),
+    )
+    .await?;
+    Ok(params.paginate(items, total))
+}
+
+/// `DELETE /admin/ai/sessions/{id}` — delete a session and its messages.
+pub async fn admin_delete_session(
+    auth: AuthUser,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> AppResult<ApiResponse<()>> {
+    auth.ensure_admin()?;
+    let id = crate::types::snowflake_id::parse_id(&id)?;
+    ai_service::delete_session(&state.pool, auth.tenant_id(), id).await?;
+    Ok(ApiResponse::success(()))
+}
+
+/// `GET /admin/ai/sessions/{id}/messages` — read-only replay for admins
+/// (no owner check; tenant-scoped).
+pub async fn admin_session_messages(
+    auth: AuthUser,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Query(q): Query<MessagesQuery>,
+) -> AppResult<ApiResponse<Vec<crate::agent::models::ai_message::AiMessage>>> {
+    auth.ensure_admin()?;
+    let id = crate::types::snowflake_id::parse_id(&id)?;
+    let _session = ai_service::find_session(&state.pool, id, auth.tenant_id()).await?;
+    let messages = ai_service::list_messages(
+        &state.pool,
+        id,
         auth.tenant_id(),
         q.after_seq,
         q.limit.unwrap_or(200).clamp(1, 1000),

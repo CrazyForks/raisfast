@@ -182,6 +182,129 @@ pub async fn forget_memory(
     Ok(q.execute(pool).await?.rows_affected() > 0)
 }
 
+/// Admin listing over live rows of one agent, cross-user. Optional keyword
+/// (matches key or content), category and user filters; most recently
+/// updated first.
+pub async fn admin_list_memories(
+    pool: &crate::db::Pool,
+    tenant_id: Option<&str>,
+    agent_id: SnowflakeId,
+    user_id: Option<SnowflakeId>,
+    category: Option<&str>,
+    query: Option<&str>,
+    limit: i64,
+) -> AppResult<Vec<AiMemory>> {
+    let keyword: Option<String> = query
+        .map(str::trim)
+        .filter(|q| !q.is_empty())
+        .map(|q| format!("%{q}%"));
+
+    let mut sql = format!(
+        "SELECT {MEMORY_COLS} FROM ai_memories WHERE agent_id = {} AND superseded_by IS NULL",
+        crate::db::Driver::ph(1)
+    );
+    let (tail, mut n) = scope_clause(tenant_id, user_id, 2);
+    sql.push_str(&tail);
+    if category.is_some() {
+        sql.push_str(&format!(" AND category = {}", crate::db::Driver::ph(n)));
+        n += 1;
+    }
+    if keyword.is_some() {
+        sql.push_str(&format!(
+            " AND (mem_key LIKE {} OR content LIKE {})",
+            crate::db::Driver::ph(n),
+            crate::db::Driver::ph(n + 1)
+        ));
+        n += 2;
+    }
+    sql.push_str(&format!(
+        " ORDER BY updated_at DESC LIMIT {}",
+        crate::db::Driver::ph(n)
+    ));
+
+    let mut q = sqlx::query_as::<_, AiMemory>(crate::db::safe_sql(&sql)).bind(agent_id);
+    if let Some(tid) = tenant_id {
+        q = q.bind(tid);
+    }
+    if let Some(uid) = user_id {
+        q = q.bind(uid);
+    }
+    if let Some(cat) = category {
+        q = q.bind(cat);
+    }
+    if let Some(pat) = &keyword {
+        q = q.bind(pat.as_str()).bind(pat.as_str());
+    }
+    Ok(q.bind(limit).fetch_all(pool).await?)
+}
+
+/// Admin update by row id: editable columns only, scoped to (tenant, agent).
+#[allow(clippy::too_many_arguments)]
+pub async fn update_memory_by_id(
+    pool: &crate::db::Pool,
+    tenant_id: Option<&str>,
+    agent_id: SnowflakeId,
+    id: SnowflakeId,
+    content: &str,
+    category: &str,
+    importance: f64,
+    pinned: bool,
+) -> AppResult<()> {
+    let now = now_utc();
+    let tenant_clause = tenant_id
+        .map(|_| format!(" AND tenant_id = {}", crate::db::Driver::ph(8)))
+        .unwrap_or_default();
+    let sql = format!(
+        "UPDATE ai_memories SET content = {}, category = {}, importance = {}, pinned = {}, updated_at = {} \
+         WHERE id = {} AND agent_id = {}{tenant_clause}",
+        crate::db::Driver::ph(1),
+        crate::db::Driver::ph(2),
+        crate::db::Driver::ph(3),
+        crate::db::Driver::ph(4),
+        crate::db::Driver::ph(5),
+        crate::db::Driver::ph(6),
+        crate::db::Driver::ph(7)
+    );
+    let mut q = sqlx::query(crate::db::safe_sql(&sql))
+        .bind(content)
+        .bind(category)
+        .bind(importance)
+        .bind(pinned)
+        .bind(now)
+        .bind(id)
+        .bind(agent_id);
+    if let Some(tid) = tenant_id {
+        q = q.bind(tid);
+    }
+    let result = q.execute(pool).await?;
+    AppError::expect_affected(&result, "ai_memory")
+}
+
+/// Admin delete by row id, scoped to (tenant, agent).
+pub async fn delete_memory_by_id(
+    pool: &crate::db::Pool,
+    tenant_id: Option<&str>,
+    agent_id: SnowflakeId,
+    id: SnowflakeId,
+) -> AppResult<()> {
+    let tenant_clause = tenant_id
+        .map(|_| format!(" AND tenant_id = {}", crate::db::Driver::ph(3)))
+        .unwrap_or_default();
+    let sql = format!(
+        "DELETE FROM ai_memories WHERE id = {} AND agent_id = {}{tenant_clause}",
+        crate::db::Driver::ph(1),
+        crate::db::Driver::ph(2)
+    );
+    let mut q = sqlx::query(crate::db::safe_sql(&sql))
+        .bind(id)
+        .bind(agent_id);
+    if let Some(tid) = tenant_id {
+        q = q.bind(tid);
+    }
+    let result = q.execute(pool).await?;
+    AppError::expect_affected(&result, "ai_memory")
+}
+
 /// Optional scope clause ` AND tenant_id = ? AND user_id = ?` (either/both).
 /// Returns the next free placeholder index.
 fn scope_clause(

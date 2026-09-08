@@ -3,6 +3,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::db::DbDriver;
 use crate::errors::app_error::{AppError, AppResult};
 use crate::types::snowflake_id::SnowflakeId;
 use crate::utils::tz::{Timestamp, now_utc};
@@ -141,4 +142,77 @@ pub async fn delete_agent(
         tenant: tenant_id
     )?;
     AppError::expect_affected(&result, "ai_agent")
+}
+
+/// Delete an agent plus its sessions, messages and memories in one
+/// transaction (service-level cascade, db-schema §8).
+pub async fn delete_agent_cascade(
+    pool: &crate::db::Pool,
+    id: SnowflakeId,
+    tenant_id: Option<&str>,
+) -> AppResult<()> {
+    crate::in_transaction!(pool, tx, {
+        let ph = crate::db::Driver::ph;
+        // Messages of every session of this agent (subquery keeps it one
+        // statement on all three backends).
+        let tenant_msgs = tenant_id
+            .map(|_| format!(" AND tenant_id = {}", ph(2)))
+            .unwrap_or_default();
+        let sql = format!(
+            "DELETE FROM ai_messages WHERE session_id IN \
+             (SELECT id FROM ai_sessions WHERE agent_id = {}{})",
+            ph(1),
+            tenant_msgs
+        );
+        let mut q = sqlx::query(crate::db::safe_sql(&sql)).bind(id);
+        if let Some(tid) = tenant_id {
+            q = q.bind(tid);
+        }
+        q.execute(&mut *tx).await?;
+
+        // Sessions.
+        let tenant_sessions = tenant_id
+            .map(|_| format!(" AND tenant_id = {}", ph(2)))
+            .unwrap_or_default();
+        let sql = format!(
+            "DELETE FROM ai_sessions WHERE agent_id = {}{}",
+            ph(1),
+            tenant_sessions
+        );
+        let mut q = sqlx::query(crate::db::safe_sql(&sql)).bind(id);
+        if let Some(tid) = tenant_id {
+            q = q.bind(tid);
+        }
+        q.execute(&mut *tx).await?;
+
+        // Long-term memories (scoped by agent, not session).
+        let tenant_mem = tenant_id
+            .map(|_| format!(" AND tenant_id = {}", ph(2)))
+            .unwrap_or_default();
+        let sql = format!(
+            "DELETE FROM ai_memories WHERE agent_id = {}{}",
+            ph(1),
+            tenant_mem
+        );
+        let mut q = sqlx::query(crate::db::safe_sql(&sql)).bind(id);
+        if let Some(tid) = tenant_id {
+            q = q.bind(tid);
+        }
+        q.execute(&mut *tx).await?;
+
+        // The agent row itself.
+        if tenant_id.is_some() {
+            raisfast_derive::crud_delete!(
+                &mut *tx,
+                "ai_agents",
+                where: ("id", id),
+                tenant: tenant_id
+            )?;
+        } else {
+            raisfast_derive::crud_delete!(&mut *tx, "ai_agents", where: ("id", id))?;
+        }
+
+        Ok::<_, AppError>(())
+    })?;
+    Ok(())
 }
