@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO kb_faqs (id, kb_id, standard_question, similar_questions, answers, enabled, created_by, created_at, tenant_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 9
+    },
+    "nullable": []
+  },
+  "hash": "0ac15c4493172c78f0baf9cdc0b6aa9d022dd2ab156f20d7db42c20cc2708154"
+}

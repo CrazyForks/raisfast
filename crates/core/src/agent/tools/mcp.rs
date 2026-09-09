@@ -119,6 +119,9 @@ impl Tool for McpTool {
     fn description(&self) -> &str {
         &self.description
     }
+    fn category(&self) -> &'static str {
+        "mcp"
+    }
     fn parameters_schema(&self) -> Value {
         self.schema.clone()
     }
@@ -168,6 +171,65 @@ impl Tool for McpTool {
                             .map_err(|ce| format!("mcp call {}: {ce}", self.cfg.name))
                     }
                 }
+            }
+        }
+    }
+}
+
+/// Catalog metadata cache for `GET /admin/ai/tools`: MCP tool specs are
+/// the only live-derived part of the catalog, so they are cached with a
+/// TTL instead of re-handshaking on every request. On refresh failure the
+/// last-known list keeps being served (stale beats blocking); the refresh
+/// attempt itself is capped at [`CATALOG_ATTEMPT`] so a hanging server
+/// can only ever delay one request per TTL by that much.
+const CATALOG_TTL: std::time::Duration = std::time::Duration::from_secs(5 * 60);
+const CATALOG_ATTEMPT: std::time::Duration = std::time::Duration::from_secs(3);
+
+/// `(fetched_at, specs)` pairs keyed fresh for one TTL.
+type CatalogCache = Option<(std::time::Instant, Arc<Vec<(String, String)>>)>;
+
+static CATALOG_SPECS: std::sync::OnceLock<std::sync::Mutex<CatalogCache>> =
+    std::sync::OnceLock::new();
+
+/// Cached `(name, description)` list of all MCP tools across servers.
+/// Server-side tool changes surface within one TTL; server config changes
+/// require a restart (env-derived, same as the turn path).
+pub async fn cached_catalog_specs(servers: &[Value]) -> Arc<Vec<(String, String)>> {
+    let cell = CATALOG_SPECS.get_or_init(|| std::sync::Mutex::new(None));
+    if let Some((at, specs)) = cell.lock().unwrap_or_else(|p| p.into_inner()).clone()
+        && at.elapsed() < CATALOG_TTL
+    {
+        return specs;
+    }
+    // Stale or absent: try one bounded refresh; on failure keep serving
+    // whatever we had (possibly none).
+    let refreshed = tokio::time::timeout(CATALOG_ATTEMPT, async {
+        let mut registry = raisfast_agent::ToolRegistry::new();
+        register_mcp_tools(&mut registry, servers).await;
+        registry
+            .specs()
+            .into_iter()
+            .map(|s| (s.name, s.description))
+            .collect::<Vec<_>>()
+    })
+    .await;
+    let mut guard = cell.lock().unwrap_or_else(|p| p.into_inner());
+    match refreshed {
+        Ok(list) => {
+            let specs = Arc::new(list);
+            *guard = Some((std::time::Instant::now(), Arc::clone(&specs)));
+            specs
+        }
+        Err(_) => {
+            // Attempt timed out (dead/hanging server): keep the previous
+            // entry but bump its timestamp so we do not retry on every
+            // request (negative cache until the next TTL).
+            if let Some((_at, specs)) = guard.as_ref() {
+                let cloned = Arc::clone(specs);
+                *guard = Some((std::time::Instant::now(), Arc::clone(&cloned)));
+                cloned
+            } else {
+                Arc::new(Vec::new())
             }
         }
     }

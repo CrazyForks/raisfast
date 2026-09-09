@@ -258,14 +258,18 @@ async fn s03_delete_cleans_all_three_stores() {
         .unwrap();
     let key = row.storage_key.clone().expect("online doc has storage key");
     assert!(
-        tokio::fs::try_exists(format!("/tmp/kb-it-uploads/{key}")).await.unwrap(),
+        tokio::fs::try_exists(format!("/tmp/kb-it-uploads/{key}"))
+            .await
+            .unwrap(),
         "storage file must exist before delete"
     );
     service::delete_document_everywhere(&deps, doc, "default")
         .await
         .unwrap();
     assert!(
-        !tokio::fs::try_exists(format!("/tmp/kb-it-uploads/{key}")).await.unwrap(),
+        !tokio::fs::try_exists(format!("/tmp/kb-it-uploads/{key}"))
+            .await
+            .unwrap(),
         "storage file must be removed with the document"
     );
     assert!(
@@ -307,6 +311,7 @@ async fn s04_ask_answered_with_aligned_citations() {
     .await;
 
     let ask = AskRequest {
+        tenant_id: "default".into(),
         kb_ids: vec![i64::from(kb)],
         doc_ids: Vec::new(),
         question: "支持什么数据库".into(),
@@ -327,6 +332,7 @@ async fn s05_uncovered_kb_never_generates() {
     let deps = deps().await;
     let kb = seed_kb(&deps, "空库").await;
     let ask = AskRequest {
+        tenant_id: "default".into(),
         kb_ids: vec![i64::from(kb)],
         doc_ids: Vec::new(),
         question: "任意问题".into(),
@@ -359,6 +365,7 @@ async fn s06_multi_kb_isolation() {
     .await;
 
     let ask_a = AskRequest {
+        tenant_id: "default".into(),
         kb_ids: vec![i64::from(kb_a)],
         doc_ids: Vec::new(),
         question: "pineapple 是什么".into(),
@@ -373,6 +380,7 @@ async fn s06_multi_kb_isolation() {
     );
 
     let ask_all = AskRequest {
+        tenant_id: "default".into(),
         kb_ids: vec![],
         doc_ids: Vec::new(),
         question: "durian 是什么".into(),
@@ -405,6 +413,7 @@ async fn s07_understanding_degrades_to_raw_question() {
     .await;
 
     let ask = AskRequest {
+        tenant_id: "default".into(),
         kb_ids: vec![i64::from(kb)],
         doc_ids: Vec::new(),
         question: "支持什么数据库".into(),
@@ -448,6 +457,7 @@ async fn s08_faq_lifecycle_and_pinned_context() {
     service::index_faq(&deps, &faq).await.unwrap();
 
     let ask = AskRequest {
+        tenant_id: "default".into(),
         kb_ids: vec![i64::from(kb)],
         doc_ids: Vec::new(),
         question: "如何重置密码".into(),
@@ -461,6 +471,7 @@ async fn s08_faq_lifecycle_and_pinned_context() {
     // 撤池：disable 后不再进入检索
     service::deindex_faq(&deps, faq.id, kb).await.unwrap();
     let ask2 = AskRequest {
+        tenant_id: "default".into(),
         kb_ids: vec![i64::from(kb)],
         doc_ids: Vec::new(),
         question: "如何重置密码".into(),
@@ -725,6 +736,7 @@ async fn s14_child_hit_expands_to_parent_content() {
     ingest_md(&deps, kb, "长文", &md).await;
     // 用子块里的原文提问 → BM25 命中子块 → 装配上下文必须是父块（远大于 384 子块上限）
     let ask = AskRequest {
+        tenant_id: "default".into(),
         kb_ids: vec![i64::from(kb)],
         doc_ids: Vec::new(),
         question: "PARENT_SENTINEL_甲乙丙丁".into(),
@@ -781,6 +793,7 @@ async fn s15_wiki_boost_reorders_over_document() {
 
     // 双路召回后同分并列时，wiki ×1.3 必须把 wiki 单元顶到最前
     let ask = AskRequest {
+        tenant_id: "default".into(),
         kb_ids: vec![i64::from(kb)],
         doc_ids: Vec::new(),
         question: "zephyr".into(),

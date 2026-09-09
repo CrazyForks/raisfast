@@ -1612,7 +1612,7 @@ CREATE TABLE IF NOT EXISTS kb_knowledge_bases (
     indexing_strategy TEXT,
     chunking_config TEXT,
     embedding_model TEXT,
-    embedding_dim INTEGER,
+    embedding_dim BIGINT,
     status TEXT NOT NULL DEFAULT 'active',
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
     updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
@@ -1632,7 +1632,7 @@ CREATE TABLE IF NOT EXISTS kb_documents (
     parse_format TEXT NOT NULL DEFAULT 'markdown',
     status TEXT NOT NULL DEFAULT 'pending',
     error TEXT,
-    chunk_count INTEGER NOT NULL DEFAULT 0,
+    chunk_count BIGINT NOT NULL DEFAULT 0,
     steps TEXT,
     created_by BIGINT,
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
@@ -1648,11 +1648,11 @@ CREATE TABLE IF NOT EXISTS kb_chunks (
     wiki_page_id INTEGER,
     kind TEXT NOT NULL DEFAULT 'document',
     parent_id INTEGER,
-    seq INTEGER NOT NULL DEFAULT 0,
+    seq BIGINT NOT NULL DEFAULT 0,
     content TEXT NOT NULL,
     breadcrumb TEXT,
-    byte_start INTEGER NOT NULL DEFAULT 0,
-    byte_end INTEGER NOT NULL DEFAULT 0,
+    byte_start BIGINT NOT NULL DEFAULT 0,
+    byte_end BIGINT NOT NULL DEFAULT 0,
     questions TEXT,
     embedding BLOB,
     embedding_model TEXT,
@@ -1689,8 +1689,8 @@ CREATE TABLE IF NOT EXISTS kb_wiki_sources (
     page_revision INTEGER NOT NULL DEFAULT 1,
     doc_id INTEGER NOT NULL,
     chunk_id INTEGER,
-    span_start INTEGER NOT NULL DEFAULT 0,
-    span_end INTEGER NOT NULL DEFAULT 0,
+    span_start BIGINT NOT NULL DEFAULT 0,
+    span_end BIGINT NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
 );
 CREATE INDEX IF NOT EXISTS idx_kb_wiki_sources_page ON kb_wiki_sources(page_id, page_revision);
@@ -1720,7 +1720,7 @@ CREATE TABLE IF NOT EXISTS kb_query_logs (
     cited_units TEXT,
     status TEXT NOT NULL DEFAULT 'answered',
     top_score REAL,
-    feedback INTEGER,
+    feedback BIGINT,
     user_id BIGINT,
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
 );

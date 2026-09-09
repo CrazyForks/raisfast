@@ -28,6 +28,10 @@ impl Tool for TodayTool {
         "Return today's UTC date as YYYY-MM-DD."
     }
 
+    fn category(&self) -> &'static str {
+        "system"
+    }
+
     fn parameters_schema(&self) -> Value {
         serde_json::json!({ "type": "object", "properties": {}, "additionalProperties": false })
     }

@@ -149,6 +149,10 @@ impl Tool for RunShellTool {
          Only registered when the operator enabled RAISFAST_AI_ALLOW_SHELL."
     }
 
+    fn category(&self) -> &'static str {
+        "shell"
+    }
+
     fn parameters_schema(&self) -> Value {
         serde_json::json!({
             "type": "object",

@@ -36,6 +36,29 @@ pub fn routes(
         r,
         registry,
         _config.api_restful,
+        "/admin/ai/tools",
+        get,
+        admin_list_domain_tools,
+        "system",
+        "admin/ai/tools",
+        "admin"
+    );
+    #[cfg(feature = "mcp")]
+    let r = reg_route!(
+        r,
+        registry,
+        _config.api_restful,
+        "/admin/ai/tools/mcp",
+        get,
+        admin_list_mcp_tools,
+        "system",
+        "admin/ai/tools",
+        "admin"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        _config.api_restful,
         "/admin/ai/agents",
         post,
         admin_create_agent,
@@ -140,6 +163,17 @@ pub fn routes(
         compact_session,
         "system",
         "ai/sessions/compact",
+        "authed"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        _config.api_restful,
+        "/ai/sessions/{id}",
+        delete,
+        delete_session,
+        "system",
+        "ai/sessions",
         "authed"
     );
     let r = reg_route!(
@@ -294,6 +328,71 @@ pub struct CreateAgentReq {
 
 fn default_true() -> bool {
     true
+}
+
+/// `GET /admin/ai/tools` — the domain-tool catalog for the admin agents
+/// form and the tools page.
+///
+/// Built-in/conditional tools only — pure construction, zero IO, no MCP:
+/// this endpoint never touches the network and answers instantly.
+/// Code/env-level tool changes surface after the mandatory
+/// compile/restart with no cache to invalidate. MCP tools live on
+/// [`admin_list_mcp_tools`].
+///
+/// `read_skill` is registered per-turn in compact mode only, but is listed
+/// here so admins can allowlist it up front.
+pub async fn admin_list_domain_tools(
+    auth: AuthUser,
+    State(state): State<AppState>,
+) -> AppResult<ApiResponse<serde_json::Value>> {
+    auth.ensure_admin()?;
+    // Tool *specs* (name/description/category) are identical for every
+    // actor; the admin caller's `auth` only matters for execution, which
+    // never happens here.
+    let mut registry = crate::agent::tools::build_static_tools(&state, &auth, None).await;
+    // knowledge_search: listed whenever the KB subsystem is enabled
+    // (mounting is a per-agent binding configured separately).
+    crate::agent::tools::kb::register_catalog(&mut registry, &state);
+    // read_skill: per-turn tool (compact mode), listed for allowlisting.
+    registry.register(crate::agent::tools::skills::ReadSkillTool::new(
+        crate::agent::skills::skills_root(),
+        auth.tenant_id().map(str::to_string),
+        Vec::new(),
+    ));
+    let items: Vec<serde_json::Value> = registry
+        .specs()
+        .into_iter()
+        .map(|s| {
+            json!({
+                "name": s.name,
+                "description": s.description,
+                "category": s.category,
+            })
+        })
+        .collect();
+    Ok(ApiResponse::success(json!({ "items": items })))
+}
+
+/// `GET /admin/ai/tools/mcp` — MCP tools only. This is the only catalog
+/// path that talks to MCP servers; specs come from a TTL cache
+/// ([`mcp::cached_catalog_specs`]) so a dead/hanging server costs at most
+/// one bounded attempt per TTL, and server-side tool changes surface
+/// within one TTL.
+#[cfg(feature = "mcp")]
+pub async fn admin_list_mcp_tools(
+    auth: AuthUser,
+    State(state): State<AppState>,
+) -> AppResult<ApiResponse<serde_json::Value>> {
+    auth.ensure_admin()?;
+    let items: Vec<serde_json::Value> =
+        crate::agent::tools::mcp::cached_catalog_specs(&state.config.ai.mcp_servers)
+            .await
+            .iter()
+            .map(|(name, description)| {
+                json!({ "name": name, "description": description, "category": "mcp" })
+            })
+            .collect();
+    Ok(ApiResponse::success(json!({ "items": items })))
 }
 
 pub async fn admin_create_agent(
@@ -858,6 +957,23 @@ pub async fn compact_session(
     })))
 }
 
+/// `DELETE /api/v1/ai/sessions/{id}` — owner-scoped session deletion
+/// (cascade: session + its messages).
+pub async fn delete_session(
+    auth: AuthUser,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> AppResult<ApiResponse<serde_json::Value>> {
+    let owner = current_owner(&auth)?;
+    let id = crate::types::snowflake_id::parse_id(&id)?;
+    let session = ai_service::find_session(&state.pool, id, auth.tenant_id()).await?;
+    if session.user_id != owner {
+        return Err(AppError::ForbiddenOwnership);
+    }
+    ai_service::delete_session(&state.pool, auth.tenant_id(), session.id).await?;
+    Ok(ApiResponse::success(json!({ "deleted": true })))
+}
+
 /// `POST /api/v1/ai/sessions/{id}/turns` — streamed SSE of one turn.
 pub async fn run_turn(
     auth: AuthUser,
@@ -872,7 +988,7 @@ pub async fn run_turn(
         return Err(AppError::ForbiddenOwnership);
     }
     let agent = ai_service::find_agent(&state.pool, session.agent_id, auth.tenant_id()).await?;
-    let extra_tools = crate::agent::tools::build_domain_tools(&state, &auth).await;
+    let extra_tools = crate::agent::tools::build_domain_tools(&state, &auth, Some(&agent)).await;
 
     let pool = state.pool.clone();
     let ai_cfg = state.config.ai.clone();

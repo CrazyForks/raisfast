@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO kb_wiki_pages (id, kb_id, title, slug, status, content, summary, linked_page_ids, created_by, created_at, tenant_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 11
+    },
+    "nullable": []
+  },
+  "hash": "6ba570ed6d4bbae11a5894b7386319790e0d3defe85133146e7918acd25914cc"
+}

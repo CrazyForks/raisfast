@@ -450,16 +450,6 @@ async fn record_node_runs(
         let Some(node) = graph.nodes.get(node_id) else {
             continue;
         };
-        let error = st.error.as_ref().map(|v| {
-            if let Some(s) = v.as_str() {
-                s.to_string()
-            } else {
-                v.to_string()
-            }
-        });
-        let input = st.input.as_ref().map(|v| v.to_string());
-        let output = st.output.as_ref().map(|v| v.to_string());
-        let usage = st.usage.as_ref().map(|v| v.to_string());
         model::record_node_run(
             pool,
             instance_id,
@@ -467,10 +457,10 @@ async fn record_node_runs(
             node.data.kind.as_str(),
             status,
             st.attempt,
-            input.as_deref(),
-            output.as_deref(),
-            error.as_deref(),
-            usage.as_deref(),
+            st.input.as_ref(),
+            st.output.as_ref(),
+            st.error.as_ref(),
+            st.usage.as_ref(),
             st.latency_ms,
         )
         .await?;

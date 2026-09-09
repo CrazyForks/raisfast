@@ -47,9 +47,8 @@ impl JobHandler for KbProcessDocumentHandler {
     /// the SAME doc — one idempotent run suffices
     /// [抄RF:worker/handlers/search_index.rs coalesce 配对实现].
     fn coalesce(&self, jobs: Vec<Job>) -> Option<Job> {
-        jobs.into_iter().find(|j| {
-            matches!(j, Job::KbProcessDocument { .. })
-        })
+        jobs.into_iter()
+            .find(|j| matches!(j, Job::KbProcessDocument { .. }))
     }
 
     async fn handle(&self, job: &Job) -> AppResult<()> {

@@ -179,6 +179,46 @@ db-reset:
 db-migrate:
     DATABASE_URL={{db_url}} cargo run --no-default-features --features "{{features}}" -- db migrate
 
+# Salvage a corrupted SQLite database (SQLITE_CORRUPT) via .recover —
+# keeps a timestamped backup, then integrity-checks + VACUUMs the result.
+# STOP the dev server first. Damaged rows/objects may be dropped; follow
+# up with `just db-init` to restore missing schema objects.
+# Usage: just db-recover (sqlite backend only)
+db-recover:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    DB="{{db}}"
+    if [ "$DB" != "sqlite" ]; then
+        echo ">> db-recover only applies to the sqlite backend (current: $DB)" >&2
+        exit 1
+    fi
+    DB_FILE="$(echo '{{db_url}}' | sed 's/sqlite://;s/?.*//')"
+    if [ ! -f "$DB_FILE" ]; then
+        echo ">> database file not found: $DB_FILE" >&2
+        exit 1
+    fi
+    if command -v lsof >/dev/null 2>&1; then
+        if [ -n "$(lsof -t "$DB_FILE" 2>/dev/null)" ]; then
+            echo ">> a process still holds $DB_FILE open — stop the dev server first:" >&2
+            lsof "$DB_FILE" >&2 || true
+            exit 1
+        fi
+    elif [ -f "$DB_FILE-wal" ]; then
+        echo ">> cannot verify (lsof missing) and a -wal file exists — stop the dev server first." >&2
+        exit 1
+    fi
+    STAMP="$(date +%Y%m%d%H%M%S)"
+    echo ">> recovering $DB_FILE ..."
+    sqlite3 "$DB_FILE" ".recover" | sqlite3 "${DB_FILE}.recovered"
+    mv "$DB_FILE" "${DB_FILE}.corrupt.${STAMP}.bak"
+    rm -f "$DB_FILE-shm"
+    mv "${DB_FILE}.recovered" "$DB_FILE"
+    sqlite3 "$DB_FILE" "VACUUM;"
+    echo ">> integrity check:"
+    sqlite3 "$DB_FILE" "PRAGMA integrity_check;"
+    echo ">> done. corrupt backup: ${DB_FILE}.corrupt.${STAMP}.bak"
+    echo ">> if schema objects are missing, run: just db-init"
+
 # Backup database
 db-backup:
     DATABASE_URL={{db_url}} cargo run --no-default-features --features "{{features}}" -- db backup ./backups

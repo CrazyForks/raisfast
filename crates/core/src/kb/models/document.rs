@@ -66,7 +66,6 @@ pub async fn create_document(
         [
             "id" => id,
             "kb_id" => cmd.kb_id,
-            "tenant_id" => tenant_id,
             "title" => cmd.title.as_str(),
             "source" => cmd.source.as_str(),
             "storage_key" => cmd.storage_key.as_deref(),
@@ -266,9 +265,11 @@ pub async fn find_doc_titles_by_ids(
     for id in ids {
         query = query.bind(id);
     }
-    for (id, title) in query.fetch_all(pool).await.map_err(|e| {
-        AppError::Internal(anyhow::anyhow!(e.to_string()))
-    })? {
+    for (id, title) in query
+        .fetch_all(pool)
+        .await
+        .map_err(|e| AppError::Internal(anyhow::anyhow!(e.to_string())))?
+    {
         out.insert(id, title);
     }
     Ok(out)

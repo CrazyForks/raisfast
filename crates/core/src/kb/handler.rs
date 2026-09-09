@@ -418,7 +418,7 @@ pub fn routes(
 
 impl AppState {
     /// Build the KB dependency set from app state.
-    fn kb_deps(&self) -> AppResult<KbDeps> {
+    pub(crate) fn kb_deps(&self) -> AppResult<KbDeps> {
         let kb = self
             .kb_runtime
             .as_ref()
@@ -513,10 +513,14 @@ async fn admin_update_kb(
     auth.ensure_admin()?;
     state.kb_deps()?;
     if req.name.trim().is_empty() || req.slug.trim().is_empty() {
-        return Err(AppError::BadRequest("name and slug must not be empty".into()));
+        return Err(AppError::BadRequest(
+            "name and slug must not be empty".into(),
+        ));
     }
     if !matches!(req.status.as_str(), "active" | "archived") {
-        return Err(AppError::BadRequest("status must be 'active' or 'archived'".into()));
+        return Err(AppError::BadRequest(
+            "status must be 'active' or 'archived'".into(),
+        ));
     }
     let id = parse_snowflake(&id)?;
     let tenant = tenant_of(&auth);
@@ -763,7 +767,9 @@ async fn admin_document_jobs(
             })
         })
         .collect();
-    Ok(ApiResponse::success(json!({ "items": items, "total": items.len() })))
+    Ok(ApiResponse::success(
+        json!({ "items": items, "total": items.len() }),
+    ))
 }
 
 async fn admin_get_document(
@@ -935,8 +941,14 @@ async fn public_ask(
     auth.ensure_authenticated()?;
     let deps = state.kb_deps()?;
     let ask = crate::kb::pipeline::AskRequest {
+        tenant_id: tenant_of(&auth),
         kb_ids: req.kb_ids.unwrap_or_default().iter().map(|i| i.0).collect(),
-        doc_ids: req.doc_ids.unwrap_or_default().iter().map(|i| i.0).collect(),
+        doc_ids: req
+            .doc_ids
+            .unwrap_or_default()
+            .iter()
+            .map(|i| i.0)
+            .collect(),
         question: req.question,
     };
     let user_id = auth.user_id().map(crate::types::snowflake_id::SnowflakeId);
@@ -1012,7 +1024,7 @@ async fn log_ask(
         Some(&outcome.answer),
         Some(&cited),
         outcome.status,
-        Some(outcome.top_score),
+        Some(f64::from(outcome.top_score)),
         user_id,
     )
     .await
@@ -1038,6 +1050,7 @@ async fn public_search(
     auth.ensure_authenticated()?;
     let deps = state.kb_deps()?;
     let ask = crate::kb::pipeline::AskRequest {
+        tenant_id: tenant_of(&auth),
         kb_ids: req.kb_ids.unwrap_or_default().iter().map(|i| i.0).collect(),
         doc_ids: Vec::new(),
         question: req.query,
@@ -1468,27 +1481,30 @@ async fn admin_delete_chunk(
         return Err(AppError::NotFound("kb_chunk".into()));
     };
     // Children of a parent chunk are part of its content — cascade.
-    let children =
-        crate::kb::models::chunk::find_children_by_parent(&state.pool, id).await?;
+    let children = crate::kb::models::chunk::find_children_by_parent(&state.pool, id).await?;
     let mut gone_ids: Vec<i64> = children.iter().map(|c| i64::from(c.id)).collect();
     gone_ids.push(i64::from(id));
-    deps.vector.delete(i64::from(chunk.kb_id), &gone_ids).await?;
+    deps.vector
+        .delete(i64::from(chunk.kb_id), &gone_ids)
+        .await?;
     crate::kb::models::chunk::delete_chunks_by_ids(&state.pool, &gone_ids).await?;
     // FTS: rebuild the remaining units of the source facet per kind
     // (document → doc_id facet, faq → faq_id facet, wiki → self-keyed).
     if let Some(doc_id) = chunk.doc_id {
-        let remaining =
-            crate::kb::models::chunk::find_chunks_by_doc(&state.pool, doc_id).await?;
+        let remaining = crate::kb::models::chunk::find_chunks_by_doc(&state.pool, doc_id).await?;
         rebuild_fts_facet(
             &deps,
             i64::from(doc_id),
-            &remaining.iter()
-                .map(|c| (i64::from(c.id), i64::from(c.kb_id), c.kind.clone(), {
-                    match &c.breadcrumb {
-                        Some(b) => format!("{b}\n{}", c.content),
-                        None => c.content.clone(),
-                    }
-                }))
+            &remaining
+                .iter()
+                .map(|c| {
+                    (i64::from(c.id), i64::from(c.kb_id), c.kind.clone(), {
+                        match &c.breadcrumb {
+                            Some(b) => format!("{b}\n{}", c.content),
+                            None => c.content.clone(),
+                        }
+                    })
+                })
                 .collect::<Vec<_>>(),
         )
         .await?;
@@ -1502,13 +1518,20 @@ async fn admin_delete_chunk(
             );
         }
     } else if let Some(faq_id) = chunk.faq_id {
-        let remaining =
-            crate::kb::models::chunk::find_chunks_by_faq(&state.pool, faq_id).await?;
+        let remaining = crate::kb::models::chunk::find_chunks_by_faq(&state.pool, faq_id).await?;
         rebuild_fts_facet(
             &deps,
             i64::from(faq_id),
-            &remaining.iter()
-                .map(|c| (i64::from(c.id), i64::from(c.kb_id), c.kind.clone(), c.content.clone()))
+            &remaining
+                .iter()
+                .map(|c| {
+                    (
+                        i64::from(c.id),
+                        i64::from(c.kb_id),
+                        c.kind.clone(),
+                        c.content.clone(),
+                    )
+                })
                 .collect::<Vec<_>>(),
         )
         .await?;
@@ -1536,13 +1559,15 @@ async fn rebuild_fts_facet(
     }
     let units: Vec<crate::kb::kbsearch::KbIndexUnit> = remaining
         .iter()
-        .map(|(unit_id, kb_id, kind, text)| crate::kb::kbsearch::KbIndexUnit {
-            unit_id: *unit_id,
-            kb_id: *kb_id,
-            doc_id: facet_id,
-            kind: kind.clone(),
-            text: text.clone(),
-        })
+        .map(
+            |(unit_id, kb_id, kind, text)| crate::kb::kbsearch::KbIndexUnit {
+                unit_id: *unit_id,
+                kb_id: *kb_id,
+                doc_id: facet_id,
+                kind: kind.clone(),
+                text: text.clone(),
+            },
+        )
         .collect();
     deps.kbsearch.reindex_document(&units).await?;
     Ok(())
@@ -1826,14 +1851,9 @@ async fn admin_list_faqs(
     auth.ensure_admin()?;
     let page = q.page.unwrap_or(1);
     let page_size = q.page_size.unwrap_or(20);
-    let (faqs, total) = crate::kb::models::faq::list_faqs(
-        &state.pool,
-        q.kb_id,
-        page,
-        page_size,
-        &tenant_of(&auth),
-    )
-    .await?;
+    let (faqs, total) =
+        crate::kb::models::faq::list_faqs(&state.pool, q.kb_id, page, page_size, &tenant_of(&auth))
+            .await?;
     Ok(ApiResponse::success(
         json!({ "items": faqs, "total": total, "page": page, "page_size": page_size }),
     ))
@@ -1918,7 +1938,10 @@ async fn admin_list_chunks(
         ids
     };
     let doc_ids: Vec<i64> = {
-        let mut ids: Vec<i64> = chunks.iter().filter_map(|c| c.doc_id.map(i64::from)).collect();
+        let mut ids: Vec<i64> = chunks
+            .iter()
+            .filter_map(|c| c.doc_id.map(i64::from))
+            .collect();
         ids.sort_unstable();
         ids.dedup();
         ids

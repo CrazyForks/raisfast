@@ -56,7 +56,6 @@ pub async fn create_kb(
         "kb_knowledge_bases",
         [
             "id" => id,
-            "tenant_id" => tenant_id,
             "name" => cmd.name.as_str(),
             "description" => cmd.description.as_deref(),
             "slug" => cmd.slug.as_str(),
@@ -121,11 +120,7 @@ pub async fn find_kb_by_id(
     )?)
 }
 
-pub async fn delete_kb(
-    pool: &crate::db::Pool,
-    id: SnowflakeId,
-    tenant_id: &str,
-) -> AppResult<()> {
+pub async fn delete_kb(pool: &crate::db::Pool, id: SnowflakeId, tenant_id: &str) -> AppResult<()> {
     raisfast_derive::crud_delete!(
         pool,
         "kb_knowledge_bases",
@@ -171,9 +166,11 @@ pub async fn find_kb_names_by_ids(
     for id in ids {
         query = query.bind(id);
     }
-    for (id, name) in query.fetch_all(pool).await.map_err(|e| {
-        AppError::Internal(anyhow::anyhow!(e.to_string()))
-    })? {
+    for (id, name) in query
+        .fetch_all(pool)
+        .await
+        .map_err(|e| AppError::Internal(anyhow::anyhow!(e.to_string())))?
+    {
         out.insert(id, name);
     }
     Ok(out)

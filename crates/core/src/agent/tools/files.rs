@@ -62,6 +62,10 @@ impl Tool for ManagedFileTool {
         &self.description
     }
 
+    fn category(&self) -> &'static str {
+        "files"
+    }
+
     fn parameters_schema(&self) -> Value {
         serde_json::json!({
             "type": "object",

@@ -120,10 +120,16 @@ pub fn rouge_l(reference: &str, candidate: &str) -> f64 {
 
 /// Run the dataset against a prepared KB: retrieval hit = every expected
 /// keyword appears in some recalled context unit.
-pub async fn run_eval(deps: &KbDeps, kb_ids: &[i64], cases: &[EvalCase]) -> AppResult<EvalReport> {
+pub async fn run_eval(
+    deps: &KbDeps,
+    tenant_id: &str,
+    kb_ids: &[i64],
+    cases: &[EvalCase],
+) -> AppResult<EvalReport> {
     let mut reports = Vec::with_capacity(cases.len());
     for case in cases {
         let ask = AskRequest {
+            tenant_id: tenant_id.to_string(),
             kb_ids: kb_ids.to_vec(),
             doc_ids: Vec::new(),
             question: case.question.clone(),
@@ -289,6 +295,7 @@ mod tests {
 
         let report = run_eval(
             &deps,
+            "default",
             &[i64::from(kb.id)],
             &[
                 EvalCase {

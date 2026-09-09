@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO \"kb_documents\" (\"id\", \"kb_id\", \"title\", \"source\", \"storage_key\", \"mime_type\", \"size\", \"created_by\", \"created_at\") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Int8",
+        "Int8",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "ad4c536899f56911752a92c69c8e8d44508245405b1ba58b6ec2725e3cee0748"
+}

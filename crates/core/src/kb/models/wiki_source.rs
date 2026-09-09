@@ -39,8 +39,8 @@ pub async fn link_source(
             "page_id" => page_id,
             "page_revision" => page_revision,
             "doc_id" => doc_id,
-            "span_start" => 0,
-            "span_end" => 0,
+            "span_start" => 0_i64,
+            "span_end" => 0_i64,
             "created_at" => now
         ]
     )?;
@@ -63,10 +63,7 @@ pub async fn find_page_ids_by_doc(
 
 /// Drop provenance links of a deleted document (its pages are marked
 /// stale separately — the links themselves must not outlive the doc).
-pub async fn delete_sources_by_doc(
-    pool: &crate::db::Pool,
-    doc_id: SnowflakeId,
-) -> AppResult<()> {
+pub async fn delete_sources_by_doc(pool: &crate::db::Pool, doc_id: SnowflakeId) -> AppResult<()> {
     raisfast_derive::crud_delete!(
         pool,
         "kb_wiki_sources",
@@ -77,10 +74,7 @@ pub async fn delete_sources_by_doc(
 
 /// Drop every provenance link of a KB (the table has no kb_id column;
 /// resolve via the KB's pages and documents before those rows vanish).
-pub async fn delete_sources_by_kb(
-    pool: &crate::db::Pool,
-    kb_id: SnowflakeId,
-) -> AppResult<()> {
+pub async fn delete_sources_by_kb(pool: &crate::db::Pool, kb_id: SnowflakeId) -> AppResult<()> {
     let sql = format!(
         "DELETE FROM kb_wiki_sources WHERE page_id IN (SELECT id FROM kb_wiki_pages WHERE kb_id = {}) \
          OR doc_id IN (SELECT id FROM kb_documents WHERE kb_id = {})",
@@ -92,6 +86,8 @@ pub async fn delete_sources_by_kb(
         .bind(i64::from(kb_id))
         .execute(pool)
         .await
-        .map_err(|e| crate::errors::app_error::AppError::Internal(anyhow::anyhow!(e.to_string())))?;
+        .map_err(|e| {
+            crate::errors::app_error::AppError::Internal(anyhow::anyhow!(e.to_string()))
+        })?;
     Ok(())
 }

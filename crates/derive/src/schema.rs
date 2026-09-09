@@ -376,6 +376,7 @@ fn parse_column_line(line: &str) -> Option<ColumnSchema> {
         && !rest.starts_with("LONGBLOB")
         && !rest.starts_with("MEDIUMBLOB")
         && !rest.starts_with("TINYBLOB")
+        && !rest.starts_with("BYTEA")
         && !rest.starts_with("JSON")
         && !rest.starts_with("BOOLEAN")
         && !rest.starts_with("BOOL")
@@ -395,7 +396,7 @@ fn parse_column_line(line: &str) -> Option<ColumnSchema> {
         SqlType::Integer
     } else if rest.starts_with("REAL") || rest.starts_with("FLOAT") || rest.starts_with("DOUBLE") {
         SqlType::Real
-    } else if rest.starts_with("BLOB") {
+    } else if rest.starts_with("BLOB") || rest.starts_with("BYTEA") {
         SqlType::Blob
     } else {
         SqlType::Text

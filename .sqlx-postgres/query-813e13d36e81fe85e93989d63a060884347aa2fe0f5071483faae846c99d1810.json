@@ -1,0 +1,24 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO \"kb_wiki_pages\" (\"id\", \"kb_id\", \"title\", \"slug\", \"status\", \"content\", \"summary\", \"linked_page_ids\", \"created_by\", \"created_at\", \"tenant_id\") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Jsonb",
+        "Int8",
+        "Timestamptz",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "813e13d36e81fe85e93989d63a060884347aa2fe0f5071483faae846c99d1810"
+}

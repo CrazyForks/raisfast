@@ -1,0 +1,18 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO \"content_revisions\" (\"content_type\", \"record_id\", \"revision_number\", \"snapshot\", \"created_by\") VALUES ($1, $2, $3, $4, $5)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Varchar",
+        "Int8",
+        "Int8",
+        "Jsonb",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "09d9c924a02b20f667212d907d7297433d8b2137b8922f3c9ac3f0d66d6adfaa"
+}

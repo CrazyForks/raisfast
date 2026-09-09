@@ -3,6 +3,7 @@
 //! UI lists them under an instance.
 
 use serde::Serialize;
+use serde_json::Value;
 
 use crate::db::{DbDriver, Driver};
 use crate::errors::app_error::AppResult;
@@ -26,12 +27,16 @@ pub struct FlowNodeRun {
     pub finished_at: Option<Timestamp>,
     #[cfg_attr(feature = "export-types", ts(type = "number"))]
     pub latency_ms: Option<i64>,
-    pub input_summary: Option<String>,
-    pub output_summary: Option<String>,
+    #[cfg_attr(feature = "export-types", ts(type = "unknown"))]
+    pub input_summary: Option<Value>,
+    #[cfg_attr(feature = "export-types", ts(type = "unknown"))]
+    pub output_summary: Option<Value>,
     /// LLM usage payload ({"prompt_tokens","completion_tokens","total_tokens"})
-    /// for billing (llm-node.md §6); serialized JSON text.
-    pub usage_json: Option<String>,
-    pub error: Option<String>,
+    /// for billing (llm-node.md §6).
+    #[cfg_attr(feature = "export-types", ts(type = "unknown"))]
+    pub usage_json: Option<Value>,
+    #[cfg_attr(feature = "export-types", ts(type = "unknown"))]
+    pub error: Option<Value>,
     pub created_at: Timestamp,
 }
 
@@ -57,10 +62,10 @@ pub async fn record_node_run(
     node_type: &str,
     status: &str,
     attempt: i64,
-    input: Option<&str>,
-    output: Option<&str>,
-    error: Option<&str>,
-    usage: Option<&str>,
+    input: Option<&Value>,
+    output: Option<&Value>,
+    error: Option<&Value>,
+    usage: Option<&Value>,
     latency_ms: Option<i64>,
 ) -> AppResult<()> {
     let found: Option<i64> = sqlx::query_scalar(crate::db::safe_sql(&format!(

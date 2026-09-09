@@ -232,9 +232,17 @@ mod tests {
         .await
         .unwrap();
         let rows = find_expired_open(&pool, now).await.unwrap();
+        // Shared-database discipline: only assert on this test's instance
+        // (the global sweep legitimately surfaces overdue rows from other
+        // tests' instances).
+        let mine: Vec<_> = rows.iter().filter(|r| r.instance_id == iid).collect();
         assert!(
-            rows.iter().all(|r| r.node_id == past),
-            "only the overdue row surfaces: {rows:?}"
+            mine.iter().any(|r| r.node_id == past),
+            "the overdue row must surface: {mine:?}"
+        );
+        assert!(
+            mine.iter().all(|r| r.node_id != future),
+            "the future row must not surface: {mine:?}"
         );
     }
 }

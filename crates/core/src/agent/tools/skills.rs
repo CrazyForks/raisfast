@@ -135,6 +135,10 @@ impl Tool for ReadSkillTool {
         "Load the full SKILL.md instructions for an available skill by name."
     }
 
+    fn category(&self) -> &'static str {
+        "skills"
+    }
+
     fn parameters_schema(&self) -> Value {
         serde_json::json!({
             "type": "object",

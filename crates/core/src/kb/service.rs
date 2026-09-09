@@ -124,7 +124,7 @@ impl ProviderEmbedder {
                     return Err(AppError::ServiceUnavailable(format!(
                         "embedding: {}",
                         last_err.unwrap_or_else(|| "unknown error".into())
-                    )))
+                    )));
                 }
             }
         }
@@ -1026,6 +1026,7 @@ mod faq_tests {
 
         // pipeline: ask the FAQ → answered, FAQ unit pinned first
         let ask = AskRequest {
+            tenant_id: "default".into(),
             kb_ids: vec![i64::from(kb_id)],
             doc_ids: Vec::new(),
             question: "如何重置密码".into(),

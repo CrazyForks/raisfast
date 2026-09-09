@@ -62,7 +62,6 @@ pub async fn create_page(
         [
             "id" => id,
             "kb_id" => cmd.kb_id,
-            "tenant_id" => tenant_id,
             "title" => cmd.title.as_str(),
             "slug" => cmd.slug.as_str(),
             "status" => "draft",

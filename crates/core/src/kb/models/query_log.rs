@@ -35,7 +35,7 @@ pub async fn insert_log(
     answer: Option<&str>,
     cited_units: Option<&Value>,
     status: &str,
-    top_score: Option<f32>,
+    top_score: Option<f64>,
     user_id: Option<SnowflakeId>,
 ) -> AppResult<SnowflakeId> {
     let (id, now) = (

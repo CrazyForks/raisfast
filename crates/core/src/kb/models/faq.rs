@@ -100,7 +100,6 @@ pub async fn create_faq(
         [
             "id" => id,
             "kb_id" => cmd.kb_id,
-            "tenant_id" => tenant_id,
             "standard_question" => cmd.standard_question.as_str(),
             "similar_questions" => serde_json::json!(cmd.similar_questions),
             "answers" => serde_json::json!(cmd.answers),

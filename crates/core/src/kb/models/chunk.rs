@@ -165,10 +165,9 @@ pub async fn delete_chunks_by_ids(pool: &crate::db::Pool, ids: &[i64]) -> AppRes
     for id in ids {
         query = query.bind(id);
     }
-    query
-        .execute(pool)
-        .await
-        .map_err(|e| crate::errors::app_error::AppError::Internal(anyhow::anyhow!(e.to_string())))?;
+    query.execute(pool).await.map_err(|e| {
+        crate::errors::app_error::AppError::Internal(anyhow::anyhow!(e.to_string()))
+    })?;
     Ok(())
 }
 

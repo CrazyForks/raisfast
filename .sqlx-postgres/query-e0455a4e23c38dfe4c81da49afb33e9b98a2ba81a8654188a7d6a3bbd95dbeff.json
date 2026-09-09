@@ -1,0 +1,21 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO \"kb_faqs\" (\"id\", \"kb_id\", \"standard_question\", \"similar_questions\", \"answers\", \"enabled\", \"created_by\", \"created_at\") VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8",
+        "Text",
+        "Jsonb",
+        "Jsonb",
+        "Bool",
+        "Int8",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "e0455a4e23c38dfe4c81da49afb33e9b98a2ba81a8654188a7d6a3bbd95dbeff"
+}

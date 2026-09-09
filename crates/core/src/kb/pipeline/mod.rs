@@ -60,7 +60,11 @@ pub struct Reference {
 /// The ask request (single-turn, D5).
 #[derive(Debug, Clone)]
 pub struct AskRequest {
-    /// KB scope; empty = all enabled KBs (D4 [抄WK:SearchTargets 语义]).
+    /// Calling tenant — every KB scope resolution is tenant-scoped
+    /// (`resolve_kbs` validates both the default and the explicit list).
+    pub tenant_id: String,
+    /// KB scope; empty = all enabled KBs of the tenant (D4 [抄WK:SearchTargets
+    /// 语义]).
     pub kb_ids: Vec<i64>,
     pub question: String,
     /// Document scope for per-doc testing; empty = whole KB scope.
@@ -70,6 +74,7 @@ pub struct AskRequest {
 }
 
 /// Pipeline outcome consumed by the HTTP layer (stream + non-stream).
+#[derive(Debug)]
 pub struct AskOutcome {
     pub status: &'static str,
     /// The (possibly rewritten) question — carried for S9 and query logging.
@@ -88,18 +93,58 @@ pub async fn prepare_answer(deps: &KbDeps, req: &AskRequest) -> AppResult<AskOut
     if req.question.trim().is_empty() {
         return Err(AppError::BadRequest("question must not be empty".into()));
     }
-    let kbs = resolve_kbs(deps, &req.kb_ids).await?;
+    let kbs = resolve_kbs(deps, &req.kb_ids, &req.tenant_id).await?;
 
     // S1 understand (LLM rewrite + keywords; degrades to raw question).
     let understood = understand::run(deps, &req.question).await;
 
+    // S2–S7 recall → fuse → hydrate → boost → merge.
+    let (top_score, units) = recall_and_merge(deps, &kbs, &req.doc_ids, &understood).await?;
+
+    Ok(AskOutcome {
+        status: "answered",
+        question: understood.text,
+        answer: String::new(),
+        references: Vec::new(),
+        top_score,
+        context_units: units,
+    })
+}
+
+/// Retrieval-only seam for the agent `knowledge_search` tool (kb-technical-
+/// design §10): validates the KB scope against the tenant, then runs S2–S7
+/// **without S1** (the agent formulates the query itself — an LLM rewrite
+/// here would only add latency) and without S9 generation (the agent's own
+/// turn is the generator).
+pub async fn search_units(
+    deps: &KbDeps,
+    tenant_id: &str,
+    kb_ids: &[i64],
+    query: &str,
+) -> AppResult<(f32, Vec<ContextUnit>)> {
+    if query.trim().is_empty() {
+        return Err(AppError::BadRequest("query must not be empty".into()));
+    }
+    let kbs = resolve_kbs(deps, kb_ids, tenant_id).await?;
+    let understood = understand::UnderstoodQuery::raw(query);
+    recall_and_merge(deps, &kbs, &[], &understood).await
+}
+
+/// S2–S7 over a validated KB scope: recall → fuse → top-k → hydrate →
+/// wiki boost → merge. Returns `(top_score, context_units)`.
+async fn recall_and_merge(
+    deps: &KbDeps,
+    kbs: &[i64],
+    doc_ids: &[i64],
+    understood: &understand::UnderstoodQuery,
+) -> AppResult<(f32, Vec<ContextUnit>)> {
     // S2+S3+S4 recall → fuse → top-k, per KB scope.
     let mut candidates = Vec::new();
-    for kb_id in &kbs {
-        let mut recalled = search::recall(deps, *kb_id, &understood).await?;
+    for kb_id in kbs {
+        let mut recalled = search::recall(deps, *kb_id, understood).await?;
         // Document scope (playground per-doc testing): drop units that do
         // not belong to the selected documents, before fusion cuts top-k.
-        if !req.doc_ids.is_empty() {
+        if !doc_ids.is_empty() {
             let mut ids: Vec<i64> = recalled
                 .bm25
                 .iter()
@@ -113,12 +158,16 @@ pub async fn prepare_answer(deps: &KbDeps, req: &AskRequest) -> AppResult<AskOut
                 .into_iter()
                 .filter_map(|c| {
                     c.doc_id
-                        .filter(|d| req.doc_ids.contains(&i64::from(*d)))
+                        .filter(|d| doc_ids.contains(&i64::from(*d)))
                         .map(|_| i64::from(c.id))
                 })
                 .collect();
-            recalled.bm25.retain(|(unit_id, _)| allowed.contains(unit_id));
-            recalled.dense.retain(|(unit_id, _)| allowed.contains(unit_id));
+            recalled
+                .bm25
+                .retain(|(unit_id, _)| allowed.contains(unit_id));
+            recalled
+                .dense
+                .retain(|(unit_id, _)| allowed.contains(unit_id));
         }
         candidates.extend(fusion::fuse_and_cut(recalled, deps.config.kb.top_k));
     }
@@ -157,14 +206,7 @@ pub async fn prepare_answer(deps: &KbDeps, req: &AskRequest) -> AppResult<AskOut
     // S7 merge: FAQ inject + parent expand + dedup.
     let units = merge::merge_units(deps, &hydrated).await?;
 
-    Ok(AskOutcome {
-        status: "answered",
-        question: understood.text,
-        answer: String::new(),
-        references: Vec::new(),
-        top_score: hydrated.first().map(|c| c.score).unwrap_or(0.0),
-        context_units: units,
-    })
+    Ok((hydrated.first().map(|c| c.score).unwrap_or(0.0), units))
 }
 
 /// S9–S11 over a prepared outcome: fallback check, generation, references.
@@ -218,20 +260,58 @@ pub async fn finish_answer_streaming(
     Ok(())
 }
 
-/// Resolve the KB scope: empty request = all enabled KBs of the tenant.
-async fn resolve_kbs(deps: &KbDeps, requested: &[i64]) -> AppResult<Vec<i64>> {
-    if !requested.is_empty() {
-        return Ok(requested.to_vec());
+/// Resolve the KB scope, tenant-scoped on both branches (also used by the
+/// agent tool registration to pre-bind its search targets):
+/// - empty request = all enabled KBs **of the tenant**;
+/// - explicit ids = validated against the tenant and `status='active'`;
+///   any id that fails validation rejects the request (fail-closed —
+///   object-level authz on the retrieval path, mirroring the write path's
+///   `ensure_kb` gate).
+pub(crate) async fn resolve_kbs(
+    deps: &KbDeps,
+    requested: &[i64],
+    tenant_id: &str,
+) -> AppResult<Vec<i64>> {
+    // Dedup first so the row-count comparison below is sound.
+    let mut requested = requested.to_vec();
+    requested.sort_unstable();
+    requested.dedup();
+    let requested = requested.as_slice();
+    if requested.is_empty() {
+        let sql = format!(
+            "SELECT {} FROM kb_knowledge_bases WHERE status = 'active' AND tenant_id = {}",
+            crate::db::Driver::cast_int("id"),
+            crate::db::Driver::ph(1)
+        );
+        let rows: Vec<i64> = sqlx::query_scalar(crate::db::safe_sql(&sql))
+            .bind(tenant_id)
+            .fetch_all(&deps.pool)
+            .await
+            .map_err(|e| AppError::Internal(anyhow::anyhow!(e.to_string())))?;
+        if rows.is_empty() {
+            return Err(AppError::NotFound("kb_knowledge_base".into()));
+        }
+        return Ok(rows);
     }
+    let placeholders: Vec<String> = (1..=requested.len()).map(crate::db::Driver::ph).collect();
     let sql = format!(
-        "SELECT {} FROM kb_knowledge_bases WHERE status = 'active'",
-        crate::db::Driver::cast_int("id")
+        "SELECT {} FROM kb_knowledge_bases WHERE id IN ({}) AND status = 'active' AND tenant_id = {}",
+        crate::db::Driver::cast_int("id"),
+        placeholders.join(", "),
+        crate::db::Driver::ph(requested.len() + 1)
     );
-    let rows: Vec<i64> = sqlx::query_scalar(crate::db::safe_sql(&sql))
+    let mut query = sqlx::query_scalar::<_, i64>(crate::db::safe_sql(&sql));
+    for id in requested {
+        query = query.bind(id);
+    }
+    let rows: Vec<i64> = query
+        .bind(tenant_id)
         .fetch_all(&deps.pool)
         .await
         .map_err(|e| AppError::Internal(anyhow::anyhow!(e.to_string())))?;
-    if rows.is_empty() {
+    if rows.len() != requested.len() {
+        // Some requested ids are unknown, inactive, or belong to another
+        // tenant — do not reveal which (uniform NotFound).
         return Err(AppError::NotFound("kb_knowledge_base".into()));
     }
     Ok(rows)
@@ -337,6 +417,7 @@ mod tests {
             .unwrap();
 
         let ask = AskRequest {
+            tenant_id: "default".into(),
             kb_ids: vec![i64::from(kb.id)],
             doc_ids: Vec::new(),
             question: "支持哪些数据库？".into(),
@@ -379,6 +460,7 @@ mod tests {
         .unwrap();
 
         let ask = AskRequest {
+            tenant_id: "default".into(),
             kb_ids: vec![i64::from(kb.id)],
             doc_ids: Vec::new(),
             question: "量子力学的诠释有哪些".into(),
@@ -420,6 +502,7 @@ mod tests {
             .unwrap();
 
         let ask = AskRequest {
+            tenant_id: "default".into(),
             kb_ids: vec![i64::from(kb.id)],
             doc_ids: Vec::new(),
             question: "知识库怎么开关".into(),
@@ -438,5 +521,105 @@ mod tests {
             "streamed deltas must equal final answer"
         );
         assert!(!outcome.references.is_empty());
+    }
+
+    async fn seeded_tenant_kb(deps: &KbDeps, tenant: &str) -> i64 {
+        let kb = crate::kb::models::knowledge_base::create_kb(
+            &deps.pool,
+            &crate::kb::models::knowledge_base::CreateKbCmd {
+                name: "iso".into(),
+                description: None,
+                slug: format!("iso-{tenant}"),
+                kind: "document".into(),
+                indexing_strategy: None,
+                embedding_model: Some("m".into()),
+                embedding_dim: Some(4),
+            },
+            tenant,
+        )
+        .await
+        .unwrap();
+        let mut markdown = "# 隔离\n\n".to_string();
+        markdown.push_str(&format!("租户 {tenant} 的私有部署步骤说明。").repeat(60));
+        let doc =
+            crate::kb::service::create_online_document(deps, kb.id, "iso", &markdown, None, tenant)
+                .await
+                .unwrap();
+        crate::kb::service::process_document(deps, doc.id, tenant)
+            .await
+            .unwrap();
+        i64::from(kb.id)
+    }
+
+    #[tokio::test]
+    async fn tenant_scope_is_isolated() {
+        let deps = deps().await;
+        let kb_a = seeded_tenant_kb(&deps, "tenant-a").await;
+
+        // Explicit foreign kb id → rejected (object-level authz).
+        let ask = AskRequest {
+            tenant_id: "tenant-b".into(),
+            kb_ids: vec![kb_a],
+            doc_ids: Vec::new(),
+            question: "私有部署步骤".into(),
+        };
+        let err = prepare_answer(&deps, &ask).await.unwrap_err();
+        assert!(matches!(
+            err,
+            crate::errors::app_error::AppError::NotFound(_)
+        ));
+
+        // Default scope from tenant-b → no active KBs there → NotFound.
+        let ask = AskRequest {
+            tenant_id: "tenant-b".into(),
+            kb_ids: Vec::new(),
+            doc_ids: Vec::new(),
+            question: "私有部署步骤".into(),
+        };
+        let err = prepare_answer(&deps, &ask).await.unwrap_err();
+        assert!(matches!(
+            err,
+            crate::errors::app_error::AppError::NotFound(_)
+        ));
+
+        // Owner tenant still retrieves.
+        let ask = AskRequest {
+            tenant_id: "tenant-a".into(),
+            kb_ids: vec![kb_a],
+            doc_ids: Vec::new(),
+            question: "私有部署步骤".into(),
+        };
+        let outcome = prepare_answer(&deps, &ask).await.unwrap();
+        assert!(!outcome.context_units.is_empty(), "owner must retrieve");
+    }
+
+    #[tokio::test]
+    async fn inactive_kb_rejected() {
+        let deps = deps().await;
+        let kb_id = seeded_tenant_kb(&deps, "default").await;
+        crate::kb::models::knowledge_base::update_kb(
+            &deps.pool,
+            crate::types::snowflake_id::SnowflakeId(kb_id),
+            &crate::kb::models::knowledge_base::UpdateKbCmd {
+                name: "iso".into(),
+                description: None,
+                slug: "iso-default".into(),
+                status: "disabled".into(),
+            },
+            "default",
+        )
+        .await
+        .unwrap();
+        let ask = AskRequest {
+            tenant_id: "default".into(),
+            kb_ids: vec![kb_id],
+            doc_ids: Vec::new(),
+            question: "私有部署步骤".into(),
+        };
+        let err = prepare_answer(&deps, &ask).await.unwrap_err();
+        assert!(
+            matches!(err, crate::errors::app_error::AppError::NotFound(_)),
+            "inactive kb must fail closed"
+        );
     }
 }

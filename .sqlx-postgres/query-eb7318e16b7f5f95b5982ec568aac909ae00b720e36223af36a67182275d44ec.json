@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO \"kb_knowledge_bases\" (\"id\", \"name\", \"description\", \"slug\", \"kind\", \"indexing_strategy\", \"embedding_model\", \"embedding_dim\", \"created_at\") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Jsonb",
+        "Text",
+        "Int8",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "eb7318e16b7f5f95b5982ec568aac909ae00b720e36223af36a67182275d44ec"
+}

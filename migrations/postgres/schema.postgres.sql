@@ -1620,7 +1620,7 @@ CREATE TABLE IF NOT EXISTS kb_knowledge_bases (
     indexing_strategy JSONB,
     chunking_config JSONB,
     embedding_model TEXT,
-    embedding_dim INTEGER,
+    embedding_dim BIGINT,
     status TEXT NOT NULL DEFAULT 'active',
     created_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW()
@@ -1640,7 +1640,7 @@ CREATE TABLE IF NOT EXISTS kb_documents (
     parse_format TEXT NOT NULL DEFAULT 'markdown',
     status TEXT NOT NULL DEFAULT 'pending',
     error TEXT,
-    chunk_count INTEGER NOT NULL DEFAULT 0,
+    chunk_count BIGINT NOT NULL DEFAULT 0,
     steps JSONB,
     created_by BIGINT,
     created_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW(),
@@ -1656,11 +1656,11 @@ CREATE TABLE IF NOT EXISTS kb_chunks (
     wiki_page_id BIGINT,
     kind TEXT NOT NULL DEFAULT 'document',
     parent_id BIGINT,
-    seq INTEGER NOT NULL DEFAULT 0,
+    seq BIGINT NOT NULL DEFAULT 0,
     content TEXT NOT NULL,
     breadcrumb TEXT,
-    byte_start INTEGER NOT NULL DEFAULT 0,
-    byte_end INTEGER NOT NULL DEFAULT 0,
+    byte_start BIGINT NOT NULL DEFAULT 0,
+    byte_end BIGINT NOT NULL DEFAULT 0,
     questions JSONB,
     embedding BYTEA,
     embedding_model TEXT,
@@ -1697,8 +1697,8 @@ CREATE TABLE IF NOT EXISTS kb_wiki_sources (
     page_revision BIGINT NOT NULL DEFAULT 1,
     doc_id BIGINT NOT NULL,
     chunk_id BIGINT,
-    span_start INTEGER NOT NULL DEFAULT 0,
-    span_end INTEGER NOT NULL DEFAULT 0,
+    span_start BIGINT NOT NULL DEFAULT 0,
+    span_end BIGINT NOT NULL DEFAULT 0,
     created_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_kb_wiki_sources_page ON kb_wiki_sources(page_id, page_revision);
@@ -1728,7 +1728,7 @@ CREATE TABLE IF NOT EXISTS kb_query_logs (
     cited_units JSONB,
     status TEXT NOT NULL DEFAULT 'answered',
     top_score DOUBLE PRECISION,
-    feedback INTEGER,
+    feedback BIGINT,
     user_id BIGINT,
     created_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW()
 );

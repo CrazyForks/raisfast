@@ -60,6 +60,10 @@ impl Tool for RunCodeTool {
         &self.description
     }
 
+    fn category(&self) -> &'static str {
+        "script"
+    }
+
     fn parameters_schema(&self) -> Value {
         serde_json::json!({
             "type": "object",

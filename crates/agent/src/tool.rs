@@ -11,6 +11,9 @@ pub struct ToolSpec {
     pub name: String,
     pub description: String,
     pub parameters: Value,
+    /// Presentation category (e.g. "content", "files", "mcp") — used by
+    /// admin UIs to group the tool catalog; "other" when unset.
+    pub category: &'static str,
 }
 
 impl ToolSpec {
@@ -19,6 +22,7 @@ impl ToolSpec {
             name: name.into(),
             description: description.into(),
             parameters,
+            category: "other",
         }
     }
 }
@@ -29,6 +33,11 @@ pub trait Tool: Send + Sync {
     fn name(&self) -> &str;
     fn description(&self) -> &str;
     fn parameters_schema(&self) -> Value;
+    /// Presentation category for admin tool catalogs (grouping only; no
+    /// behavioral meaning). Default `"other"`.
+    fn category(&self) -> &'static str {
+        "other"
+    }
     async fn execute(&self, args: Value) -> ToolExecution;
 }
 
@@ -60,7 +69,11 @@ impl ToolRegistry {
     pub fn specs(&self) -> Vec<ToolSpec> {
         self.tools
             .iter()
-            .map(|t| ToolSpec::new(t.name(), t.description(), t.parameters_schema()))
+            .map(|t| {
+                let mut spec = ToolSpec::new(t.name(), t.description(), t.parameters_schema());
+                spec.category = t.category();
+                spec
+            })
             .collect()
     }
 

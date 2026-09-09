@@ -35,6 +35,10 @@ impl Tool for SearchPostsTool {
         "Full-text search over blog posts. Use when the user wants to find posts by keywords."
     }
 
+    fn category(&self) -> &'static str {
+        "content"
+    }
+
     fn parameters_schema(&self) -> Value {
         serde_json::json!({
             "type": "object",
@@ -109,6 +113,10 @@ impl Tool for ListPostsTool {
 
     fn description(&self) -> &str {
         "List blog posts (published). Supports keyword search and pagination."
+    }
+
+    fn category(&self) -> &'static str {
+        "content"
     }
 
     fn parameters_schema(&self) -> Value {
