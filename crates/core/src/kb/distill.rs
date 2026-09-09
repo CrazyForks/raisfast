@@ -240,8 +240,9 @@ pub async fn publish_page(
     else {
         return Err(AppError::NotFound("kb_wiki_page".into()));
     };
-    // D2: snapshot BEFORE the publish bump (old published content, if any).
-    if page.current_revision > 1 {
+    // D2: snapshot the content being REPLACED — i.e. any already-published
+    // version (first publish of a draft replaces nothing).
+    if page.status == "published" {
         snapshot_page(&deps.pool, &page, reviewer, tenant_id).await?;
     }
     let revision =
@@ -303,7 +304,8 @@ async fn index_page_units(
     }
 
     let texts: Vec<&str> = inserts.iter().map(|c| c.content.as_str()).collect();
-    let vectors = deps.embedder.embed(&texts).await?;
+    let model = page_knowledge(deps, page.kb_id).await?;
+    let vectors = deps.embedder.embed_for(&model.0, model.1, &texts).await?;
     let mut items = Vec::with_capacity(inserts.len());
     let mut fts = Vec::with_capacity(inserts.len());
     for (idx, ins) in inserts.iter().enumerate() {
@@ -329,6 +331,20 @@ async fn index_page_units(
     deps.kbsearch.reindex_document(&fts).await?;
     let _ = revision;
     Ok(())
+}
+
+/// (model, dim) pinned on the KB row.
+async fn page_knowledge(
+    deps: &crate::kb::service::KbDeps,
+    kb_id: SnowflakeId,
+) -> AppResult<(String, u32)> {
+    let kb = models::knowledge_base::find_kb_by_id(&deps.pool, kb_id, "default")
+        .await?
+        .ok_or_else(|| AppError::NotFound("kb_knowledge_base".into()))?;
+    Ok((
+        kb.embedding_model.unwrap_or_default(),
+        u32::try_from(kb.embedding_dim.unwrap_or(0)).unwrap_or(0),
+    ))
 }
 
 async fn snapshot_page(
@@ -463,6 +479,7 @@ mod tests {
             &deps.pool,
             &models::knowledge_base::CreateKbCmd {
                 name: "kb".into(),
+                description: None,
                 slug: "kb".into(),
                 kind: "document".into(),
                 indexing_strategy: None,
@@ -473,8 +490,10 @@ mod tests {
         )
         .await
         .unwrap();
-        let markdown = "# 数据库\n\nraisfast 支持 SQLite PostgreSQL MySQL。向量检索由 Qdrant 提供。"
-            .to_string() + &"配置详见环境变量章节。".repeat(40);
+        let mut markdown =
+            "# 数据库\n\nraisfast 支持 SQLite PostgreSQL MySQL。向量检索由 Qdrant 提供。"
+                .to_string();
+        markdown.push_str(&"配置详见环境变量章节。".repeat(40));
         let doc = crate::kb::service::create_online_document(
             deps,
             kb.id,

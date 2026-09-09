@@ -38,14 +38,16 @@ pub struct LuaEngine {
     pool: Option<Pool>,
     event_bus: Option<crate::eventbus::EventBus>,
     content_registry: Option<std::sync::Arc<crate::content_type::ContentTypeRegistry>>,
+    presence_store: Option<std::sync::Arc<dyn crate::presence::PresenceStore>>,
 }
 
 impl LuaEngine {
-    pub fn new(
+    pub async fn new(
         config: &AppConfig,
         pool: Option<Pool>,
         event_bus: Option<crate::eventbus::EventBus>,
         content_registry: Option<std::sync::Arc<crate::content_type::ContentTypeRegistry>>,
+        presence_store: Option<std::sync::Arc<dyn crate::presence::PresenceStore>>,
     ) -> anyhow::Result<Self> {
         Ok(Self {
             plugins: DashMap::new(),
@@ -53,6 +55,7 @@ impl LuaEngine {
             pool,
             event_bus,
             content_registry,
+            presence_store,
         })
     }
 
@@ -226,7 +229,7 @@ impl LuaEngine {
             return Ok(());
         };
 
-        let lua = self.create_instance(&entry, plugin_id)?;
+        let lua = self.create_instance(&entry, plugin_id, None)?;
         exec_with_timeout(&lua, || {
             let globals = lua.globals();
             let plugin_table: mlua::Table = match globals.get("Plugin") {
@@ -249,12 +252,13 @@ impl LuaEngine {
         plugin_id: &str,
         func_name: &str,
         input: &str,
+        auth: Option<crate::content_type::repository::SaveContext>,
     ) -> anyhow::Result<Option<String>> {
         let Some(entry) = self.plugins.get(plugin_id) else {
             return Ok(None);
         };
 
-        let lua = self.create_instance(&entry, plugin_id)?;
+        let lua = self.create_instance(&entry, plugin_id, auth)?;
         exec_with_timeout(&lua, || {
             let globals = lua.globals();
             let plugin_table: mlua::Table = match globals.get("Plugin") {
@@ -313,13 +317,15 @@ mod tests {
 
     #[tokio::test]
     async fn lua_engine_create() {
-        let engine = LuaEngine::new(&test_config(), None, None, None);
+        let engine = LuaEngine::new(&test_config(), None, None, None, None).await;
         assert!(engine.is_ok());
     }
 
     #[tokio::test]
     async fn lua_engine_load_and_call_filter() {
-        let engine = LuaEngine::new(&test_config(), None, None, None).unwrap();
+        let engine = LuaEngine::new(&test_config(), None, None, None, None)
+            .await
+            .unwrap();
 
         let code = r#"
 Plugin = {
@@ -336,7 +342,7 @@ Plugin = {
 
         let input = serde_json::json!({"title": "hello", "content": "world"});
         let result: Option<serde_json::Value> = engine
-            .call_filter("test-filter", "on_post_creating", &input)
+            .call_filter("test-filter", "on_post_creating", &input, None)
             .await
             .unwrap();
 
@@ -348,9 +354,16 @@ Plugin = {
 
     #[tokio::test]
     async fn lua_engine_call_filter_missing_plugin() {
-        let engine = LuaEngine::new(&test_config(), None, None, None).unwrap();
+        let engine = LuaEngine::new(&test_config(), None, None, None, None)
+            .await
+            .unwrap();
         let result: Option<serde_json::Value> = engine
-            .call_filter("nonexistent", "on_post_creating", &serde_json::json!({}))
+            .call_filter(
+                "nonexistent",
+                "on_post_creating",
+                &serde_json::json!({}),
+                None,
+            )
             .await
             .unwrap();
         assert!(result.is_none());
@@ -358,14 +371,21 @@ Plugin = {
 
     #[tokio::test]
     async fn lua_engine_call_filter_missing_function() {
-        let engine = LuaEngine::new(&test_config(), None, None, None).unwrap();
+        let engine = LuaEngine::new(&test_config(), None, None, None, None)
+            .await
+            .unwrap();
         engine
             .load_plugin_default("test-nofunc", "Plugin = {}")
             .await
             .unwrap();
 
         let result: Option<serde_json::Value> = engine
-            .call_filter("test-nofunc", "on_post_creating", &serde_json::json!({}))
+            .call_filter(
+                "test-nofunc",
+                "on_post_creating",
+                &serde_json::json!({}),
+                None,
+            )
             .await
             .unwrap();
         assert!(result.is_none());
@@ -373,7 +393,9 @@ Plugin = {
 
     #[tokio::test]
     async fn lua_engine_call_action() {
-        let engine = LuaEngine::new(&test_config(), None, None, None).unwrap();
+        let engine = LuaEngine::new(&test_config(), None, None, None, None)
+            .await
+            .unwrap();
 
         let code = r#"
 Plugin = {
@@ -399,7 +421,9 @@ Plugin = {
 
     #[tokio::test]
     async fn lua_engine_call_string_filter() {
-        let engine = LuaEngine::new(&test_config(), None, None, None).unwrap();
+        let engine = LuaEngine::new(&test_config(), None, None, None, None)
+            .await
+            .unwrap();
 
         let code = r#"
 Plugin = {
@@ -418,6 +442,7 @@ Plugin = {
                 "test-strfilter",
                 "filter_html",
                 "<head><title>Test</title></head>",
+                None,
             )
             .await
             .unwrap();
@@ -428,7 +453,9 @@ Plugin = {
 
     #[tokio::test]
     async fn lua_engine_unload_plugin() {
-        let engine = LuaEngine::new(&test_config(), None, None, None).unwrap();
+        let engine = LuaEngine::new(&test_config(), None, None, None, None)
+            .await
+            .unwrap();
         engine
             .load_plugin_default("test-unload", "Plugin = {}")
             .await
@@ -441,7 +468,9 @@ Plugin = {
 
     #[tokio::test]
     async fn lua_engine_multiple_plugins() {
-        let engine = LuaEngine::new(&test_config(), None, None, None).unwrap();
+        let engine = LuaEngine::new(&test_config(), None, None, None, None)
+            .await
+            .unwrap();
 
         for i in 0..3 {
             let code = format!(
@@ -458,7 +487,9 @@ Plugin = {
 
     #[tokio::test]
     async fn lua_engine_syntax_error_fails_load() {
-        let engine = LuaEngine::new(&test_config(), None, None, None).unwrap();
+        let engine = LuaEngine::new(&test_config(), None, None, None, None)
+            .await
+            .unwrap();
         let result = engine
             .load_plugin_default("test-bad", "function !!!invalid!!!")
             .await;
@@ -469,7 +500,9 @@ Plugin = {
     async fn lua_engine_timeout_interrupts_long_execution() {
         let mut config = (*test_config()).clone();
         config.plugin_default_timeout_ms = 100;
-        let engine = LuaEngine::new(&Arc::new(config), None, None, None).unwrap();
+        let engine = LuaEngine::new(&Arc::new(config), None, None, None, None)
+            .await
+            .unwrap();
 
         let code = r#"
 Plugin = {
@@ -486,14 +519,21 @@ Plugin = {
             .unwrap();
 
         let result: anyhow::Result<Option<serde_json::Value>> = engine
-            .call_filter("test-timeout", "on_post_creating", &serde_json::json!({}))
+            .call_filter(
+                "test-timeout",
+                "on_post_creating",
+                &serde_json::json!({}),
+                None,
+            )
             .await;
         assert!(result.is_err());
     }
 
     #[tokio::test]
     async fn lua_engine_action_exception_does_not_crash() {
-        let engine = LuaEngine::new(&test_config(), None, None, None).unwrap();
+        let engine = LuaEngine::new(&test_config(), None, None, None, None)
+            .await
+            .unwrap();
 
         let code = r#"
 Plugin = {
@@ -519,7 +559,9 @@ Plugin = {
 
     #[tokio::test]
     async fn lua_engine_host_get_config_returns_value() {
-        let engine = LuaEngine::new(&test_config(), None, None, None).unwrap();
+        let engine = LuaEngine::new(&test_config(), None, None, None, None)
+            .await
+            .unwrap();
 
         let code = r#"
 Plugin = {
@@ -558,7 +600,9 @@ Plugin = {
 
     #[tokio::test]
     async fn lua_engine_no_io_os_libs() {
-        let engine = LuaEngine::new(&test_config(), None, None, None).unwrap();
+        let engine = LuaEngine::new(&test_config(), None, None, None, None)
+            .await
+            .unwrap();
 
         let code = r#"
 Plugin = {}
@@ -574,7 +618,9 @@ if debug ~= nil then error("debug should not be available") end
     async fn lua_engine_memory_limit_enforced() {
         let mut config = (*test_config()).clone();
         config.plugin_max_memory_mb = 1;
-        let engine = LuaEngine::new(&Arc::new(config), None, None, None).unwrap();
+        let engine = LuaEngine::new(&Arc::new(config), None, None, None, None)
+            .await
+            .unwrap();
 
         let code = r#"
 local t = {}
@@ -589,7 +635,9 @@ Plugin = {}
 
     #[tokio::test]
     async fn lua_per_request_state_isolation() {
-        let engine = LuaEngine::new(&test_config(), None, None, None).unwrap();
+        let engine = LuaEngine::new(&test_config(), None, None, None, None)
+            .await
+            .unwrap();
 
         let code = r#"
 counter = 0
@@ -607,13 +655,23 @@ Plugin = {
             .unwrap();
 
         let r1: Option<serde_json::Value> = engine
-            .call_filter("test-isolation", "on_post_creating", &serde_json::json!({}))
+            .call_filter(
+                "test-isolation",
+                "on_post_creating",
+                &serde_json::json!({}),
+                None,
+            )
             .await
             .unwrap();
         assert_eq!(r1.as_ref().unwrap()["counter"], 1);
 
         let r2: Option<serde_json::Value> = engine
-            .call_filter("test-isolation", "on_post_creating", &serde_json::json!({}))
+            .call_filter(
+                "test-isolation",
+                "on_post_creating",
+                &serde_json::json!({}),
+                None,
+            )
             .await
             .unwrap();
         assert_eq!(
@@ -625,7 +683,11 @@ Plugin = {
 
     #[tokio::test]
     async fn lua_concurrent_calls_succeed() {
-        let engine = Arc::new(LuaEngine::new(&test_config(), None, None, None).unwrap());
+        let engine = Arc::new(
+            LuaEngine::new(&test_config(), None, None, None, None)
+                .await
+                .unwrap(),
+        );
 
         let code = r#"
 Plugin = {
@@ -645,8 +707,13 @@ Plugin = {
             let eng = Arc::clone(&engine);
             handles.push(tokio::spawn(async move {
                 let input = serde_json::json!({"idx": i});
-                eng.call_filter::<serde_json::Value>("test-concurrent", "on_post_creating", &input)
-                    .await
+                eng.call_filter::<serde_json::Value>(
+                    "test-concurrent",
+                    "on_post_creating",
+                    &input,
+                    None,
+                )
+                .await
             }));
         }
 
@@ -662,7 +729,9 @@ Plugin = {
 
     #[tokio::test]
     async fn lua_call_after_unload_returns_none() {
-        let engine = LuaEngine::new(&test_config(), None, None, None).unwrap();
+        let engine = LuaEngine::new(&test_config(), None, None, None, None)
+            .await
+            .unwrap();
         engine
             .load_plugin_default(
                 "test-gone",
@@ -674,7 +743,12 @@ Plugin = {
         engine.unload_plugin("test-gone").await;
 
         let result: Option<serde_json::Value> = engine
-            .call_filter("test-gone", "on_post_creating", &serde_json::json!({}))
+            .call_filter(
+                "test-gone",
+                "on_post_creating",
+                &serde_json::json!({}),
+                None,
+            )
             .await
             .unwrap();
         assert!(result.is_none(), "call after unload should return None");
@@ -688,7 +762,7 @@ Plugin = {
         );
 
         let result = engine
-            .call_string_filter("test-gone", "on_post_creating", "hello")
+            .call_string_filter("test-gone", "on_post_creating", "hello", None)
             .await
             .unwrap();
         assert!(
@@ -699,7 +773,9 @@ Plugin = {
 
     #[tokio::test]
     async fn lua_engine_filter_returns_nil() {
-        let engine = LuaEngine::new(&test_config(), None, None, None).unwrap();
+        let engine = LuaEngine::new(&test_config(), None, None, None, None)
+            .await
+            .unwrap();
 
         let code = r#"
 Plugin = {
@@ -718,6 +794,7 @@ Plugin = {
                 "test-nil-return",
                 "on_post_creating",
                 &serde_json::json!({"title": "hello"}),
+                None,
             )
             .await
             .unwrap();
@@ -730,7 +807,9 @@ Plugin = {
 
     #[tokio::test]
     async fn lua_engine_filter_exception_does_not_crash() {
-        let engine = LuaEngine::new(&test_config(), None, None, None).unwrap();
+        let engine = LuaEngine::new(&test_config(), None, None, None, None)
+            .await
+            .unwrap();
 
         let code = r#"
 Plugin = {
@@ -749,6 +828,7 @@ Plugin = {
                 "test-filter-throw",
                 "on_post_creating",
                 &serde_json::json!({}),
+                None,
             )
             .await;
         assert!(result.is_err());
@@ -756,7 +836,9 @@ Plugin = {
 
     #[tokio::test]
     async fn lua_engine_string_filter_exception_does_not_crash() {
-        let engine = LuaEngine::new(&test_config(), None, None, None).unwrap();
+        let engine = LuaEngine::new(&test_config(), None, None, None, None)
+            .await
+            .unwrap();
 
         let code = r#"
 Plugin = {
@@ -771,14 +853,16 @@ Plugin = {
             .unwrap();
 
         let result = engine
-            .call_string_filter("test-strfilter-throw", "filter_html", "<html></html>")
+            .call_string_filter("test-strfilter-throw", "filter_html", "<html></html>", None)
             .await;
         assert!(result.is_err());
     }
 
     #[tokio::test]
     async fn lua_engine_string_filter_returns_empty_string() {
-        let engine = LuaEngine::new(&test_config(), None, None, None).unwrap();
+        let engine = LuaEngine::new(&test_config(), None, None, None, None)
+            .await
+            .unwrap();
 
         let code = r#"
 Plugin = {
@@ -793,7 +877,7 @@ Plugin = {
             .unwrap();
 
         let result = engine
-            .call_string_filter("test-empty-str", "filter_html", "<html></html>")
+            .call_string_filter("test-empty-str", "filter_html", "<html></html>", None)
             .await
             .unwrap();
         assert_eq!(result.as_deref(), Some(""));
@@ -801,7 +885,9 @@ Plugin = {
 
     #[tokio::test]
     async fn lua_engine_filter_modifies_multiple_fields() {
-        let engine = LuaEngine::new(&test_config(), None, None, None).unwrap();
+        let engine = LuaEngine::new(&test_config(), None, None, None, None)
+            .await
+            .unwrap();
 
         let code = r#"
 Plugin = {
@@ -826,7 +912,7 @@ Plugin = {
             "removable": "yes"
         });
         let result: Option<serde_json::Value> = engine
-            .call_filter("test-multi-field", "on_post_creating", &input)
+            .call_filter("test-multi-field", "on_post_creating", &input, None)
             .await
             .unwrap();
 
@@ -842,7 +928,9 @@ Plugin = {
 
     #[tokio::test]
     async fn lua_engine_reload_same_plugin() {
-        let engine = LuaEngine::new(&test_config(), None, None, None).unwrap();
+        let engine = LuaEngine::new(&test_config(), None, None, None, None)
+            .await
+            .unwrap();
 
         let code_v1 = r#"
 Plugin = {
@@ -858,7 +946,12 @@ Plugin = {
             .unwrap();
 
         let r1: Option<serde_json::Value> = engine
-            .call_filter("test-reload", "on_post_creating", &serde_json::json!({}))
+            .call_filter(
+                "test-reload",
+                "on_post_creating",
+                &serde_json::json!({}),
+                None,
+            )
             .await
             .unwrap();
         assert_eq!(r1.as_ref().unwrap()["version"], 1);
@@ -877,7 +970,12 @@ Plugin = {
             .unwrap();
 
         let r2: Option<serde_json::Value> = engine
-            .call_filter("test-reload", "on_post_creating", &serde_json::json!({}))
+            .call_filter(
+                "test-reload",
+                "on_post_creating",
+                &serde_json::json!({}),
+                None,
+            )
             .await
             .unwrap();
         assert_eq!(r2.as_ref().unwrap()["version"], 2);
@@ -887,7 +985,9 @@ Plugin = {
     async fn lua_engine_action_timeout_interrupts() {
         let mut config = (*test_config()).clone();
         config.plugin_default_timeout_ms = 100;
-        let engine = LuaEngine::new(&Arc::new(config), None, None, None).unwrap();
+        let engine = LuaEngine::new(&Arc::new(config), None, None, None, None)
+            .await
+            .unwrap();
 
         let code = r#"
 Plugin = {
@@ -916,7 +1016,9 @@ Plugin = {
     async fn lua_engine_string_filter_timeout_interrupts() {
         let mut config = (*test_config()).clone();
         config.plugin_default_timeout_ms = 100;
-        let engine = LuaEngine::new(&Arc::new(config), None, None, None).unwrap();
+        let engine = LuaEngine::new(&Arc::new(config), None, None, None, None)
+            .await
+            .unwrap();
 
         let code = r#"
 Plugin = {
@@ -933,7 +1035,7 @@ Plugin = {
             .unwrap();
 
         let result = engine
-            .call_string_filter("test-strfilter-timeout", "render_markdown", "# hello")
+            .call_string_filter("test-strfilter-timeout", "render_markdown", "# hello", None)
             .await;
         assert!(result.is_err());
     }

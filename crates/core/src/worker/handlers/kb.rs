@@ -43,6 +43,15 @@ impl JobHandler for KbProcessDocumentHandler {
         }
     }
 
+    /// Coalesce key is per-doc: a group is duplicate re-process requests for
+    /// the SAME doc — one idempotent run suffices
+    /// [抄RF:worker/handlers/search_index.rs coalesce 配对实现].
+    fn coalesce(&self, jobs: Vec<Job>) -> Option<Job> {
+        jobs.into_iter().find(|j| {
+            matches!(j, Job::KbProcessDocument { .. })
+        })
+    }
+
     async fn handle(&self, job: &Job) -> AppResult<()> {
         let Job::KbProcessDocument { doc_id, tenant_id } = job else {
             return Ok(());
@@ -116,6 +125,37 @@ impl JobHandler for KbDistillWikiHandler {
             Job::KbDistillWiki { kb_id, .. } => Some(format!("kb_distill_{kb_id}")),
             _ => None,
         }
+    }
+
+    /// Merge same-KB distill requests: union + dedup doc_ids
+    /// [抄RF:worker/handlers/search_index.rs coalesce 合并模式].
+    fn coalesce(&self, jobs: Vec<Job>) -> Option<Job> {
+        let mut doc_ids: Vec<i64> = Vec::new();
+        let mut first: Option<Job> = None;
+        for job in jobs {
+            if let Job::KbDistillWiki {
+                kb_id,
+                doc_ids: ids,
+                tenant_id,
+            } = job
+            {
+                if first.is_none() {
+                    first = Some(Job::KbDistillWiki {
+                        kb_id,
+                        doc_ids: Vec::new(),
+                        tenant_id,
+                    });
+                }
+                doc_ids.extend(ids);
+            }
+        }
+        let mut job = first?;
+        if let Job::KbDistillWiki { doc_ids: ids, .. } = &mut job {
+            doc_ids.sort_unstable();
+            doc_ids.dedup();
+            *ids = doc_ids;
+        }
+        Some(job)
     }
 
     async fn handle(&self, job: &Job) -> AppResult<()> {

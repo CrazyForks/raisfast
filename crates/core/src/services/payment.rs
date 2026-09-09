@@ -1369,6 +1369,7 @@ mod tests {
         .unwrap()
     }
 
+    #[cfg(feature = "payment-stripe")]
     async fn seed_channel_encrypted(
         pool: &crate::db::Pool,
         provider: &str,

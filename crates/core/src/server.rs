@@ -28,7 +28,6 @@ use axum::routing::get;
 use tokio::net::TcpListener;
 use tower_http::compression::CompressionLayer;
 use tower_http::cors::{Any, CorsLayer};
-use tower_http::limit::RequestBodyLimitLayer;
 use tower_http::services::ServeDir;
 use tower_http::trace::TraceLayer;
 use tracing::Level;
@@ -142,11 +141,10 @@ async fn build_app(
 
     if config.worker_enabled {
         let cache_for_workers: Arc<dyn crate::cache::CacheStore> = Arc::new(MemoryCache::new());
-        let kb_for_workers = state.kb_runtime.clone().and_then(|rt| {
-            crate::storage::create_storage(config)
-                .ok()
-                .map(|storage| (rt, storage))
-        });
+        let kb_for_workers = state
+            .kb_runtime
+            .clone()
+            .zip(crate::storage::create_storage(config).ok());
         state.handler_registry = spawn_workers(
             worker_pool,
             &eventbus,
@@ -469,7 +467,7 @@ async fn build_app(
             crate::middleware::audit_denied::audit_denied_layer,
         ))
         .layer(Extension(limiters.clone()))
-        .layer(RequestBodyLimitLayer::new(2 * 1024 * 1024));
+        .layer(axum::extract::DefaultBodyLimit::max(2 * 1024 * 1024));
 
     let app = axum::Router::new()
         .route("/health", get(health::health))

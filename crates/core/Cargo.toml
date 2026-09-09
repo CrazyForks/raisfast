@@ -189,6 +189,7 @@ qdrant-client = { version = "1.15", optional = true }
 
 # Knowledge base document processing (kb-technical-design §3/§15)
 anydoc = "0.2"
+pdf-inspector = "1.17"
 similar = "2"
 text-splitter = { version = "0.32", features = ["markdown"] }
 

@@ -18,8 +18,6 @@ pub fn routes(
     registry: &mut crate::server::RouteRegistry,
     config: &crate::config::app::AppConfig,
 ) -> axum::Router<crate::AppState> {
-    use tower_http::limit::RequestBodyLimitLayer;
-
     let restful = config.api_restful;
     let r = axum::Router::new();
     let r = reg_route!(
@@ -28,7 +26,7 @@ pub fn routes(
         restful,
         "/media/upload",
         post,
-        axum::routing::post(upload).layer(RequestBodyLimitLayer::new(max_upload)),
+        axum::routing::post(upload).layer(axum::extract::DefaultBodyLimit::max(max_upload)),
         "content",
         "media",
         "media:create",
@@ -84,7 +82,7 @@ pub fn routes(
         restful,
         "/admin/media/upload",
         post,
-        axum::routing::post(admin_upload).layer(RequestBodyLimitLayer::new(max_upload)),
+        axum::routing::post(admin_upload).layer(axum::extract::DefaultBodyLimit::max(max_upload)),
         "content",
         "admin/media",
         "admin",

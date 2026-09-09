@@ -429,7 +429,7 @@ pub async fn build_app_state(
     svc_builder.register(storage.clone());
     let services = svc_builder.build();
 
-    let kb_runtime = match crate::kb::build_kb_runtime(&config) {
+    let kb_runtime = match crate::kb::build_kb_runtime(config) {
         Ok(rt) => rt,
         Err(e) => {
             return Err(anyhow::anyhow!("knowledge base config invalid (D6): {e}"));

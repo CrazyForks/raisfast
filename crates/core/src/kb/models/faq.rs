@@ -148,6 +148,15 @@ pub async fn delete_faq(pool: &crate::db::Pool, id: SnowflakeId, tenant_id: &str
     Ok(())
 }
 
+pub async fn delete_faqs_by_kb(
+    pool: &crate::db::Pool,
+    kb_id: SnowflakeId,
+    tenant_id: &str,
+) -> AppResult<()> {
+    raisfast_derive::crud_delete!(pool, "kb_faqs", where: ("kb_id", kb_id), tenant: Some(tenant_id))?;
+    Ok(())
+}
+
 pub async fn bump_hit_count(pool: &crate::db::Pool, id: SnowflakeId) -> AppResult<()> {
     let sql = format!(
         "UPDATE kb_faqs SET hit_count = hit_count + 1 WHERE id = {}",
@@ -174,4 +183,53 @@ pub fn question_variants(faq: &KbFaq) -> Vec<String> {
         );
     }
     variants
+}
+
+pub async fn list_faqs(
+    pool: &crate::db::Pool,
+    kb_id: SnowflakeId,
+    page: i64,
+    page_size: i64,
+    tenant_id: &str,
+) -> AppResult<(Vec<KbFaq>, i64)> {
+    Ok(raisfast_derive::crud_query_paged!(
+        pool,
+        KbFaq,
+        table: "kb_faqs",
+        where: ("kb_id", kb_id),
+        order_by: "created_at DESC",
+        tenant: Some(tenant_id),
+        page: page,
+        page_size: page_size
+    ))
+}
+
+/// Update-FAQ command (retrieval re-index handled by the service layer).
+#[derive(Debug, Clone)]
+pub struct UpdateFaqCmd {
+    pub standard_question: String,
+    pub similar_questions: Vec<String>,
+    pub answers: Vec<String>,
+}
+
+pub async fn update_faq(
+    pool: &crate::db::Pool,
+    id: SnowflakeId,
+    cmd: &UpdateFaqCmd,
+    tenant_id: &str,
+) -> AppResult<()> {
+    let now = crate::utils::tz::now_utc();
+    raisfast_derive::crud_update!(
+        pool,
+        "kb_faqs",
+        bind: [
+            "standard_question" => cmd.standard_question.as_str(),
+            "similar_questions" => serde_json::json!(cmd.similar_questions),
+            "answers" => serde_json::json!(cmd.answers),
+            "updated_at" => now
+        ],
+        where: ("id", id),
+        tenant: Some(tenant_id)
+    )?;
+    Ok(())
 }

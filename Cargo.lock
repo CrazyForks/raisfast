@@ -7108,6 +7108,7 @@ dependencies = [
  "native-tls",
  "nix",
  "notify",
+ "pdf-inspector",
  "prost 0.13.5",
  "qdrant-client",
  "raisfast-agent",

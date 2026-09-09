@@ -3500,6 +3500,8 @@ end
             PluginManagerOptions {
                 pool: Some(pool.clone()),
                 event_bus: None,
+                content_registry: None,
+                presence_store: None,
             },
         )
         .await;

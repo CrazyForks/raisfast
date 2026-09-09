@@ -98,8 +98,77 @@ pub async fn find_chunks_by_doc(
     )?)
 }
 
+/// Paged chunk list for the standalone chunks page: optional KB filter,
+/// ordered so chunks of one document stay adjacent (parent-child grouping).
+pub async fn list_chunks_paged(
+    pool: &crate::db::Pool,
+    kb_id: Option<SnowflakeId>,
+    page: i64,
+    page_size: i64,
+) -> AppResult<(Vec<KbChunk>, i64)> {
+    match kb_id {
+        Some(kb) => Ok(raisfast_derive::crud_query_paged!(
+            pool,
+            KbChunk,
+            table: "kb_chunks",
+            where: ("kb_id", kb),
+            order_by: "kb_id ASC, doc_id ASC, seq ASC",
+            page: page,
+            page_size: page_size
+        )),
+        None => Ok(raisfast_derive::crud_query_paged!(
+            pool,
+            KbChunk,
+            table: "kb_chunks",
+            order_by: "kb_id ASC, doc_id ASC, seq ASC",
+            page: page,
+            page_size: page_size
+        )),
+    }
+}
+
 pub async fn delete_chunks_by_doc(pool: &crate::db::Pool, doc_id: SnowflakeId) -> AppResult<()> {
     raisfast_derive::crud_delete!(pool, "kb_chunks", where: ("doc_id", doc_id))?;
+    Ok(())
+}
+
+pub async fn delete_chunks_by_kb(pool: &crate::db::Pool, kb_id: SnowflakeId) -> AppResult<()> {
+    raisfast_derive::crud_delete!(pool, "kb_chunks", where: ("kb_id", kb_id))?;
+    Ok(())
+}
+
+/// Children of one parent chunk (document kind links parents; flat elsewhere).
+pub async fn find_children_by_parent(
+    pool: &crate::db::Pool,
+    parent_id: SnowflakeId,
+) -> AppResult<Vec<KbChunk>> {
+    Ok(raisfast_derive::crud_find_all!(
+        pool,
+        "kb_chunks",
+        KbChunk,
+        where: ("parent_id", parent_id),
+        order_by: "seq ASC"
+    )?)
+}
+
+/// Delete chunks by ids (single chunk delete + cascade of its children).
+pub async fn delete_chunks_by_ids(pool: &crate::db::Pool, ids: &[i64]) -> AppResult<()> {
+    if ids.is_empty() {
+        return Ok(());
+    }
+    let placeholders: Vec<String> = (1..=ids.len()).map(Driver::ph).collect();
+    let sql = format!(
+        "DELETE FROM kb_chunks WHERE id IN ({})",
+        placeholders.join(", ")
+    );
+    let mut query = sqlx::query(crate::db::safe_sql(&sql));
+    for id in ids {
+        query = query.bind(id);
+    }
+    query
+        .execute(pool)
+        .await
+        .map_err(|e| crate::errors::app_error::AppError::Internal(anyhow::anyhow!(e.to_string())))?;
     Ok(())
 }
 

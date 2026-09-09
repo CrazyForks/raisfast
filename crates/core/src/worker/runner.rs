@@ -102,8 +102,12 @@ impl WorkerRunner {
                 tracing::warn!("no handler for coalesced key '{key}'");
                 continue;
             };
-            let Some(merged) = h.coalesce(group.iter().map(|q| q.job.clone()).collect()) else {
-                continue;
+            // A handler that defines coalesce_key but returns None from
+            // coalesce must not silently drop claimed jobs — fall back to
+            // executing the first job of the group.
+            let merged = match h.coalesce(group.iter().map(|q| q.job.clone()).collect()) {
+                Some(merged) => merged,
+                None => group[0].job.clone(),
             };
             let handler_start = std::time::Instant::now();
             let result = self.handlers.handle(&merged).await;

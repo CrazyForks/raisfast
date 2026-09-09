@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO content_revisions (content_type, record_id, revision_number, snapshot, created_by) VALUES (?1, ?2, ?3, ?4, ?5)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 5
+    },
+    "nullable": []
+  },
+  "hash": "52f4018ff00445185c7f2d6db3826de6f9916cc32533de1d02d176648e48c951"
+}

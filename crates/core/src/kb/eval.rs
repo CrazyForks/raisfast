@@ -125,6 +125,7 @@ pub async fn run_eval(deps: &KbDeps, kb_ids: &[i64], cases: &[EvalCase]) -> AppR
     for case in cases {
         let ask = AskRequest {
             kb_ids: kb_ids.to_vec(),
+            doc_ids: Vec::new(),
             question: case.question.clone(),
         };
         let mut outcome = pipeline::prepare_answer(deps, &ask).await?;
@@ -256,6 +257,7 @@ mod tests {
             &deps.pool,
             &crate::kb::models::knowledge_base::CreateKbCmd {
                 name: "eval".into(),
+                description: None,
                 slug: "eval".into(),
                 kind: "document".into(),
                 indexing_strategy: None,
@@ -266,9 +268,11 @@ mod tests {
         )
         .await
         .unwrap();
-        let markdown = "# 数据库\n\n".to_string()
-            + &"raisfast 支持 SQLite PostgreSQL MySQL 三种数据库后端，向量检索使用 Qdrant。"
-                .repeat(50);
+        let mut markdown = "# 数据库\n\n".to_string();
+        markdown.push_str(
+            &"raisfast 支持 SQLite PostgreSQL MySQL 三种数据库后端，向量检索使用 Qdrant。"
+                .repeat(50),
+        );
         let doc = crate::kb::service::create_online_document(
             &deps,
             kb.id,

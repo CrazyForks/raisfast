@@ -1606,6 +1606,7 @@ CREATE TABLE IF NOT EXISTS kb_knowledge_bases (
     id INTEGER PRIMARY KEY,
     tenant_id TEXT NOT NULL DEFAULT 'default',
     name TEXT NOT NULL,
+    description TEXT,
     slug TEXT NOT NULL,
     kind TEXT NOT NULL DEFAULT 'document',
     indexing_strategy TEXT,
@@ -1632,6 +1633,7 @@ CREATE TABLE IF NOT EXISTS kb_documents (
     status TEXT NOT NULL DEFAULT 'pending',
     error TEXT,
     chunk_count INTEGER NOT NULL DEFAULT 0,
+    steps TEXT,
     created_by BIGINT,
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
     updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))

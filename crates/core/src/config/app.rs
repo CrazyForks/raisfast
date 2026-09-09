@@ -653,6 +653,15 @@ pub struct AiConfig {
     /// Required together with `embedding_model` when KB is enabled.
     #[serde(default)]
     pub embedding_dim: Option<u32>,
+    /// Separate provider for embeddings: chat stays on `base_url` while
+    /// vector calls go here (e.g. chat on DeepSeek + embeddings on a local
+    /// Ollama). Env `RAISFAST_AI_EMBEDDING_BASE_URL`; unset = share `base_url`.
+    #[serde(default)]
+    pub embedding_base_url: Option<String>,
+    /// API key for the embedding provider. Env `RAISFAST_AI_EMBEDDING_API_KEY`;
+    /// unset = fall back to `api_key`.
+    #[serde(default)]
+    pub embedding_api_key: Option<String>,
 }
 
 fn default_ai_timeout_secs() -> u64 {
@@ -679,6 +688,8 @@ impl Default for AiConfig {
             mcp_servers: Vec::new(),
             embedding_model: None,
             embedding_dim: None,
+            embedding_base_url: None,
+            embedding_api_key: None,
         }
     }
 }
@@ -750,6 +761,12 @@ impl AiConfig {
                 .ok()
                 .filter(|v| !v.is_empty())
                 .and_then(|v| v.parse().ok()),
+            embedding_base_url: env::var("RAISFAST_AI_EMBEDDING_BASE_URL")
+                .ok()
+                .filter(|v| !v.is_empty()),
+            embedding_api_key: env::var("RAISFAST_AI_EMBEDDING_API_KEY")
+                .ok()
+                .filter(|v| !v.is_empty()),
         }
     }
 }
@@ -767,6 +784,7 @@ impl AiConfig {
 /// | `RAISFAST_KB_WIKI_BOOST` | f32 | `1.3` | wiki_page unit score multiplier (WK same value) |
 /// | `RAISFAST_KB_FALLBACK_THRESHOLD` | f32 | `0.3` | Below this top score → "not covered" (no generation) |
 /// | `RAISFAST_KB_CONTEXT_TOKEN_BUDGET` | u32 | `4000` | S8 context assembly budget (chars/4 estimate) |
+/// | `RAISFAST_KB_EMBED_BATCH_SIZE` | usize | `32` | Texts per `/embeddings` request (WK `BATCH_EMBED_SIZE` analog; WK default 5 + goroutine pool, ours serializes so 32) |
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct KbConfig {
     #[serde(default)]
@@ -796,10 +814,20 @@ pub struct KbConfig {
     /// [抄RF:glossary U 估算]). Env `RAISFAST_KB_CONTEXT_TOKEN_BUDGET` (default 4000).
     #[serde(default = "default_kb_context_budget")]
     pub context_budget_tokens: u32,
+    /// Texts per `/embeddings` request [抄WK:models/embedding/batch.go
+    /// BATCH_EMBED_SIZE]. Declared deviation: WK defaults to 5 paired with
+    /// an ants concurrency pool; we serialize batches, so the default is 32
+    /// to keep round-trips sane. Env `RAISFAST_KB_EMBED_BATCH_SIZE`.
+    #[serde(default = "default_kb_embed_batch_size")]
+    pub embed_batch_size: usize,
 }
 
 fn default_kb_top_k() -> u32 {
     10
+}
+
+fn default_kb_embed_batch_size() -> usize {
+    32
 }
 
 fn default_kb_wiki_boost() -> f32 {
@@ -834,6 +862,7 @@ impl Default for KbConfig {
             wiki_boost: default_kb_wiki_boost(),
             fallback_threshold: default_kb_fallback_threshold(),
             context_budget_tokens: default_kb_context_budget(),
+            embed_batch_size: default_kb_embed_batch_size(),
         }
     }
 }
@@ -876,6 +905,11 @@ impl KbConfig {
                 .ok()
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(defaults.context_budget_tokens),
+            embed_batch_size: env::var("RAISFAST_KB_EMBED_BATCH_SIZE")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .filter(|n| *n > 0)
+                .unwrap_or(defaults.embed_batch_size),
         }
     }
 }

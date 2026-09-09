@@ -16,7 +16,7 @@ use crate::event::Event;
 use crate::event::EventEmitter;
 use crate::kb::chunker::{self, ChunkerConfig};
 use crate::kb::kbsearch::{KbIndexUnit, KbSearchEngine};
-use crate::kb::models::{chunk, document, knowledge_base};
+use crate::kb::models::{chunk, document, faq, knowledge_base, wiki_page, wiki_source};
 use crate::kb::vectors::{VectorIndex, VectorItem};
 use crate::storage::Storage;
 use crate::types::snowflake_id::SnowflakeId;
@@ -26,46 +26,129 @@ use crate::types::snowflake_id::SnowflakeId;
 #[async_trait::async_trait]
 pub trait KbEmbedder: Send + Sync {
     async fn embed(&self, texts: &[&str]) -> AppResult<Vec<Vec<f32>>>;
+
+    /// Per-KB embedding: the KB row pins its model + dim at creation
+    /// (immutable). Production uses the KB's model; tests fall back to
+    /// [`KbEmbedder::embed`].
+    async fn embed_for(&self, _model: &str, dim: u32, texts: &[&str]) -> AppResult<Vec<Vec<f32>>> {
+        let out = self.embed(texts).await?;
+        for v in &out {
+            if v.len() as u32 != dim {
+                return Err(AppError::Internal(anyhow::anyhow!(
+                    "embedding dim mismatch: kb pins {dim}, model returned {}",
+                    v.len()
+                )));
+            }
+        }
+        Ok(out)
+    }
 }
 
 /// Production embedder over `ModelProvider::embed` [抄EXT:OpenAI embeddings].
 pub struct ProviderEmbedder {
     provider: Arc<dyn ModelProvider>,
     model: String,
-    dim: u32,
+    /// Texts per `/embeddings` request.
+    batch_size: usize,
 }
+
+/// Retry shape [抄WK:keywords_vector_hybrid_indexer.go batchEmbedWithBackoff]:
+/// 5 attempts, exponential backoff 200ms → 3.2s.
+const EMBED_RETRY_ATTEMPTS: usize = 5;
+const EMBED_RETRY_BASE_DELAY_MS: u64 = 200;
 
 impl ProviderEmbedder {
     pub fn new(config: &AppConfig) -> AppResult<Self> {
-        crate::kb::vectors::validate_kb_config(config)?;
-        let provider = crate::agent::service::provider_from_config(&config.ai)?;
+        // Dedicated embedding provider when configured (chat on DeepSeek +
+        // embeddings on Ollama); otherwise share the chat provider.
+        let provider = match &config.ai.embedding_base_url {
+            Some(base) => Arc::new(raisfast_agent::openai::OpenAiCompatProvider::new(
+                base.clone(),
+                config
+                    .ai
+                    .embedding_api_key
+                    .clone()
+                    .or_else(|| config.ai.api_key.clone()),
+            )) as Arc<dyn ModelProvider>,
+            None => crate::agent::service::provider_from_config(&config.ai)?,
+        };
         Ok(Self {
             provider,
             model: config.ai.embedding_model.clone().unwrap_or_default(),
-            dim: config.ai.embedding_dim.unwrap_or(0),
+            batch_size: config.kb.embed_batch_size,
         })
+    }
+
+    /// Slice texts into fixed-size batches and embed them sequentially,
+    /// retrying each batch with exponential backoff on failure
+    /// [抄WK:models/embedding/batch.go BatchEmbedWithPool 语义，串行替代协程池].
+    async fn embed_batched(&self, texts: &[&str], model: &str) -> AppResult<Vec<Vec<f32>>> {
+        let mut out = Vec::with_capacity(texts.len());
+        for batch in texts.chunks(self.batch_size.max(1)) {
+            let mut delay = EMBED_RETRY_BASE_DELAY_MS;
+            let mut last_err: Option<String> = None;
+            let mut vectors: Option<Vec<Vec<f32>>> = None;
+            for attempt in 0..EMBED_RETRY_ATTEMPTS {
+                match self.provider.embed(batch, model).await {
+                    Ok(v) if v.len() == batch.len() => {
+                        vectors = Some(v);
+                        break;
+                    }
+                    Ok(v) => {
+                        last_err = Some(format!(
+                            "embedding count mismatch: batch {} got {}",
+                            batch.len(),
+                            v.len()
+                        ));
+                    }
+                    Err(e) => {
+                        last_err = Some(e.to_string());
+                    }
+                }
+                tracing::warn!(
+                    "embedding batch ({}/{} texts) attempt {}/{} failed: {}",
+                    batch.len(),
+                    texts.len(),
+                    attempt + 1,
+                    EMBED_RETRY_ATTEMPTS,
+                    last_err.as_deref().unwrap_or_default()
+                );
+                if attempt + 1 < EMBED_RETRY_ATTEMPTS {
+                    tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
+                    delay *= 2;
+                }
+            }
+            match vectors {
+                Some(v) => out.extend(v),
+                None => {
+                    return Err(AppError::ServiceUnavailable(format!(
+                        "embedding: {}",
+                        last_err.unwrap_or_else(|| "unknown error".into())
+                    )))
+                }
+            }
+        }
+        Ok(out)
     }
 }
 
 #[async_trait::async_trait]
 impl KbEmbedder for ProviderEmbedder {
-    async fn embed(&self, texts: &[&str]) -> AppResult<Vec<Vec<f32>>> {
-        let out = self
-            .provider
-            .embed(texts, &self.model)
-            .await
-            .map_err(|e| AppError::ServiceUnavailable(format!("embedding: {e}")))?;
+    async fn embed_for(&self, model: &str, dim: u32, texts: &[&str]) -> AppResult<Vec<Vec<f32>>> {
+        let out = self.embed_batched(texts, model).await?;
         for v in &out {
-            if v.len() as u32 != self.dim {
+            if v.len() as u32 != dim {
                 return Err(AppError::Internal(anyhow::anyhow!(
-                    "embedding dim mismatch: expected {}, got {} (model {})",
-                    self.dim,
-                    v.len(),
-                    self.model
+                    "embedding dim mismatch: kb pins {dim}, model '{model}' returned {}",
+                    v.len()
                 )));
             }
         }
         Ok(out)
+    }
+
+    async fn embed(&self, texts: &[&str]) -> AppResult<Vec<Vec<f32>>> {
+        self.embed_batched(texts, &self.model).await
     }
 }
 
@@ -198,15 +281,20 @@ pub async fn process_document(
     let Some(kb) = knowledge_base::find_kb_by_id(&deps.pool, doc.kb_id, tenant_id).await? else {
         return Ok(());
     };
-    let dim = kb
-        .embedding_dim
-        .unwrap_or_else(|| i64::from(deps.config.ai.embedding_dim.unwrap_or(0)));
-    if dim <= 0 {
+    // Per-KB pinned model/dim (immutable since creation, D6-revised).
+    let model = kb
+        .embedding_model
+        .clone()
+        .filter(|m| !m.is_empty())
+        .ok_or_else(|| {
+            AppError::BadRequest("该知识库未配置嵌入模型（创建时必填，之后不可修改）".into())
+        })?;
+    let dim = u32::try_from(kb.embedding_dim.unwrap_or(0)).unwrap_or(0);
+    if dim == 0 {
         return Err(AppError::BadRequest(
-            "kb has no embedding_dim configured".into(),
+            "该知识库未配置向量维度（创建时必填，之后不可修改）".into(),
         ));
     }
-    let dim = u32::try_from(dim).unwrap_or(0);
 
     // ① parse → markdown [抄EXT:anydoc]
     document::set_document_status(&deps.pool, doc_id, "parsing", None, None, tenant_id).await?;
@@ -288,7 +376,7 @@ pub async fn process_document(
         .map(|&(_, raw_i)| (raw_i, raw_chunks[raw_i].content.clone()))
         .collect();
     let texts: Vec<&str> = embed_targets.iter().map(|(_, t)| t.as_str()).collect();
-    let vectors = deps.embedder.embed(&texts).await?;
+    let vectors = deps.embedder.embed_for(&model, dim, &texts).await?;
 
     let mut items = Vec::with_capacity(embed_targets.len());
     for (idx, (raw_i, _)) in embed_targets.iter().enumerate() {
@@ -313,6 +401,7 @@ pub async fn process_document(
     }
 
     // ⑤ vector + BM25 index (delete-then-insert idempotency per doc)
+    document::set_document_status(&deps.pool, doc_id, "indexing", None, None, tenant_id).await?;
     deps.vector
         .delete(
             i64::from(doc.kb_id),
@@ -359,6 +448,9 @@ pub async fn process_document(
 
 /// Parse raw bytes to markdown. Markdown files pass through unchanged;
 /// everything else goes through anydoc [抄EXT:anydoc to_markdown_bytes].
+/// PDFs with scanned/image-only pages degrade to per-page extraction with
+/// placeholders instead of failing the whole document (pdf-inspector
+/// per-page API 混合 OCR 语义；真实 OCR 是后续工作).
 fn parse_to_markdown(doc: &document::KbDocument, bytes: &[u8]) -> AppResult<String> {
     let is_markdown = doc
         .mime_type
@@ -372,8 +464,44 @@ fn parse_to_markdown(doc: &document::KbDocument, bytes: &[u8]) -> AppResult<Stri
         return String::from_utf8(bytes.to_vec())
             .map_err(|e| AppError::BadRequest(format!("invalid utf-8 markdown: {e}")));
     }
-    anydoc::to_markdown_bytes(bytes, None)
-        .map_err(|e| AppError::BadRequest(format!("document parse failed: {e}")))
+    match anydoc::to_markdown_bytes(bytes, None) {
+        Ok(md) => Ok(md),
+        Err(anydoc::ConvertError::NeedsOcr { pages, page_count }) => {
+            extract_pdf_skip_ocr(bytes, &pages, page_count)
+        }
+        Err(e) => Err(AppError::BadRequest(format!("document parse failed: {e}"))),
+    }
+}
+
+/// Degraded PDF parse: keep text pages, insert placeholders for scanned
+/// pages. Fails only when nothing extractable remains.
+fn extract_pdf_skip_ocr(bytes: &[u8], ocr_pages: &[u32], page_count: u32) -> AppResult<String> {
+    let extracted = pdf_inspector::extract_pages_markdown_mem(bytes, None)
+        .map_err(|e| AppError::BadRequest(format!("document parse failed: {e}")))?;
+    let mut md = String::new();
+    for page in &extracted.pages {
+        if page.needs_ocr {
+            let reason = page.ocr_reason.as_deref().unwrap_or("scanned page");
+            md.push_str(&format!(
+                "\n\n> [第 {} 页为扫描件（{}），需要 OCR，已跳过]\n",
+                page.page + 1,
+                reason
+            ));
+        } else {
+            md.push_str(&page.markdown);
+        }
+    }
+    if md.trim().is_empty() {
+        return Err(AppError::BadRequest(format!(
+            "document parse failed: pages {ocr_pages:?} of {page_count} need OCR and no extractable text remains"
+        )));
+    }
+    tracing::warn!(
+        "[kb] pdf degraded parse: {} of {} pages need OCR (skipped: {ocr_pages:?}), placeholders inserted",
+        ocr_pages.len(),
+        page_count
+    );
+    Ok(md)
 }
 
 /// Delete a document everywhere (SQL + vector + FTS), then emit.
@@ -392,7 +520,15 @@ pub async fn delete_document_everywhere(
     }
     deps.kbsearch.delete_document(i64::from(doc_id)).await?;
     chunk::delete_chunks_by_doc(&deps.pool, doc_id).await?;
+    crate::kb::models::wiki_source::delete_sources_by_doc(&deps.pool, doc_id).await?;
     document::delete_document(&deps.pool, doc_id, tenant_id).await?;
+    // Original bytes on storage: warn-only cleanup (row is already gone;
+    // a leaked file is preferable to a failed delete) [抄RF:services/media.rs].
+    if let Some(key) = &doc.storage_key
+        && let Err(e) = deps.storage.delete(key).await
+    {
+        tracing::warn!(key = %key, error = %e, "failed to delete kb document file from storage");
+    }
     let stale = crate::kb::models::wiki_page::mark_stale_by_doc(&deps.pool, doc_id).await?;
     if !stale.is_empty() {
         tracing::info!(
@@ -401,6 +537,46 @@ pub async fn delete_document_everywhere(
         );
     }
     deps.emitter.emit(Event::KbDocumentDeleted(doc));
+    Ok(())
+}
+
+/// Delete a KB and everything in it (documents, chunks, FAQs, wiki pages,
+/// provenance links, vector + FTS indexes, original files), mirroring
+/// `delete_document_everywhere` at KB scope.
+pub async fn delete_kb_everywhere(
+    deps: &KbDeps,
+    kb_id: SnowflakeId,
+    tenant_id: &str,
+) -> AppResult<()> {
+    let Some(kb) = knowledge_base::find_kb_by_id(&deps.pool, kb_id, tenant_id).await? else {
+        return Ok(());
+    };
+    let docs = document::find_documents_by_kb(&deps.pool, kb_id, tenant_id).await?;
+    // Vector + FTS: whole-KB wipe (both are keyed by kb_id).
+    deps.vector.delete_all(i64::from(kb_id)).await?;
+    deps.kbsearch.delete_kb(i64::from(kb_id)).await?;
+    // SQL rows, children first (no FK cascade: order matters).
+    chunk::delete_chunks_by_kb(&deps.pool, kb_id).await?;
+    wiki_source::delete_sources_by_kb(&deps.pool, kb_id).await?;
+    wiki_page::delete_pages_by_kb(&deps.pool, kb_id, tenant_id).await?;
+    faq::delete_faqs_by_kb(&deps.pool, kb_id, tenant_id).await?;
+    document::delete_documents_by_kb(&deps.pool, kb_id, tenant_id).await?;
+    knowledge_base::delete_kb(&deps.pool, kb_id, tenant_id).await?;
+    // Original bytes on storage: warn-only cleanup (rows are already gone;
+    // a leaked file is preferable to a failed delete) [抄RF:services/media.rs].
+    for doc in &docs {
+        if let Some(key) = &doc.storage_key
+            && let Err(e) = deps.storage.delete(key).await
+        {
+            tracing::warn!(key = %key, error = %e, "failed to delete kb document file from storage");
+        }
+    }
+    tracing::info!(
+        "[kb] kb {} ({}) deleted: {} document(s) removed with indexes",
+        i64::from(kb_id),
+        kb.slug,
+        docs.len()
+    );
     Ok(())
 }
 
@@ -512,6 +688,7 @@ mod tests {
             &deps.pool,
             &knowledge_base::CreateKbCmd {
                 name: "产品文档".into(),
+                description: None,
                 slug: "docs".into(),
                 kind: "document".into(),
                 indexing_strategy: None,
@@ -530,9 +707,9 @@ mod tests {
         let deps = test_deps().await;
         let kb_id = seed_kb(&deps).await;
 
-        let markdown = "# 安装指南\n\n通过 cargo 安装 raisfast 服务端。\n\n## 配置数据库\n\n"
-            .to_string()
-            + &"支持 SQLite、PostgreSQL 与 MySQL 三种后端。".repeat(80);
+        let mut markdown =
+            "# 安装指南\n\n通过 cargo 安装 raisfast 服务端。\n\n## 配置数据库\n\n".to_string();
+        markdown.push_str(&"支持 SQLite、PostgreSQL 与 MySQL 三种后端。".repeat(80));
         let doc = create_online_document(&deps, kb_id, "安装指南", &markdown, None, "default")
             .await
             .unwrap();
@@ -667,7 +844,12 @@ pub async fn index_faq(deps: &KbDeps, faq: &crate::kb::models::faq::KbFaq) -> Ap
 
     let variants = crate::kb::models::faq::question_variants(faq);
     let texts: Vec<&str> = variants.iter().map(String::as_str).collect();
-    let vectors = deps.embedder.embed(&texts).await?;
+    let kb_row = crate::kb::models::knowledge_base::find_kb_by_id(&deps.pool, faq.kb_id, "default")
+        .await?
+        .ok_or_else(|| AppError::NotFound("kb_knowledge_base".into()))?;
+    let model = kb_row.embedding_model.clone().unwrap_or_default();
+    let dim = u32::try_from(kb_row.embedding_dim.unwrap_or(0)).unwrap_or(0);
+    let vectors = deps.embedder.embed_for(&model, dim, &texts).await?;
     let now = crate::utils::tz::now_utc();
     let mut items = Vec::with_capacity(variants.len());
     let mut fts = Vec::with_capacity(variants.len());
@@ -791,6 +973,7 @@ mod faq_tests {
             &deps.pool,
             &crate::kb::models::knowledge_base::CreateKbCmd {
                 name: "faq-kb".into(),
+                description: None,
                 slug: "faq-kb".into(),
                 kind: "document".into(),
                 indexing_strategy: None,
@@ -844,6 +1027,7 @@ mod faq_tests {
         // pipeline: ask the FAQ → answered, FAQ unit pinned first
         let ask = AskRequest {
             kb_ids: vec![i64::from(kb_id)],
+            doc_ids: Vec::new(),
             question: "如何重置密码".into(),
         };
         let mut outcome = pipeline::prepare_answer(&deps, &ask).await.unwrap();
@@ -893,9 +1077,9 @@ mod faq_tests {
         let gaps = crate::kb::models::query_log::list_gaps(&deps.pool, 10)
             .await
             .unwrap();
-        let entry = gaps.iter().find(|(q, _)| q == "什么是量子纠缠");
+        let entry = gaps.iter().find(|(q, _, _)| q == "什么是量子纠缠");
         assert!(
-            entry.is_some_and(|(_, c)| *c >= 2),
+            entry.is_some_and(|(_, c, _)| *c >= 2),
             "gaps must aggregate counts: {gaps:?}"
         );
     }

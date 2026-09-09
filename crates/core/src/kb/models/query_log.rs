@@ -62,16 +62,16 @@ pub async fn insert_log(
 
 /// Knowledge-gap list: uncovered (or negatively rated) questions grouped
 /// with occurrence counts — the M5 sedimentation input (§9).
-pub async fn list_gaps(pool: &crate::db::Pool, limit: i64) -> AppResult<Vec<(String, i64)>> {
-    let placeholders = (1..=1).map(Driver::ph).collect::<Vec<_>>().join("");
+pub async fn list_gaps(pool: &crate::db::Pool, limit: i64) -> AppResult<Vec<(String, i64, i64)>> {
     let sql = format!(
-        "SELECT question, {} FROM kb_query_logs WHERE status = 'uncovered' OR feedback < 0 \
-         GROUP BY question ORDER BY 2 DESC",
+        "SELECT question, {}, {} FROM kb_query_logs \
+         WHERE status = 'uncovered' OR feedback < 0 \
+         GROUP BY question ORDER BY 2 DESC LIMIT {}",
         Driver::cast_int("COUNT(*)"),
+        Driver::cast_int("MAX(id)"),
+        Driver::ph(1)
     );
-    let _ = placeholders;
-    let sql = format!("{sql} LIMIT {}", Driver::ph(1));
-    let rows: Vec<(String, i64)> = sqlx::query_as(crate::db::safe_sql(&sql))
+    let rows: Vec<(String, i64, i64)> = sqlx::query_as(crate::db::safe_sql(&sql))
         .bind(limit)
         .fetch_all(pool)
         .await

@@ -177,7 +177,8 @@ mod tests {
 
     #[test]
     fn splits_by_headings_and_sizes() {
-        let md = "# A\n\nintro text\n\n## B\n\n".to_string() + &"word ".repeat(200); // > child size, forces parent+child
+        let mut md = "# A\n\nintro text\n\n## B\n\n".to_string();
+        md.push_str(&"word ".repeat(200)); // > child size, forces parent+child
         let chunks = chunk_markdown(&md, &ChunkerConfig::default());
         assert!(
             chunks.len() >= 3,
@@ -241,7 +242,8 @@ mod tests {
 
     #[test]
     fn roundtrip_spans_slice_source() {
-        let md = "# H\n\n".to_string() + &"数据 ".repeat(300);
+        let mut md = "# H\n\n".to_string();
+        md.push_str(&"数据 ".repeat(300));
         let chunks = chunk_markdown(&md, &ChunkerConfig::default());
         for c in &chunks {
             let slice = &md[c.byte_start..c.byte_end];

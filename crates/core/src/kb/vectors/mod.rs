@@ -73,27 +73,14 @@ pub trait VectorIndex: Send + Sync {
     fn backend_name(&self) -> &str;
 }
 
-/// D6 startup validation (technical design §4.1/§11): with the KB enabled,
-/// the embedding model/dim must be explicit and the selected backend's
-/// prerequisites present. Fails loudly instead of silently indexing with a
-/// wrong dimension.
+/// Startup validation (D6, revised 2026-09-08): the server must always
+/// boot; embedding model/dim are **per-KB** choices fixed at KB creation
+/// (WeKnora `vector_store_id` precedent: set once, immutable). The global
+/// env vars are only creation-time defaults. Only backend prerequisites
+/// fail fast here.
 pub fn validate_kb_config(config: &AppConfig) -> AppResult<()> {
     if !config.kb.enabled {
         return Ok(());
-    }
-    if config.ai.embedding_model.is_none() || config.ai.embedding_dim.is_none() {
-        return Err(AppError::BadRequest(
-            "RAISFAST_KB_ENABLED=true requires RAISFAST_AI_EMBEDDING_MODEL and \
-             RAISFAST_AI_EMBEDDING_DIM to be set explicitly (D6, kb-technical-design §4.1)"
-                .to_string(),
-        ));
-    }
-    if !config.ai.enabled || config.ai.model.as_deref().unwrap_or_default().is_empty() {
-        return Err(AppError::BadRequest(
-            "RAISFAST_KB_ENABLED=true requires RAISFAST_AI_ENABLED=true and RAISFAST_AI_MODEL \
-             (the QA pipeline generates answers via the chat provider)"
-                .to_string(),
-        ));
     }
     match config.kb.vector_backend.as_str() {
         "qdrant" => {
@@ -123,6 +110,15 @@ pub fn build_vector_index(config: &AppConfig) -> AppResult<std::sync::Arc<dyn Ve
         #[cfg(feature = "kb-qdrant")]
         "qdrant" => {
             let url = config.kb.qdrant_url.clone().unwrap_or_default();
+            if url.ends_with(":6333") {
+                // Classic footgun: 6333 is qdrant's REST port; this client
+                // speaks gRPC (6334). Pointed at REST, calls die as
+                // "operation was cancelled" with empty metadata.
+                tracing::warn!(
+                    "kb qdrant url '{url}' looks like the REST port (6333); \
+                     the gRPC client expects 6334 — set RAISFAST_KB_QDRANT_URL=http://localhost:6334"
+                );
+            }
             let index = QdrantIndex::new(
                 &url,
                 config.kb.qdrant_api_key.clone(),

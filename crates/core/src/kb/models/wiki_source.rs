@@ -3,6 +3,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::db::{DbDriver, Driver};
 use crate::errors::app_error::AppResult;
 use crate::types::snowflake_id::SnowflakeId;
 use crate::utils::tz::Timestamp;
@@ -58,4 +59,39 @@ pub async fn find_page_ids_by_doc(
         where: ("doc_id", doc_id)
     )?;
     Ok(rows.into_iter().map(|r| i64::from(r.page_id)).collect())
+}
+
+/// Drop provenance links of a deleted document (its pages are marked
+/// stale separately — the links themselves must not outlive the doc).
+pub async fn delete_sources_by_doc(
+    pool: &crate::db::Pool,
+    doc_id: SnowflakeId,
+) -> AppResult<()> {
+    raisfast_derive::crud_delete!(
+        pool,
+        "kb_wiki_sources",
+        where: ("doc_id", doc_id)
+    )?;
+    Ok(())
+}
+
+/// Drop every provenance link of a KB (the table has no kb_id column;
+/// resolve via the KB's pages and documents before those rows vanish).
+pub async fn delete_sources_by_kb(
+    pool: &crate::db::Pool,
+    kb_id: SnowflakeId,
+) -> AppResult<()> {
+    let sql = format!(
+        "DELETE FROM kb_wiki_sources WHERE page_id IN (SELECT id FROM kb_wiki_pages WHERE kb_id = {}) \
+         OR doc_id IN (SELECT id FROM kb_documents WHERE kb_id = {})",
+        Driver::ph(1),
+        Driver::ph(2)
+    );
+    sqlx::query(crate::db::safe_sql(&sql))
+        .bind(i64::from(kb_id))
+        .bind(i64::from(kb_id))
+        .execute(pool)
+        .await
+        .map_err(|e| crate::errors::app_error::AppError::Internal(anyhow::anyhow!(e.to_string())))?;
+    Ok(())
 }

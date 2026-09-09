@@ -188,6 +188,22 @@ impl KbSearchEngine {
         Ok(())
     }
 
+    /// Remove every unit of one knowledge base from the index (KB delete).
+    pub async fn delete_kb(&self, kb_id: i64) -> AppResult<()> {
+        let term = Term::from_field_text(self.fields.kb_id, &kb_id.to_string());
+        let writer = self.writer.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut w = writer.blocking_lock();
+            w.delete_term(term);
+            w.commit().map_err(map_tantivy)?;
+            Ok::<(), AppError>(())
+        })
+        .await
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("join: {e}")))??;
+        self.reader.reload().map_err(map_tantivy)?;
+        Ok(())
+    }
+
     /// BM25 search within one KB. Chinese-friendly via the ngram tokenizer.
     pub async fn search(
         &self,

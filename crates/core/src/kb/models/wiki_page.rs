@@ -226,3 +226,17 @@ pub async fn set_page_status(
     )?;
     Ok(())
 }
+
+pub async fn delete_pages_by_kb(
+    pool: &crate::db::Pool,
+    kb_id: SnowflakeId,
+    tenant_id: &str,
+) -> AppResult<()> {
+    raisfast_derive::crud_delete!(
+        pool,
+        "kb_wiki_pages",
+        where: ("kb_id", kb_id),
+        tenant: Some(tenant_id)
+    )?;
+    Ok(())
+}

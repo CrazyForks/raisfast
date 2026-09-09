@@ -8,8 +8,10 @@ use axum::extract::{Multipart, Path, Query, State};
 use axum::response::IntoResponse;
 use serde::Deserialize;
 use serde_json::{Value, json};
+use sqlx::Row as _;
 
 use crate::AppState;
+use crate::db::{DbDriver, Driver};
 use crate::errors::app_error::{AppError, AppResult};
 use crate::errors::response::ApiResponse;
 use crate::kb::chunker::{self, ChunkerConfig};
@@ -51,12 +53,36 @@ pub fn routes(
         r,
         registry,
         config.api_restful,
+        "/admin/kb/knowledge-bases/{id}",
+        put,
+        admin_update_kb,
+        "system",
+        "admin/kb/knowledge-bases",
+        "admin"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        config.api_restful,
+        "/admin/kb/knowledge-bases/{id}",
+        delete,
+        admin_delete_kb,
+        "system",
+        "admin/kb/knowledge-bases",
+        "admin"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        config.api_restful,
         "/admin/kb/documents",
         post,
-        admin_upload_document,
+        axum::routing::post(admin_upload_document)
+            .layer(axum::extract::DefaultBodyLimit::max(config.max_upload_size)),
         "system",
         "admin/kb/documents",
-        "admin"
+        "admin",
+        layered
     );
     let r = reg_route!(
         r,
@@ -109,6 +135,17 @@ pub fn routes(
         "/admin/kb/documents/{id}/reparse",
         post,
         admin_reparse_document,
+        "system",
+        "admin/kb/documents",
+        "admin"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        config.api_restful,
+        "/admin/kb/documents/{id}/jobs",
+        get,
+        admin_document_jobs,
         "system",
         "admin/kb/documents",
         "admin"
@@ -205,6 +242,17 @@ pub fn routes(
         r,
         registry,
         config.api_restful,
+        "/admin/kb/wiki/pages/{id}/restore/{rev}",
+        post,
+        admin_restore_wiki_page,
+        "system",
+        "admin/kb/wiki",
+        "admin"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        config.api_restful,
         "/admin/kb/wiki/pages/{id}/diff/{a}/{b}",
         get,
         admin_wiki_diff,
@@ -227,9 +275,53 @@ pub fn routes(
         r,
         registry,
         config.api_restful,
+        "/admin/kb/chunks/{id}",
+        get,
+        admin_get_chunk,
+        "system",
+        "admin/kb/chunks",
+        "admin"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        config.api_restful,
+        "/admin/kb/chunks/{id}",
+        delete,
+        admin_delete_chunk,
+        "system",
+        "admin/kb/chunks",
+        "admin"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        config.api_restful,
         "/admin/kb/faqs",
         post,
         admin_create_faq,
+        "system",
+        "admin/kb/faqs",
+        "admin"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        config.api_restful,
+        "/admin/kb/faqs",
+        get,
+        admin_list_faqs,
+        "system",
+        "admin/kb/faqs",
+        "admin"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        config.api_restful,
+        "/admin/kb/faqs/{id}",
+        put,
+        admin_update_faq,
         "system",
         "admin/kb/faqs",
         "admin"
@@ -265,6 +357,28 @@ pub fn routes(
         admin_faq_from_log,
         "system",
         "admin/kb/faqs",
+        "admin"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        config.api_restful,
+        "/admin/kb/chunks",
+        get,
+        admin_list_chunks,
+        "system",
+        "admin/kb/chunks",
+        "admin"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        config.api_restful,
+        "/admin/kb/stats",
+        get,
+        admin_kb_stats,
+        "system",
+        "admin/kb/stats",
         "admin"
     );
     let r = reg_route!(
@@ -327,9 +441,18 @@ impl AppState {
 #[derive(Deserialize)]
 struct CreateKbRequest {
     name: String,
+    #[serde(default)]
+    description: Option<String>,
     slug: String,
     #[serde(default = "default_kb_kind")]
     kind: String,
+    /// Embedding model pinned at creation (immutable afterwards, WeKnora
+    /// vector_store_id precedent). Defaults to RAISFAST_AI_EMBEDDING_MODEL.
+    #[serde(default)]
+    embedding_model: Option<String>,
+    /// Dimension pinned with the model. Defaults to RAISFAST_AI_EMBEDDING_DIM.
+    #[serde(default)]
+    embedding_dim: Option<u32>,
 }
 
 fn default_kb_kind() -> String {
@@ -349,22 +472,122 @@ async fn admin_create_kb(
                 .into(),
         ));
     }
+    let model = resolve_kb_model(&state, &req)?;
+    let dim = resolve_kb_dim(&state, &req)?;
     let kb = knowledge_base::create_kb(
         &state.pool,
         &knowledge_base::CreateKbCmd {
             name: req.name,
+            description: req.description,
             slug: req.slug,
             kind: req.kind,
             indexing_strategy: None,
-            embedding_model: state.config.ai.embedding_model.clone(),
-            embedding_dim: state.config.ai.embedding_dim.map(i64::from),
+            embedding_model: Some(model),
+            embedding_dim: Some(i64::from(dim)),
         },
         &tenant_of(&auth),
     )
     .await?;
     Ok(ApiResponse::success(
-        json!({ "id": kb.id, "slug": kb.slug, "kind": kb.kind }),
+        json!({ "id": kb.id, "slug": kb.slug, "kind": kb.kind, "description": kb.description }),
     ))
+}
+
+#[derive(Deserialize)]
+struct UpdateKbRequest {
+    name: String,
+    #[serde(default)]
+    description: Option<String>,
+    slug: String,
+    status: String,
+}
+
+/// Update mutable KB metadata only (name/slug/description/status).
+/// kind / embedding_model / embedding_dim are immutable after creation.
+async fn admin_update_kb(
+    auth: AuthUser,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(req): Json<UpdateKbRequest>,
+) -> AppResult<ApiResponse<Value>> {
+    auth.ensure_admin()?;
+    state.kb_deps()?;
+    if req.name.trim().is_empty() || req.slug.trim().is_empty() {
+        return Err(AppError::BadRequest("name and slug must not be empty".into()));
+    }
+    if !matches!(req.status.as_str(), "active" | "archived") {
+        return Err(AppError::BadRequest("status must be 'active' or 'archived'".into()));
+    }
+    let id = parse_snowflake(&id)?;
+    let tenant = tenant_of(&auth);
+    if knowledge_base::find_kb_by_id(&state.pool, id, &tenant)
+        .await?
+        .is_none()
+    {
+        return Err(AppError::NotFound("kb_knowledge_base".into()));
+    }
+    knowledge_base::update_kb(
+        &state.pool,
+        id,
+        &knowledge_base::UpdateKbCmd {
+            name: req.name.trim().to_owned(),
+            description: req
+                .description
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_owned),
+            slug: req.slug.trim().to_owned(),
+            status: req.status,
+        },
+        &tenant,
+    )
+    .await?;
+    Ok(ApiResponse::success(json!({ "id": id })))
+}
+
+/// Delete a KB and everything in it (documents, chunks, FAQs, wiki pages,
+/// provenance links, vector/FTS indexes, original files).
+async fn admin_delete_kb(
+    auth: AuthUser,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> AppResult<ApiResponse<Value>> {
+    auth.ensure_admin()?;
+    let deps = state.kb_deps()?;
+    let id = parse_snowflake(&id)?;
+    let tenant = tenant_of(&auth);
+    if knowledge_base::find_kb_by_id(&state.pool, id, &tenant)
+        .await?
+        .is_none()
+    {
+        return Err(AppError::NotFound("kb_knowledge_base".into()));
+    }
+    crate::kb::service::delete_kb_everywhere(&deps, id, &tenant).await?;
+    Ok(ApiResponse::success(json!({ "deleted": true })))
+}
+
+/// Per-KB model: request > global default; model+dim must be complete at
+/// creation (immutable afterwards, WeKnora `vector_store_id` precedent).
+fn resolve_kb_model(state: &AppState, req: &CreateKbRequest) -> AppResult<String> {
+    req.embedding_model
+        .clone()
+        .or_else(|| state.config.ai.embedding_model.clone())
+        .filter(|m| !m.is_empty())
+        .ok_or_else(|| {
+            AppError::BadRequest(
+                "embedding_model required: pass it (with embedding_dim), or set \
+                 RAISFAST_AI_EMBEDDING_MODEL/_DIM as creation defaults"
+                    .into(),
+            )
+        })
+}
+
+fn resolve_kb_dim(state: &AppState, req: &CreateKbRequest) -> AppResult<u32> {
+    req.embedding_dim
+        .or(state.config.ai.embedding_dim)
+        .filter(|d| *d > 0)
+        .ok_or_else(|| AppError::BadRequest("embedding_dim required (with embedding_model)".into()))
 }
 
 async fn admin_list_kbs(
@@ -401,13 +624,12 @@ async fn admin_upload_document(
         .await
         .map_err(|e| AppError::BadRequest(format!("multipart read failed: {e}")))?
         .ok_or_else(|| AppError::BadRequest("kb_id field missing".into()))?;
-    let kb_id: SnowflakeId = field
-        .text()
-        .await
-        .map_err(|e| AppError::BadRequest(format!("kb_id read failed: {e}")))?
-        .parse::<i64>()
-        .map_err(|_| AppError::BadRequest("kb_id must be a snowflake integer".into()))?
-        .into();
+    let kb_id: SnowflakeId = parse_snowflake(
+        &field
+            .text()
+            .await
+            .map_err(|e| AppError::BadRequest(format!("kb_id read failed: {e}")))?,
+    )?;
 
     // field 2: file
     let field = multipart
@@ -468,25 +690,26 @@ async fn admin_create_online_document(
     ))
 }
 
+#[derive(Deserialize)]
+struct ListDocumentsQuery {
+    kb_id: SnowflakeId,
+    status: Option<String>,
+    page: Option<i64>,
+    page_size: Option<i64>,
+}
+
 async fn admin_list_documents(
     auth: AuthUser,
     State(state): State<AppState>,
-    Query(q): Query<std::collections::HashMap<String, String>>,
+    Query(q): Query<ListDocumentsQuery>,
 ) -> AppResult<ApiResponse<Value>> {
     auth.ensure_admin()?;
-    let kb_id: i64 = q
-        .get("kb_id")
-        .and_then(|v| v.parse().ok())
-        .ok_or_else(|| AppError::BadRequest("kb_id query param required".into()))?;
-    let page: i64 = q.get("page").and_then(|v| v.parse().ok()).unwrap_or(1);
-    let page_size: i64 = q
-        .get("page_size")
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(20);
+    let page = q.page.unwrap_or(1);
+    let page_size = q.page_size.unwrap_or(20);
     let (docs, total) = document::list_documents(
         &state.pool,
-        SnowflakeId(kb_id),
-        q.get("status").map(String::as_str),
+        q.kb_id,
+        q.status.as_deref(),
         page,
         page_size,
         &tenant_of(&auth),
@@ -495,6 +718,52 @@ async fn admin_list_documents(
     Ok(ApiResponse::success(
         json!({ "items": docs, "total": total, "page": page, "page_size": page_size }),
     ))
+}
+
+/// Processing history for one document: its `kb_process_document` job runs
+/// (attempts, errors, timestamps) — admin observability. Payload doc_id may
+/// be plain or encoded depending on ID_ENCODING at write time, so match both.
+async fn admin_document_jobs(
+    auth: AuthUser,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> AppResult<ApiResponse<Value>> {
+    auth.ensure_admin()?;
+    let id = parse_snowflake(&id)?;
+    let raw = i64::from(id);
+    let plain = format!("%\"doc_id\":\"{raw}\"%");
+    let encoded = format!(
+        "%\"doc_id\":\"{}\"%",
+        crate::types::snowflake_id::encode_id(raw)
+    );
+    let rows = sqlx::query(crate::db::safe_sql(&format!(
+        "SELECT id, status, attempts, max_attempts, error, created_at, updated_at \
+         FROM jobs WHERE job_type = 'kb_process_document' \
+         AND (payload LIKE {} OR payload LIKE {}) \
+         ORDER BY created_at DESC LIMIT 20",
+        Driver::ph(1),
+        Driver::ph(2)
+    )))
+    .bind(&plain)
+    .bind(&encoded)
+    .fetch_all(&state.pool)
+    .await
+    .map_err(|e| AppError::Internal(anyhow::anyhow!("job history query failed: {e}")))?;
+    let items: Vec<Value> = rows
+        .iter()
+        .map(|r| {
+            json!({
+                "id": r.try_get::<i64, _>("id").unwrap_or_default(),
+                "status": r.try_get::<String, _>("status").unwrap_or_default(),
+                "attempts": r.try_get::<i64, _>("attempts").unwrap_or_default(),
+                "max_attempts": r.try_get::<i64, _>("max_attempts").unwrap_or_default(),
+                "error": r.try_get::<Option<String>, _>("error").ok().flatten(),
+                "created_at": r.try_get::<crate::utils::tz::Timestamp, _>("created_at").ok(),
+                "updated_at": r.try_get::<crate::utils::tz::Timestamp, _>("updated_at").ok(),
+            })
+        })
+        .collect();
+    Ok(ApiResponse::success(json!({ "items": items, "total": items.len() })))
 }
 
 async fn admin_get_document(
@@ -605,9 +874,9 @@ fn tenant_of(auth: &AuthUser) -> String {
 }
 
 fn parse_snowflake(raw: &str) -> AppResult<SnowflakeId> {
-    raw.parse::<i64>()
-        .map(SnowflakeId)
-        .map_err(|_| AppError::BadRequest("id must be a snowflake integer".into()))
+    // ID_ENCODING-aware: accepts both plain and encoded ids
+    // [抄RF:handlers/cart.rs parse_id 用法——AGENTS.md SnowflakeId 纪律].
+    crate::types::snowflake_id::parse_id(raw)
 }
 
 fn preview(text: &str, max_chars: usize) -> String {
@@ -625,7 +894,10 @@ fn preview(text: &str, max_chars: usize) -> String {
 struct AskRequestDto {
     question: String,
     #[serde(default)]
-    kb_ids: Option<Vec<i64>>,
+    kb_ids: Option<Vec<SnowflakeId>>,
+    /// Document scope (playground); empty = whole KB scope.
+    #[serde(default)]
+    doc_ids: Option<Vec<SnowflakeId>>,
     #[serde(default)]
     stream: bool,
 }
@@ -663,7 +935,8 @@ async fn public_ask(
     auth.ensure_authenticated()?;
     let deps = state.kb_deps()?;
     let ask = crate::kb::pipeline::AskRequest {
-        kb_ids: req.kb_ids.unwrap_or_default(),
+        kb_ids: req.kb_ids.unwrap_or_default().iter().map(|i| i.0).collect(),
+        doc_ids: req.doc_ids.unwrap_or_default().iter().map(|i| i.0).collect(),
         question: req.question,
     };
     let user_id = auth.user_id().map(crate::types::snowflake_id::SnowflakeId);
@@ -750,7 +1023,7 @@ async fn log_ask(
 struct SearchRequestDto {
     query: String,
     #[serde(default)]
-    kb_ids: Option<Vec<i64>>,
+    kb_ids: Option<Vec<SnowflakeId>>,
     #[serde(default)]
     top_k: Option<u32>,
 }
@@ -765,7 +1038,8 @@ async fn public_search(
     auth.ensure_authenticated()?;
     let deps = state.kb_deps()?;
     let ask = crate::kb::pipeline::AskRequest {
-        kb_ids: req.kb_ids.unwrap_or_default(),
+        kb_ids: req.kb_ids.unwrap_or_default().iter().map(|i| i.0).collect(),
+        doc_ids: Vec::new(),
         question: req.query,
     };
     let mut outcome = crate::kb::pipeline::prepare_answer(&deps, &ask).await?;
@@ -798,7 +1072,7 @@ async fn public_search(
 #[derive(Deserialize)]
 struct DistillRequest {
     kb_id: SnowflakeId,
-    doc_ids: Vec<i64>,
+    doc_ids: Vec<SnowflakeId>,
 }
 
 async fn admin_distill_wiki(
@@ -812,7 +1086,7 @@ async fn admin_distill_wiki(
     // concurrency governance).
     let mut new_job = crate::worker::NewJob::from(crate::worker::Job::KbDistillWiki {
         kb_id: req.kb_id,
-        doc_ids: req.doc_ids,
+        doc_ids: req.doc_ids.iter().map(|i| i.0).collect(),
         tenant_id: tenant_of(&auth),
     });
     new_job.priority = -5; // slow LLM work must not starve online jobs (§7)
@@ -821,25 +1095,26 @@ async fn admin_distill_wiki(
     Ok(ApiResponse::success(json!({ "queued": true })))
 }
 
+#[derive(Deserialize)]
+struct ListWikiPagesQuery {
+    kb_id: SnowflakeId,
+    status: Option<String>,
+    page: Option<i64>,
+    page_size: Option<i64>,
+}
+
 async fn admin_list_wiki_pages(
     auth: AuthUser,
     State(state): State<AppState>,
-    Query(q): Query<std::collections::HashMap<String, String>>,
+    Query(q): Query<ListWikiPagesQuery>,
 ) -> AppResult<ApiResponse<Value>> {
     auth.ensure_admin()?;
-    let kb_id: i64 = q
-        .get("kb_id")
-        .and_then(|v| v.parse().ok())
-        .ok_or_else(|| AppError::BadRequest("kb_id required".into()))?;
-    let page: i64 = q.get("page").and_then(|v| v.parse().ok()).unwrap_or(1);
-    let page_size: i64 = q
-        .get("page_size")
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(20);
+    let page = q.page.unwrap_or(1);
+    let page_size = q.page_size.unwrap_or(20);
     let (pages, total) = knowledge_base_list(
         &state.pool,
-        SnowflakeId(kb_id),
-        q.get("status").map(String::as_str),
+        q.kb_id,
+        q.status.as_deref(),
         page,
         page_size,
         &tenant_of(&auth),
@@ -1093,6 +1368,31 @@ struct EditChunkRequest {
     content: String,
 }
 
+/// Chunk detail (full content) — reference "view full" popover input.
+async fn admin_get_chunk(
+    auth: AuthUser,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> AppResult<ApiResponse<Value>> {
+    auth.ensure_admin()?;
+    let id = parse_snowflake(&id)?;
+    let Some(c) = crate::kb::models::chunk::find_chunk_by_id(&state.pool, id).await? else {
+        return Err(AppError::NotFound("kb_chunk".into()));
+    };
+    let kb_names = knowledge_base::find_kb_names_by_ids(&state.pool, &[i64::from(c.kb_id)]).await?;
+    let doc_ids: Vec<i64> = c.doc_id.map(i64::from).into_iter().collect();
+    let doc_titles = document::find_doc_titles_by_ids(&state.pool, &doc_ids).await?;
+    Ok(ApiResponse::success(json!({
+        "id": c.id, "kb_id": c.kb_id,
+        "kb_name": kb_names.get(&i64::from(c.kb_id)),
+        "doc_id": c.doc_id,
+        "doc_title": c.doc_id.and_then(|d| doc_titles.get(&i64::from(d))),
+        "kind": c.kind, "parent_id": c.parent_id, "seq": c.seq,
+        "breadcrumb": c.breadcrumb, "content": c.content,
+        "has_embedding": c.embedding.is_some(),
+    })))
+}
+
 /// Chunk editing with revision + automatic re-embedding/re-indexing
 /// [抄WK:CHANGELOG v0.7.2 chunk 编辑+版本+自动重索引].
 async fn admin_edit_chunk(
@@ -1150,6 +1450,102 @@ async fn admin_edit_chunk(
         }])
         .await?;
     Ok(ApiResponse::success(json!({ "id": id, "reindexed": true })))
+}
+
+/// Delete one chunk (cascading to its children): SQL rows, vector points
+/// and FTS units are all removed; the source facet is rebuilt from the
+/// remaining chunks. Mirrors the edit handler's re-index shape.
+async fn admin_delete_chunk(
+    auth: AuthUser,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> AppResult<ApiResponse<Value>> {
+    auth.ensure_admin()?;
+    let deps = state.kb_deps()?;
+    let id = parse_snowflake(&id)?;
+    let tenant = tenant_of(&auth);
+    let Some(chunk) = crate::kb::models::chunk::find_chunk_by_id(&state.pool, id).await? else {
+        return Err(AppError::NotFound("kb_chunk".into()));
+    };
+    // Children of a parent chunk are part of its content — cascade.
+    let children =
+        crate::kb::models::chunk::find_children_by_parent(&state.pool, id).await?;
+    let mut gone_ids: Vec<i64> = children.iter().map(|c| i64::from(c.id)).collect();
+    gone_ids.push(i64::from(id));
+    deps.vector.delete(i64::from(chunk.kb_id), &gone_ids).await?;
+    crate::kb::models::chunk::delete_chunks_by_ids(&state.pool, &gone_ids).await?;
+    // FTS: rebuild the remaining units of the source facet per kind
+    // (document → doc_id facet, faq → faq_id facet, wiki → self-keyed).
+    if let Some(doc_id) = chunk.doc_id {
+        let remaining =
+            crate::kb::models::chunk::find_chunks_by_doc(&state.pool, doc_id).await?;
+        rebuild_fts_facet(
+            &deps,
+            i64::from(doc_id),
+            &remaining.iter()
+                .map(|c| (i64::from(c.id), i64::from(c.kb_id), c.kind.clone(), {
+                    match &c.breadcrumb {
+                        Some(b) => format!("{b}\n{}", c.content),
+                        None => c.content.clone(),
+                    }
+                }))
+                .collect::<Vec<_>>(),
+        )
+        .await?;
+        document::set_chunk_count(&state.pool, doc_id, remaining.len() as i64, &tenant).await?;
+        // Incremental invalidation (§7): pages citing this doc go stale.
+        let stale = crate::kb::models::wiki_page::mark_stale_by_doc(&state.pool, doc_id).await?;
+        if !stale.is_empty() {
+            tracing::info!(
+                "[kb] doc {doc_id} chunks edited: {} wiki page(s) marked stale",
+                stale.len()
+            );
+        }
+    } else if let Some(faq_id) = chunk.faq_id {
+        let remaining =
+            crate::kb::models::chunk::find_chunks_by_faq(&state.pool, faq_id).await?;
+        rebuild_fts_facet(
+            &deps,
+            i64::from(faq_id),
+            &remaining.iter()
+                .map(|c| (i64::from(c.id), i64::from(c.kb_id), c.kind.clone(), c.content.clone()))
+                .collect::<Vec<_>>(),
+        )
+        .await?;
+    } else {
+        // Wiki (or lone) units key on themselves — drop per unit.
+        for gid in &gone_ids {
+            deps.kbsearch.delete_document(*gid).await?;
+        }
+    }
+    Ok(ApiResponse::success(
+        json!({ "deleted": true, "removed": gone_ids.len() }),
+    ))
+}
+
+/// Rebuild one FTS facet from its remaining chunks; an empty facet is
+/// removed outright.
+async fn rebuild_fts_facet(
+    deps: &KbDeps,
+    facet_id: i64,
+    remaining: &[(i64, i64, String, String)],
+) -> AppResult<()> {
+    if remaining.is_empty() {
+        deps.kbsearch.delete_document(facet_id).await?;
+        return Ok(());
+    }
+    let units: Vec<crate::kb::kbsearch::KbIndexUnit> = remaining
+        .iter()
+        .map(|(unit_id, kb_id, kind, text)| crate::kb::kbsearch::KbIndexUnit {
+            unit_id: *unit_id,
+            kb_id: *kb_id,
+            doc_id: facet_id,
+            kind: kind.clone(),
+            text: text.clone(),
+        })
+        .collect();
+    deps.kbsearch.reindex_document(&units).await?;
+    Ok(())
 }
 
 // ── FAQ management + sedimentation loop (M5, §8/§9) ────────────────
@@ -1353,7 +1749,264 @@ async fn admin_kb_gaps(
     let gaps = crate::kb::models::query_log::list_gaps(&state.pool, 50).await?;
     let items: Vec<Value> = gaps
         .into_iter()
-        .map(|(question, count)| json!({ "question": question, "count": count }))
+        .map(|(question, count, log_id)| {
+            json!({ "question": question, "count": count, "log_id": log_id })
+        })
         .collect();
     Ok(ApiResponse::success(json!({ "items": items })))
+}
+
+/// Restore a page to a revision snapshot: current content is snapshotted
+/// first (undo is always possible), then the revision content is applied;
+/// published pages re-index immediately [抄WK:wiki rollback 语义].
+async fn admin_restore_wiki_page(
+    auth: AuthUser,
+    State(state): State<AppState>,
+    Path((id, rev)): Path<(String, String)>,
+) -> AppResult<ApiResponse<Value>> {
+    auth.ensure_admin()?;
+    let deps = state.kb_deps()?;
+    let id = parse_snowflake(&id)?;
+    let rev_id = parse_snowflake(&rev)?;
+    let tenant = tenant_of(&auth);
+    let Some(page) =
+        crate::kb::models::wiki_page::find_page_by_id(&state.pool, id, &tenant).await?
+    else {
+        return Err(AppError::NotFound("kb_wiki_page".into()));
+    };
+    let revision =
+        crate::services::content_revision::get_revision(&state.pool, "kb_wiki_page", id, rev_id)
+            .await
+            .map_err(|_| AppError::NotFound("content_revision".into()))?;
+    let content = revision
+        .snapshot
+        .get("content")
+        .and_then(|c| c.as_str())
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("revision snapshot missing content")))?;
+    // 快照当前内容（restore 本身可撤销）
+    let snapshot = json!({ "title": page.title, "slug": page.slug, "content": page.content,
+        "summary": page.summary, "status": page.status });
+    insert_wiki_snapshot(&state.pool, id, page.current_revision, &snapshot, &tenant).await?;
+    let was_published = page.status == "published";
+    crate::kb::models::wiki_page::update_page_content(
+        &state.pool,
+        id,
+        content,
+        page.summary.as_deref(),
+        if was_published { "published" } else { "draft" },
+        &tenant,
+    )
+    .await?;
+    if was_published {
+        crate::kb::distill::publish_page(
+            &deps,
+            id,
+            SnowflakeId(auth.user_id().unwrap_or_default()),
+            &tenant,
+        )
+        .await?;
+    }
+    Ok(ApiResponse::success(
+        json!({ "id": id, "restored_from": rev_id, "reindexed": was_published }),
+    ))
+}
+
+#[derive(Deserialize)]
+struct ListFaqsQuery {
+    kb_id: SnowflakeId,
+    page: Option<i64>,
+    page_size: Option<i64>,
+}
+
+async fn admin_list_faqs(
+    auth: AuthUser,
+    State(state): State<AppState>,
+    Query(q): Query<ListFaqsQuery>,
+) -> AppResult<ApiResponse<Value>> {
+    auth.ensure_admin()?;
+    let page = q.page.unwrap_or(1);
+    let page_size = q.page_size.unwrap_or(20);
+    let (faqs, total) = crate::kb::models::faq::list_faqs(
+        &state.pool,
+        q.kb_id,
+        page,
+        page_size,
+        &tenant_of(&auth),
+    )
+    .await?;
+    Ok(ApiResponse::success(
+        json!({ "items": faqs, "total": total, "page": page, "page_size": page_size }),
+    ))
+}
+
+#[derive(Deserialize)]
+struct UpdateFaqRequest {
+    standard_question: String,
+    #[serde(default)]
+    similar_questions: Vec<String>,
+    answers: Vec<String>,
+}
+
+async fn admin_update_faq(
+    auth: AuthUser,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(req): Json<UpdateFaqRequest>,
+) -> AppResult<ApiResponse<Value>> {
+    auth.ensure_admin()?;
+    let deps = state.kb_deps()?;
+    let id = parse_snowflake(&id)?;
+    let tenant = tenant_of(&auth);
+    crate::kb::models::faq::update_faq(
+        &state.pool,
+        id,
+        &crate::kb::models::faq::UpdateFaqCmd {
+            standard_question: req.standard_question,
+            similar_questions: req.similar_questions,
+            answers: req.answers,
+        },
+        &tenant,
+    )
+    .await?;
+    // enabled FAQs re-index immediately (content changed).
+    if let Some(faq) = crate::kb::models::faq::find_faqs_by_ids(&state.pool, &[i64::from(id)])
+        .await?
+        .into_iter()
+        .next()
+        && faq.enabled
+    {
+        crate::kb::service::index_faq(&deps, &faq).await?;
+    }
+    Ok(ApiResponse::success(json!({ "id": id, "reindexed": true })))
+}
+
+/// Chunk list: document drill-down (`doc_id` set → whole document, unpaged)
+/// or standalone browsing (paged across KBs, optional `kb_id` filter).
+/// Every item carries its KB name and document title for list columns.
+#[derive(Deserialize)]
+struct ListChunksQuery {
+    #[serde(default)]
+    doc_id: Option<SnowflakeId>,
+    #[serde(default)]
+    kb_id: Option<SnowflakeId>,
+    #[serde(default)]
+    page: Option<i64>,
+    #[serde(default)]
+    page_size: Option<i64>,
+}
+
+async fn admin_list_chunks(
+    auth: AuthUser,
+    State(state): State<AppState>,
+    Query(q): Query<ListChunksQuery>,
+) -> AppResult<ApiResponse<Value>> {
+    auth.ensure_admin()?;
+    let (chunks, total) = if let Some(doc_id) = q.doc_id {
+        let all = crate::kb::models::chunk::find_chunks_by_doc(&state.pool, doc_id).await?;
+        let n = all.len() as i64;
+        (all, n)
+    } else {
+        let page = q.page.unwrap_or(1).max(1);
+        let page_size = q.page_size.unwrap_or(50).clamp(1, 200);
+        crate::kb::models::chunk::list_chunks_paged(&state.pool, q.kb_id, page, page_size).await?
+    };
+    // Resolve kb_name / doc_title columns in two batch lookups.
+    let kb_ids: Vec<i64> = {
+        let mut ids: Vec<i64> = chunks.iter().map(|c| i64::from(c.kb_id)).collect();
+        ids.sort_unstable();
+        ids.dedup();
+        ids
+    };
+    let doc_ids: Vec<i64> = {
+        let mut ids: Vec<i64> = chunks.iter().filter_map(|c| c.doc_id.map(i64::from)).collect();
+        ids.sort_unstable();
+        ids.dedup();
+        ids
+    };
+    let kb_names = knowledge_base::find_kb_names_by_ids(&state.pool, &kb_ids).await?;
+    let doc_titles = document::find_doc_titles_by_ids(&state.pool, &doc_ids).await?;
+    let items: Vec<Value> = chunks
+        .iter()
+        .map(|c| {
+            json!({
+                "id": c.id, "kind": c.kind, "parent_id": c.parent_id, "seq": c.seq,
+                "breadcrumb": c.breadcrumb, "bytes": c.content.len(),
+                "has_embedding": c.embedding.is_some(),
+                "preview": c.content.chars().take(100).collect::<String>(),
+                "content": c.content,
+                "kb_id": c.kb_id,
+                "kb_name": kb_names.get(&i64::from(c.kb_id)),
+                "doc_id": c.doc_id,
+                "doc_title": c.doc_id.and_then(|d| doc_titles.get(&i64::from(d))),
+            })
+        })
+        .collect();
+    Ok(ApiResponse::success(
+        json!({ "items": items, "total": total }),
+    ))
+}
+
+/// Ops card: per-KB counters + vector backend identity.
+async fn admin_kb_stats(
+    auth: AuthUser,
+    State(state): State<AppState>,
+) -> AppResult<ApiResponse<Value>> {
+    auth.ensure_admin()?;
+    let tenant = tenant_of(&auth);
+    let (kbs, _) =
+        crate::kb::models::knowledge_base::list_kbs(&state.pool, 1, 100, &tenant).await?;
+    let mut items = Vec::new();
+    for kb in &kbs {
+        let docs: i64 = sqlx::query_scalar(crate::db::safe_sql(&format!(
+            "SELECT {} FROM kb_documents WHERE kb_id = {}",
+            Driver::cast_int("COUNT(*)"),
+            Driver::ph(1)
+        )))
+        .bind(i64::from(kb.id))
+        .fetch_one(&state.pool)
+        .await
+        .unwrap_or(0);
+        let chunks: i64 = sqlx::query_scalar(crate::db::safe_sql(&format!(
+            "SELECT {} FROM kb_chunks WHERE kb_id = {}",
+            Driver::cast_int("COUNT(*)"),
+            Driver::ph(1)
+        )))
+        .bind(i64::from(kb.id))
+        .fetch_one(&state.pool)
+        .await
+        .unwrap_or(0);
+        let faqs: i64 = sqlx::query_scalar(crate::db::safe_sql(&format!(
+            "SELECT {} FROM kb_faqs WHERE kb_id = {}",
+            Driver::cast_int("COUNT(*)"),
+            Driver::ph(1)
+        )))
+        .bind(i64::from(kb.id))
+        .fetch_one(&state.pool)
+        .await
+        .unwrap_or(0);
+        let wiki: i64 = sqlx::query_scalar(crate::db::safe_sql(&format!(
+            "SELECT {} FROM kb_wiki_pages WHERE kb_id = {}",
+            Driver::cast_int("COUNT(*)"),
+            Driver::ph(1)
+        )))
+        .bind(i64::from(kb.id))
+        .fetch_one(&state.pool)
+        .await
+        .unwrap_or(0);
+        items.push(json!({
+            "kb_id": kb.id, "name": kb.name, "kind": kb.kind,
+            "documents": docs, "chunks": chunks, "faqs": faqs, "wiki_pages": wiki,
+        }));
+    }
+    let vector_backend = state
+        .kb_runtime
+        .as_ref()
+        .map(|rt| rt.vector.backend_name().to_string());
+    Ok(ApiResponse::success(json!({
+        "enabled": state.kb_runtime.is_some(),
+        "vector_backend": vector_backend,
+        "default_embedding_model": state.config.ai.embedding_model,
+        "default_embedding_dim": state.config.ai.embedding_dim,
+        "items": items,
+    })))
 }

@@ -63,6 +63,10 @@ pub struct AskRequest {
     /// KB scope; empty = all enabled KBs (D4 [抄WK:SearchTargets 语义]).
     pub kb_ids: Vec<i64>,
     pub question: String,
+    /// Document scope for per-doc testing; empty = whole KB scope.
+    /// Filters recall candidates before fusion (FAQ/wiki units have no
+    /// doc and are dropped while the filter is active).
+    pub doc_ids: Vec<i64>,
 }
 
 /// Pipeline outcome consumed by the HTTP layer (stream + non-stream).
@@ -92,7 +96,30 @@ pub async fn prepare_answer(deps: &KbDeps, req: &AskRequest) -> AppResult<AskOut
     // S2+S3+S4 recall → fuse → top-k, per KB scope.
     let mut candidates = Vec::new();
     for kb_id in &kbs {
-        let recalled = search::recall(deps, *kb_id, &understood).await?;
+        let mut recalled = search::recall(deps, *kb_id, &understood).await?;
+        // Document scope (playground per-doc testing): drop units that do
+        // not belong to the selected documents, before fusion cuts top-k.
+        if !req.doc_ids.is_empty() {
+            let mut ids: Vec<i64> = recalled
+                .bm25
+                .iter()
+                .chain(recalled.dense.iter())
+                .map(|(unit_id, _)| *unit_id)
+                .collect();
+            ids.sort_unstable();
+            ids.dedup();
+            let chunks = crate::kb::models::chunk::find_chunks_by_ids(&deps.pool, &ids).await?;
+            let allowed: std::collections::HashSet<i64> = chunks
+                .into_iter()
+                .filter_map(|c| {
+                    c.doc_id
+                        .filter(|d| req.doc_ids.contains(&i64::from(*d)))
+                        .map(|_| i64::from(c.id))
+                })
+                .collect();
+            recalled.bm25.retain(|(unit_id, _)| allowed.contains(unit_id));
+            recalled.dense.retain(|(unit_id, _)| allowed.contains(unit_id));
+        }
         candidates.extend(fusion::fuse_and_cut(recalled, deps.config.kb.top_k));
     }
     // Stable cross-KB order, then S6+S7.
@@ -286,6 +313,7 @@ mod tests {
             &deps.pool,
             &crate::kb::models::knowledge_base::CreateKbCmd {
                 name: "docs".into(),
+                description: None,
                 slug: "docs".into(),
                 kind: "document".into(),
                 indexing_strategy: None,
@@ -297,8 +325,8 @@ mod tests {
         .await
         .unwrap();
 
-        let markdown = "# 安装\n\n".to_string()
-            + &"raisfast 支持 SQLite PostgreSQL MySQL 数据库后端。".repeat(60);
+        let mut markdown = "# 安装\n\n".to_string();
+        markdown.push_str(&"raisfast 支持 SQLite PostgreSQL MySQL 数据库后端。".repeat(60));
         let doc = crate::kb::service::create_online_document(
             &deps, kb.id, "安装", &markdown, None, "default",
         )
@@ -310,6 +338,7 @@ mod tests {
 
         let ask = AskRequest {
             kb_ids: vec![i64::from(kb.id)],
+            doc_ids: Vec::new(),
             question: "支持哪些数据库？".into(),
         };
         let mut outcome = prepare_answer(&deps, &ask).await.unwrap();
@@ -337,6 +366,7 @@ mod tests {
             &deps.pool,
             &crate::kb::models::knowledge_base::CreateKbCmd {
                 name: "empty".into(),
+                description: None,
                 slug: "empty".into(),
                 kind: "document".into(),
                 indexing_strategy: None,
@@ -350,6 +380,7 @@ mod tests {
 
         let ask = AskRequest {
             kb_ids: vec![i64::from(kb.id)],
+            doc_ids: Vec::new(),
             question: "量子力学的诠释有哪些".into(),
         };
         let mut outcome = prepare_answer(&deps, &ask).await.unwrap();
@@ -366,6 +397,7 @@ mod tests {
             &deps.pool,
             &crate::kb::models::knowledge_base::CreateKbCmd {
                 name: "s".into(),
+                description: None,
                 slug: "s".into(),
                 kind: "document".into(),
                 indexing_strategy: None,
@@ -376,8 +408,8 @@ mod tests {
         )
         .await
         .unwrap();
-        let markdown =
-            "# 配置\n\n".to_string() + &"环境变量 RAISFAST_KB_ENABLED 控制知识库开关。".repeat(60);
+        let mut markdown = "# 配置\n\n".to_string();
+        markdown.push_str(&"环境变量 RAISFAST_KB_ENABLED 控制知识库开关。".repeat(60));
         let doc = crate::kb::service::create_online_document(
             &deps, kb.id, "配置", &markdown, None, "default",
         )
@@ -389,6 +421,7 @@ mod tests {
 
         let ask = AskRequest {
             kb_ids: vec![i64::from(kb.id)],
+            doc_ids: Vec::new(),
             question: "知识库怎么开关".into(),
         };
         let mut outcome = prepare_answer(&deps, &ask).await.unwrap();

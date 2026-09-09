@@ -1614,6 +1614,7 @@ CREATE TABLE IF NOT EXISTS kb_knowledge_bases (
     id BIGINT PRIMARY KEY,
     tenant_id TEXT NOT NULL DEFAULT 'default',
     name TEXT NOT NULL,
+    description TEXT,
     slug TEXT NOT NULL,
     kind TEXT NOT NULL DEFAULT 'document',
     indexing_strategy JSONB,
@@ -1640,6 +1641,7 @@ CREATE TABLE IF NOT EXISTS kb_documents (
     status TEXT NOT NULL DEFAULT 'pending',
     error TEXT,
     chunk_count INTEGER NOT NULL DEFAULT 0,
+    steps JSONB,
     created_by BIGINT,
     created_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW()
