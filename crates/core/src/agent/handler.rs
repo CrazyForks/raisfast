@@ -349,7 +349,7 @@ pub async fn admin_list_domain_tools(
     // Tool *specs* (name/description/category) are identical for every
     // actor; the admin caller's `auth` only matters for execution, which
     // never happens here.
-    let mut registry = crate::agent::tools::build_static_tools(&state, &auth, None).await;
+    let mut registry = crate::agent::tools::build_static_tools(&state, &auth, None, None).await;
     // knowledge_search: listed whenever the KB subsystem is enabled
     // (mounting is a per-agent binding configured separately).
     crate::agent::tools::kb::register_catalog(&mut registry, &state);
@@ -988,7 +988,9 @@ pub async fn run_turn(
         return Err(AppError::ForbiddenOwnership);
     }
     let agent = ai_service::find_agent(&state.pool, session.agent_id, auth.tenant_id()).await?;
-    let extra_tools = crate::agent::tools::build_domain_tools(&state, &auth, Some(&agent)).await;
+    let extra_tools =
+        crate::agent::tools::build_domain_tools(&state, &auth, Some(&agent), Some(session.id))
+            .await;
 
     let pool = state.pool.clone();
     let ai_cfg = state.config.ai.clone();

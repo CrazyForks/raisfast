@@ -11,6 +11,7 @@ use std::sync::Arc;
 use raisfast_agent::ModelProvider;
 
 use crate::config::app::AppConfig;
+use crate::db::DbDriver as _;
 use crate::errors::app_error::{AppError, AppResult};
 use crate::event::Event;
 use crate::event::EventEmitter;
@@ -275,6 +276,53 @@ pub async fn process_document(
     doc_id: SnowflakeId,
     tenant_id: &str,
 ) -> AppResult<()> {
+    process_document_traced(
+        deps,
+        doc_id,
+        tenant_id,
+        &mut crate::kb::trace::RunRecorder::disabled(),
+    )
+    .await
+}
+
+/// [kb-observability-design T1] `process_document` with a run recorder —
+/// the caller (job handler / reparse) owns the recorder so it can attach
+/// exact attempt/job_id provenance (DR6); the pipeline body brackets each
+/// stage (parse/chunk/embed/vector/bm25) into it (DR6 zero-invasion: only
+/// the orchestration function is touched).
+pub async fn process_document_traced(
+    deps: &KbDeps,
+    doc_id: SnowflakeId,
+    tenant_id: &str,
+    trace: &mut crate::kb::trace::RunRecorder,
+) -> AppResult<()> {
+    let result = process_document_inner(deps, doc_id, tenant_id, trace).await;
+    match &result {
+        Ok(()) => {
+            trace
+                .finish(&deps.pool, crate::kb::models::kb_run::STATUS_OK, None)
+                .await;
+        }
+        Err(e) => {
+            trace.fail_stage(&e.to_string()); // close any open stage
+            trace
+                .finish(
+                    &deps.pool,
+                    crate::kb::models::kb_run::STATUS_FAILED,
+                    Some(&e.to_string()),
+                )
+                .await;
+        }
+    }
+    result
+}
+
+async fn process_document_inner(
+    deps: &KbDeps,
+    doc_id: SnowflakeId,
+    tenant_id: &str,
+    trace: &mut crate::kb::trace::RunRecorder,
+) -> AppResult<()> {
     let Some(doc) = document::find_document_by_id(&deps.pool, doc_id, tenant_id).await? else {
         return Ok(()); // deleted meanwhile — nothing to do
     };
@@ -295,8 +343,12 @@ pub async fn process_document(
             "该知识库未配置向量维度（创建时必填，之后不可修改）".into(),
         ));
     }
+    // First persistence hop for the trace run row (DR2 long task).
+    trace.set_kb(kb.id);
+    trace.begin(&deps.pool, &deps.config).await;
 
     // ① parse → markdown [抄EXT:anydoc]
+    trace.stage("parse");
     document::set_document_status(&deps.pool, doc_id, "parsing", None, None, tenant_id).await?;
     let markdown = match &doc.storage_key {
         Some(key) => {
@@ -310,8 +362,18 @@ pub async fn process_document(
         }
         None => return Err(AppError::BadRequest("document has no storage key".into())),
     };
+    trace.end_stage(
+        crate::kb::trace::STAGE_OK,
+        serde_json::json!({
+            "bytes": doc.size,
+            "mime": doc.mime_type,
+            "chars": markdown.chars().count(),
+        }),
+        None,
+    );
 
     // ② chunk (§3) + ③ persist chunks
+    trace.stage("chunk");
     document::set_document_status(&deps.pool, doc_id, "chunking", None, None, tenant_id).await?;
     // idempotency: wipe this doc's chunks + vector units + fts units first
     chunk::delete_chunks_by_doc(&deps.pool, doc_id).await?;
@@ -357,6 +419,15 @@ pub async fn process_document(
     for ins in &inserts {
         chunk::insert_chunk(&deps.pool, ins).await?;
     }
+    trace.end_stage(
+        crate::kb::trace::STAGE_OK,
+        serde_json::json!({
+            "total": inserts.len(),
+            "parents": raw_chunks.iter().filter(|c| c.parent.is_none()).count(),
+            "children": raw_chunks.iter().filter(|c| c.parent.is_some()).count(),
+        }),
+        None,
+    );
 
     // Leaf retrieval units: child chunks when a parent has children,
     // otherwise the childless parent itself (a lone small chunk).
@@ -370,6 +441,7 @@ pub async fn process_document(
     }
 
     // ④ embed children (parents ride along via expansion in the M3 pipeline)
+    trace.stage("embed");
     document::set_document_status(&deps.pool, doc_id, "embedding", None, None, tenant_id).await?;
     let embed_targets: Vec<(usize, String)> = leaf_units
         .iter()
@@ -399,8 +471,18 @@ pub async fn process_document(
             embedding: vectors[idx].clone(),
         });
     }
+    trace.end_stage(
+        crate::kb::trace::STAGE_OK,
+        serde_json::json!({
+            "chunks": embed_targets.len(),
+            "model": model,
+            "dim": dim,
+        }),
+        None,
+    );
 
     // ⑤ vector + BM25 index (delete-then-insert idempotency per doc)
+    trace.stage("vector");
     document::set_document_status(&deps.pool, doc_id, "indexing", None, None, tenant_id).await?;
     deps.vector
         .delete(
@@ -411,6 +493,14 @@ pub async fn process_document(
     deps.vector
         .upsert(i64::from(doc.kb_id), dim, &items)
         .await?;
+    trace.end_stage(
+        crate::kb::trace::STAGE_OK,
+        serde_json::json!({
+            "backend": deps.vector.backend_name(),
+            "upserted": items.len(),
+        }),
+        None,
+    );
     let fts_units: Vec<KbIndexUnit> = inserts
         .iter()
         .map(|c| KbIndexUnit {
@@ -424,7 +514,13 @@ pub async fn process_document(
             },
         })
         .collect();
+    trace.stage("bm25");
     deps.kbsearch.reindex_document(&fts_units).await?;
+    trace.end_stage(
+        crate::kb::trace::STAGE_OK,
+        serde_json::json!({ "units": fts_units.len() }),
+        None,
+    );
 
     // ⑥ ready
     let total = inserts.len() as i64;
@@ -829,6 +925,182 @@ mod tests {
     }
 }
 
+/// Traced chunk edit [kb-observability-design §4.2 chunk_edit]: snapshot
+/// revision → content update → re-embed → vector + FTS reindex. The
+/// five-step sequence is one autocommit chain — a mid-way failure leaves
+/// the doc `ready` with a stale vector, which is exactly why the run row
+/// (kind=`chunk_edit`) is the only durable record of the failure.
+pub async fn edit_chunk_traced(
+    deps: &KbDeps,
+    chunk: &crate::kb::models::chunk::KbChunk,
+    user_id: Option<SnowflakeId>,
+    content: &str,
+) -> AppResult<()> {
+    let prior = crate::kb::models::kb_run::count_runs(
+        &deps.pool,
+        crate::kb::models::kb_run::KIND_CHUNK_EDIT,
+        chunk.doc_id,
+        None,
+    )
+    .await
+    .unwrap_or(0);
+    let mut trace = crate::kb::trace::RunRecorder::create(
+        crate::kb::trace::TraceMode::parse(&deps.config.kb.trace_mode),
+        crate::kb::trace::RunSpec {
+            kind: crate::kb::models::kb_run::KIND_CHUNK_EDIT,
+            trigger_src: "admin",
+            tenant_id: "default".to_string(), // resolved from the KB row on the ingest path; chunk rows carry no tenant
+            kb_id: Some(chunk.kb_id),
+            doc_id: chunk.doc_id,
+            agent_id: None,
+            session_id: None,
+            job_id: None,
+            attempt: prior + 1,
+            long_running: false,
+        },
+    );
+    trace.begin(&deps.pool, &deps.config).await;
+    trace.stage("persist");
+    let result = edit_chunk_inner(deps, chunk, user_id, content, &mut trace).await;
+    match &result {
+        Ok(()) => {
+            trace
+                .finish(&deps.pool, crate::kb::models::kb_run::STATUS_OK, None)
+                .await;
+        }
+        Err(e) => {
+            trace.fail_stage(&e.to_string());
+            trace
+                .finish(
+                    &deps.pool,
+                    crate::kb::models::kb_run::STATUS_FAILED,
+                    Some(&e.to_string()),
+                )
+                .await;
+        }
+    }
+    result
+}
+
+async fn edit_chunk_inner(
+    deps: &KbDeps,
+    chunk: &crate::kb::models::chunk::KbChunk,
+    user_id: Option<SnowflakeId>,
+    content: &str,
+    trace: &mut crate::kb::trace::RunRecorder,
+) -> AppResult<()> {
+    // Snapshot the pre-edit content.
+    let snapshot = serde_json::json!({
+        "content": chunk.content,
+        "kind": chunk.kind,
+        "breadcrumb": chunk.breadcrumb,
+    });
+    raisfast_derive::crud_insert!(
+        &deps.pool,
+        "content_revisions",
+        [
+            "content_type" => "kb_chunk",
+            "record_id" => chunk.id,
+            "revision_number" => 1_i64,
+            "snapshot" => snapshot,
+            "created_by" => user_id
+        ]
+    )?;
+    crate::kb::models::chunk::update_content(&deps.pool, chunk.id, content).await?;
+    trace.end_stage(crate::kb::trace::STAGE_OK, serde_json::json!({}), None);
+    trace.stage("embed");
+    // Update content + re-embed + re-index both paths.
+    let vectors = deps.embedder.embed(&[content]).await?;
+    let vector = vectors.first().cloned().unwrap_or_default();
+    crate::kb::models::chunk::update_embedding(&deps.pool, chunk.id, &vector).await?;
+    trace.end_stage(
+        crate::kb::trace::STAGE_OK,
+        serde_json::json!({ "dim": vector.len() }),
+        None,
+    );
+    trace.stage("index");
+    deps.vector
+        .upsert(
+            i64::from(chunk.kb_id),
+            vector.len() as u32,
+            &[VectorItem {
+                unit_id: i64::from(chunk.id),
+                kb_id: i64::from(chunk.kb_id),
+                kind: chunk.kind.clone(),
+                embedding: vector,
+            }],
+        )
+        .await?;
+    let doc_key = chunk
+        .doc_id
+        .map(i64::from)
+        .unwrap_or_else(|| i64::from(chunk.id));
+    deps.kbsearch
+        .reindex_document(&[KbIndexUnit {
+            unit_id: i64::from(chunk.id),
+            kb_id: i64::from(chunk.kb_id),
+            doc_id: doc_key,
+            kind: chunk.kind.clone(),
+            text: content.to_string(),
+        }])
+        .await?;
+    trace.end_stage(
+        crate::kb::trace::STAGE_OK,
+        serde_json::json!({ "backend": deps.vector.backend_name() }),
+        None,
+    );
+    Ok(())
+}
+
+/// Full vector-index rebuild for one KB from the SQL truth (D3) — shared
+/// by the admin endpoint, the `KbRebuildVectorIndex` job and the
+/// bruteforce lazy warm-up (DR10). `tenant_hint` is only used for logging;
+/// the KB row is resolved by id (infrastructure operation, cross-tenant
+/// by design). Returns the number of re-indexed units.
+pub async fn rebuild_vector_index_from_sql(
+    pool: &crate::db::Pool,
+    vector: &std::sync::Arc<dyn crate::kb::vectors::VectorIndex>,
+    kb_id: SnowflakeId,
+) -> AppResult<usize> {
+    let sql = format!(
+        "SELECT embedding_dim FROM kb_knowledge_bases WHERE id = {}",
+        crate::db::Driver::ph(1)
+    );
+    let dim: Option<i64> = sqlx::query_scalar(crate::db::safe_sql(&sql))
+        .bind(i64::from(kb_id))
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| AppError::Internal(anyhow::anyhow!(e.to_string())))?
+        .flatten();
+    let dim = u32::try_from(dim.unwrap_or(0)).unwrap_or(0);
+    if dim == 0 {
+        return Err(AppError::BadRequest(
+            "kb has no embedding_dim configured".into(),
+        ));
+    }
+    let chunks = raisfast_derive::crud_find_all!(
+        pool,
+        "kb_chunks",
+        crate::kb::models::chunk::KbChunk,
+        where: ("kb_id", kb_id)
+    )?;
+    let mut items = Vec::new();
+    for c in chunks.iter().filter(|c| c.embedding.is_some()) {
+        items.push(crate::kb::vectors::VectorItem {
+            unit_id: i64::from(c.id),
+            kb_id: i64::from(c.kb_id),
+            kind: c.kind.clone(),
+            embedding: crate::kb::models::chunk::unpack_embedding(
+                c.embedding.as_deref().unwrap_or_default(),
+            ),
+        });
+    }
+    let n = items.len();
+    vector.rebuild(i64::from(kb_id), dim, &items).await?;
+    tracing::info!("[kb] vector index rebuilt for kb {kb_id}: {n} units");
+    Ok(n)
+}
+
 // ── FAQ indexing (M5) ──────────────────────────────────────────────
 
 /// (Re)index a FAQ: embed every question variant as a `kind='faq'` unit
@@ -1082,6 +1354,189 @@ mod faq_tests {
         assert!(
             entry.is_some_and(|(_, c, _)| *c >= 2),
             "gaps must aggregate counts: {gaps:?}"
+        );
+    }
+
+    /// Fixture re-export for `trace_tests` (same shape, explicit seam).
+    pub(super) async fn deps_for_trace() -> KbDeps {
+        deps().await
+    }
+
+    pub(super) async fn seed_kb_for_trace(deps: &KbDeps) -> SnowflakeId {
+        seed_kb(deps).await
+    }
+}
+
+#[cfg(test)]
+mod trace_tests {
+    //! [kb-observability-design T1] ingest 链 run 记录断言：成功/失败落库、
+    //! stages 完整性、errors 模式不落成功 run。
+    use super::*;
+    use crate::kb::models::kb_run::{self, RunFilter};
+    use crate::kb::trace::{RunRecorder, RunSpec, TraceMode};
+
+    async fn deps() -> KbDeps {
+        // Reuse the FAQ test fixture shape (one-hot embedder + bruteforce).
+        super::faq_tests::deps_for_trace().await
+    }
+
+    fn recorder(mode: TraceMode, doc_id: SnowflakeId, attempt: i64) -> RunRecorder {
+        RunRecorder::create(
+            mode,
+            RunSpec {
+                kind: kb_run::KIND_INGEST_DOC,
+                trigger_src: "admin",
+                tenant_id: "default".into(),
+                kb_id: None,
+                doc_id: Some(doc_id),
+                agent_id: None,
+                session_id: None,
+                job_id: None,
+                attempt,
+                long_running: true,
+            },
+        )
+    }
+
+    #[tokio::test]
+    async fn ingest_success_records_ok_run_with_stages() {
+        let deps = deps().await;
+        let kb_id = super::faq_tests::seed_kb_for_trace(&deps).await;
+        let mut markdown = "# 部署\n\n".to_string();
+        markdown.push_str(&"raisfast 单二进制部署，支持 docker 与裸机。".repeat(40));
+        let doc = create_online_document(&deps, kb_id, "部署", &markdown, None, "default")
+            .await
+            .unwrap();
+        let mut trace = recorder(TraceMode::All, doc.id, 1);
+        process_document_traced(&deps, doc.id, "default", &mut trace)
+            .await
+            .unwrap();
+
+        let (runs, total) = kb_run::list_runs(
+            &deps.pool,
+            "default",
+            &RunFilter {
+                kind: Some("ingest_doc".into()),
+                doc_id: Some(i64::from(doc.id)),
+                ..RunFilter::default()
+            },
+            1,
+            10,
+        )
+        .await
+        .unwrap();
+        assert_eq!(total, 1, "exactly one run row for this doc");
+        let run = runs.first().expect("run row");
+        assert_eq!(run.status, "ok");
+        assert_eq!(run.attempt, 1);
+        assert_eq!(run.kb_id, Some(kb_id));
+        assert!(run.latency_ms.is_some());
+        let stages = run
+            .stages
+            .as_ref()
+            .and_then(|s| s.as_array())
+            .expect("stages");
+        let names: Vec<&str> = stages
+            .iter()
+            .filter_map(|s| s.get("stage").and_then(|v| v.as_str()))
+            .collect();
+        assert_eq!(names, vec!["parse", "chunk", "embed", "vector", "bm25"]);
+        assert!(
+            stages
+                .iter()
+                .all(|s| s.get("status").and_then(|v| v.as_str()) == Some("ok"))
+        );
+        // detail lookup roundtrip
+        let detail = kb_run::find_run_by_id(&deps.pool, run.id, "default")
+            .await
+            .unwrap()
+            .expect("detail");
+        assert_eq!(detail.id, run.id);
+    }
+
+    #[tokio::test]
+    async fn ingest_failure_records_failed_run_and_error() {
+        let deps = deps().await;
+        let kb_id = super::faq_tests::seed_kb_for_trace(&deps).await;
+        // Doc whose storage key does not exist → parse stage fails.
+        let doc = document::create_document(
+            &deps.pool,
+            &document::CreateKbDocumentCmd {
+                kb_id,
+                title: "ghost".into(),
+                source: "upload".into(),
+                storage_key: Some("kb/missing-file.bin".into()),
+                mime_type: Some("text/plain".into()),
+                size: 10,
+                created_by: None,
+            },
+            "default",
+        )
+        .await
+        .unwrap();
+        let mut trace = recorder(TraceMode::All, doc.id, 2);
+        let result = process_document_traced(&deps, doc.id, "default", &mut trace).await;
+        assert!(result.is_err(), "missing storage bytes must fail ingest");
+
+        let (runs, _) = kb_run::list_runs(
+            &deps.pool,
+            "default",
+            &RunFilter {
+                kind: Some("ingest_doc".into()),
+                doc_id: Some(i64::from(doc.id)),
+                ..RunFilter::default()
+            },
+            1,
+            10,
+        )
+        .await
+        .unwrap();
+        let run = runs.first().expect("run row");
+        assert_eq!(run.status, "failed");
+        assert_eq!(run.attempt, 2);
+        assert!(run.error.as_deref().is_some_and(|e| !e.is_empty()));
+        let stages = run
+            .stages
+            .as_ref()
+            .and_then(|s| s.as_array())
+            .expect("stages");
+        let failed = stages
+            .iter()
+            .find(|s| s.get("status").and_then(|v| v.as_str()) == Some("failed"))
+            .expect("a failed stage must be recorded");
+        assert_eq!(failed.get("stage").and_then(|v| v.as_str()), Some("parse"));
+    }
+
+    #[tokio::test]
+    async fn errors_mode_skips_successful_run() {
+        let deps = deps().await;
+        let kb_id = super::faq_tests::seed_kb_for_trace(&deps).await;
+        let mut markdown = "# 备份\n\n".to_string();
+        markdown.push_str(&"使用 just db-backup 进行数据库备份。".repeat(40));
+        let doc = create_online_document(&deps, kb_id, "备份", &markdown, None, "default")
+            .await
+            .unwrap();
+        let mut trace = recorder(TraceMode::Errors, doc.id, 1);
+        process_document_traced(&deps, doc.id, "default", &mut trace)
+            .await
+            .unwrap();
+
+        let (_, total) = kb_run::list_runs(
+            &deps.pool,
+            "default",
+            &RunFilter {
+                kind: Some("ingest_doc".into()),
+                doc_id: Some(i64::from(doc.id)),
+                ..RunFilter::default()
+            },
+            1,
+            10,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            total, 0,
+            "DR5: successful runs are not persisted in errors mode"
         );
     }
 }

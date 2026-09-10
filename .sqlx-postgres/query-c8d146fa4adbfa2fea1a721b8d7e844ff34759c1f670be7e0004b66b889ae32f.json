@@ -1,0 +1,30 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO \"kb_runs\" (\"id\", \"tenant_id\", \"kind\", \"trigger_src\", \"kb_id\", \"doc_id\", \"agent_id\", \"session_id\", \"job_id\", \"attempt\", \"status\", \"latency_ms\", \"error\", \"config_snapshot\", \"stages\", \"created_at\", \"updated_at\") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text",
+        "Text",
+        "Text",
+        "Int8",
+        "Int8",
+        "Int8",
+        "Int8",
+        "Int8",
+        "Int8",
+        "Text",
+        "Int8",
+        "Text",
+        "Jsonb",
+        "Jsonb",
+        "Timestamptz",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "c8d146fa4adbfa2fea1a721b8d7e844ff34759c1f670be7e0004b66b889ae32f"
+}

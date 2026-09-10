@@ -62,6 +62,7 @@ mod tests {
                 unit(1, &"aaaa".repeat(100), false),
                 unit(2, "FAQ 答案", true),
             ],
+            trace: crate::kb::trace::RunRecorder::disabled(),
         };
         let selected = assemble(&outcome, 10_000);
         assert_eq!(selected[0].unit_id, 2, "FAQ must lead the context");
@@ -76,6 +77,7 @@ mod tests {
             references: Vec::new(),
             top_score: 1.0,
             context_units: (1..=10).map(|i| unit(i, &"x".repeat(400), false)).collect(),
+            trace: crate::kb::trace::RunRecorder::disabled(),
         };
         let selected = assemble(&outcome, 200);
         assert!(selected.len() < 10, "budget must cut units");

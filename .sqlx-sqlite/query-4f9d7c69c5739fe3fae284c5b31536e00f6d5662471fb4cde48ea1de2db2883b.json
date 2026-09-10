@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO kb_runs (id, tenant_id, kind, trigger_src, kb_id, doc_id, agent_id, session_id, job_id, attempt, status, latency_ms, error, config_snapshot, stages, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 17
+    },
+    "nullable": []
+  },
+  "hash": "4f9d7c69c5739fe3fae284c5b31536e00f6d5662471fb4cde48ea1de2db2883b"
+}

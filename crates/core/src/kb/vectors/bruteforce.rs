@@ -153,6 +153,11 @@ impl VectorIndex for BruteForceIndex {
     fn backend_name(&self) -> &str {
         "bruteforce"
     }
+
+    async fn count(&self, kb_id: i64) -> AppResult<u64> {
+        let guard = self.by_kb.read().await;
+        Ok(u64::try_from(guard.get(&kb_id).map_or(0, std::vec::Vec::len)).unwrap_or(0))
+    }
 }
 
 #[cfg(test)]

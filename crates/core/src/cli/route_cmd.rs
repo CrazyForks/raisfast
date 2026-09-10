@@ -37,6 +37,7 @@ fn collect_routes(config: &AppConfig) -> Vec<RouteInfo> {
 
     let _ = raisfast::handlers::plugin::routes(&mut registry, config);
     let _ = raisfast::handlers::cron::routes(&mut registry, config);
+    let _ = raisfast::handlers::jobs::routes(&mut registry, config);
     let _ = raisfast::handlers::rbac::routes(&mut registry, config);
     let _ = raisfast::handlers::stats::routes(&mut registry, config);
     let _ = raisfast::handlers::options::routes(&mut registry, config);

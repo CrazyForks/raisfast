@@ -26,6 +26,9 @@ pub async fn recall(deps: &KbDeps, kb_id: i64, query: &UnderstoodQuery) -> AppRe
         async move { kbsearch.search(kb_id, &text, top_k).await }
     };
     let dense_future = async {
+        // DR10: bruteforce cold-start warm-up (restart emptied the in-memory
+        // index; best-effort rebuild from SQL before the dense search).
+        crate::kb::vectors::warmup::ensure_warm(&deps.pool, &deps.vector, kb_id).await;
         let texts = [query.text.as_str()];
         let vectors = deps.embedder.embed(&texts).await?;
         let Some(embedding) = vectors.first() else {

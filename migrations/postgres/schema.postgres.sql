@@ -1730,6 +1730,37 @@ CREATE TABLE IF NOT EXISTS kb_query_logs (
     top_score DOUBLE PRECISION,
     feedback BIGINT,
     user_id BIGINT,
+    rewritten_question TEXT,
+    kb_ids JSONB,
+    latency_ms BIGINT,
+    run_id BIGINT,
+    error TEXT,
+    source TEXT NOT NULL DEFAULT 'ask',
     created_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_kb_query_logs_status ON kb_query_logs(status, created_at);
+
+CREATE TABLE IF NOT EXISTS kb_runs (
+    id BIGINT PRIMARY KEY,
+    tenant_id TEXT NOT NULL DEFAULT 'default',
+    kind TEXT NOT NULL,
+    trigger_src TEXT NOT NULL,
+    kb_id BIGINT,
+    doc_id BIGINT,
+    agent_id BIGINT,
+    session_id BIGINT,
+    job_id BIGINT,
+    attempt BIGINT NOT NULL DEFAULT 1,
+    status TEXT NOT NULL DEFAULT 'running',
+    latency_ms BIGINT,
+    error TEXT,
+    config_snapshot JSONB,
+    stages JSONB,
+    created_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_kb_runs_doc ON kb_runs(doc_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_kb_runs_kb ON kb_runs(kb_id, kind, created_at);
+CREATE INDEX IF NOT EXISTS idx_kb_runs_agent ON kb_runs(agent_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_kb_runs_kind ON kb_runs(kind, status, created_at);
+CREATE INDEX IF NOT EXISTS idx_kb_runs_sweep ON kb_runs(status, created_at);

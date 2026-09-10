@@ -942,3 +942,457 @@ async fn s18_update_kb_metadata_and_tenant_guard() {
         .expect("kb must exist");
     assert_eq!(got.name, "改名", "cross-tenant update must be a no-op");
 }
+
+// ── 场景：可观测性 T2（ask trace / 富日志 / Q7 / chunk_edit 失败留痕）──
+
+/// s19: ask 全链路 stages + run 行 + 富 query log（rewritten/latency/run_id/source）。
+#[tokio::test]
+async fn s19_ask_trace_run_and_rich_log() {
+    let deps = deps().await;
+    let kb = seed_kb(&deps, "obs-ask").await;
+    let md = format!(
+        "# 部署\n\n{}",
+        long_body("raisfast 单二进制部署支持三种数据库。", 40)
+    );
+    ingest_md(&deps, kb, "部署", &md).await;
+
+    let ask = AskRequest {
+        tenant_id: "default".into(),
+        kb_ids: vec![i64::from(kb)],
+        doc_ids: Vec::new(),
+        question: "支持哪些数据库".into(),
+    };
+    let mut outcome = pipeline::prepare_answer(&deps, &ask).await.unwrap();
+    pipeline::finish_answer(&deps, &mut outcome).await.unwrap();
+    // Handler-mirroring bookkeeping: snapshot stages, finish run, rich log.
+    let stages = outcome.trace.stages_snapshot();
+    let names: Vec<&str> = stages
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|s| s.get("stage").and_then(|v| v.as_str()))
+        .collect();
+    for expected in [
+        "s1_understand",
+        "s2_recall",
+        "s3_fusion",
+        "s4_topk",
+        "s6_boost",
+        "s7_merge",
+        "s11_fallback",
+        "s8_assemble",
+        "s9_generate",
+        "s10_references",
+    ] {
+        assert!(
+            names.contains(&expected),
+            "stage {expected} missing: {names:?}"
+        );
+    }
+    // s2 summary carries per-kb lists with titles (回访可读性, §3.3).
+    let s2 = stages
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s.get("stage").and_then(|v| v.as_str()) == Some("s2_recall"))
+        .unwrap();
+    let s2_kbs = s2.pointer("/summary/0").unwrap();
+    // At least one recall path must be non-empty, with readable titles.
+    let bm25_len = s2_kbs
+        .pointer("/bm25")
+        .and_then(|l| l.as_array())
+        .map_or(0, Vec::len);
+    let dense_len = s2_kbs
+        .pointer("/dense")
+        .and_then(|l| l.as_array())
+        .map_or(0, Vec::len);
+    assert!(
+        bm25_len + dense_len > 0,
+        "both recall paths empty: {s2_kbs}"
+    );
+    let first_title = s2_kbs
+        .pointer(if bm25_len > 0 {
+            "/bm25/0/title"
+        } else {
+            "/dense/0/title"
+        })
+        .and_then(|t| t.as_str())
+        .unwrap_or("");
+    assert!(!first_title.is_empty(), "title must be readable for 回访");
+
+    let run_id = outcome
+        .trace
+        .finish(&deps.pool, "ok", None)
+        .await
+        .expect("run row must exist (trace=all default)");
+    let log_id = models::query_log::insert_entry(
+        &deps.pool,
+        &models::query_log::LogEntry {
+            kb_id: Some(kb),
+            question: &ask.question,
+            answer: Some(&outcome.answer),
+            cited_units: None,
+            status: outcome.status,
+            top_score: Some(f64::from(outcome.top_score)),
+            user_id: None,
+            rewritten_question: Some(&outcome.question),
+            kb_ids: Some(&serde_json::json!(ask.kb_ids)),
+            latency_ms: Some(42),
+            run_id: Some(run_id),
+            error: None,
+            source: "ask",
+        },
+    )
+    .await
+    .unwrap();
+    let log = models::query_log::find_log_by_id(&deps.pool, log_id)
+        .await
+        .unwrap()
+        .expect("log row");
+    assert_eq!(log.source, "ask");
+    assert_eq!(log.run_id, Some(run_id));
+    assert!(log.rewritten_question.is_some());
+    assert_eq!(log.latency_ms, Some(42));
+
+    let (runs, total) = models::kb_run::list_runs(
+        &deps.pool,
+        "default",
+        &models::kb_run::RunFilter {
+            kind: Some("ask".into()),
+            doc_id: None,
+            kb_id: Some(i64::from(kb)),
+            agent_id: None,
+            session_id: None,
+            status: None,
+        },
+        1,
+        10,
+    )
+    .await
+    .unwrap();
+    assert!(total >= 1);
+    let run = runs.first().unwrap();
+    assert!(run.agent_id.is_none() && run.session_id.is_none());
+}
+
+/// s20: Q7 —— 检索路径真实 coverage（空召回/低于阈值 → uncovered）。
+#[tokio::test]
+async fn s20_coverage_status_is_real() {
+    use raisfast::kb::pipeline::coverage_status;
+    assert_eq!(coverage_status(0, 0.9, 0.3), "uncovered", "empty recall");
+    assert_eq!(coverage_status(3, 0.1, 0.3), "uncovered", "below threshold");
+    assert_eq!(coverage_status(3, 0.5, 0.3), "answered");
+}
+
+/// 失败 embedder：chunk 编辑中途失败注入。
+struct FailingEmbedder;
+
+#[async_trait::async_trait]
+impl KbEmbedder for FailingEmbedder {
+    async fn embed(
+        &self,
+        _texts: &[&str],
+    ) -> raisfast::errors::app_error::AppResult<Vec<Vec<f32>>> {
+        Err(raisfast::errors::app_error::AppError::ServiceUnavailable(
+            "embedder down (test)".into(),
+        ))
+    }
+}
+
+/// s21: chunk_edit 中途失败 → failed run 留痕（doc 保持 ready 的盲区可见性）。
+#[tokio::test]
+async fn s21_chunk_edit_failure_records_failed_run() {
+    let good = deps().await;
+    let kb = seed_kb(&good, "obs-edit").await;
+    let md = format!("# 编辑\n\n{}", long_body("可编辑的知识内容块。", 60));
+    let doc = ingest_md(&good, kb, "编辑", &md).await;
+    let chunks = models::chunk::find_chunks_by_doc(&good.pool, doc)
+        .await
+        .unwrap();
+    let chunk = chunks.first().unwrap().clone();
+
+    // Same shape as deps() but the embedder fails.
+    let failing = KbDeps {
+        pool: good.pool.clone(),
+        config: good.config.clone(),
+        storage: good.storage.clone(),
+        vector: good.vector.clone(),
+        kbsearch: good.kbsearch.clone(),
+        embedder: Arc::new(FailingEmbedder),
+        provider: good.provider.clone(),
+        emitter: good.emitter.clone(),
+    };
+    let result = service::edit_chunk_traced(&failing, &chunk, None, "改后的内容").await;
+    assert!(result.is_err(), "failing embedder must abort the edit");
+
+    let (runs, total) = models::kb_run::list_runs(
+        &failing.pool,
+        "default",
+        &models::kb_run::RunFilter {
+            kind: Some("chunk_edit".into()),
+            doc_id: Some(i64::from(doc)),
+            kb_id: None,
+            agent_id: None,
+            session_id: None,
+            status: None,
+        },
+        1,
+        10,
+    )
+    .await
+    .unwrap();
+    assert_eq!(total, 1, "exactly one failed chunk_edit run");
+    let run = runs.first().unwrap();
+    assert_eq!(run.status, "failed");
+    assert!(
+        run.error
+            .as_deref()
+            .is_some_and(|e| e.contains("embedder down"))
+    );
+}
+
+// ── 场景：T3（懒回填 / 体检规则 / retention 清理）──────────────────
+
+/// s22: bruteforce 冷启动懒回填——重启（换新空索引）后首查 dense 恢复。
+#[tokio::test]
+async fn s22_cold_bruteforce_rebuilds_on_first_search() {
+    let deps = deps().await;
+    let kb = seed_kb(&deps, "warm").await;
+    let md = format!(
+        "# 冷启动\n\n{}",
+        long_body("重启后懒回填恢复稠密召回。", 60)
+    );
+    ingest_md(&deps, kb, "冷启动", &md).await;
+
+    // Simulate a restart: brand-new (empty) in-memory index, SQL untouched.
+    let cold = KbDeps {
+        pool: deps.pool.clone(),
+        config: deps.config.clone(),
+        storage: deps.storage.clone(),
+        vector: Arc::new(BruteForceIndex::new()),
+        kbsearch: deps.kbsearch.clone(),
+        embedder: deps.embedder.clone(),
+        provider: deps.provider.clone(),
+        emitter: deps.emitter.clone(),
+    };
+    let mut trace = raisfast::kb::trace::RunRecorder::disabled();
+    let (top, units) = pipeline::search_units(
+        &cold,
+        "default",
+        &[i64::from(kb)],
+        "懒回填恢复稠密召回",
+        &mut trace,
+    )
+    .await
+    .unwrap();
+    assert!(!units.is_empty(), "cold index must warm up and recall");
+    assert!(top > 0.0);
+    // And the index is warm now: a second search sees dense units directly.
+    let count = cold.vector.count(i64::from(kb)).await.unwrap();
+    assert!(count > 0, "index repopulated from SQL (DR10)");
+}
+
+/// s23: 体检规则 R1/R4/R6/R7 命中构造的漂移态。
+#[tokio::test]
+async fn s23_diagnostics_rules_detect_drift() {
+    let deps = deps().await;
+    let kb = seed_kb(&deps, "diag").await;
+
+    // R1: pending doc, no job, no run, created 1h ago.
+    let ghost = models::document::create_document(
+        &deps.pool,
+        &models::document::CreateKbDocumentCmd {
+            kb_id: kb,
+            title: "orphan".into(),
+            source: "upload".into(),
+            storage_key: Some("kb/ghost.bin".into()),
+            mime_type: Some("text/plain".into()),
+            size: 10,
+            created_by: None,
+        },
+        "default",
+    )
+    .await
+    .unwrap();
+    backdate(&deps.pool, "kb_documents", "created_at", ghost.id.0, 3600).await;
+
+    // R4: ready doc with one chunk's embedding nulled.
+    let md = format!(
+        "# 半成品\n\n{}",
+        long_body("就绪文档的部分切块缺嵌入。", 60)
+    );
+    let doc = ingest_md(&deps, kb, "半成品", &md).await;
+    let chunks = models::chunk::find_chunks_by_doc(&deps.pool, doc)
+        .await
+        .unwrap();
+    let victim = chunks.first().unwrap().id;
+    {
+        let sql = raisfast::db::safe_sql("UPDATE kb_chunks SET embedding = NULL WHERE id = ?");
+        sqlx::query(sql)
+            .bind(i64::from(victim))
+            .execute(&deps.pool)
+            .await
+            .unwrap();
+    }
+
+    // R6: a dead kb job row.
+    let dead_id = raisfast::utils::id::new_id();
+    {
+        let payload: serde_json::Value = serde_json::json!({ "doc_id": ghost.id.0 });
+        let sql = raisfast::db::safe_sql(
+            "INSERT INTO jobs (id, job_type, payload, status, attempts, max_attempts) \
+             VALUES (?, 'kb_process_document', ?, 'dead', 3, 3)",
+        );
+        sqlx::query(sql)
+            .bind(dead_id)
+            .bind(payload)
+            .execute(&deps.pool)
+            .await
+            .unwrap();
+    }
+
+    // R7: a stale running kb_runs row.
+    let run_id = models::kb_run::insert_run(
+        &deps.pool,
+        &models::kb_run::NewKbRun {
+            kind: "ingest_doc",
+            trigger_src: "job",
+            tenant_id: "default".into(),
+            kb_id: Some(kb),
+            doc_id: Some(doc),
+            agent_id: None,
+            session_id: None,
+            job_id: None,
+            attempt: 1,
+            status: "running",
+            config_snapshot: None,
+        },
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    backdate(&deps.pool, "kb_runs", "updated_at", run_id.0, 3600).await;
+
+    let scan = raisfast::kb::diagnostics::run_scan(&deps, "default")
+        .await
+        .unwrap();
+    let rules = scan.get("rules").and_then(|r| r.as_array()).unwrap();
+    let find_rule = |id: &str| {
+        rules
+            .iter()
+            .find(|r| r.get("id").and_then(|v| v.as_str()) == Some(id))
+            .unwrap()
+    };
+    // R1 hits the orphan doc.
+    let r1 = find_rule("r1_event_lost");
+    assert!(
+        r1.get("count").and_then(|c| c.as_i64()).unwrap_or(0) >= 1,
+        "R1: {r1}"
+    );
+    // R4 hits the ready doc with a NULL embedding.
+    let r4 = find_rule("r4_missing_embeddings");
+    assert!(
+        r4.get("count").and_then(|c| c.as_i64()).unwrap_or(0) >= 1,
+        "R4: {r4}"
+    );
+    // R6 lists the dead job.
+    let r6 = find_rule("r6_dead_jobs");
+    assert!(
+        r6.get("count").and_then(|c| c.as_i64()).unwrap_or(0) >= 1,
+        "R6: {r6}"
+    );
+    // R7 flags the stale running row.
+    let r7 = find_rule("r7_stuck_runs");
+    assert!(
+        r7.get("count").and_then(|c| c.as_i64()).unwrap_or(0) >= 1,
+        "R7: {r7}"
+    );
+}
+
+/// s24: retention 清理——只删过期的非 running 行。
+#[tokio::test]
+async fn s24_runs_retention_sweep() {
+    let deps = deps().await;
+    let kb = seed_kb(&deps, "sweep").await;
+    let mk = |status: &'static str| models::kb_run::NewKbRun {
+        kind: "ingest_doc",
+        trigger_src: "job",
+        tenant_id: "default".into(),
+        kb_id: Some(kb),
+        doc_id: None,
+        agent_id: None,
+        session_id: None,
+        job_id: None,
+        attempt: 1,
+        status,
+        config_snapshot: None,
+    };
+    let old = models::kb_run::insert_run(&deps.pool, &mk("ok"), None, None, None)
+        .await
+        .unwrap();
+    backdate(&deps.pool, "kb_runs", "created_at", old.0, 86_400 * 30).await;
+    let fresh = models::kb_run::insert_run(&deps.pool, &mk("ok"), None, None, None)
+        .await
+        .unwrap();
+    let running_old = models::kb_run::insert_run(&deps.pool, &mk("running"), None, None, None)
+        .await
+        .unwrap();
+    backdate(
+        &deps.pool,
+        "kb_runs",
+        "created_at",
+        running_old.0,
+        86_400 * 30,
+    )
+    .await;
+
+    let removed = raisfast::kb::diagnostics::sweep_runs(&deps.pool, 14)
+        .await
+        .unwrap();
+    assert!(removed >= 1);
+    assert!(
+        models::kb_run::find_run_by_id(&deps.pool, old, "default")
+            .await
+            .unwrap()
+            .is_none(),
+        "old terminal run deleted"
+    );
+    assert!(
+        models::kb_run::find_run_by_id(&deps.pool, fresh, "default")
+            .await
+            .unwrap()
+            .is_some(),
+        "fresh run kept"
+    );
+    assert!(
+        models::kb_run::find_run_by_id(&deps.pool, running_old, "default")
+            .await
+            .unwrap()
+            .is_some(),
+        "running rows never swept (R7 evidence)"
+    );
+}
+
+// ── helpers ────────────────────────────────────────────────────────
+
+async fn backdate(pool: &raisfast::db::Pool, table: &str, col: &str, id: i64, secs_ago: i64) {
+    let past = chrono::DateTime::from_timestamp(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs() as i64
+            - secs_ago,
+        0,
+    )
+    .unwrap_or_default();
+    let stmt = format!("UPDATE {table} SET {col} = ? WHERE id = ?");
+    let sql = raisfast::db::safe_sql(&stmt);
+    sqlx::query(sql)
+        .bind(past)
+        .bind(id)
+        .execute(pool)
+        .await
+        .unwrap();
+}

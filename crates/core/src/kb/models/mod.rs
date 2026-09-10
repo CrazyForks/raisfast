@@ -9,6 +9,7 @@
 pub mod chunk;
 pub mod document;
 pub mod faq;
+pub mod kb_run;
 pub mod knowledge_base;
 pub mod query_log;
 pub mod wiki_page;

@@ -11,10 +11,14 @@ use raisfast_agent::messages::{ChatMessage, ChatRole};
 use crate::kb::service::KbDeps;
 
 /// Understood query: the (possibly rewritten) search text plus keywords.
+/// `degraded=true` means no rewrite happened (no provider / empty model /
+/// chat error / unparseable reply) — the raw question was used verbatim
+/// [kb-observability-design §3.3 s1_understand].
 #[derive(Debug, Clone)]
 pub struct UnderstoodQuery {
     pub text: String,
     pub keywords: Vec<String>,
+    pub degraded: bool,
 }
 
 impl UnderstoodQuery {
@@ -22,6 +26,7 @@ impl UnderstoodQuery {
         Self {
             text: question.to_string(),
             keywords: Vec::new(),
+            degraded: true,
         }
     }
 }
@@ -94,6 +99,7 @@ fn parse(text: &str) -> Option<UnderstoodQuery> {
     Some(UnderstoodQuery {
         text: query,
         keywords,
+        degraded: false,
     })
 }
 

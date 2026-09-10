@@ -12,7 +12,7 @@ use crate::config::app::AppConfig;
 use crate::constants::DEFAULT_TENANT;
 use crate::handlers::payment as h_payment;
 use crate::handlers::{
-    api_token, auth, category, comment, cron, health, media, options, page, plugin, post,
+    api_token, auth, category, comment, cron, health, jobs, media, options, page, plugin, post,
     product_category, rbac, reusable_block, rss, setup, sse, stats, tag, tenant, user, wallet, ws,
 };
 use crate::middleware::locale::locale_middleware;
@@ -255,6 +255,7 @@ async fn build_app(
     api_v1 = api_v1
         .merge(plugin::routes(&mut registry, config))
         .merge(cron::routes(&mut registry, config))
+        .merge(jobs::routes(&mut registry, config))
         .merge(rbac::routes(&mut registry, config))
         .merge(stats::routes(&mut registry, config))
         .merge(options::routes(&mut registry, config))

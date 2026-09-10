@@ -1722,6 +1722,37 @@ CREATE TABLE IF NOT EXISTS kb_query_logs (
     top_score REAL,
     feedback BIGINT,
     user_id BIGINT,
+    rewritten_question TEXT,
+    kb_ids TEXT,
+    latency_ms BIGINT,
+    run_id BIGINT,
+    error TEXT,
+    source TEXT NOT NULL DEFAULT 'ask',
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
 );
 CREATE INDEX IF NOT EXISTS idx_kb_query_logs_status ON kb_query_logs(status, created_at);
+
+CREATE TABLE IF NOT EXISTS kb_runs (
+    id INTEGER PRIMARY KEY,
+    tenant_id TEXT NOT NULL DEFAULT 'default',
+    kind TEXT NOT NULL,
+    trigger_src TEXT NOT NULL,
+    kb_id BIGINT,
+    doc_id BIGINT,
+    agent_id BIGINT,
+    session_id BIGINT,
+    job_id BIGINT,
+    attempt BIGINT NOT NULL DEFAULT 1,
+    status TEXT NOT NULL DEFAULT 'running',
+    latency_ms BIGINT,
+    error TEXT,
+    config_snapshot TEXT,
+    stages TEXT,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_kb_runs_doc ON kb_runs(doc_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_kb_runs_kb ON kb_runs(kb_id, kind, created_at);
+CREATE INDEX IF NOT EXISTS idx_kb_runs_agent ON kb_runs(agent_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_kb_runs_kind ON kb_runs(kind, status, created_at);
+CREATE INDEX IF NOT EXISTS idx_kb_runs_sweep ON kb_runs(status, created_at);

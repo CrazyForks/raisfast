@@ -28,12 +28,15 @@ use super::models::ai_agent::AiAgent;
 /// Every available domain tool is registered here; the per-agent allowlist
 /// (`ai_agents.tools`) is applied later by `AgentService`. `agent` carries
 /// the turn's agent row (KB binding etc.); `None` on paths without one.
+/// `session_id` is the turn's conversation (KB run attribution,
+/// kb-observability-design §4.2); `None` outside a session turn.
 pub async fn build_domain_tools(
     state: &AppState,
     auth: &AuthUser,
     agent: Option<&AiAgent>,
+    session_id: Option<crate::types::snowflake_id::SnowflakeId>,
 ) -> ToolRegistry {
-    let mut registry = build_static_tools(state, auth, agent).await;
+    let mut registry = build_static_tools(state, auth, agent, session_id).await;
     #[cfg(feature = "mcp")]
     {
         mcp::register_mcp_tools(&mut registry, &state.config.ai.mcp_servers).await;
@@ -51,6 +54,7 @@ pub async fn build_static_tools(
     state: &AppState,
     auth: &AuthUser,
     agent: Option<&AiAgent>,
+    session_id: Option<crate::types::snowflake_id::SnowflakeId>,
 ) -> ToolRegistry {
     let mut registry = ToolRegistry::new();
     posts::register(&mut registry, state, auth);
@@ -58,7 +62,7 @@ pub async fn build_static_tools(
     script::register(&mut registry, &state.plugins);
     files::register(&mut registry, state, auth);
     if let Some(agent) = agent {
-        kb::register(&mut registry, state, auth, agent).await;
+        kb::register(&mut registry, state, auth, agent, session_id).await;
     }
     // `run_shell` is default closed: only registered when an operator enabled
     // `[ai].allow_shell` (RAISFAST_AI_ALLOW_SHELL=true), then gated per agent

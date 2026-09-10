@@ -251,7 +251,12 @@ pub fn register_all(deps: HandlerDeps) -> JobHandlerRegistry {
             Box::new(kb::KbRebuildVectorIndexHandler::new(
                 pool.clone(),
                 kb_runtime,
+                config.clone(),
             )),
+        );
+        registry.register(
+            "kb_runs_cleanup",
+            Box::new(kb::KbRunsCleanupHandler::new(pool.clone(), config.clone())),
         );
     }
 

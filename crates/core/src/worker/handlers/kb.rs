@@ -52,6 +52,33 @@ impl JobHandler for KbProcessDocumentHandler {
     }
 
     async fn handle(&self, job: &Job) -> AppResult<()> {
+        // Legacy entry (tests / direct dispatch): no job provenance.
+        self.run(job, None, 1).await
+    }
+
+    /// Full-context dispatch [kb-observability-design DR6]: the runner goes
+    /// through here so the run row carries the exact `jobs.attempts` and
+    /// `jobs.id` (precise retry provenance + run↔job linkage).
+    async fn handle_queued(&self, queued: &crate::worker::QueuedJob) -> AppResult<()> {
+        let job_id = queued
+            .id
+            .parse::<i64>()
+            .ok()
+            .map(crate::types::snowflake_id::SnowflakeId);
+        self.run(&queued.job, job_id, i64::from(queued.attempts))
+            .await
+    }
+}
+
+impl KbProcessDocumentHandler {
+    /// Shared body: build the traced deps + recorder, delegate to the
+    /// pipeline, keep the legacy failure bookkeeping (doc status + event).
+    async fn run(
+        &self,
+        job: &Job,
+        job_id: Option<crate::types::snowflake_id::SnowflakeId>,
+        attempt: i64,
+    ) -> AppResult<()> {
         let Job::KbProcessDocument { doc_id, tenant_id } = job else {
             return Ok(());
         };
@@ -65,7 +92,25 @@ impl JobHandler for KbProcessDocumentHandler {
             provider: Some(self.runtime.provider.clone()),
             emitter: self.emitter.clone(),
         };
-        match crate::kb::service::process_document(&deps, *doc_id, tenant_id).await {
+        let mode = crate::kb::trace::TraceMode::parse(&self.config.kb.trace_mode);
+        let mut trace = crate::kb::trace::RunRecorder::create(
+            mode,
+            crate::kb::trace::RunSpec {
+                kind: crate::kb::models::kb_run::KIND_INGEST_DOC,
+                trigger_src: "job",
+                tenant_id: tenant_id.clone(),
+                kb_id: None, // bound inside the pipeline (doc → kb lookup)
+                doc_id: Some(*doc_id),
+                agent_id: None,
+                session_id: None,
+                job_id,
+                attempt,
+                long_running: true,
+            },
+        );
+        match crate::kb::service::process_document_traced(&deps, *doc_id, tenant_id, &mut trace)
+            .await
+        {
             Ok(()) => Ok(()),
             Err(e) => {
                 // Record failure on the row and emit; then surface for retry.
@@ -192,58 +237,138 @@ impl JobHandler for KbDistillWikiHandler {
 pub struct KbRebuildVectorIndexHandler {
     pool: crate::db::Pool,
     runtime: Arc<KbRuntime>,
+    config: Arc<crate::config::app::AppConfig>,
 }
 
 impl KbRebuildVectorIndexHandler {
-    pub fn new(pool: crate::db::Pool, runtime: Arc<KbRuntime>) -> Self {
-        Self { pool, runtime }
+    pub fn new(
+        pool: crate::db::Pool,
+        runtime: Arc<KbRuntime>,
+        config: Arc<crate::config::app::AppConfig>,
+    ) -> Self {
+        Self {
+            pool,
+            runtime,
+            config,
+        }
     }
 }
 
 #[async_trait::async_trait]
 impl JobHandler for KbRebuildVectorIndexHandler {
+    /// Per-KB coalesce [抄RF:KbProcessDocument 同键模式 — DR10 注：启动
+    /// 批量 + 手动 rebuild 并发时去重].
+    fn coalesce_key(&self, job: &Job) -> Option<String> {
+        match job {
+            Job::KbRebuildVectorIndex { kb_id, .. } => Some(format!("kb_rebuild_{kb_id}")),
+            _ => None,
+        }
+    }
+
+    fn coalesce(&self, jobs: Vec<Job>) -> Option<Job> {
+        jobs.into_iter()
+            .find(|j| matches!(j, Job::KbRebuildVectorIndex { .. }))
+    }
+
     async fn handle(&self, job: &Job) -> AppResult<()> {
+        self.run(job, None, 1).await
+    }
+
+    async fn handle_queued(&self, queued: &crate::worker::QueuedJob) -> AppResult<()> {
+        let job_id = queued
+            .id
+            .parse::<i64>()
+            .ok()
+            .map(crate::types::snowflake_id::SnowflakeId);
+        self.run(&queued.job, job_id, i64::from(queued.attempts))
+            .await
+    }
+}
+
+impl KbRebuildVectorIndexHandler {
+    async fn run(
+        &self,
+        job: &Job,
+        job_id: Option<crate::types::snowflake_id::SnowflakeId>,
+        attempt: i64,
+    ) -> AppResult<()> {
         let Job::KbRebuildVectorIndex { kb_id, tenant_id } = job else {
             return Ok(());
         };
-        // Full rebuild from SQL (the source of truth, D3): embedded chunks
-        // of this KB, dim from the KB row.
-        let kb = crate::kb::models::knowledge_base::find_kb_by_id(&self.pool, *kb_id, tenant_id)
-            .await?
-            .ok_or_else(|| {
-                crate::errors::app_error::AppError::NotFound("kb_knowledge_base".into())
-            })?;
-        let dim = u32::try_from(kb.embedding_dim.unwrap_or(0)).unwrap_or(0);
-        if dim == 0 {
-            return Err(crate::errors::app_error::AppError::BadRequest(
-                "kb has no embedding_dim configured".into(),
-            ));
-        }
-        let chunks = raisfast_derive::crud_find_all!(
-            &self.pool,
-            "kb_chunks",
-            crate::kb::models::chunk::KbChunk,
-            where: ("kb_id", kb_id)
-        )?;
-        let mut items = Vec::new();
-        for c in chunks.iter().filter(|c| c.embedding.is_some()) {
-            items.push(crate::kb::vectors::VectorItem {
-                unit_id: i64::from(c.id),
-                kb_id: i64::from(c.kb_id),
-                kind: c.kind.clone(),
-                embedding: crate::kb::models::chunk::unpack_embedding(
-                    c.embedding.as_deref().unwrap_or_default(),
-                ),
-            });
-        }
-        self.runtime
-            .vector
-            .rebuild(i64::from(*kb_id), dim, &items)
-            .await?;
-        tracing::info!(
-            "[kb] vector index rebuilt for kb {kb_id}: {} units",
-            items.len()
+        // Traced long task (DR2: `running` row visible while rebuilding).
+        let mut trace = crate::kb::trace::RunRecorder::create(
+            crate::kb::trace::TraceMode::parse(&self.config.kb.trace_mode),
+            crate::kb::trace::RunSpec {
+                kind: crate::kb::models::kb_run::KIND_REBUILD_VECTOR,
+                trigger_src: "job",
+                tenant_id: tenant_id.clone(),
+                kb_id: Some(*kb_id),
+                doc_id: None,
+                agent_id: None,
+                session_id: None,
+                job_id,
+                attempt,
+                long_running: true,
+            },
         );
+        let vector = self.runtime.vector.clone();
+        let pool = self.pool.clone();
+        trace.begin(&pool, &self.config).await;
+        trace.stage("rebuild");
+        let result =
+            crate::kb::service::rebuild_vector_index_from_sql(&pool, &vector, *kb_id).await;
+        match &result {
+            Ok(n) => {
+                trace.end_stage(
+                    crate::kb::trace::STAGE_OK,
+                    serde_json::json!({ "units": n, "backend": vector.backend_name() }),
+                    None,
+                );
+                trace
+                    .finish(&pool, crate::kb::models::kb_run::STATUS_OK, None)
+                    .await;
+            }
+            Err(e) => {
+                trace.fail_stage(&e.to_string());
+                trace
+                    .finish(
+                        &pool,
+                        crate::kb::models::kb_run::STATUS_FAILED,
+                        Some(&e.to_string()),
+                    )
+                    .await;
+            }
+        }
+        result.map(|_| ())
+    }
+}
+
+/// kb_runs retention sweeper (kb-observability-design §10) — thin bridge
+/// to `kb::diagnostics::sweep_runs` [抄RF:worker/handlers/itg_egress_cleanup.rs 清理模式].
+pub struct KbRunsCleanupHandler {
+    pool: crate::db::Pool,
+    config: Arc<crate::config::app::AppConfig>,
+}
+
+impl KbRunsCleanupHandler {
+    pub fn new(pool: crate::db::Pool, config: Arc<crate::config::app::AppConfig>) -> Self {
+        Self { pool, config }
+    }
+}
+
+#[async_trait::async_trait]
+impl JobHandler for KbRunsCleanupHandler {
+    async fn handle(&self, _job: &Job) -> AppResult<()> {
+        let days = self.config.kb.trace_retention_days;
+        if days <= 0 {
+            return Ok(()); // keep forever
+        }
+        let removed = crate::kb::diagnostics::sweep_runs(&self.pool, days).await?;
+        if removed > 0 {
+            tracing::info!(
+                "[kb] runs retention sweep: removed {removed} row(s) older than {days}d"
+            );
+        }
         Ok(())
     }
 }

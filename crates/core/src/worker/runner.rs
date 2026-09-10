@@ -154,7 +154,7 @@ impl WorkerRunner {
         let handler_start = std::time::Instant::now();
 
         let result = if self.handlers.has_handler(job_type) {
-            self.handlers.handle(&job.job).await
+            self.handlers.handle_queued(job).await
         } else if let Some(ref dispatcher) = self.plugin_dispatcher {
             tracing::info!("no built-in handler for '{job_type}', dispatching to plugins");
             dispatcher.dispatch(&job.job).await

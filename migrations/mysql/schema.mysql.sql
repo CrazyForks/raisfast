@@ -1663,6 +1663,37 @@ CREATE TABLE IF NOT EXISTS kb_query_logs (
     top_score DOUBLE,
     feedback BIGINT,
     user_id BIGINT,
+    rewritten_question TEXT,
+    kb_ids JSON,
+    latency_ms BIGINT,
+    run_id BIGINT,
+    error TEXT,
+    source VARCHAR(16) NOT NULL DEFAULT 'ask',
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     INDEX idx_kb_query_logs_status (status, created_at)
+);
+
+CREATE TABLE IF NOT EXISTS kb_runs (
+    id BIGINT PRIMARY KEY,
+    tenant_id VARCHAR(36) NOT NULL DEFAULT 'default',
+    kind VARCHAR(32) NOT NULL,
+    trigger_src VARCHAR(16) NOT NULL,
+    kb_id BIGINT,
+    doc_id BIGINT,
+    agent_id BIGINT,
+    session_id BIGINT,
+    job_id BIGINT,
+    attempt BIGINT NOT NULL DEFAULT 1,
+    status VARCHAR(16) NOT NULL DEFAULT 'running',
+    latency_ms BIGINT,
+    error TEXT,
+    config_snapshot JSON,
+    stages JSON,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_kb_runs_doc (doc_id, created_at),
+    INDEX idx_kb_runs_kb (kb_id, kind, created_at),
+    INDEX idx_kb_runs_agent (agent_id, created_at),
+    INDEX idx_kb_runs_kind (kind, status, created_at),
+    INDEX idx_kb_runs_sweep (status, created_at)
 );

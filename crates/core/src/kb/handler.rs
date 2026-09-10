@@ -15,7 +15,7 @@ use crate::db::{DbDriver, Driver};
 use crate::errors::app_error::{AppError, AppResult};
 use crate::errors::response::ApiResponse;
 use crate::kb::chunker::{self, ChunkerConfig};
-use crate::kb::models::{chunk, document, knowledge_base};
+use crate::kb::models::{chunk, document, kb_run, knowledge_base};
 use crate::kb::service::{self, KbDeps};
 use crate::middleware::auth::AuthUser;
 use crate::types::snowflake_id::SnowflakeId;
@@ -148,6 +148,61 @@ pub fn routes(
         admin_document_jobs,
         "system",
         "admin/kb/documents",
+        "admin"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        config.api_restful,
+        "/admin/kb/runs",
+        get,
+        admin_list_runs,
+        "system",
+        "admin/kb/runs",
+        "admin"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        config.api_restful,
+        "/admin/kb/runs/{id}",
+        get,
+        admin_get_run,
+        "system",
+        "admin/kb/runs",
+        "admin"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        config.api_restful,
+        "/admin/kb/health",
+        get,
+        crate::kb::diagnostics::admin_kb_health,
+        "system",
+        "admin/kb/diagnostics",
+        "admin"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        config.api_restful,
+        "/admin/kb/diagnostics",
+        get,
+        crate::kb::diagnostics::admin_kb_diagnostics,
+        "system",
+        "admin/kb/diagnostics",
+        "admin"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        config.api_restful,
+        "/admin/kb/vector/rebuild",
+        post,
+        crate::kb::diagnostics::admin_rebuild_vector,
+        "system",
+        "admin/kb/diagnostics",
         "admin"
     );
     let r = reg_route!(
@@ -772,6 +827,80 @@ async fn admin_document_jobs(
     ))
 }
 
+// ── run records (kb-observability-design T1: 运行记录) ─────────────
+
+#[derive(Deserialize)]
+struct RunsQuery {
+    #[serde(default)]
+    kind: Option<String>,
+    #[serde(default)]
+    kb_id: Option<String>,
+    #[serde(default)]
+    doc_id: Option<String>,
+    #[serde(default)]
+    agent_id: Option<String>,
+    #[serde(default)]
+    session_id: Option<String>,
+    #[serde(default)]
+    status: Option<String>,
+    #[serde(default)]
+    page: Option<i64>,
+    #[serde(default)]
+    page_size: Option<i64>,
+}
+
+/// Optional id query param → i64 (ID_ENCODING-aware; garbage → 400).
+fn parse_id_query(raw: &Option<String>) -> AppResult<Option<i64>> {
+    match raw.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        None | Some("") => Ok(None),
+        Some(s) => Ok(Some(i64::from(parse_snowflake(s)?))),
+    }
+}
+
+async fn admin_list_runs(
+    auth: AuthUser,
+    State(state): State<AppState>,
+    Query(q): Query<RunsQuery>,
+) -> AppResult<ApiResponse<Value>> {
+    auth.ensure_admin()?;
+    let tenant = tenant_of(&auth);
+    let filter = kb_run::RunFilter {
+        kind: q.kind.filter(|s| !s.is_empty()),
+        kb_id: parse_id_query(&q.kb_id)?,
+        doc_id: parse_id_query(&q.doc_id)?,
+        agent_id: parse_id_query(&q.agent_id)?,
+        session_id: parse_id_query(&q.session_id)?,
+        status: q.status.filter(|s| !s.is_empty()),
+    };
+    let (runs, total) = kb_run::list_runs(
+        &state.pool,
+        &tenant,
+        &filter,
+        q.page.unwrap_or(1),
+        q.page_size.unwrap_or(20),
+    )
+    .await?;
+    Ok(ApiResponse::success(json!({
+        "items": runs,
+        "total": total,
+        "page": q.page.unwrap_or(1),
+        "page_size": q.page_size.unwrap_or(20),
+    })))
+}
+
+async fn admin_get_run(
+    auth: AuthUser,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> AppResult<ApiResponse<Value>> {
+    auth.ensure_admin()?;
+    let id = parse_snowflake(&id)?;
+    let run = kb_run::find_run_by_id(&state.pool, id, &tenant_of(&auth))
+        .await?
+        .ok_or_else(|| AppError::NotFound("kb_run".into()))?;
+    Ok(ApiResponse::success(json!({ "run": run })))
+}
+
 async fn admin_get_document(
     auth: AuthUser,
     State(state): State<AppState>,
@@ -808,8 +937,48 @@ async fn admin_reparse_document(
     auth.ensure_admin()?;
     let deps = state.kb_deps()?;
     let id = parse_snowflake(&id)?;
-    service::process_document(&deps, id, &tenant_of(&auth)).await?;
-    let doc = document::find_document_by_id(&state.pool, id, &tenant_of(&auth))
+    let tenant = tenant_of(&auth);
+    // W4 fix [kb-observability-design §1.1]: the sync path used to `?` the
+    // error away, leaving the doc in an intermediate status with no error.
+    // Now it mirrors the job path — failed status + error + a traced run.
+    let mode = crate::kb::trace::TraceMode::parse(&deps.config.kb.trace_mode);
+    let prior = crate::kb::models::kb_run::count_runs(
+        &state.pool,
+        crate::kb::models::kb_run::KIND_INGEST_DOC,
+        Some(id),
+        None,
+    )
+    .await
+    .unwrap_or(0);
+    let mut trace = crate::kb::trace::RunRecorder::create(
+        mode,
+        crate::kb::trace::RunSpec {
+            kind: crate::kb::models::kb_run::KIND_INGEST_DOC,
+            trigger_src: "admin",
+            tenant_id: tenant.clone(),
+            kb_id: None,
+            doc_id: Some(id),
+            agent_id: None,
+            session_id: None,
+            job_id: None,
+            attempt: prior + 1,
+            long_running: true,
+        },
+    );
+    let result = service::process_document_traced(&deps, id, &tenant, &mut trace).await;
+    if let Err(e) = &result {
+        let _ = document::set_document_status(
+            &state.pool,
+            id,
+            "failed",
+            Some(&e.to_string()),
+            None,
+            &tenant,
+        )
+        .await;
+    }
+    result?;
+    let doc = document::find_document_by_id(&state.pool, id, &tenant)
         .await?
         .ok_or_else(|| AppError::NotFound("kb_document".into()))?;
     Ok(ApiResponse::success(
@@ -906,6 +1075,10 @@ struct AskRequestDto {
     doc_ids: Option<Vec<SnowflakeId>>,
     #[serde(default)]
     stream: bool,
+    /// Admin-only: include the pipeline trace (stages) in the response
+    /// [kb-observability-design §5] — ignored for non-admin callers.
+    #[serde(default)]
+    trace: Option<bool>,
 }
 
 #[derive(serde::Serialize)]
@@ -952,6 +1125,9 @@ async fn public_ask(
         question: req.question,
     };
     let user_id = auth.user_id().map(crate::types::snowflake_id::SnowflakeId);
+    // Trace exposure is admin-only (§5: avoid leaking retrieval internals).
+    let want_trace = req.trace.unwrap_or(false) && auth.ensure_admin().is_ok();
+    let started = std::time::Instant::now();
 
     let mut outcome = crate::kb::pipeline::prepare_answer(&deps, &ask).await?;
 
@@ -968,12 +1144,34 @@ async fn public_ask(
             let result =
                 crate::kb::pipeline::finish_answer_streaming(&deps, &mut outcome, &mut on_delta)
                     .await;
-            let log_id = log_ask(&deps, &ask, &outcome, user_id).await;
+            let latency = started.elapsed().as_millis() as i64;
+            let trace_payload = if want_trace {
+                outcome.trace.stages_snapshot()
+            } else {
+                serde_json::Value::Null
+            };
+            let run_id = match &result {
+                Ok(()) => {
+                    outcome
+                        .trace
+                        .finish(&deps.pool, kb_run::STATUS_OK, None)
+                        .await
+                }
+                Err(e) => {
+                    outcome
+                        .trace
+                        .finish(&deps.pool, kb_run::STATUS_FAILED, Some(&e.to_string()))
+                        .await
+                }
+            };
+            let log_id = log_ask(&deps, &ask, &outcome, user_id, latency, run_id).await;
             let payload = match result {
                 Ok(()) => serde_json::json!({
                     "status": outcome.status,
                     "references": outcome.references.iter().cloned().map(ReferenceDto::from).collect::<Vec<_>>(),
                     "log_id": log_id.map(i64::from),
+                    "run_id": run_id.map(i64::from),
+                    "trace": trace_payload,
                 }),
                 Err(e) => serde_json::json!({ "status": "error", "error": e.to_string() }),
             };
@@ -986,24 +1184,53 @@ async fn public_ask(
             .keep_alive(axum::response::sse::KeepAlive::default())
             .into_response())
     } else {
-        crate::kb::pipeline::finish_answer(&deps, &mut outcome).await?;
-        let log_id = log_ask(&deps, &ask, &outcome, user_id).await;
-        let body = serde_json::json!({
+        let result = crate::kb::pipeline::finish_answer(&deps, &mut outcome).await;
+        let latency = started.elapsed().as_millis() as i64;
+        let trace_payload = if want_trace {
+            outcome.trace.stages_snapshot()
+        } else {
+            serde_json::Value::Null
+        };
+        let run_id = match &result {
+            Ok(()) => {
+                outcome
+                    .trace
+                    .finish(&deps.pool, kb_run::STATUS_OK, None)
+                    .await
+            }
+            Err(e) => {
+                outcome
+                    .trace
+                    .finish(&deps.pool, kb_run::STATUS_FAILED, Some(&e.to_string()))
+                    .await
+            }
+        };
+        let log_id = log_ask(&deps, &ask, &outcome, user_id, latency, run_id).await;
+        result?;
+        let mut body = serde_json::json!({
             "status": outcome.status,
             "answer": outcome.answer,
             "references": outcome.references.iter().cloned().map(ReferenceDto::from).collect::<Vec<_>>(),
             "log_id": log_id.map(i64::from),
         });
+        if want_trace {
+            body["run_id"] = serde_json::json!(run_id.map(i64::from));
+            body["trace"] = trace_payload;
+        }
         Ok(ApiResponse::success(body).into_response())
     }
 }
 
-/// Persist the query log row (§9 feedback data plane).
+/// Persist the query log row (§9 feedback data plane + observability §3.4:
+/// rewritten question, full kb_ids, latency, run backlink — source='ask').
+#[allow(clippy::too_many_arguments)]
 async fn log_ask(
     deps: &crate::kb::service::KbDeps,
     ask: &crate::kb::pipeline::AskRequest,
     outcome: &crate::kb::pipeline::AskOutcome,
     user_id: Option<crate::types::snowflake_id::SnowflakeId>,
+    latency_ms: i64,
+    run_id: Option<SnowflakeId>,
 ) -> Option<crate::types::snowflake_id::SnowflakeId> {
     let cited: serde_json::Value = serde_json::json!(
         outcome
@@ -1017,15 +1244,24 @@ async fn log_ask(
         .first()
         .copied()
         .map(crate::types::snowflake_id::SnowflakeId);
-    crate::kb::models::query_log::insert_log(
+    let kb_ids_json = serde_json::json!(ask.kb_ids);
+    crate::kb::models::query_log::insert_entry(
         &deps.pool,
-        kb_id,
-        &ask.question,
-        Some(&outcome.answer),
-        Some(&cited),
-        outcome.status,
-        Some(f64::from(outcome.top_score)),
-        user_id,
+        &crate::kb::models::query_log::LogEntry {
+            kb_id,
+            question: &ask.question,
+            answer: Some(&outcome.answer),
+            cited_units: Some(&cited),
+            status: outcome.status,
+            top_score: Some(f64::from(outcome.top_score)),
+            user_id,
+            rewritten_question: Some(&outcome.question),
+            kb_ids: Some(&kb_ids_json),
+            latency_ms: Some(latency_ms),
+            run_id,
+            error: None,
+            source: "ask",
+        },
     )
     .await
     .ok()
@@ -1041,7 +1277,11 @@ struct SearchRequestDto {
 }
 
 /// Unit-level search without generation — the retrieval seam agents consume
-/// (§10; [抄WK:agent/tools/knowledge_search.go 模式]).
+/// (§10; [抄WK:agent/tools/knowledge_search.go 模式]). Goes through
+/// `search_units` (no S1 rewrite) with its own traced run + query log
+/// (source='search'). Q7 fix: the response `status` is the REAL coverage
+/// verdict (empty recall or below `fallback_threshold` → `uncovered`),
+/// not the hardcoded `"answered"` `prepare_answer` used to leak.
 async fn public_search(
     auth: AuthUser,
     State(state): State<AppState>,
@@ -1049,35 +1289,108 @@ async fn public_search(
 ) -> AppResult<ApiResponse<serde_json::Value>> {
     auth.ensure_authenticated()?;
     let deps = state.kb_deps()?;
-    let ask = crate::kb::pipeline::AskRequest {
-        tenant_id: tenant_of(&auth),
-        kb_ids: req.kb_ids.unwrap_or_default().iter().map(|i| i.0).collect(),
-        doc_ids: Vec::new(),
-        question: req.query,
-    };
-    let mut outcome = crate::kb::pipeline::prepare_answer(&deps, &ask).await?;
-    if let Some(k) = req.top_k {
-        outcome.context_units.truncate(k as usize);
+    let tenant = tenant_of(&auth);
+    let kb_ids: Vec<i64> = req.kb_ids.unwrap_or_default().iter().map(|i| i.0).collect();
+    let started = std::time::Instant::now();
+
+    let mut trace = crate::kb::trace::RunRecorder::create(
+        crate::kb::trace::TraceMode::parse(&deps.config.kb.trace_mode),
+        crate::kb::trace::RunSpec {
+            kind: kb_run::KIND_SEARCH,
+            trigger_src: "public",
+            tenant_id: tenant.clone(),
+            kb_id: kb_ids.first().copied().map(SnowflakeId),
+            doc_id: None,
+            agent_id: None,
+            session_id: None,
+            job_id: None,
+            attempt: 1,
+            long_running: false,
+        },
+    );
+    trace.begin(&deps.pool, &deps.config).await;
+
+    let result =
+        crate::kb::pipeline::search_units(&deps, &tenant, &kb_ids, &req.query, &mut trace).await;
+    let latency = started.elapsed().as_millis() as i64;
+    match result {
+        Ok((top_score, mut units)) => {
+            if let Some(k) = req.top_k {
+                units.truncate(k as usize);
+            }
+            let status = crate::kb::pipeline::coverage_status(
+                units.len(),
+                top_score,
+                deps.config.kb.fallback_threshold,
+            );
+            let run_id = trace.finish(&deps.pool, kb_run::STATUS_OK, None).await;
+            let cited = serde_json::json!(units.iter().map(|u| u.unit_id).collect::<Vec<i64>>());
+            let kb_ids_json = serde_json::json!(kb_ids);
+            let _ = crate::kb::models::query_log::insert_entry(
+                &deps.pool,
+                &crate::kb::models::query_log::LogEntry {
+                    kb_id: kb_ids.first().copied().map(SnowflakeId),
+                    question: &req.query,
+                    answer: None,
+                    cited_units: Some(&cited),
+                    status,
+                    top_score: Some(f64::from(top_score)),
+                    user_id: auth.user_id().map(SnowflakeId),
+                    rewritten_question: None,
+                    kb_ids: Some(&kb_ids_json),
+                    latency_ms: Some(latency),
+                    run_id,
+                    error: None,
+                    source: "search",
+                },
+            )
+            .await;
+            let items: Vec<serde_json::Value> = units
+                .iter()
+                .map(|u| {
+                    serde_json::json!({
+                        "unit_id": u.unit_id,
+                        "kind": u.kind,
+                        "title": u.title,
+                        "score": u.score,
+                        "is_faq": u.is_faq,
+                        "content": u.content,
+                    })
+                })
+                .collect();
+            Ok(ApiResponse::success(serde_json::json!({
+                "items": items,
+                "status": status,
+                "top_score": top_score,
+            })))
+        }
+        Err(e) => {
+            trace
+                .finish(&deps.pool, kb_run::STATUS_FAILED, Some(&e.to_string()))
+                .await;
+            let kb_ids_json = serde_json::json!(kb_ids);
+            let _ = crate::kb::models::query_log::insert_entry(
+                &deps.pool,
+                &crate::kb::models::query_log::LogEntry {
+                    kb_id: kb_ids.first().copied().map(SnowflakeId),
+                    question: &req.query,
+                    answer: None,
+                    cited_units: None,
+                    status: "error",
+                    top_score: None,
+                    user_id: auth.user_id().map(SnowflakeId),
+                    rewritten_question: None,
+                    kb_ids: Some(&kb_ids_json),
+                    latency_ms: Some(latency),
+                    run_id: None,
+                    error: Some(&e.to_string()),
+                    source: "search",
+                },
+            )
+            .await;
+            Err(e)
+        }
     }
-    let items: Vec<serde_json::Value> = outcome
-        .context_units
-        .iter()
-        .map(|u| {
-            serde_json::json!({
-                "unit_id": u.unit_id,
-                "kind": u.kind,
-                "title": u.title,
-                "score": u.score,
-                "is_faq": u.is_faq,
-                "content": u.content,
-            })
-        })
-        .collect();
-    Ok(ApiResponse::success(serde_json::json!({
-        "items": items,
-        "status": outcome.status,
-        "top_score": outcome.top_score,
-    })))
 }
 
 // ── wiki governance (M4) ───────────────────────────────────────────
@@ -1417,50 +1730,11 @@ async fn admin_edit_chunk(
     auth.ensure_admin()?;
     let deps = state.kb_deps()?;
     let id = parse_snowflake(&id)?;
-    let _tenant = tenant_of(&auth);
     let Some(chunk) = crate::kb::models::chunk::find_chunk_by_id(&state.pool, id).await? else {
         return Err(AppError::NotFound("kb_chunk".into()));
     };
-    // Snapshot the pre-edit content.
-    let snapshot =
-        json!({ "content": chunk.content, "kind": chunk.kind, "breadcrumb": chunk.breadcrumb });
-    raisfast_derive::crud_insert!(
-        &state.pool,
-        "content_revisions",
-        [
-            "content_type" => "kb_chunk",
-            "record_id" => id,
-            "revision_number" => 1_i64,
-            "snapshot" => snapshot,
-            "created_by" => SnowflakeId(auth.user_id().unwrap_or_default())
-        ]
-    )?;
-    // Update content + re-embed + re-index both paths.
-    crate::kb::models::chunk::update_content(&state.pool, id, &req.content).await?;
-    let vectors = deps.embedder.embed(&[req.content.as_str()]).await?;
-    let vector = vectors.first().cloned().unwrap_or_default();
-    crate::kb::models::chunk::update_embedding(&state.pool, id, &vector).await?;
-    deps.vector
-        .upsert(
-            i64::from(chunk.kb_id),
-            vector.len() as u32,
-            &[crate::kb::vectors::VectorItem {
-                unit_id: i64::from(id),
-                kb_id: i64::from(chunk.kb_id),
-                kind: chunk.kind.clone(),
-                embedding: vector,
-            }],
-        )
-        .await?;
-    let doc_key = chunk.doc_id.map(i64::from).unwrap_or_else(|| i64::from(id));
-    deps.kbsearch
-        .reindex_document(&[crate::kb::kbsearch::KbIndexUnit {
-            unit_id: i64::from(id),
-            kb_id: i64::from(chunk.kb_id),
-            doc_id: doc_key,
-            kind: chunk.kind.clone(),
-            text: req.content.clone(),
-        }])
+    // Traced five-step body lives in the service layer (thin handler).
+    service::edit_chunk_traced(&deps, &chunk, auth.user_id().map(SnowflakeId), &req.content)
         .await?;
     Ok(ApiResponse::success(json!({ "id": id, "reindexed": true })))
 }

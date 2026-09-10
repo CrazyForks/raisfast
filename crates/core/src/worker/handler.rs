@@ -7,7 +7,7 @@ use ts_rs::TS;
 
 use crate::errors::app_error::AppResult;
 
-use super::Job;
+use super::{Job, QueuedJob};
 
 /// Self-describing metadata for a cron handler — powers the admin task menu.
 ///
@@ -37,6 +37,14 @@ pub struct HandlerMeta {
 #[async_trait::async_trait]
 pub trait JobHandler: Send + Sync {
     async fn handle(&self, job: &Job) -> AppResult<()>;
+
+    /// Full-context variant: the runner dispatches through this so handlers
+    /// that need job identity (id / attempts / max_attempts — e.g. KB run
+    /// tracing) can override it; everyone else inherits the default
+    /// delegation to [`JobHandler::handle`] with zero changes.
+    async fn handle_queued(&self, job: &QueuedJob) -> AppResult<()> {
+        self.handle(&job.job).await
+    }
 
     /// Return a coalesce key for this job. If two or more jobs in a batch share
     /// the same key, they are merged via [`JobHandler::coalesce`] and executed
@@ -111,6 +119,18 @@ impl JobHandlerRegistry {
         let job_type = job.job_type();
         if let Some(handler) = self.handlers.get(job_type) {
             handler.handle(job).await
+        } else {
+            tracing::warn!("no handler registered for job type: {job_type}");
+            Ok(())
+        }
+    }
+
+    /// Runner entry point — dispatches through [`JobHandler::handle_queued`]
+    /// so overriding handlers receive the full `QueuedJob` context.
+    pub async fn handle_queued(&self, job: &QueuedJob) -> AppResult<()> {
+        let job_type = job.job.job_type();
+        if let Some(handler) = self.handlers.get(job_type) {
+            handler.handle_queued(job).await
         } else {
             tracing::warn!("no handler registered for job type: {job_type}");
             Ok(())

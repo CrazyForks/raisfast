@@ -20,6 +20,9 @@ pub use self::qdrant::QdrantIndex;
 mod bruteforce;
 pub use self::bruteforce::BruteForceIndex;
 
+/// Bruteforce cold-start lazy warm-up (DR10).
+pub mod warmup;
+
 use crate::config::app::AppConfig;
 use crate::errors::app_error::{AppError, AppResult};
 
@@ -68,6 +71,10 @@ pub trait VectorIndex: Send + Sync {
 
     /// Full re-index of one KB from the SQL source of truth.
     async fn rebuild(&self, kb_id: i64, dim: u32, items: &[VectorItem]) -> AppResult<()>;
+
+    /// Point count for one KB (DR9) — the diagnostics/health drift check
+    /// compares this against the SQL embedded-chunk count.
+    async fn count(&self, kb_id: i64) -> AppResult<u64>;
 
     /// Human-readable backend name for health reporting and admin UI.
     fn backend_name(&self) -> &str;

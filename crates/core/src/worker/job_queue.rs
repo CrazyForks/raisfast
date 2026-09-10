@@ -9,8 +9,8 @@ use crate::errors::app_error::{AppError, AppResult};
 use crate::utils::tz::Timestamp;
 
 use super::{
-    JobQueue, JobRow, JobStats, JobStatus, NewJob, QueuedJob, backoff_duration, parse_job,
-    serialize_job,
+    JobFilter, JobQueue, JobRow, JobStats, JobStatus, NewJob, QueuedJob, backoff_duration,
+    parse_job, serialize_job,
 };
 use crate::types::snowflake_id::SnowflakeId;
 
@@ -428,92 +428,86 @@ impl JobQueue for DefaultJobQueue {
 
     async fn list(
         &self,
-        status: Option<JobStatus>,
+        filter: JobFilter,
         page: i64,
         page_size: i64,
     ) -> AppResult<(Vec<JobRow>, i64)> {
         let offset = (page - 1) * page_size;
 
-        let (items, total): (Vec<JobRow>, i64) = if let Some(s) = status {
-            let rows: Vec<crate::db::pool::DbRow> = sqlx::query::<crate::db::pool::Db>(crate::db::safe_sql(&format!(
-                "SELECT {COL_ID}, job_type, payload, status, attempts, max_attempts, run_after, error, created_at, updated_at
-                 FROM jobs WHERE status = {} ORDER BY created_at DESC LIMIT {} OFFSET {}",
-                Driver::ph(1), Driver::ph(2), Driver::ph(3)
-            )))
-            .bind(s)
-            .bind(page_size)
-            .bind(offset)
-            .fetch_all(&self.pool)
-            .await?;
-
-            let total: i64 = sqlx::query_scalar::<crate::db::pool::Db, i64>(crate::db::safe_sql(
-                &format!("SELECT COUNT(*) FROM jobs WHERE status = {}", Driver::ph(1)),
-            ))
-            .bind(s)
-            .fetch_one(&self.pool)
-            .await
-            .unwrap_or(0);
-
-            let items = rows
-                .into_iter()
-                .map(|r: crate::db::pool::DbRow| JobRow {
-                    id: r
-                        .get::<Option<i64>, _>(COL_ID)
-                        .map(|i: i64| i.to_string())
-                        .unwrap_or_default(),
-                    job_type: r.get::<String, _>("job_type"),
-                    payload: r.get::<serde_json::Value, _>("payload"),
-                    status: r.get::<super::JobStatus, _>("status"),
-                    attempts: r.get::<i32, _>("attempts") as u32,
-                    max_attempts: r.get::<i32, _>("max_attempts") as u32,
-                    run_after: r.get::<Option<crate::utils::tz::Timestamp>, _>("run_after"),
-                    error: r.get::<Option<String>, _>("error"),
-                    created_at: r.get::<crate::utils::tz::Timestamp, _>("created_at"),
-                    updated_at: r.get::<crate::utils::tz::Timestamp, _>("updated_at"),
-                })
-                .collect();
-
-            (items, total)
+        // Dynamically build the WHERE clause: status = ? AND job_type = ?
+        let mut clauses: Vec<String> = Vec::new();
+        if filter.status.is_some() {
+            clauses.push(format!("status = {}", Driver::ph(clauses.len() + 1)));
+        }
+        let job_type = filter
+            .job_type
+            .as_deref()
+            .filter(|t| !t.is_empty())
+            .map(str::to_string);
+        if job_type.is_some() {
+            clauses.push(format!("job_type = {}", Driver::ph(clauses.len() + 1)));
+        }
+        let where_sql = if clauses.is_empty() {
+            String::new()
         } else {
-            let rows: Vec<crate::db::pool::DbRow> = sqlx::query::<crate::db::pool::Db>(crate::db::safe_sql(&format!(
-                "SELECT {COL_ID}, job_type, payload, status, attempts, max_attempts, run_after, error, created_at, updated_at
-                 FROM jobs ORDER BY created_at DESC LIMIT {} OFFSET {}",
-                Driver::ph(1), Driver::ph(2)
-            )))
-            .bind(page_size)
-            .bind(offset)
-            .fetch_all(&self.pool)
-            .await?;
-
-            let total: i64 =
-                sqlx::query_scalar::<crate::db::pool::Db, i64>("SELECT COUNT(*) FROM jobs")
-                    .fetch_one(&self.pool)
-                    .await
-                    .unwrap_or(0);
-
-            let items = rows
-                .into_iter()
-                .map(|r: crate::db::pool::DbRow| JobRow {
-                    id: r
-                        .get::<Option<i64>, _>(COL_ID)
-                        .map(|i: i64| i.to_string())
-                        .unwrap_or_default(),
-                    job_type: r.get::<String, _>("job_type"),
-                    payload: r.get::<serde_json::Value, _>("payload"),
-                    status: r.get::<super::JobStatus, _>("status"),
-                    attempts: r.get::<i32, _>("attempts") as u32,
-                    max_attempts: r.get::<i32, _>("max_attempts") as u32,
-                    run_after: r.get::<Option<crate::utils::tz::Timestamp>, _>("run_after"),
-                    error: r.get::<Option<String>, _>("error"),
-                    created_at: r.get::<crate::utils::tz::Timestamp, _>("created_at"),
-                    updated_at: r.get::<crate::utils::tz::Timestamp, _>("updated_at"),
-                })
-                .collect();
-
-            (items, total)
+            format!(" WHERE {}", clauses.join(" AND "))
         };
 
+        let mut query = sqlx::query::<crate::db::pool::Db>(crate::db::safe_sql(&format!(
+            "SELECT {COL_ID}, job_type, payload, status, attempts, max_attempts, run_after, error, created_at, updated_at
+             FROM jobs{where_sql} ORDER BY created_at DESC LIMIT {} OFFSET {}",
+            Driver::ph(clauses.len() + 1),
+            Driver::ph(clauses.len() + 2)
+        )));
+        if let Some(s) = filter.status {
+            query = query.bind(s);
+        }
+        if let Some(t) = job_type.as_deref() {
+            query = query.bind(t);
+        }
+        query = query.bind(page_size).bind(offset);
+        let rows: Vec<crate::db::pool::DbRow> = query.fetch_all(&self.pool).await?;
+
+        let mut count_query = sqlx::query_scalar::<crate::db::pool::Db, i64>(
+            crate::db::safe_sql(&format!("SELECT COUNT(*) FROM jobs{where_sql}")),
+        );
+        if let Some(s) = filter.status {
+            count_query = count_query.bind(s);
+        }
+        if let Some(t) = filter.job_type.as_deref().filter(|t| !t.is_empty()) {
+            count_query = count_query.bind(t);
+        }
+        let total: i64 = count_query.fetch_one(&self.pool).await.unwrap_or(0);
+
+        let items = rows
+            .into_iter()
+            .map(|r: crate::db::pool::DbRow| JobRow {
+                id: r
+                    .get::<Option<i64>, _>(COL_ID)
+                    .map(|i: i64| i.to_string())
+                    .unwrap_or_default(),
+                job_type: r.get::<String, _>("job_type"),
+                payload: r.get::<serde_json::Value, _>("payload"),
+                status: r.get::<super::JobStatus, _>("status"),
+                attempts: r.get::<i32, _>("attempts") as u32,
+                max_attempts: r.get::<i32, _>("max_attempts") as u32,
+                run_after: r.get::<Option<crate::utils::tz::Timestamp>, _>("run_after"),
+                error: r.get::<Option<String>, _>("error"),
+                created_at: r.get::<crate::utils::tz::Timestamp, _>("created_at"),
+                updated_at: r.get::<crate::utils::tz::Timestamp, _>("updated_at"),
+            })
+            .collect();
+
         Ok((items, total))
+    }
+
+    async fn list_job_types(&self) -> AppResult<Vec<String>> {
+        let rows: Vec<(String,)> = sqlx::query_as(
+            "SELECT DISTINCT job_type FROM jobs ORDER BY job_type",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows.into_iter().map(|(t,)| t).collect())
     }
 
     async fn retry(&self, id: &str) -> AppResult<()> {
@@ -719,7 +713,7 @@ mod tests {
         assert_eq!(stats.pending, 1);
         assert_eq!(stats.running, 0);
 
-        let (rows, _) = q.list(None, 1, 10).await.unwrap();
+        let (rows, _) = q.list(JobFilter::default(), 1, 10).await.unwrap();
         assert!(rows[0].run_after.is_some());
         assert_eq!(rows[0].error.as_deref(), Some("something went wrong"));
     }
@@ -805,7 +799,7 @@ mod tests {
         .await
         .unwrap();
 
-        let (rows, total) = q.list(None, 1, 10).await.unwrap();
+        let (rows, total) = q.list(JobFilter::default(), 1, 10).await.unwrap();
         assert_eq!(total, 2);
         assert_eq!(rows.len(), 2);
     }
@@ -819,11 +813,50 @@ mod tests {
         let jobs = q.dequeue(1).await.unwrap();
         q.complete(&jobs[0].id).await.unwrap();
 
-        let (pending, _) = q.list(Some(JobStatus::Pending), 1, 10).await.unwrap();
+        let (pending, _) = q.list(JobFilter { status: Some(JobStatus::Pending), ..Default::default() }, 1, 10).await.unwrap();
         assert_eq!(pending.len(), 1);
 
-        let (completed, _) = q.list(Some(JobStatus::Completed), 1, 10).await.unwrap();
+        let (completed, _) = q.list(JobFilter { status: Some(JobStatus::Completed), ..Default::default() }, 1, 10).await.unwrap();
         assert_eq!(completed.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn list_filter_by_job_type() {
+        let q = setup().await;
+        q.enqueue(sample_job()).await.unwrap();
+        q.enqueue(NewJob {
+            job: Job::InvalidateCache { keys: vec![] },
+            max_attempts: None,
+            run_after: None,
+            cron_schedule_id: None,
+            cron_log_id: None,
+            priority: 0,
+            timeout_secs: None,
+            dedup_key: None,
+        })
+        .await
+        .unwrap();
+
+        let types = q.list_job_types().await.unwrap();
+        assert!(types.contains(&"generate_sitemap".to_string()));
+        assert!(types.contains(&"invalidate_cache".to_string()));
+
+        let filter = JobFilter {
+            job_type: Some("generate_sitemap".to_string()),
+            ..Default::default()
+        };
+        let (rows, total) = q.list(filter, 1, 10).await.unwrap();
+        assert_eq!(total, 1);
+        assert_eq!(rows[0].job_type, "generate_sitemap");
+
+        // Combined with status filter
+        let combined = JobFilter {
+            status: Some(JobStatus::Completed),
+            job_type: Some("generate_sitemap".to_string()),
+        };
+        let (rows, total) = q.list(combined, 1, 10).await.unwrap();
+        assert_eq!(total, 0);
+        assert!(rows.is_empty());
     }
 
     #[tokio::test]
@@ -833,14 +866,14 @@ mod tests {
             q.enqueue(sample_job()).await.unwrap();
         }
 
-        let (page1, total) = q.list(None, 1, 2).await.unwrap();
+        let (page1, total) = q.list(JobFilter::default(), 1, 2).await.unwrap();
         assert_eq!(total, 5);
         assert_eq!(page1.len(), 2);
 
-        let (page2, _) = q.list(None, 2, 2).await.unwrap();
+        let (page2, _) = q.list(JobFilter::default(), 2, 2).await.unwrap();
         assert_eq!(page2.len(), 2);
 
-        let (page3, _) = q.list(None, 3, 2).await.unwrap();
+        let (page3, _) = q.list(JobFilter::default(), 3, 2).await.unwrap();
         assert_eq!(page3.len(), 1);
     }
 
@@ -872,7 +905,7 @@ mod tests {
         assert_eq!(stats.pending, 1);
         assert_eq!(stats.dead, 0);
 
-        let (rows, _) = q.list(None, 1, 10).await.unwrap();
+        let (rows, _) = q.list(JobFilter::default(), 1, 10).await.unwrap();
         assert_eq!(rows[0].attempts, 0);
         assert!(rows[0].error.is_none());
         assert!(rows[0].run_after.is_none());
@@ -900,12 +933,12 @@ mod tests {
         let q = setup().await;
         q.enqueue(sample_job()).await.unwrap();
 
-        let (rows, _) = q.list(None, 1, 10).await.unwrap();
+        let (rows, _) = q.list(JobFilter::default(), 1, 10).await.unwrap();
         assert_eq!(rows.len(), 1);
 
         q.remove(&rows[0].id).await.unwrap();
 
-        let (rows, _) = q.list(None, 1, 10).await.unwrap();
+        let (rows, _) = q.list(JobFilter::default(), 1, 10).await.unwrap();
         assert!(rows.is_empty());
     }
 

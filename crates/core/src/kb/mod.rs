@@ -13,6 +13,7 @@
 //! loop → M6 admin frontend.
 
 pub mod chunker;
+pub mod diagnostics;
 pub mod distill;
 pub mod eval;
 
@@ -53,4 +54,5 @@ pub mod kbsearch;
 pub mod models;
 pub mod pipeline;
 pub mod service;
+pub mod trace;
 pub mod vectors;

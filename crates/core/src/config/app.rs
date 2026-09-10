@@ -820,6 +820,15 @@ pub struct KbConfig {
     /// to keep round-trips sane. Env `RAISFAST_KB_EMBED_BATCH_SIZE`.
     #[serde(default = "default_kb_embed_batch_size")]
     pub embed_batch_size: usize,
+    /// Observability plane persistence mode (kb-observability-design DR5):
+    /// `all` = every run row; `errors` = only failed/degraded runs;
+    /// `off` = no kb_runs writes. Env `RAISFAST_KB_TRACE_MODE`.
+    #[serde(default = "default_kb_trace_mode")]
+    pub trace_mode: String,
+    /// kb_runs retention window in days (0 = keep forever); enforced by the
+    /// T3 cleanup sweeper. Env `RAISFAST_KB_TRACE_RETENTION_DAYS`.
+    #[serde(default = "default_kb_trace_retention_days")]
+    pub trace_retention_days: i64,
 }
 
 fn default_kb_top_k() -> u32 {
@@ -850,6 +859,14 @@ fn default_kb_qdrant_prefix() -> String {
     "kb".to_string()
 }
 
+fn default_kb_trace_mode() -> String {
+    "all".to_string()
+}
+
+fn default_kb_trace_retention_days() -> i64 {
+    14
+}
+
 impl Default for KbConfig {
     fn default() -> Self {
         Self {
@@ -863,6 +880,8 @@ impl Default for KbConfig {
             fallback_threshold: default_kb_fallback_threshold(),
             context_budget_tokens: default_kb_context_budget(),
             embed_batch_size: default_kb_embed_batch_size(),
+            trace_mode: default_kb_trace_mode(),
+            trace_retention_days: default_kb_trace_retention_days(),
         }
     }
 }
@@ -910,6 +929,15 @@ impl KbConfig {
                 .and_then(|v| v.parse().ok())
                 .filter(|n| *n > 0)
                 .unwrap_or(defaults.embed_batch_size),
+            trace_mode: env::var("RAISFAST_KB_TRACE_MODE")
+                .ok()
+                .filter(|v| matches!(v.as_str(), "all" | "errors" | "off"))
+                .unwrap_or(defaults.trace_mode),
+            trace_retention_days: env::var("RAISFAST_KB_TRACE_RETENTION_DAYS")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .filter(|d| *d >= 0)
+                .unwrap_or(defaults.trace_retention_days),
         }
     }
 }
@@ -1146,6 +1174,13 @@ pub fn default_cron_schedules() -> Vec<CronScheduleConfig> {
             payload: None,
             cron_expr: "0 0 */6 * * *".into(),
             enabled: false,
+        },
+        CronScheduleConfig {
+            label: "KB Runs Retention Sweep".into(),
+            job_type: "kb_runs_cleanup".into(),
+            payload: None,
+            cron_expr: "0 0 5 * * *".into(),
+            enabled: true,
         },
         CronScheduleConfig {
             label: "Cleanup Old Jobs".into(),

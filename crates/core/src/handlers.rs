@@ -28,6 +28,7 @@ pub mod coupon;
 pub mod cron;
 pub mod currencies;
 pub mod health;
+pub mod jobs;
 pub mod media;
 pub mod oauth;
 pub mod options;

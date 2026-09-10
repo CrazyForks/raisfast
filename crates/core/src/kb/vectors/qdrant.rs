@@ -185,6 +185,21 @@ impl VectorIndex for QdrantIndex {
     fn backend_name(&self) -> &str {
         "qdrant"
     }
+
+    /// DR9: exact point count for the KB's collection. A missing
+    /// collection counts as 0 (lazily created on first upsert).
+    async fn count(&self, kb_id: i64) -> AppResult<u64> {
+        let name = self.collection(kb_id);
+        match self
+            .client
+            .count(qdrant_client::qdrant::CountPointsBuilder::new(&name).exact(true))
+            .await
+        {
+            Ok(res) => Ok(res.result.map_or(0, |r| r.count)),
+            Err(e) if is_not_found(&e) => Ok(0),
+            Err(e) => Err(qerr("count", e)),
+        }
+    }
 }
 
 #[cfg(test)]

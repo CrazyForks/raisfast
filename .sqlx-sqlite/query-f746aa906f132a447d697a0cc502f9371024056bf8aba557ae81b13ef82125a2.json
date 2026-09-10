@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO kb_query_logs (id, kb_id, question, answer, cited_units, status, top_score, user_id, rewritten_question, kb_ids, latency_ms, run_id, error, source, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 15
+    },
+    "nullable": []
+  },
+  "hash": "f746aa906f132a447d697a0cc502f9371024056bf8aba557ae81b13ef82125a2"
+}

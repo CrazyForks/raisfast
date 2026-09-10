@@ -137,6 +137,8 @@ pub enum Job {
         kb_id: SnowflakeId,
         tenant_id: String,
     },
+    /// Daily kb_runs retention sweep (kb-observability-design §10).
+    KbRunsCleanup {},
     KbDistillWiki {
         kb_id: SnowflakeId,
         doc_ids: Vec<i64>,
@@ -174,6 +176,7 @@ impl Job {
             Job::ProcessWalletOutbox => "process_wallet_outbox",
             Job::KbProcessDocument { .. } => "kb_process_document",
             Job::KbRebuildVectorIndex { .. } => "kb_rebuild_vector_index",
+            Job::KbRunsCleanup {} => "kb_runs_cleanup",
             Job::KbDistillWiki { .. } => "kb_distill_wiki",
             Job::Custom { job_type, .. } => job_type,
         }
@@ -255,10 +258,12 @@ pub trait JobQueue: Send + Sync {
     async fn stats(&self) -> AppResult<JobStats>;
     async fn list(
         &self,
-        status: Option<JobStatus>,
+        filter: JobFilter,
         page: i64,
         page_size: i64,
     ) -> AppResult<(Vec<JobRow>, i64)>;
+    /// Distinct `job_type` values present in the queue (for filter dropdowns).
+    async fn list_job_types(&self) -> AppResult<Vec<String>>;
     async fn retry(&self, id: &str) -> AppResult<()>;
     async fn remove(&self, id: &str) -> AppResult<()>;
     async fn cleanup(&self) -> AppResult<u64>;
@@ -268,6 +273,13 @@ pub trait JobQueue: Send + Sync {
     /// Jobs still under `max_attempts` go back to `pending`; those that have
     /// exhausted their retries are marked `dead`.
     async fn requeue_stuck(&self, timeout: Duration) -> AppResult<u64>;
+}
+
+/// Filter for admin job listing ([`JobQueue::list`]).
+#[derive(Debug, Clone, Default)]
+pub struct JobFilter {
+    pub status: Option<JobStatus>,
+    pub job_type: Option<String>,
 }
 
 /// Job statistics

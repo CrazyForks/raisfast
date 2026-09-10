@@ -55,6 +55,7 @@ pub async fn register(
     state: &AppState,
     auth: &AuthUser,
     agent: &AiAgent,
+    session_id: Option<crate::types::snowflake_id::SnowflakeId>,
 ) {
     if state.kb_runtime.is_none() {
         return; // KB subsystem disabled — tool simply absent.
@@ -90,6 +91,8 @@ pub async fn register(
         deps,
         tenant,
         scope,
+        agent_id: Some(agent.id),
+        session_id,
         seen: Mutex::new(HashSet::new()),
     });
 }
@@ -102,6 +105,8 @@ pub fn register_catalog(registry: &mut ToolRegistry, state: &AppState) {
     if let Ok(deps) = state.kb_deps() {
         registry.register(KnowledgeSearchTool {
             deps,
+            agent_id: None,
+            session_id: None,
             tenant: String::new(),
             scope: Vec::new(),
             seen: Mutex::new(HashSet::new()),
@@ -147,6 +152,10 @@ struct KnowledgeSearchTool {
     tenant: String,
     /// Tenant-validated KB ids bound at registration (search targets).
     scope: Vec<i64>,
+    /// Attribution [kb-observability-design §3.1]: which agent / session
+    /// invoked the search (None for the never-executed catalog instance).
+    agent_id: Option<crate::types::snowflake_id::SnowflakeId>,
+    session_id: Option<crate::types::snowflake_id::SnowflakeId>,
     /// Unit ids already returned earlier this turn.
     seen: Mutex<HashSet<i64>>,
 }
@@ -238,22 +247,108 @@ that the knowledge base does not cover the question — never fabricate."
             .and_then(Value::as_i64)
             .map_or(DEFAULT_TOP_K, |k| k.clamp(1, MAX_TOP_K as i64) as usize);
 
+        // Observability run [kb-observability-design T2]: one run per tool
+        // call (stages repeat per query), agent/session attribution, and a
+        // single query-log row with source='agent' so agent misses become
+        // gap signal without flooding the human curation list (§3.4).
+        let mut trace = crate::kb::trace::RunRecorder::create(
+            crate::kb::trace::TraceMode::parse(&self.deps.config.kb.trace_mode),
+            crate::kb::trace::RunSpec {
+                kind: crate::kb::models::kb_run::KIND_SEARCH,
+                trigger_src: "agent",
+                tenant_id: self.tenant.clone(),
+                kb_id: effective_scope
+                    .first()
+                    .map(|i| crate::types::snowflake_id::SnowflakeId(*i)),
+                doc_id: None,
+                agent_id: self.agent_id,
+                session_id: self.session_id,
+                job_id: None,
+                attempt: 1,
+                long_running: false,
+            },
+        );
+        trace.begin(&self.deps.pool, &self.deps.config).await;
+
         // Per-query retrieval (S2–S7, no S1 rewrite, no generation), merged
         // across queries keeping each unit's best score and first source.
         let mut merged: HashMap<i64, (f32, String, ContextUnit)> = HashMap::new();
+        let mut retrieval_error: Option<String> = None;
         for q in &queries {
-            let (_top, units) =
-                pipeline::search_units(&self.deps, &self.tenant, &effective_scope, q)
-                    .await
-                    .map_err(|e| format!("knowledge_search failed: {e}"))?;
-            for u in units {
-                match merged.get(&u.unit_id) {
-                    Some((best, _, _)) if *best >= u.score => {}
-                    _ => {
-                        merged.insert(u.unit_id, (u.score, q.clone(), u));
+            match pipeline::search_units(&self.deps, &self.tenant, &effective_scope, q, &mut trace)
+                .await
+            {
+                Ok((_top, units)) => {
+                    for u in units {
+                        match merged.get(&u.unit_id) {
+                            Some((best, _, _)) if *best >= u.score => {}
+                            _ => {
+                                merged.insert(u.unit_id, (u.score, q.clone(), u));
+                            }
+                        }
                     }
                 }
+                Err(e) => {
+                    retrieval_error = Some(format!("knowledge_search failed: {e}"));
+                    break;
+                }
             }
+        }
+        let top_score = merged.values().map(|(s, _, _)| *s).fold(0.0_f32, f32::max);
+        let uncovered = pipeline::coverage_status(
+            merged.len(),
+            top_score,
+            self.deps.config.kb.fallback_threshold,
+        ) == "uncovered";
+        let error_text = retrieval_error.clone();
+        let run_id = match error_text.as_deref() {
+            Some(err) => {
+                trace
+                    .finish(
+                        &self.deps.pool,
+                        crate::kb::models::kb_run::STATUS_FAILED,
+                        Some(err),
+                    )
+                    .await
+            }
+            None => {
+                trace
+                    .finish(&self.deps.pool, crate::kb::models::kb_run::STATUS_OK, None)
+                    .await
+            }
+        };
+        // One log row per tool call (source='agent'; Q4 收口).
+        let cited: serde_json::Value =
+            serde_json::json!(merged.keys().copied().collect::<Vec<i64>>());
+        let _ = crate::kb::models::query_log::insert_entry(
+            &self.deps.pool,
+            &crate::kb::models::query_log::LogEntry {
+                kb_id: effective_scope
+                    .first()
+                    .map(|i| crate::types::snowflake_id::SnowflakeId(*i)),
+                question: &queries.join(" | "),
+                answer: None,
+                cited_units: Some(&cited),
+                status: if error_text.is_some() {
+                    "error"
+                } else if uncovered {
+                    "uncovered"
+                } else {
+                    "answered"
+                },
+                top_score: Some(f64::from(top_score)),
+                user_id: None,
+                rewritten_question: None,
+                kb_ids: Some(&serde_json::json!(effective_scope)),
+                latency_ms: None,
+                run_id,
+                error: error_text.as_deref(),
+                source: "agent",
+            },
+        )
+        .await;
+        if let Some(err) = error_text {
+            return Err(err);
         }
         let mut ranked: Vec<(f32, String, ContextUnit)> = merged.into_values().collect();
         ranked.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
@@ -431,6 +526,8 @@ mod tests {
 
     fn tool(deps: KbDeps, tenant: &str, scope: Vec<i64>) -> KnowledgeSearchTool {
         KnowledgeSearchTool {
+            agent_id: None,
+            session_id: None,
             deps,
             tenant: tenant.to_string(),
             scope,
@@ -539,6 +636,53 @@ mod tests {
         assert!(
             !second.contains("<content>"),
             "seen unit omits content: {second}"
+        );
+    }
+
+    /// [kb-observability-design §4.2] agent 归因：run 行落 agent_id/session_id。
+    #[tokio::test]
+    async fn search_run_records_agent_and_session_attribution() {
+        let deps = deps().await;
+        let kb_id = seeded_kb(
+            &deps,
+            "default",
+            "attr",
+            "raisfast 归因测试语料：混合检索可观测。",
+        )
+        .await;
+        let pool = deps.pool.clone();
+        let tool = KnowledgeSearchTool {
+            deps,
+            tenant: "default".into(),
+            scope: vec![kb_id],
+            agent_id: Some(crate::types::snowflake_id::SnowflakeId(4242)),
+            session_id: Some(crate::types::snowflake_id::SnowflakeId(777)),
+            seen: Mutex::new(HashSet::new()),
+        };
+        let q = serde_json::json!({ "queries": ["混合检索"] });
+        let out = tool.execute(q).await.unwrap();
+        assert!(out.contains("<search_results"));
+
+        let (runs, _) = crate::kb::models::kb_run::list_runs(
+            &pool,
+            "default",
+            &crate::kb::models::kb_run::RunFilter {
+                kind: Some("search".into()),
+                kb_id: None,
+                doc_id: None,
+                agent_id: Some(4242),
+                session_id: Some(777),
+                status: None,
+            },
+            1,
+            10,
+        )
+        .await
+        .unwrap();
+        assert!(
+            runs.first()
+                .is_some_and(|r| r.trigger_src == "agent" && r.status == "ok"),
+            "agent-attributed run row must exist"
         );
     }
 
