@@ -1791,8 +1791,10 @@ CREATE TABLE IF NOT EXISTS llm_logs (
     elapsed_ms INT,
     status_code INT,
     error_message TEXT,
+    day VARCHAR(10) NOT NULL DEFAULT '',
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     INDEX idx_llm_logs_tenant (tenant_id, created_at),
+    INDEX idx_llm_logs_day (tenant_id, day),
     INDEX idx_llm_logs_channel (channel_id, created_at),
     INDEX idx_llm_logs_token (token_id, created_at)
 );

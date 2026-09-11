@@ -169,8 +169,7 @@ pub fn estimate_precharge(
                     .filter(|v| *v > 0)
                     .or_else(|| max_output_tokens.filter(|v| *v > 0))
                     .unwrap_or(4096);
-                (prompt_est * pricing.input_price
-                    + max_tokens_eff as f64 * pricing.output_price)
+                (prompt_est * pricing.input_price + max_tokens_eff as f64 * pricing.output_price)
                     / 1_000_000.0
             };
             Quota::from_usd_ceil(usd * group_ratio)
@@ -213,9 +212,7 @@ pub fn cost_quota(
 ) -> Quota {
     match cost_mode {
         LlmCostMode::Fixed => Quota(0),
-        LlmCostMode::Usage => {
-            Quota::from_usd_ceil(usage_usd(pricing, usage) * cost_discount)
-        }
+        LlmCostMode::Usage => Quota::from_usd_ceil(usage_usd(pricing, usage) * cost_discount),
     }
 }
 
@@ -438,7 +435,10 @@ mod tests {
         let p = pricing(2.0, 4.0);
         let u = usage(1_000_000, 500_000);
         // billable USD = (1M×2 + 0.5M×4)/1M = $4 → 4,000,000 quota at 1.0.
-        assert_eq!(cost_quota(&p, &u, LlmCostMode::Usage, 1.0), Quota(4_000_000));
+        assert_eq!(
+            cost_quota(&p, &u, LlmCostMode::Usage, 1.0),
+            Quota(4_000_000)
+        );
         // 8折 = $3.2 → 3,200,000.
         assert_eq!(
             cost_quota(&p, &u, LlmCostMode::Usage, 0.8),
@@ -515,7 +515,12 @@ mod tests {
     #[test]
     fn exact_profit_example() {
         let sell = settle_quota(&example_pricing(), &example_usage(), 1.5);
-        let cost = cost_quota(&example_pricing(), &example_usage(), LlmCostMode::Usage, 0.8);
+        let cost = cost_quota(
+            &example_pricing(),
+            &example_usage(),
+            LlmCostMode::Usage,
+            0.8,
+        );
         assert_eq!(sell - cost, Quota(5_005)); // $0.005005
     }
 
@@ -618,7 +623,12 @@ mod tests {
     #[test]
     fn cost_quota_fixed_ignores_usage_entirely() {
         assert_eq!(
-            cost_quota(&example_pricing(), &example_usage(), LlmCostMode::Fixed, 0.0),
+            cost_quota(
+                &example_pricing(),
+                &example_usage(),
+                LlmCostMode::Fixed,
+                0.0
+            ),
             Quota(0)
         );
     }

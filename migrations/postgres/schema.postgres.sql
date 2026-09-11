@@ -1859,8 +1859,10 @@ CREATE TABLE IF NOT EXISTS llm_logs (
     elapsed_ms INTEGER,
     status_code INTEGER,
     error_message TEXT,
+    day VARCHAR(10) NOT NULL DEFAULT '',
     created_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_llm_logs_tenant ON llm_logs(tenant_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_llm_logs_day ON llm_logs(tenant_id, day);
 CREATE INDEX IF NOT EXISTS idx_llm_logs_channel ON llm_logs(channel_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_llm_logs_token ON llm_logs(token_id, created_at);

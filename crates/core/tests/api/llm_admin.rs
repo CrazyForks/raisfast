@@ -593,6 +593,38 @@ async fn admin_models_crud_with_immediate_cache_invalidation() {
         "price change is immediate"
     );
 
+    // ── 开关端点：disable 摘出目录，enable 回归 ──
+    let (status, _) = crate::send(
+        &mut app,
+        admin_req(
+            "POST",
+            &format!("/api/v1/admin/llm/models/{mid}/disable"),
+            &admin_jwt,
+            None,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "disable via switch endpoint");
+    assert!(
+        router.model_info("default", &model_name).is_none(),
+        "disabled model leaves the active directory"
+    );
+    let (status, _) = crate::send(
+        &mut app,
+        admin_req(
+            "POST",
+            &format!("/api/v1/admin/llm/models/{mid}/enable"),
+            &admin_jwt,
+            None,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "enable via switch endpoint");
+    assert!(
+        router.model_info("default", &model_name).is_some(),
+        "enabled model re-enters the active directory"
+    );
+
     // 删除 → 目录与缓存同时摘除（唯一名，无 builtin 兜底）。
     let (status, _) = crate::send(
         &mut app,
@@ -826,6 +858,284 @@ async fn user_token_self_service_lifecycle() {
     let _ = (owner_id, other_id);
 }
 
+// ── Admin token 管理：代建（指定用户）/ 列表回填用户名 / 开关 ──────
+
+#[tokio::test]
+async fn admin_token_administration_and_toggle() {
+    let (_, state) = crate::test_app().await;
+    let (owner_id, owner_jwt) = user_jwt(&state.pool, false).await;
+    let (_other_id, other_jwt) = user_jwt(&state.pool, false).await;
+    let (_admin_id, admin_jwt) = user_jwt(&state.pool, true).await;
+    let owner = raisfast::models::user::find_by_id(&state.pool, owner_id, None)
+        .await
+        .unwrap()
+        .expect("owner exists");
+    let mut app = llm_admin_app(&state);
+
+    // 非 admin 访问 admin 列表 → 403。
+    let (status, _) = crate::send(
+        &mut app,
+        admin_req("GET", "/api/v1/admin/llm/tokens", &owner_jwt, None),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "admin list is admin-only");
+
+    // admin 代建：指定 user_id → token 归属该用户。
+    let (status, resp) = crate::send(
+        &mut app,
+        admin_req(
+            "POST",
+            "/api/v1/admin/llm/tokens",
+            &admin_jwt,
+            Some(json!({
+                "name": "for-owner", "user_id": owner_id.to_string(), "remain_quota": 100
+            })),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "body: {resp:?}");
+    let tid = resp["data"]["token"]["id"].as_str().unwrap().to_owned();
+    assert_eq!(
+        resp["data"]["token"]["user_id"].as_str(),
+        Some(owner_id.to_string().as_str()),
+        "token belongs to the target user"
+    );
+
+    // 不存在的 user_id → 400。
+    let (status, _) = crate::send(
+        &mut app,
+        admin_req(
+            "POST",
+            "/api/v1/admin/llm/tokens",
+            &admin_jwt,
+            Some(json!({ "name": "ghost", "user_id": "4194304" })),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "unknown user rejected");
+
+    // admin 列表：按 tid 过滤（共享库不做全量断言），username 已回填。
+    let find_row = |resp: &Value| -> Value {
+        resp["data"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["id"].as_str() == Some(tid.as_str()))
+            .cloned()
+            .expect("token present in list")
+    };
+    let (status, resp) = crate::send(
+        &mut app,
+        admin_req("GET", "/api/v1/admin/llm/tokens", &admin_jwt, None),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        find_row(&resp)["username"].as_str(),
+        Some(owner.username.as_str()),
+        "owner username resolved"
+    );
+
+    // username 子串过滤：命中 / 未命中 / 精确 user_id。
+    let prefix = &owner.username[..owner.username.len().min(8)];
+    let (status, resp) = crate::send(
+        &mut app,
+        admin_req(
+            "GET",
+            &format!("/api/v1/admin/llm/tokens?username={prefix}"),
+            &admin_jwt,
+            None,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        !resp["data"].as_array().unwrap().is_empty(),
+        "username substring matches"
+    );
+    assert!(
+        resp["data"].as_array().unwrap().iter().all(|r| r
+            ["username"]
+            .as_str()
+            .is_some_and(|n| n.to_lowercase().contains(&prefix.to_lowercase()))),
+        "every returned row matches the username filter"
+    );
+    let (status, resp) = crate::send(
+        &mut app,
+        admin_req(
+            "GET",
+            "/api/v1/admin/llm/tokens?username=no-such-user-xyz",
+            &admin_jwt,
+            None,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        resp["data"].as_array().unwrap().len(),
+        0,
+        "unknown username yields empty list"
+    );
+    let (status, resp) = crate::send(
+        &mut app,
+        admin_req(
+            "GET",
+            &format!("/api/v1/admin/llm/tokens?username={owner_id}"),
+            &admin_jwt,
+            None,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        resp["data"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|r| r["id"].as_str() == Some(tid.as_str())),
+        "exact user_id filter matches"
+    );
+
+    // 所有者 disable（开关端点，authed）。
+    let (status, _) = crate::send(
+        &mut app,
+        admin_req(
+            "POST",
+            &format!("/api/v1/llm/tokens/{tid}/disable"),
+            &owner_jwt,
+            None,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, resp) = crate::send(
+        &mut app,
+        admin_req("GET", "/api/v1/llm/tokens", &owner_jwt, None),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(find_row(&resp)["status"], "disabled");
+
+    // 他人 enable → 403（所有权）。
+    let (status, _) = crate::send(
+        &mut app,
+        admin_req(
+            "POST",
+            &format!("/api/v1/llm/tokens/{tid}/enable"),
+            &other_jwt,
+            None,
+        ),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::FORBIDDEN,
+        "ownership enforced on toggle"
+    );
+
+    // admin 跨所有权 enable + 删除（旁路所有权）。
+    let (status, _) = crate::send(
+        &mut app,
+        admin_req(
+            "POST",
+            &format!("/api/v1/llm/tokens/{tid}/enable"),
+            &admin_jwt,
+            None,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "admin bypasses ownership");
+    let (status, _) = crate::send(
+        &mut app,
+        admin_req(
+            "DELETE",
+            &format!("/api/v1/llm/tokens/{tid}"),
+            &admin_jwt,
+            None,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "admin may delete any token");
+}
+
+// ── Logs 用户名过滤（logs 页）───────────────────────────────────
+
+#[tokio::test]
+async fn admin_logs_username_filter() {
+    let (_, state) = crate::test_app().await;
+    let (owner_id, _owner_jwt) = user_jwt(&state.pool, false).await;
+    let (_admin_id, admin_jwt) = user_jwt(&state.pool, true).await;
+    let owner = raisfast::models::user::find_by_id(&state.pool, owner_id, None)
+        .await
+        .unwrap()
+        .expect("owner exists");
+
+    // 唯一 model 名做行标记（共享库不做全量断言）。
+    let marker = format!("usr-flt-{}", raisfast::utils::id::new_id());
+    raisfast::llm::models::log::insert_log(
+        &state.pool,
+        raisfast::llm::models::log::NewLog {
+            user_id: Some(owner_id),
+            source: raisfast::llm::models::log::LogSource::Relay,
+            model_name: marker.clone(),
+            quota: raisfast::types::quota::Quota(1_000_000),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+
+    let mut app = llm_admin_app(&state);
+    let has_marker = |resp: &Value| -> bool {
+        resp["data"]["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|l| l["model_name"].as_str() == Some(marker.as_str()))
+    };
+
+    // 用户名子串过滤 → 命中。
+    let prefix = &owner.username[..owner.username.len().min(8)];
+    let (status, resp) = crate::send(
+        &mut app,
+        admin_req(
+            "GET",
+            &format!("/api/v1/admin/llm/logs?username={prefix}&page_size=100"),
+            &admin_jwt,
+            None,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "body: {resp:?}");
+    assert!(has_marker(&resp), "username substring filter hits");
+    // 精确 user_id 过滤同样命中。
+    let (status, resp) = crate::send(
+        &mut app,
+        admin_req(
+            "GET",
+            &format!("/api/v1/admin/llm/logs?username={owner_id}&page_size=100"),
+            &admin_jwt,
+            None,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(has_marker(&resp), "exact user id filter hits");
+    // 未命中用户名 → 空。
+    let (status, resp) = crate::send(
+        &mut app,
+        admin_req(
+            "GET",
+            "/api/v1/admin/llm/logs?username=no-such-user-xyz",
+            &admin_jwt,
+            None,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(resp["data"]["total"], 0, "unknown username yields empty");
+}
+
 // ── 健康 cron（§7.5/§6.3）：探活恢复仅作用于被测 key ─────────────
 
 #[tokio::test]
@@ -966,6 +1276,135 @@ async fn admin_group_ratios_crud_and_validation() {
             "/api/v1/admin/llm/group-ratios",
             &admin_jwt,
             Some(json!({ "ratios": { "bad": -1.0 } })),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
+/// Daily logs stats endpoint: zero-filled window + USD charge/cost/profit.
+#[tokio::test]
+async fn admin_logs_stats_daily_totals() {
+    let (_, state) = crate::test_app().await;
+    let (admin_id, admin_jwt) = user_jwt(&state.pool, true).await;
+
+    // Two relay logs today: charge 800,000 quota ($0.8), cost 320,000 ($0.32).
+    for (model, quota, cost) in [
+        ("gpt-4o", 300_000i64, 120_000i64),
+        ("gpt-4o-mini", 500_000, 200_000),
+    ] {
+        raisfast::llm::models::log::insert_log(
+            &state.pool,
+            raisfast::llm::models::log::NewLog {
+                tenant_id: Some("default".to_owned()),
+                user_id: Some(admin_id),
+                source: raisfast::llm::models::log::LogSource::Relay,
+                model_name: model.to_owned(),
+                prompt_tokens: 100,
+                completion_tokens: 50,
+                quota: raisfast::types::quota::Quota(quota),
+                cost_quota: raisfast::types::quota::Quota(cost),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    }
+
+    let mut app = llm_admin_app(&state);
+    let (status, resp) = crate::send(
+        &mut app,
+        admin_req(
+            "GET",
+            "/api/v1/admin/llm/logs/stats?days=7",
+            &admin_jwt,
+            None,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "body: {resp:?}");
+    // Day window is a continuous 7 days regardless of logged days.
+    assert_eq!(resp["data"]["group_by"], "day");
+    assert_eq!(resp["data"]["data"].as_array().unwrap().len(), 7);
+    assert_eq!(resp["data"]["totals"]["requests"], 2);
+    assert_eq!(resp["data"]["totals"]["prompt_tokens"], 200);
+    assert_eq!(resp["data"]["totals"]["completion_tokens"], 100);
+    assert_eq!(resp["data"]["totals"]["charge_usd"], 0.8);
+    assert_eq!(resp["data"]["totals"]["cost_usd"], 0.32);
+    assert_eq!(resp["data"]["totals"]["profit_usd"], 0.48);
+
+    // Group by model: sorted by charge DESC (gpt-4o-mini $0.5 first).
+    let (status, resp) = crate::send(
+        &mut app,
+        admin_req(
+            "GET",
+            "/api/v1/admin/llm/logs/stats?group_by=model&days=7",
+            &admin_jwt,
+            None,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "body: {resp:?}");
+    let rows = resp["data"]["data"].as_array().unwrap();
+    assert_eq!(rows.len(), 2);
+    assert_eq!(rows[0]["label"], "gpt-4o-mini");
+    assert_eq!(rows[0]["charge_usd"], 0.5);
+    assert_eq!(rows[1]["label"], "gpt-4o");
+    assert_eq!(rows[1]["charge_usd"], 0.3);
+    // Totals identical across groupings.
+    assert_eq!(resp["data"]["totals"]["charge_usd"], 0.8);
+
+    // Group by user: label resolves to the username.
+    let (status, resp) = crate::send(
+        &mut app,
+        admin_req(
+            "GET",
+            "/api/v1/admin/llm/logs/stats?group_by=user&days=7",
+            &admin_jwt,
+            None,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "body: {resp:?}");
+    let rows = resp["data"]["data"].as_array().unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0]["charge_usd"], 0.8);
+    assert_ne!(rows[0]["label"], "");
+
+    // Explicit window that excludes today → empty totals but still a valid day series.
+    let (status, resp) = crate::send(
+        &mut app,
+        admin_req(
+            "GET",
+            "/api/v1/admin/llm/logs/stats?start=2020-01-01&end=2020-01-03",
+            &admin_jwt,
+            None,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "body: {resp:?}");
+    assert_eq!(resp["data"]["totals"]["requests"], 0);
+    assert_eq!(resp["data"]["data"].as_array().unwrap().len(), 3);
+
+    // Invalid group_by / inverted range → 400.
+    let (status, _) = crate::send(
+        &mut app,
+        admin_req(
+            "GET",
+            "/api/v1/admin/llm/logs/stats?group_by=bogus",
+            &admin_jwt,
+            None,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let (status, _) = crate::send(
+        &mut app,
+        admin_req(
+            "GET",
+            "/api/v1/admin/llm/logs/stats?start=2026-02-01&end=2026-01-01",
+            &admin_jwt,
+            None,
         ),
     )
     .await;

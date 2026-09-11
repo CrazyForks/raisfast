@@ -207,7 +207,11 @@ async fn billing_unlimited_token_skips_holds() {
     crate::llm::relay::billing::settle(&p, &charge, Quota(999)).await;
     crate::llm::relay::billing::refund_all(&p, &charge).await;
     let row = token::find_by_id(&p, t.id, None).await.unwrap().unwrap();
-    assert_eq!(row.remain_quota, Quota(0), "unlimited never touches remain_quota");
+    assert_eq!(
+        row.remain_quota,
+        Quota(0),
+        "unlimited never touches remain_quota"
+    );
 }
 
 #[tokio::test]
@@ -310,4 +314,57 @@ async fn log_insert_roundtrip() {
     assert_eq!(total, 1);
     assert_eq!(items[0].model_name, "gpt-4o");
     assert_eq!(items[0].quota, Quota(42));
+    // Day defaults to today (UTC) when not provided.
+    let today = crate::utils::tz::now_utc().format("%Y-%m-%d").to_string();
+    assert_eq!(items[0].day, today);
+}
+
+#[tokio::test]
+async fn log_daily_stats_aggregates_by_day() {
+    use crate::llm::models::log::{self, LogSource, NewLog};
+    let p = pool().await;
+    let uid = make_user(&p, UserStatus::Active).await;
+    let today = crate::utils::tz::now_utc();
+    let d0 = today.format("%Y-%m-%d").to_string();
+    let d1 = (today - chrono::Duration::days(1))
+        .format("%Y-%m-%d")
+        .to_string();
+
+    let mk = |day: &str, prompt: i32, completion: i32, quota: i64, cost: i64| NewLog {
+        tenant_id: Some("default".to_owned()),
+        user_id: Some(uid),
+        source: LogSource::Relay,
+        model_name: "m".to_owned(),
+        prompt_tokens: prompt,
+        completion_tokens: completion,
+        quota: Quota(quota),
+        cost_quota: Quota(cost),
+        day: Some(day.to_owned()),
+        ..Default::default()
+    };
+    // Two rows today, one yesterday.
+    log::insert_log(&p, mk(&d0, 100, 10, 300, 120))
+        .await
+        .unwrap();
+    log::insert_log(&p, mk(&d0, 200, 20, 500, 200))
+        .await
+        .unwrap();
+    log::insert_log(&p, mk(&d1, 50, 5, 100, 40)).await.unwrap();
+
+    let stats = log::daily_stats(&p, None, 2).await.unwrap();
+    assert_eq!(stats.len(), 2, "one bucket per day with rows");
+    let today_row = stats.iter().find(|s| s.date == d0).unwrap();
+    assert_eq!(today_row.requests, 2);
+    assert_eq!(today_row.prompt_tokens, 300);
+    assert_eq!(today_row.completion_tokens, 30);
+    assert_eq!(today_row.quota, 800);
+    assert_eq!(today_row.cost_quota, 320);
+    let yesterday = stats.iter().find(|s| s.date == d1).unwrap();
+    assert_eq!(yesterday.requests, 1);
+    assert_eq!(yesterday.quota, 100);
+
+    // Window excludes the older row when days=1 (only today).
+    let stats1 = log::daily_stats(&p, None, 1).await.unwrap();
+    assert_eq!(stats1.len(), 1);
+    assert_eq!(stats1[0].date, d0);
 }

@@ -255,6 +255,62 @@ pub async fn find_all(
     Ok(result)
 }
 
+/// Batch-resolve usernames for a set of user ids (display labels for admin
+/// views; missing ids are simply absent from the map).
+pub async fn find_usernames_by_ids(
+    pool: &crate::db::Pool,
+    ids: &[SnowflakeId],
+) -> AppResult<HashMap<i64, String>> {
+    let mut out = HashMap::with_capacity(ids.len());
+    if ids.is_empty() {
+        return Ok(out);
+    }
+    use sqlx::Row;
+    let ph = crate::db::Driver::ph;
+    let placeholders: Vec<String> = (1..=ids.len()).map(ph).collect();
+    let sql = format!(
+        "SELECT id, username FROM users WHERE id IN ({})",
+        placeholders.join(", ")
+    );
+    let mut q = sqlx::query(crate::db::safe_sql(&sql));
+    for id in ids {
+        q = q.bind(id);
+    }
+    for row in q.fetch_all(pool).await? {
+        let id: i64 = row.try_get("id")?;
+        let username: String = row.try_get("username")?;
+        out.insert(id, username);
+    }
+    Ok(out)
+}
+
+/// Find user ids whose username contains `sub` (case-insensitive substring;
+/// `%`/`_`/`\` escaped so user input never widens the match).
+pub async fn find_ids_by_username_like(
+    pool: &crate::db::Pool,
+    sub: &str,
+) -> AppResult<Vec<SnowflakeId>> {
+    use sqlx::Row;
+    let escaped = sub
+        .replace('\\', "\\\\")
+        .replace('%', "\\%")
+        .replace('_', "\\_");
+    let pattern = format!("%{escaped}%");
+    let sql = format!(
+        "SELECT id FROM users WHERE LOWER(username) LIKE LOWER({}) ESCAPE '\\'",
+        crate::db::Driver::ph(1)
+    );
+    let rows = sqlx::query(crate::db::safe_sql(&sql))
+        .bind(&pattern)
+        .fetch_all(pool)
+        .await?;
+    let mut out = Vec::with_capacity(rows.len());
+    for row in rows {
+        out.push(SnowflakeId(row.try_get::<i64, _>("id")?));
+    }
+    Ok(out)
+}
+
 pub async fn update_status(
     pool: &crate::db::Pool,
     id: SnowflakeId,

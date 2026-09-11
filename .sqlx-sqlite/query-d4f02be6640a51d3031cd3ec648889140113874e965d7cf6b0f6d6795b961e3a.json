@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO llm_logs (id, request_id, user_id, token_id, source, channel_id, key_index, model_name, is_stream, prompt_tokens, completion_tokens, cache_read_tokens, cache_write_tokens, quota, cost_quota, detail, elapsed_ms, status_code, error_message, day, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 21
+    },
+    "nullable": []
+  },
+  "hash": "d4f02be6640a51d3031cd3ec648889140113874e965d7cf6b0f6d6795b961e3a"
+}

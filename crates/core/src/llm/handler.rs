@@ -206,6 +206,17 @@ pub fn routes(
         r,
         registry,
         restful,
+        "/admin/llm/logs/stats",
+        get,
+        logs_stats,
+        "system",
+        "admin/llm/logs",
+        "admin"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        restful,
         "/admin/llm/channels/{id}/test",
         post,
         test_channel,
@@ -289,6 +300,72 @@ pub fn routes(
         "system",
         "llm/tokens",
         "authed"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        restful,
+        "/admin/llm/tokens",
+        get,
+        admin_list_tokens,
+        "system",
+        "admin/llm/tokens",
+        "admin"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        restful,
+        "/admin/llm/tokens",
+        post,
+        admin_create_token,
+        "system",
+        "admin/llm/tokens",
+        "admin"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        restful,
+        "/llm/tokens/{id}/enable",
+        post,
+        enable_token,
+        "system",
+        "llm/tokens",
+        "authed"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        restful,
+        "/llm/tokens/{id}/disable",
+        post,
+        disable_token,
+        "system",
+        "llm/tokens",
+        "authed"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        restful,
+        "/admin/llm/models/{id}/enable",
+        post,
+        enable_model,
+        "system",
+        "admin/llm/models/status",
+        "admin"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        restful,
+        "/admin/llm/models/{id}/disable",
+        post,
+        disable_model,
+        "system",
+        "admin/llm/models/status",
+        "admin"
     );
     reg_route!(
         r,
@@ -1063,6 +1140,45 @@ pub async fn delete_model(
     Ok(ApiResponse::success(()))
 }
 
+/// Enable a model (switch toggle — re-enters the active directory).
+#[utoipa::path(post, path = "/api/v1/admin/llm/models/{id}/enable", tag = "llm",
+    security(("bearer_auth" = [])),
+    params(("id" = String, Path)),
+    responses((status = 200, description = "Model enabled")))]
+pub async fn enable_model(
+    auth: AuthUser,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> AppResult<ApiResponse<()>> {
+    set_model_status(auth, state, &id, model::LlmModelStatus::Active).await
+}
+
+/// Disable a model (switch toggle — leaves the active directory).
+#[utoipa::path(post, path = "/api/v1/admin/llm/models/{id}/disable", tag = "llm",
+    security(("bearer_auth" = [])),
+    params(("id" = String, Path)),
+    responses((status = 200, description = "Model disabled")))]
+pub async fn disable_model(
+    auth: AuthUser,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> AppResult<ApiResponse<()>> {
+    set_model_status(auth, state, &id, model::LlmModelStatus::Disabled).await
+}
+
+async fn set_model_status(
+    auth: AuthUser,
+    state: AppState,
+    id_str: &str,
+    status: model::LlmModelStatus,
+) -> AppResult<ApiResponse<()>> {
+    auth.ensure_admin()?;
+    let id = parse_id(id_str)?;
+    model::update_status(&state.pool, auth.tenant_id(), id, status).await?;
+    state.llm_router.invalidate_model_cache().await;
+    Ok(ApiResponse::success(()))
+}
+
 // ---------- user self-service tokens (§12) ----------
 
 /// Models selectable for a token allowlist (§8.1 semantics, JWT-authed):
@@ -1109,6 +1225,9 @@ pub async fn selectable_models(
 #[derive(Debug, Serialize)]
 pub struct TokenResponse {
     pub id: SnowflakeId,
+    pub user_id: SnowflakeId,
+    /// Owner username (admin list view; resolved from `users`).
+    pub username: Option<String>,
     pub name: String,
     pub status: String,
     pub remain_quota: crate::types::quota::Quota,
@@ -1122,9 +1241,11 @@ pub struct TokenResponse {
 }
 
 impl TokenResponse {
-    fn from_row(row: &crate::llm::models::token::LlmToken) -> Self {
+    fn from_row(row: &crate::llm::models::token::LlmToken, username: Option<String>) -> Self {
         Self {
             id: row.id,
+            user_id: row.user_id,
+            username,
             name: row.name.clone(),
             status: row.status.as_str().to_owned(),
             remain_quota: row.remain_quota,
@@ -1158,6 +1279,9 @@ pub struct CreateTokenReq {
     pub allowed_ips: Option<String>,
     #[serde(default)]
     pub token_group: Option<String>,
+    /// Owner override (admin route only; ignored by `/llm/tokens`).
+    #[serde(default)]
+    pub user_id: Option<String>,
 }
 
 /// Update-token payload.
@@ -1185,6 +1309,8 @@ pub struct ListLogsQuery {
     pub channel_id: Option<String>,
     pub token_id: Option<String>,
     pub model_name: Option<String>,
+    /// Filter by owner: case-insensitive username substring or exact user id.
+    pub username: Option<String>,
 }
 
 /// List the caller's sk- tokens.
@@ -1198,8 +1324,88 @@ pub async fn list_own_tokens(
     let user = auth.ensure_snowflake_user_id()?;
     let rows = crate::llm::models::token::list_by_user(&state.pool, auth.tenant_id(), user).await?;
     Ok(ApiResponse::success(
-        rows.iter().map(TokenResponse::from_row).collect(),
+        rows.iter()
+            .map(|row| TokenResponse::from_row(row, None))
+            .collect(),
     ))
+}
+
+/// Query params for the admin token list.
+#[derive(Debug, Deserialize, utoipa::IntoParams)]
+pub struct ListTokensQuery {
+    /// Filter by owner: case-insensitive username substring or exact user id.
+    pub username: Option<String>,
+}
+
+/// Admin: list every token in the tenant with owner usernames.
+#[utoipa::path(get, path = "/api/v1/admin/llm/tokens", tag = "llm",
+    security(("bearer_auth" = [])),
+    params(("username" = Option<String>, Query, description = "Owner username substring or user id")),
+    responses((status = 200, description = "All tokens with owner usernames")))]
+pub async fn admin_list_tokens(
+    auth: AuthUser,
+    State(state): State<AppState>,
+    Query(q): Query<ListTokensQuery>,
+) -> AppResult<ApiResponse<Vec<TokenResponse>>> {
+    auth.ensure_admin()?;
+    let filter = q
+        .username
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_lowercase);
+    let rows = crate::llm::models::token::list_all(&state.pool, auth.tenant_id()).await?;
+    let ids: Vec<SnowflakeId> = rows.iter().map(|r| r.user_id).collect();
+    let names = crate::models::user::find_usernames_by_ids(&state.pool, &ids).await?;
+    let matches = |row: &crate::llm::models::token::LlmToken| match &filter {
+        Some(f) => {
+            let id = row.user_id.0.to_string();
+            names
+                .get(&row.user_id.0)
+                .is_some_and(|n| n.to_lowercase().contains(f))
+                || id == *f
+        }
+        None => true,
+    };
+    Ok(ApiResponse::success(
+        rows.iter()
+            .filter(|row| matches(row))
+            .map(|row| TokenResponse::from_row(row, names.get(&row.user_id.0).cloned()))
+            .collect(),
+    ))
+}
+
+/// Shared mint path for own-create and admin-create (§12): hash + encrypt the
+/// fresh key and insert the row for `user`.
+async fn mint_token(
+    state: &AppState,
+    tenant_id: Option<&str>,
+    user: SnowflakeId,
+    body: &CreateTokenReq,
+) -> AppResult<serde_json::Value> {
+    if body.name.trim().is_empty() {
+        return Err(AppError::BadRequest("token name is required".to_owned()));
+    }
+    let plain = crate::llm::relay::generate_sk();
+    let expired_at = crate::utils::tz::parse_rfc3339_opt(body.expired_at.as_deref());
+    let row = crate::llm::models::token::create_token(
+        &state.pool,
+        tenant_id,
+        user,
+        body.name.trim(),
+        &plain,
+        body.remain_quota,
+        body.unlimited_quota,
+        expired_at,
+        body.allowed_models.as_deref().filter(|s| !s.is_empty()),
+        body.allowed_ips.as_deref().filter(|s| !s.is_empty()),
+        body.token_group.as_deref().filter(|s| !s.is_empty()),
+    )
+    .await?;
+    Ok(serde_json::json!({
+        "token": TokenResponse::from_row(&row, None),
+        "key": plain,
+    }))
 }
 
 /// Create a sk- token; the plaintext key appears exactly once in the response.
@@ -1216,32 +1422,55 @@ pub async fn create_own_token(
     if body.unlimited_quota {
         auth.ensure_admin()?;
     }
-    if body.name.trim().is_empty() {
-        return Err(AppError::BadRequest("token name is required".to_owned()));
-    }
-    let plain = crate::llm::relay::generate_sk();
-    let expired_at = crate::utils::tz::parse_rfc3339_opt(body.expired_at.as_deref());
-    let row = crate::llm::models::token::create_token(
-        &state.pool,
-        auth.tenant_id(),
-        user,
-        body.name.trim(),
-        &plain,
-        body.remain_quota,
-        body.unlimited_quota,
-        expired_at,
-        body.allowed_models.as_deref().filter(|s| !s.is_empty()),
-        body.allowed_ips.as_deref().filter(|s| !s.is_empty()),
-        body.token_group.as_deref().filter(|s| !s.is_empty()),
-    )
-    .await?;
-    Ok(ApiResponse::success(serde_json::json!({
-        "token": TokenResponse::from_row(&row),
-        "key": plain,
-    })))
+    let value = mint_token(&state, auth.tenant_id(), user, &body).await?;
+    Ok(ApiResponse::success(value))
 }
 
-/// Update an own token (ownership enforced).
+/// Admin: create a sk- token on behalf of the given `user_id` (defaults to
+/// the caller when omitted).
+#[utoipa::path(post, path = "/api/v1/admin/llm/tokens", tag = "llm",
+    security(("bearer_auth" = [])),
+    request_body = CreateTokenReq,
+    responses((status = 200, description = "Token created for the target user")))]
+pub async fn admin_create_token(
+    auth: AuthUser,
+    State(state): State<AppState>,
+    Json(body): Json<CreateTokenReq>,
+) -> AppResult<ApiResponse<serde_json::Value>> {
+    auth.ensure_admin()?;
+    let user = match body.user_id.as_deref() {
+        Some(s) => {
+            let id = parse_id(s)?;
+            crate::models::user::find_by_id(&state.pool, id, auth.tenant_id())
+                .await?
+                .ok_or_else(|| AppError::BadRequest(format!("user not found: {s}")))?
+                .id
+        }
+        None => auth.ensure_snowflake_user_id()?,
+    };
+    let value = mint_token(&state, auth.tenant_id(), user, &body).await?;
+    Ok(ApiResponse::success(value))
+}
+
+/// Load a token scoped to the caller: owner or admin (shared by
+/// update/delete/enable/disable).
+async fn own_or_admin_token(
+    auth: &AuthUser,
+    state: &AppState,
+    id_str: &str,
+) -> AppResult<crate::llm::models::token::LlmToken> {
+    let user = auth.ensure_snowflake_user_id()?;
+    let id = parse_id(id_str)?;
+    let existing = crate::llm::models::token::find_by_id(&state.pool, id, auth.tenant_id())
+        .await?
+        .ok_or_else(|| AppError::NotFound("llm_token".to_owned()))?;
+    if existing.user_id != user && !auth.is_admin() {
+        return Err(AppError::ForbiddenOwnership);
+    }
+    Ok(existing)
+}
+
+/// Update an own token (admins may update any token in the tenant).
 #[utoipa::path(put, path = "/api/v1/llm/tokens/{id}", tag = "llm",
     security(("bearer_auth" = [])),
     params(("id" = String, Path)),
@@ -1253,14 +1482,7 @@ pub async fn update_own_token(
     Path(id): Path<String>,
     Json(body): Json<UpdateTokenReq>,
 ) -> AppResult<ApiResponse<()>> {
-    let user = auth.ensure_snowflake_user_id()?;
-    let id = parse_id(&id)?;
-    let existing = crate::llm::models::token::find_by_id(&state.pool, id, auth.tenant_id())
-        .await?
-        .ok_or_else(|| AppError::NotFound("llm_token".to_owned()))?;
-    if existing.user_id != user {
-        return Err(AppError::ForbiddenOwnership);
-    }
+    let existing = own_or_admin_token(&auth, &state, &id).await?;
     use crate::llm::models::token::LlmTokenStatus;
     let status = match body.enabled {
         Some(true) => LlmTokenStatus::Enabled,
@@ -1302,14 +1524,14 @@ pub async fn update_own_token(
         .bind(status.as_str())
         .bind(token_group)
         .bind(now)
-        .bind(id)
+        .bind(existing.id)
         .execute(&state.pool)
         .await?;
     AppError::expect_affected(&result, "llm_token")?;
     Ok(ApiResponse::success(()))
 }
 
-/// Delete an own token.
+/// Delete an own token (admins may delete any token in the tenant).
 #[utoipa::path(delete, path = "/api/v1/llm/tokens/{id}", tag = "llm",
     security(("bearer_auth" = [])),
     params(("id" = String, Path)),
@@ -1320,15 +1542,50 @@ pub async fn delete_own_token(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<()>> {
-    let user = auth.ensure_snowflake_user_id()?;
-    let id = parse_id(&id)?;
-    let existing = crate::llm::models::token::find_by_id(&state.pool, id, auth.tenant_id())
-        .await?
-        .ok_or_else(|| AppError::NotFound("llm_token".to_owned()))?;
-    if existing.user_id != user {
-        return Err(AppError::ForbiddenOwnership);
-    }
-    crate::llm::models::token::delete_token(&state.pool, id, auth.tenant_id()).await?;
+    let existing = own_or_admin_token(&auth, &state, &id).await?;
+    crate::llm::models::token::delete_token(&state.pool, existing.id, auth.tenant_id()).await?;
+    Ok(ApiResponse::success(()))
+}
+
+/// Enable a token (owner or admin) — switch toggle in the token list.
+#[utoipa::path(post, path = "/api/v1/llm/tokens/{id}/enable", tag = "llm",
+    security(("bearer_auth" = [])),
+    params(("id" = String, Path)),
+    responses((status = 200, description = "Token enabled")))]
+pub async fn enable_token(
+    auth: AuthUser,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> AppResult<ApiResponse<()>> {
+    let existing = own_or_admin_token(&auth, &state, &id).await?;
+    crate::llm::models::token::update_status(
+        &state.pool,
+        auth.tenant_id(),
+        existing.id,
+        crate::llm::models::token::LlmTokenStatus::Enabled,
+    )
+    .await?;
+    Ok(ApiResponse::success(()))
+}
+
+/// Disable a token (owner or admin) — switch toggle in the token list.
+#[utoipa::path(post, path = "/api/v1/llm/tokens/{id}/disable", tag = "llm",
+    security(("bearer_auth" = [])),
+    params(("id" = String, Path)),
+    responses((status = 200, description = "Token disabled")))]
+pub async fn disable_token(
+    auth: AuthUser,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> AppResult<ApiResponse<()>> {
+    let existing = own_or_admin_token(&auth, &state, &id).await?;
+    crate::llm::models::token::update_status(
+        &state.pool,
+        auth.tenant_id(),
+        existing.id,
+        crate::llm::models::token::LlmTokenStatus::Disabled,
+    )
+    .await?;
     Ok(ApiResponse::success(()))
 }
 
@@ -1348,10 +1605,28 @@ pub async fn list_logs(
     auth.ensure_admin()?;
     let page = q.page.unwrap_or(1).max(1);
     let page_size = q.page_size.unwrap_or(20).clamp(1, 100);
+    // Username → user ids (substring match; pure digits also try exact id).
+    let (user_ids, username_given) = match q.username.as_deref().map(str::trim) {
+        Some(s) if !s.is_empty() => {
+            let mut ids =
+                crate::models::user::find_ids_by_username_like(&state.pool, s).await?;
+            if let Ok(n) = s.parse::<i64>()
+                && let Some(u) =
+                    crate::models::user::find_by_id(&state.pool, SnowflakeId(n), None).await?
+                && !ids.contains(&u.id)
+            {
+                ids.push(u.id);
+            }
+            (ids, true)
+        }
+        _ => (Vec::new(), false),
+    };
     let filters = crate::llm::models::log::LogFilters {
         channel_id: q.channel_id,
         token_id: q.token_id,
         model_name: q.model_name,
+        user_ids,
+        username_given,
     };
     let (items, total) = crate::llm::models::log::query_paged(
         &state.pool,
@@ -1371,7 +1646,167 @@ pub async fn list_logs(
     ))
 }
 
-// ---------- billing group ratios (pricing.md §2) ----------
+#[derive(Debug, Deserialize, utoipa::IntoParams)]
+pub struct LogStatsQuery {
+    /// Group dimension: `day` (default) | `model` | `user` | `channel`.
+    pub group_by: Option<String>,
+    /// Lookback window when `start`/`end` are omitted (default 30, 1..=365).
+    pub days: Option<i64>,
+    /// Inclusive window bounds (`YYYY-MM-DD`); override `days`.
+    pub start: Option<String>,
+    pub end: Option<String>,
+    /// Max groups for non-day dimensions; remainder is bucketed as "other".
+    pub limit: Option<i64>,
+}
+
+/// Aggregated usage/billing stats: group by day / model / user / channel over
+/// a date window. Amounts are USD (charge / cost / profit); day mode is
+/// zero-filled for a continuous series.
+#[utoipa::path(get, path = "/api/v1/admin/llm/logs/stats", tag = "llm",
+    security(("bearer_auth" = [])),
+    params(
+        ("group_by" = Option<String>, Query, description = "day|model|user|channel"),
+        ("days" = Option<i64>, Query, description = "Lookback days (default 30)"),
+        ("start" = Option<String>, Query, description = "YYYY-MM-DD"),
+        ("end" = Option<String>, Query, description = "YYYY-MM-DD"),
+        ("limit" = Option<i64>, Query, description = "Top-N for non-day groups"),
+    ),
+    responses((status = 200, description = "Grouped stats + totals")))]
+pub async fn logs_stats(
+    auth: AuthUser,
+    State(state): State<AppState>,
+    Query(q): Query<LogStatsQuery>,
+) -> AppResult<ApiResponse<serde_json::Value>> {
+    auth.ensure_admin()?;
+    let group_by = q.group_by.unwrap_or_else(|| "day".to_owned());
+    if !matches!(group_by.as_str(), "day" | "model" | "user" | "channel") {
+        return Err(AppError::BadRequest(format!(
+            "invalid group_by: {group_by} (day|model|user|channel)"
+        )));
+    }
+    let parse_date = |s: &str| {
+        chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d")
+            .map_err(|_| AppError::BadRequest(format!("invalid date (want YYYY-MM-DD): {s}")))
+    };
+    let today = crate::utils::tz::now_utc().date_naive();
+    let end = match q.end.as_deref() {
+        Some(s) => parse_date(s)?,
+        None => today,
+    };
+    let start = match q.start.as_deref() {
+        Some(s) => parse_date(s)?,
+        None => end - chrono::Duration::days(q.days.unwrap_or(30).clamp(1, 365) - 1),
+    };
+    let span_days = (end - start).num_days();
+    if span_days < 0 {
+        return Err(AppError::BadRequest("start is after end".to_owned()));
+    }
+    if span_days > 366 {
+        return Err(AppError::BadRequest(
+            "date range too large (max 366 days)".to_owned(),
+        ));
+    }
+    let start_s = start.format("%Y-%m-%d").to_string();
+    let end_s = end.format("%Y-%m-%d").to_string();
+
+    let buckets = crate::llm::models::log::stats_by(
+        &state.pool,
+        auth.tenant_id(),
+        &group_by,
+        &start_s,
+        &end_s,
+    )
+    .await?;
+
+    let to_usd = |q: i64| q as f64 / crate::types::quota::QUOTA_PER_USD;
+    let bucket_json = |key: &str, label: &str, b: Option<&crate::llm::models::log::StatBucket>| {
+        let (requests, prompt, completion, quota, cost) = match b {
+            Some(b) => (
+                b.requests,
+                b.prompt_tokens,
+                b.completion_tokens,
+                b.quota,
+                b.cost_quota,
+            ),
+            None => (0, 0, 0, 0, 0),
+        };
+        serde_json::json!({
+            "key": key,
+            "label": label,
+            "requests": requests,
+            "prompt_tokens": prompt,
+            "completion_tokens": completion,
+            "charge_usd": to_usd(quota),
+            "cost_usd": to_usd(cost),
+            "profit_usd": to_usd(quota - cost),
+        })
+    };
+
+    let totals = buckets
+        .iter()
+        .fold((0i64, 0i64, 0i64, 0i64, 0i64), |mut t, b| {
+            t.0 += b.requests;
+            t.1 += b.prompt_tokens;
+            t.2 += b.completion_tokens;
+            t.3 += b.quota;
+            t.4 += b.cost_quota;
+            t
+        });
+
+    let data: Vec<serde_json::Value> = if group_by == "day" {
+        // Continuous series: every day in [start, end], zero-filled.
+        let by_day: std::collections::HashMap<&str, &crate::llm::models::log::StatBucket> =
+            buckets.iter().map(|b| (b.key.as_str(), b)).collect();
+        let mut data = Vec::with_capacity((span_days + 1) as usize);
+        let mut d = start;
+        loop {
+            let key = d.format("%Y-%m-%d").to_string();
+            data.push(bucket_json(&key, &key, by_day.get(key.as_str()).copied()));
+            if d == end {
+                break;
+            }
+            d += chrono::Duration::days(1);
+        }
+        data
+    } else {
+        let limit = q.limit.unwrap_or(12).clamp(1, 100) as usize;
+        let mut data: Vec<serde_json::Value> = Vec::new();
+        for (i, b) in buckets.iter().enumerate() {
+            if i < limit {
+                data.push(bucket_json(&b.key, &b.label, Some(b)));
+            } else {
+                let rest = &buckets[i..];
+                let agg = crate::llm::models::log::StatBucket {
+                    key: "__other__".to_owned(),
+                    label: "__other__".to_owned(),
+                    requests: rest.iter().map(|b| b.requests).sum(),
+                    prompt_tokens: rest.iter().map(|b| b.prompt_tokens).sum(),
+                    completion_tokens: rest.iter().map(|b| b.completion_tokens).sum(),
+                    quota: rest.iter().map(|b| b.quota).sum(),
+                    cost_quota: rest.iter().map(|b| b.cost_quota).sum(),
+                };
+                data.push(bucket_json("__other__", "__other__", Some(&agg)));
+                break;
+            }
+        }
+        data
+    };
+
+    Ok(ApiResponse::success(serde_json::json!({
+        "group_by": group_by,
+        "start": start_s,
+        "end": end_s,
+        "totals": {
+            "requests": totals.0,
+            "prompt_tokens": totals.1,
+            "completion_tokens": totals.2,
+            "charge_usd": to_usd(totals.3),
+            "cost_usd": to_usd(totals.4),
+            "profit_usd": to_usd(totals.3 - totals.4),
+        },
+        "data": data,
+    })))
+}
 
 /// Sell-price multipliers by Key billing group (runtime-adjustable option
 /// `llm_group_ratios`, stored as a JSON string; unset → {"default":1.0}).
@@ -1401,11 +1836,15 @@ pub async fn put_group_ratios(
 ) -> AppResult<ApiResponse<serde_json::Value>> {
     auth.ensure_admin()?;
     if body.ratios.is_empty() {
-        return Err(AppError::BadRequest("at least one group is required".to_owned()));
+        return Err(AppError::BadRequest(
+            "at least one group is required".to_owned(),
+        ));
     }
     for (name, ratio) in &body.ratios {
         if name.trim().is_empty() {
-            return Err(AppError::BadRequest("group name cannot be empty".to_owned()));
+            return Err(AppError::BadRequest(
+                "group name cannot be empty".to_owned(),
+            ));
         }
         if !ratio.is_finite() || *ratio < 0.0 {
             return Err(AppError::BadRequest(format!(

@@ -130,6 +130,20 @@ pub async fn list_by_user(
     Ok(result)
 }
 
+/// List all tokens (admin view, tenant-scoped, newest first). `NOT_NULL` on
+/// the primary key is a tautology — the macro requires a `where:` section.
+pub async fn list_all(pool: &crate::db::Pool, tenant_id: Option<&str>) -> AppResult<Vec<LlmToken>> {
+    let result: Vec<LlmToken> = raisfast_derive::crud_find_all!(
+        pool,
+        "llm_tokens",
+        LlmToken,
+        where: ("id", NOT_NULL),
+        order_by: "created_at DESC",
+        tenant: tenant_id
+    )?;
+    Ok(result)
+}
+
 /// Update token status.
 pub async fn update_status(
     pool: &crate::db::Pool,

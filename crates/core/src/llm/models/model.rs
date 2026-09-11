@@ -183,6 +183,24 @@ pub async fn update_model(
     AppError::expect_affected(&result, "llm_model")
 }
 
+/// Update a model's status only (switch toggle — price fields untouched).
+pub async fn update_status(
+    pool: &crate::db::Pool,
+    tenant_id: Option<&str>,
+    id: SnowflakeId,
+    status: LlmModelStatus,
+) -> AppResult<()> {
+    let now = now_utc();
+    let result = raisfast_derive::crud_update!(
+        pool,
+        "llm_models",
+        bind: ["status" => status.as_str(), "updated_at" => &now],
+        where: ("id", id),
+        tenant: tenant_id
+    )?;
+    AppError::expect_affected(&result, "llm_model")
+}
+
 /// Delete a directory row by id (tenant-scoped).
 pub async fn delete_model(
     pool: &crate::db::Pool,

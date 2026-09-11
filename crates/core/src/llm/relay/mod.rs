@@ -36,8 +36,8 @@ async fn group_ratio_of(pool: &crate::db::Pool, group: &str) -> f64 {
         .unwrap_or(1.0)
 }
 
-pub use auth::generate_sk;
 pub use crate::types::quota::QUOTA_PER_USD;
+pub use auth::generate_sk;
 
 /// Hash helper re-exported for the token self-service endpoints.
 pub fn auth_hash(plain: &str) -> String {
@@ -385,6 +385,7 @@ async fn chat_completions(
                             status_code: Some(200),
                             error_message: None,
                             request_id: None,
+                            day: None,
                         };
                         write_log(&state, log).await;
                         return (StatusCode::OK, Json(resp_body)).into_response();
@@ -606,12 +607,7 @@ impl SettleCtx {
             );
         }
         let actual = billing::settle_quota(&self.pricing, &usage, self.group_ratio);
-        let cost = billing::cost_quota(
-            &self.pricing,
-            &usage,
-            self.cost_mode,
-            self.cost_discount,
-        );
+        let cost = billing::cost_quota(&self.pricing, &usage, self.cost_mode, self.cost_discount);
         let charge = self.charge.clone();
         let pool = self.pool.clone();
         tokio::spawn(async move {
@@ -644,6 +640,7 @@ impl SettleCtx {
             status_code: Some(200),
             error_message: None,
             request_id: None,
+            day: None,
         };
         let pool = self.pool.clone();
         tokio::spawn(async move {

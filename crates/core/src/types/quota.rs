@@ -13,9 +13,7 @@ use utoipa::ToSchema;
 ///
 /// `QUOTA_PER_USD` is the data format itself (like `Price`'s ×100): hardcoded,
 /// never configurable — changing it would silently re-value every stored row.
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default, sqlx::Type,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default, sqlx::Type)]
 #[sqlx(transparent)]
 pub struct Quota(pub i64);
 

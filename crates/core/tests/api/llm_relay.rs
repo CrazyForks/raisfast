@@ -1526,7 +1526,11 @@ async fn relay_per_call_billing_full_precharge() {
     let (status, resp) = crate::send(&mut app, chat_req(&sk, body.clone())).await;
     assert_eq!(status, StatusCode::OK, "body: {resp:?}");
     let row = token_row(&state.pool, token.id).await;
-    assert_eq!(row.used_quota, Quota(10_000), "per-call settles the flat call price");
+    assert_eq!(
+        row.used_quota,
+        Quota(10_000),
+        "per-call settles the flat call price"
+    );
     assert_eq!(row.remain_quota, Quota(2_000));
 
     // 余额 9999 < 全额预扣 10000 → 429 拒绝，余额不动。
@@ -1534,7 +1538,11 @@ async fn relay_per_call_billing_full_precharge() {
     let (status, resp) = crate::send(&mut app, chat_req(&sk_poor, body)).await;
     assert_eq!(status, StatusCode::TOO_MANY_REQUESTS, "body: {resp:?}");
     let row = token_row(&state.pool, token_poor.id).await;
-    assert_eq!(row.remain_quota, Quota(9_999), "full pre-charge blocks freeloaders");
+    assert_eq!(
+        row.remain_quota,
+        Quota(9_999),
+        "full pre-charge blocks freeloaders"
+    );
     assert_eq!(row.used_quota, Quota(0));
 }
 
@@ -1816,7 +1824,14 @@ async fn relay_pricing_exact_charge_cost_and_profit() {
         .mount(&server)
         .await;
 
-    let model = model_row("price-model", LlmPriceMode::Token, 2.5, 10.0, Some(0.5), None);
+    let model = model_row(
+        "price-model",
+        LlmPriceMode::Token,
+        2.5,
+        10.0,
+        Some(0.5),
+        None,
+    );
     let mut channel = chan(1, &server.uri(), "sk-up", 0, None);
     channel.models = "price-model".to_owned();
     channel.cost_mode = raisfast::llm::models::channel::LlmCostMode::Usage;
@@ -1920,7 +1935,11 @@ async fn relay_pricing_fixed_cost_mode_zero_cost() {
     let logs = wait_logs_of(&state.pool, &token).await;
     assert_eq!(logs[0].quota, Quota(2_500_000));
     assert_eq!(logs[0].cost_quota, Quota(0));
-    assert_eq!(logs[0].quota - logs[0].cost_quota, Quota(2_500_000), "full revenue booked as profit");
+    assert_eq!(
+        logs[0].quota - logs[0].cost_quota,
+        Quota(2_500_000),
+        "full revenue booked as profit"
+    );
 }
 
 /// Streaming settles to exactly the same charge/cost as non-stream for the
@@ -2048,5 +2067,3 @@ async fn relay_pricing_hold_uses_params_max_output_tokens() {
     let logs = wait_logs_of(&state.pool, &token).await;
     assert_eq!(logs[0].detail.as_ref().unwrap()["pre_consumed"], 0.009);
 }
-
-
