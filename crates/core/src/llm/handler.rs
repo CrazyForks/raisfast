@@ -349,6 +349,17 @@ pub fn routes(
         r,
         registry,
         restful,
+        "/admin/llm/models/meta",
+        get,
+        models_meta,
+        "system",
+        "admin/llm/models",
+        "admin"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        restful,
         "/admin/llm/models/{id}/enable",
         post,
         enable_model,
@@ -1066,6 +1077,20 @@ pub async fn list_models(
     Ok(ApiResponse::success(rows))
 }
 
+/// Admin: enum catalogs backing the model form (model types + capability
+/// toggles) — single source of truth server-side, the client never
+/// hardcodes the lists.
+#[utoipa::path(get, path = "/api/v1/admin/llm/models/meta", tag = "llm",
+    security(("bearer_auth" = [])),
+    responses((status = 200, description = "Model form enum catalogs")))]
+pub async fn models_meta(auth: AuthUser) -> AppResult<ApiResponse<serde_json::Value>> {
+    auth.ensure_admin()?;
+    Ok(ApiResponse::success(serde_json::json!({
+        "model_types": crate::llm::models::model::LlmModelType::all_values(),
+        "capabilities": crate::llm::models::model::CAPABILITIES,
+    })))
+}
+
 /// Create a model-directory row.
 #[utoipa::path(post, path = "/api/v1/admin/llm/models", tag = "llm",
     security(("bearer_auth" = [])),
@@ -1608,8 +1633,7 @@ pub async fn list_logs(
     // Username → user ids (substring match; pure digits also try exact id).
     let (user_ids, username_given) = match q.username.as_deref().map(str::trim) {
         Some(s) if !s.is_empty() => {
-            let mut ids =
-                crate::models::user::find_ids_by_username_like(&state.pool, s).await?;
+            let mut ids = crate::models::user::find_ids_by_username_like(&state.pool, s).await?;
             if let Ok(n) = s.parse::<i64>()
                 && let Some(u) =
                     crate::models::user::find_by_id(&state.pool, SnowflakeId(n), None).await?

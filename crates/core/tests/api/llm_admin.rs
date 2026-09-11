@@ -625,6 +625,27 @@ async fn admin_models_crud_with_immediate_cache_invalidation() {
         "enabled model re-enters the active directory"
     );
 
+    // meta：模型类型/能力目录下发（单一事实源在服务端）。
+    let (status, resp) = crate::send(
+        &mut app,
+        admin_req("GET", "/api/v1/admin/llm/models/meta", &admin_jwt, None),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        resp["data"]["model_types"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|v| v.as_str())
+            .any(|t| t == "tts"),
+        "model_types catalog includes tts"
+    );
+    assert!(
+        !resp["data"]["capabilities"].as_array().unwrap().is_empty(),
+        "capabilities catalog served"
+    );
+
     // 删除 → 目录与缓存同时摘除（唯一名，无 builtin 兜底）。
     let (status, _) = crate::send(
         &mut app,
@@ -954,10 +975,13 @@ async fn admin_token_administration_and_toggle() {
         "username substring matches"
     );
     assert!(
-        resp["data"].as_array().unwrap().iter().all(|r| r
-            ["username"]
-            .as_str()
-            .is_some_and(|n| n.to_lowercase().contains(&prefix.to_lowercase()))),
+        resp["data"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|r| r["username"]
+                .as_str()
+                .is_some_and(|n| n.to_lowercase().contains(&prefix.to_lowercase()))),
         "every returned row matches the username filter"
     );
     let (status, resp) = crate::send(

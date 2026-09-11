@@ -57,6 +57,18 @@ pub enum RelayEndpoint {
     /// Reserved for the proxied models listing (P4).
     #[allow(dead_code)]
     Models,
+    /// `/embeddings` — OpenAI-compatible vectorization.
+    Embeddings,
+    /// `/rerank` — Jina/Cohere-style relevance reranking.
+    Rerank,
+    /// `/images/generations` — OpenAI-compatible text-to-image.
+    Images,
+    /// `/audio/transcriptions` — speech-to-text (multipart).
+    AudioTranscriptions,
+    /// `/audio/translations` — speech-to-text translated to English (multipart).
+    AudioTranslations,
+    /// `/audio/speech` — text-to-speech (JSON in, binary audio out).
+    AudioSpeech,
 }
 
 /// One shared HTTP client for the whole module (design §7.6: per-host
@@ -151,6 +163,12 @@ impl OpenaiAdaptor {
         match endpoint {
             RelayEndpoint::ChatCompletions => format!("{base_url}/chat/completions"),
             RelayEndpoint::Models => format!("{base_url}/models"),
+            RelayEndpoint::Embeddings => format!("{base_url}/embeddings"),
+            RelayEndpoint::Rerank => format!("{base_url}/rerank"),
+            RelayEndpoint::Images => format!("{base_url}/images/generations"),
+            RelayEndpoint::AudioTranscriptions => format!("{base_url}/audio/transcriptions"),
+            RelayEndpoint::AudioTranslations => format!("{base_url}/audio/translations"),
+            RelayEndpoint::AudioSpeech => format!("{base_url}/audio/speech"),
         }
     }
 
@@ -207,6 +225,31 @@ impl OpenaiAdaptor {
                     so_obj.insert("include_usage".to_owned(), serde_json::Value::Bool(true));
                 }
                 obj.insert("stream_options".to_owned(), so);
+            }
+        }
+        Ok(body)
+    }
+
+    /// Convert a non-chat request body (embeddings / rerank): upstream model
+    /// rewrite + param_override shallow merge. No stream handling — these
+    /// modalities are always request/response JSON.
+    pub fn convert_plain(
+        mut body: serde_json::Value,
+        upstream_model: &str,
+        param_override: Option<&serde_json::Value>,
+    ) -> AppResult<serde_json::Value> {
+        let Some(obj) = body.as_object_mut() else {
+            return Err(AppError::BadRequest(
+                "request body must be an object".to_owned(),
+            ));
+        };
+        obj.insert(
+            "model".to_owned(),
+            serde_json::Value::String(upstream_model.to_owned()),
+        );
+        if let Some(serde_json::Value::Object(over)) = param_override {
+            for (k, v) in over {
+                obj.insert(k.clone(), v.clone());
             }
         }
         Ok(body)

@@ -2067,3 +2067,413 @@ async fn relay_pricing_hold_uses_params_max_output_tokens() {
     let logs = wait_logs_of(&state.pool, &token).await;
     assert_eq!(logs[0].detail.as_ref().unwrap()["pre_consumed"], 0.009);
 }
+
+// ── /v1/embeddings + /v1/rerank（非 chat 模态数据面）──────────────
+
+fn json_req(uri: &str, sk: &str, body: Value) -> Request<Body> {
+    Request::builder()
+        .method("POST")
+        .uri(uri)
+        .header(header::CONTENT_TYPE, "application/json")
+        .header(header::AUTHORIZATION, format!("Bearer {sk}"))
+        .body(Body::from(serde_json::to_string(&body).unwrap()))
+        .unwrap()
+}
+
+/// /v1/embeddings 全链路：透传 + 按 usage.prompt_tokens 结算 + 日志
+/// （completion 恒 0，input 价计费）。
+#[tokio::test]
+async fn relay_embeddings_settles_from_usage() {
+    let (_, state) = crate::test_app().await;
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/embeddings"))
+        .and(body_partial_json(json!({ "model": "emb-1" })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "object": "list",
+            "data": [{ "index": 0, "embedding": [0.1, 0.2] }],
+            "model": "emb-1",
+            "usage": { "prompt_tokens": 100, "total_tokens": 100 }
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let mut model = model_row("emb-1", LlmPriceMode::Token, 2.0, 0.0, None, None);
+    model.model_type = LlmModelType::Embedding;
+    let mut channel = chan(1, &server.uri(), "sk-up-emb", 0, None);
+    channel.models = "emb-1".to_owned();
+    let (mut app, _r) = relay_router_with_models(&state, vec![channel], vec![model]);
+
+    let (sk, token) = make_llm_token(&state.pool, 1_000_000, false, None).await;
+    let body = json!({ "model": "emb-1", "input": "hello world" });
+    let (status, resp) = crate::send(&mut app, json_req("/v1/embeddings", &sk, body)).await;
+    assert_eq!(status, StatusCode::OK, "body: {resp:?}");
+    assert_eq!(resp["data"][0]["embedding"][0], 0.1);
+    server.verify().await;
+
+    // actual = 100 tokens × $2/1M = 200 quota（无 output 预留）。
+    let expected = Quota(200);
+    let row = token_row(&state.pool, token.id).await;
+    assert_eq!(row.used_quota, expected);
+    assert_eq!(row.remain_quota, Quota(1_000_000) - expected);
+    let logs = wait_logs_of(&state.pool, &token).await;
+    assert_eq!(logs[0].model_name, "emb-1");
+    assert_eq!((logs[0].prompt_tokens, logs[0].completion_tokens), (100, 0));
+    assert_eq!(logs[0].quota, expected);
+}
+
+/// /v1/rerank 全链路：Jina/Cohere 形态 usage.total_tokens 计费。
+#[tokio::test]
+async fn relay_rerank_settles_from_total_tokens() {
+    let (_, state) = crate::test_app().await;
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/rerank"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "model": "rr-1",
+            "results": [{ "index": 1, "relevance_score": 0.98 }],
+            "usage": { "total_tokens": 500 }
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let mut model = model_row("rr-1", LlmPriceMode::Token, 1.0, 0.0, None, None);
+    model.model_type = LlmModelType::Rerank;
+    let mut channel = chan(1, &server.uri(), "sk-up-rr", 0, None);
+    channel.models = "rr-1".to_owned();
+    let (mut app, _r) = relay_router_with_models(&state, vec![channel], vec![model]);
+
+    let (sk, token) = make_llm_token(&state.pool, 1_000_000, false, None).await;
+    let body = json!({
+        "model": "rr-1",
+        "query": "what is rust",
+        "documents": ["a language", "a car polish", "iron oxide"],
+        "top_n": 2
+    });
+    let (status, resp) = crate::send(&mut app, json_req("/v1/rerank", &sk, body)).await;
+    assert_eq!(status, StatusCode::OK, "body: {resp:?}");
+    assert_eq!(resp["results"][0]["index"], 1);
+    server.verify().await;
+
+    // total_tokens 500 → prompt 500 × $1/1M = 500 quota。
+    let expected = Quota(500);
+    let row = token_row(&state.pool, token.id).await;
+    assert_eq!(row.used_quota, expected);
+    let logs = wait_logs_of(&state.pool, &token).await;
+    assert_eq!((logs[0].prompt_tokens, logs[0].completion_tokens), (500, 0));
+    assert_eq!(logs[0].quota, expected);
+}
+
+/// 上游无 usage → §8.4 字符估算兜底（input 400 chars → 100 tokens），
+/// 绝不免费放行。
+#[tokio::test]
+async fn relay_embeddings_estimates_when_upstream_has_no_usage() {
+    let (_, state) = crate::test_app().await;
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/embeddings"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "object": "list",
+            "data": [{ "index": 0, "embedding": [0.5] }],
+            "model": "emb-1"
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let mut model = model_row("emb-1", LlmPriceMode::Token, 2.0, 0.0, None, None);
+    model.model_type = LlmModelType::Embedding;
+    let mut channel = chan(1, &server.uri(), "sk-up-emb", 0, None);
+    channel.models = "emb-1".to_owned();
+    let (mut app, _r) = relay_router_with_models(&state, vec![channel], vec![model]);
+
+    let (sk, token) = make_llm_token(&state.pool, 1_000_000, false, None).await;
+    let body = json!({ "model": "emb-1", "input": "a".repeat(400) });
+    let (status, _) = crate::send(&mut app, json_req("/v1/embeddings", &sk, body)).await;
+    assert_eq!(status, StatusCode::OK);
+    server.verify().await;
+
+    // 400 chars / 4 = 100 tokens × $2/1M = 200 quota。
+    let expected = Quota(200);
+    let row = token_row(&state.pool, token.id).await;
+    assert_eq!(row.used_quota, expected);
+}
+
+/// 模态守卫：chat 模型调 /v1/embeddings → 400；embedding 模型调
+/// /v1/chat/completions → 400（现有 chat 守卫）。
+#[tokio::test]
+async fn relay_rejects_model_type_mismatch_on_new_endpoints() {
+    let (_, state) = crate::test_app().await;
+    let server = MockServer::start().await;
+
+    // chat 渠道（gpt-4o builtin 定价）+ embedding 目录行。
+    let mut model = model_row("emb-1", LlmPriceMode::Token, 2.0, 0.0, None, None);
+    model.model_type = LlmModelType::Embedding;
+    let mut channel = chan(1, &server.uri(), "sk-up", 0, None);
+    channel.models = "gpt-4o,emb-1".to_owned();
+    let (mut app, _r) = relay_router_with_models(&state, vec![channel], vec![model]);
+
+    let (sk, token) = make_llm_token(&state.pool, 1_000_000, false, None).await;
+
+    // chat 模型 → /v1/embeddings：400，不触上游。
+    let (status, resp) = crate::send(
+        &mut app,
+        json_req(
+            "/v1/embeddings",
+            &sk,
+            json!({ "model": "gpt-4o", "input": "x" }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "body: {resp:?}");
+    // embedding 模型 → /v1/chat/completions：400（现有守卫）。
+    let (status, resp) = crate::send(
+        &mut app,
+        json_req(
+            "/v1/chat/completions",
+            &sk,
+            json!({ "model": "emb-1", "messages": [{ "role": "user", "content": "hi" }] }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "body: {resp:?}");
+    server.verify().await;
+
+    // 守卫拒绝不扣费（rejection refunds nothing——未预扣）。
+    let row = token_row(&state.pool, token.id).await;
+    assert_eq!(row.used_quota, Quota(0));
+}
+
+// ── /v1/images/generations（文生图数据面）────────────────────────
+
+/// token 模式按张计费：completion 侧 = 生成图片数（output_price = 每张
+/// 价的 1e6 倍），input 侧 = 1。
+#[tokio::test]
+async fn relay_images_token_mode_bills_per_image() {
+    let (_, state) = crate::test_app().await;
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/images/generations"))
+        .and(body_partial_json(json!({ "model": "img-1", "n": 2 })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "created": 1700000000,
+            "data": [
+                { "url": "https://cdn.test/a.png" },
+                { "url": "https://cdn.test/b.png" }
+            ]
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    // output_price $0.04/张 → 40_000；input_price 0。
+    let mut model = model_row("img-1", LlmPriceMode::Token, 0.0, 40_000.0, None, None);
+    model.model_type = LlmModelType::Image;
+    let mut channel = chan(1, &server.uri(), "sk-up-img", 0, None);
+    channel.models = "img-1".to_owned();
+    let (mut app, _r) = relay_router_with_models(&state, vec![channel], vec![model]);
+
+    let (sk, token) = make_llm_token(&state.pool, 1_000_000, false, None).await;
+    let body = json!({ "model": "img-1", "prompt": "a cat", "n": 2, "size": "1024x1024" });
+    let (status, resp) = crate::send(&mut app, json_req("/v1/images/generations", &sk, body)).await;
+    assert_eq!(status, StatusCode::OK, "body: {resp:?}");
+    assert_eq!(resp["data"].as_array().unwrap().len(), 2);
+    server.verify().await;
+
+    // 2 张 × $0.04 = $0.08 → 80_000 quota（hold 同额，settle 无差额）。
+    let expected = Quota(80_000);
+    let row = token_row(&state.pool, token.id).await;
+    assert_eq!(row.used_quota, expected);
+    assert_eq!(row.remain_quota, Quota(1_000_000) - expected);
+    let logs = wait_logs_of(&state.pool, &token).await;
+    assert_eq!(
+        (logs[0].prompt_tokens, logs[0].completion_tokens),
+        (1, 2),
+        "images billed on the completion side"
+    );
+    assert_eq!(logs[0].quota, expected);
+}
+
+/// per_call 模式：不论 n 张，按次一口价。
+#[tokio::test]
+async fn relay_images_per_call_mode_flat_price() {
+    let (_, state) = crate::test_app().await;
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/images/generations"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "created": 1700000000,
+            "data": [{ "b64_json": "AAAA" }, { "b64_json": "BBBB" }, { "b64_json": "CCCC" }]
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let mut model = model_row("img-2", LlmPriceMode::PerCall, 0.0, 0.0, None, Some(0.02));
+    model.model_type = LlmModelType::Image;
+    let mut channel = chan(1, &server.uri(), "sk-up-img", 0, None);
+    channel.models = "img-2".to_owned();
+    let (mut app, _r) = relay_router_with_models(&state, vec![channel], vec![model]);
+
+    let (sk, token) = make_llm_token(&state.pool, 1_000_000, false, None).await;
+    let body = json!({ "model": "img-2", "prompt": "a dog", "n": 3 });
+    let (status, resp) = crate::send(&mut app, json_req("/v1/images/generations", &sk, body)).await;
+    assert_eq!(status, StatusCode::OK, "body: {resp:?}");
+    server.verify().await;
+
+    // $0.02/次 → 20_000 quota，n=3 不放大。
+    let expected = Quota(20_000);
+    let row = token_row(&state.pool, token.id).await;
+    assert_eq!(row.used_quota, expected);
+}
+
+// ── /v1/audio/*（asr / tts 数据面）────────────────────────────────
+
+fn multipart_body(model: &str, file_bytes: &[u8]) -> Vec<u8> {
+    let boundary = "raisfast-test-boundary";
+    let mut body = Vec::new();
+    body.extend_from_slice(format!("--{boundary}\r\n").as_bytes());
+    body.extend_from_slice(
+        format!("Content-Disposition: form-data; name=\"model\"\r\n\r\n{model}\r\n").as_bytes(),
+    );
+    body.extend_from_slice(format!("--{boundary}\r\n").as_bytes());
+    body.extend_from_slice(
+        "Content-Disposition: form-data; name=\"file\"; filename=\"a.wav\"\r\n\
+         Content-Type: audio/wav\r\n\r\n"
+            .as_bytes(),
+    );
+    body.extend_from_slice(file_bytes);
+    body.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
+    body
+}
+
+fn stt_req(sk: &str, model: &str, file_bytes: &[u8]) -> Request<Body> {
+    Request::builder()
+        .method("POST")
+        .uri("/v1/audio/transcriptions")
+        .header(
+            header::CONTENT_TYPE,
+            "multipart/form-data; boundary=raisfast-test-boundary",
+        )
+        .header(header::AUTHORIZATION, format!("Bearer {sk}"))
+        .body(Body::from(multipart_body(model, file_bytes)))
+        .unwrap()
+}
+
+/// STT：verbose_json 带 duration → 按秒计费（input_price = $/1M 秒）。
+#[tokio::test]
+async fn relay_asr_bills_by_duration() {
+    let (_, state) = crate::test_app().await;
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/audio/transcriptions"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "text": "hello world",
+            "duration": 6.4
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    // input_price 100.0 → $0.0001/秒（≈$0.006/分钟）。
+    let mut model = model_row("asr-1", LlmPriceMode::Token, 100.0, 0.0, None, None);
+    model.model_type = LlmModelType::Asr;
+    let mut channel = chan(1, &server.uri(), "sk-up-asr", 0, None);
+    channel.models = "asr-1".to_owned();
+    let (mut app, _r) = relay_router_with_models(&state, vec![channel], vec![model]);
+
+    let (sk, token) = make_llm_token(&state.pool, 1_000_000, false, None).await;
+    let file = vec![0u8; 65_536]; // 64KB → est 2s（hold），实际 duration 6.4→7s
+    let (status, resp) = crate::send(&mut app, stt_req(&sk, "asr-1", &file)).await;
+    assert_eq!(status, StatusCode::OK, "body: {resp:?}");
+    assert_eq!(resp["text"], "hello world");
+    server.verify().await;
+
+    // 7 秒 × $0.0001 = $0.0007 → 700 quota。
+    let expected = Quota(700);
+    let row = token_row(&state.pool, token.id).await;
+    assert_eq!(row.used_quota, expected);
+    let logs = wait_logs_of(&state.pool, &token).await;
+    assert_eq!(logs[0].prompt_tokens, 7);
+    assert_eq!(logs[0].quota, expected);
+}
+
+/// STT 无 duration → 文件大小估算兜底（64KB ≈ 2s），绝不免费。
+#[tokio::test]
+async fn relay_asr_estimates_from_file_size_without_duration() {
+    let (_, state) = crate::test_app().await;
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/audio/transcriptions"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "text": "short clip"
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let mut model = model_row("asr-1", LlmPriceMode::Token, 100.0, 0.0, None, None);
+    model.model_type = LlmModelType::Asr;
+    let mut channel = chan(1, &server.uri(), "sk-up-asr", 0, None);
+    channel.models = "asr-1".to_owned();
+    let (mut app, _r) = relay_router_with_models(&state, vec![channel], vec![model]);
+
+    let (sk, token) = make_llm_token(&state.pool, 1_000_000, false, None).await;
+    let file = vec![0u8; 65_536]; // → 2s
+    let (status, _) = crate::send(&mut app, stt_req(&sk, "asr-1", &file)).await;
+    assert_eq!(status, StatusCode::OK);
+    server.verify().await;
+
+    let expected = Quota(200);
+    let row = token_row(&state.pool, token.id).await;
+    assert_eq!(row.used_quota, expected);
+}
+
+/// TTS：按输入字符计费，二进制音频透传（content-type 保留）。
+#[tokio::test]
+async fn relay_tts_bills_by_input_chars_and_streams_audio() {
+    let (_, state) = crate::test_app().await;
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/audio/speech"))
+        .and(body_partial_json(
+            json!({ "model": "tts-1", "input": "hello there" }),
+        ))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("content-type", "audio/mpeg")
+                .set_body_bytes(vec![0xFF, 0xF3, 0x40, 0x00]),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    // input_price 150.0 → $0.00015/字符（tts-1 ≈ $15/1M chars）。
+    let mut model = model_row("tts-1", LlmPriceMode::Token, 150.0, 0.0, None, None);
+    model.model_type = LlmModelType::Tts;
+    let mut channel = chan(1, &server.uri(), "sk-up-tts", 0, None);
+    channel.models = "tts-1".to_owned();
+    let (mut app, _r) = relay_router_with_models(&state, vec![channel], vec![model]);
+
+    let (sk, token) = make_llm_token(&state.pool, 1_000_000, false, None).await;
+    let body = json!({ "model": "tts-1", "input": "hello there", "voice": "alloy" });
+    let (status, body_bytes) =
+        crate::send_raw(&mut app, json_req("/v1/audio/speech", &sk, body)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        body_bytes,
+        vec![0xFF, 0xF3, 0x40, 0x00],
+        "audio bytes forwarded"
+    );
+    server.verify().await;
+
+    // "hello there" = 11 字符 × $0.00015 = $0.00165 → 1650 quota。
+    let expected = Quota(1_650);
+    let row = token_row(&state.pool, token.id).await;
+    assert_eq!(row.used_quota, expected);
+    let logs = wait_logs_of(&state.pool, &token).await;
+    assert_eq!(logs[0].prompt_tokens, 11);
+    assert_eq!(logs[0].quota, expected);
+}

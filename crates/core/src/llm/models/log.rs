@@ -316,8 +316,7 @@ pub async fn query_paged(
 ) -> AppResult<(Vec<LlmLog>, i64)> {
     use crate::db::driver::DbDriver;
     use crate::types::snowflake_id::{SnowflakeId, parse_id};
-    let channel: Option<SnowflakeId> =
-        filters.channel_id.as_deref().and_then(|s| parse_id(s).ok());
+    let channel: Option<SnowflakeId> = filters.channel_id.as_deref().and_then(|s| parse_id(s).ok());
     let token: Option<SnowflakeId> = filters.token_id.as_deref().and_then(|s| parse_id(s).ok());
     let model = filters.model_name.clone().filter(|m| !m.is_empty());
     let user_ids: &[SnowflakeId] = &filters.user_ids;

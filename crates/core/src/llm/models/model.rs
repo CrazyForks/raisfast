@@ -6,12 +6,18 @@ use crate::errors::app_error::{AppError, AppResult};
 use crate::types::snowflake_id::SnowflakeId;
 use crate::utils::tz::{Timestamp, now_utc};
 
+/// Canonical model-capability catalog (params.capabilities values). The
+/// admin UI renders these as toggles — single source of truth lives here,
+/// the client never hardcodes it.
+pub const CAPABILITIES: &[&str] = &["vision", "tools", "json_mode", "reasoning"];
+
 define_enum!(
     LlmModelType {
         Chat = "chat",
         Embedding = "embedding",
         Rerank = "rerank",
         Asr = "asr",
+        Tts = "tts",
         Vlm = "vlm",
         Image = "image",
     }

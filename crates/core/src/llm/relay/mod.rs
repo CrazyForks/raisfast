@@ -59,12 +59,32 @@ impl OpenaiHeaders {
 
 /// Register `/v1` routes on the application root.
 pub fn routes() -> axum::Router<AppState> {
+    // OpenAI allows 25MB audio uploads — lift the 2MB default body limit
+    // for the multipart STT routes only.
+    const AUDIO_BODY_LIMIT: usize = 25 * 1024 * 1024;
     axum::Router::new()
         .route(
             "/v1/chat/completions",
             axum::routing::post(chat_completions),
         )
         .route("/v1/models", axum::routing::get(list_models))
+        .route("/v1/embeddings", axum::routing::post(embeddings))
+        .route("/v1/rerank", axum::routing::post(rerank))
+        .route(
+            "/v1/images/generations",
+            axum::routing::post(images_generations),
+        )
+        .route(
+            "/v1/audio/transcriptions",
+            axum::routing::post(audio_transcriptions)
+                .layer(axum::extract::DefaultBodyLimit::max(AUDIO_BODY_LIMIT)),
+        )
+        .route(
+            "/v1/audio/translations",
+            axum::routing::post(audio_translations)
+                .layer(axum::extract::DefaultBodyLimit::max(AUDIO_BODY_LIMIT)),
+        )
+        .route("/v1/audio/speech", axum::routing::post(audio_speech))
 }
 
 /// Error body in the OpenAI-compatible wire shape (design §8.5): SDKs parse errors from this
@@ -506,6 +526,1125 @@ async fn list_models(State(state): State<AppState>, headers: HeaderMap) -> Respo
 
 fn adaptor_request_url(base_url: &str) -> String {
     crate::llm::relay::adaptor::OpenaiAdaptor::request_url(base_url, RelayEndpoint::ChatCompletions)
+}
+
+// ── non-chat modalities: /v1/embeddings + /v1/rerank ──────────────
+// Shared non-streaming pipeline (chat §4 minus the streaming branch):
+// the retry/settle/log loop is identical, only the URL, model-type guard
+// and usage extraction vary per modality.
+
+/// Per-modality relay parameters for the shared non-streaming pipeline.
+struct JsonRelaySpec {
+    endpoint: RelayEndpoint,
+    /// Guard on the directory model_type (chat models are rejected here).
+    type_ok: fn(&LlmModelType) -> bool,
+    /// Extract RelayUsage from a successful upstream response body.
+    usage_of: fn(&serde_json::Value) -> RelayUsage,
+    /// §8.4 no-usage fallback: estimate from the request text payload.
+    estimate_of: fn(&serde_json::Value) -> RelayUsage,
+}
+
+const EMBEDDINGS_SPEC: JsonRelaySpec = JsonRelaySpec {
+    endpoint: RelayEndpoint::Embeddings,
+    type_ok: |t| matches!(t, LlmModelType::Embedding),
+    usage_of: |v| {
+        v.get("usage")
+            .map(crate::llm::relay::adaptor::RelayUsage::from_openai)
+            .unwrap_or_default()
+    },
+    estimate_of: |req| RelayUsage::estimate(billing::count_prompt_chars(req), 0),
+};
+
+const RERANK_SPEC: JsonRelaySpec = JsonRelaySpec {
+    endpoint: RelayEndpoint::Rerank,
+    type_ok: |t| matches!(t, LlmModelType::Rerank),
+    usage_of: |v| {
+        // Jina/Cohere shape: usage.total_tokens (prompt_tokens optional).
+        let prompt = v
+            .get("usage")
+            .and_then(|u| {
+                u.get("prompt_tokens")
+                    .and_then(|x| x.as_i64())
+                    .or_else(|| u.get("total_tokens").and_then(|x| x.as_i64()))
+            })
+            .unwrap_or(0);
+        RelayUsage {
+            prompt_tokens: prompt,
+            completion_tokens: 0,
+            cache_read_tokens: 0,
+            cache_write_tokens: 0,
+        }
+    },
+    estimate_of: |req| RelayUsage::estimate(billing::count_prompt_chars(req), 0),
+};
+
+const IMAGES_SPEC: JsonRelaySpec = JsonRelaySpec {
+    endpoint: RelayEndpoint::Images,
+    type_ok: |t| matches!(t, LlmModelType::Image),
+    usage_of: |v| {
+        // Generated image count from the response `data` array; images
+        // responses carry no usage object.
+        let images = v
+            .get("data")
+            .and_then(|d| d.as_array())
+            .map(|a| a.len())
+            .unwrap_or(0) as i64;
+        RelayUsage {
+            prompt_tokens: 1,
+            completion_tokens: images,
+            cache_read_tokens: 0,
+            cache_write_tokens: 0,
+        }
+    },
+    estimate_of: |req| {
+        let n = req
+            .get("n")
+            .and_then(|v| v.as_i64())
+            .filter(|v| *v > 0)
+            .unwrap_or(1);
+        RelayUsage {
+            prompt_tokens: 1,
+            completion_tokens: n,
+            cache_read_tokens: 0,
+            cache_write_tokens: 0,
+        }
+    },
+};
+
+/// POST /v1/embeddings — OpenAI-compatible vectorization relay.
+async fn embeddings(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<serde_json::Value>,
+) -> Response {
+    relay_json(state, headers, body, &EMBEDDINGS_SPEC).await
+}
+
+/// POST /v1/rerank — Jina/Cohere-style reranking relay.
+async fn rerank(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<serde_json::Value>,
+) -> Response {
+    relay_json(state, headers, body, &RERANK_SPEC).await
+}
+
+/// POST /v1/images/generations — OpenAI-compatible text-to-image relay.
+/// Billing convention (token mode): `prompt_tokens` = 1 (input_price =
+/// per-prompt), `completion_tokens` = generated image count (output_price
+/// = per-image); `per_call` mode bills the flat call price per request.
+async fn images_generations(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<serde_json::Value>,
+) -> Response {
+    relay_json(state, headers, body, &IMAGES_SPEC).await
+}
+
+/// Shared non-streaming relay pipeline (chat §4 minus streaming): auth →
+/// model guard → pre-consume → slot/retry loop → settle → log.
+#[allow(clippy::too_many_lines)]
+async fn relay_json(
+    state: AppState,
+    headers: HeaderMap,
+    body: serde_json::Value,
+    spec: &JsonRelaySpec,
+) -> Response {
+    let Some(bearer) = bearer_of(&headers) else {
+        return openai_error(
+            StatusCode::UNAUTHORIZED,
+            "invalid_request_error",
+            "missing bearer token".into(),
+        );
+    };
+    let identity = match auth::authenticate(&state.pool, &bearer, &client_ip_of(&headers)).await {
+        Ok(id) => id,
+        Err(err) => {
+            let status = match &err {
+                crate::errors::app_error::AppError::Unauthorized => StatusCode::UNAUTHORIZED,
+                crate::errors::app_error::AppError::Forbidden => StatusCode::FORBIDDEN,
+                _ => StatusCode::UNAUTHORIZED,
+            };
+            return openai_error(status, "invalid_request_error", err.to_string());
+        }
+    };
+    let token = identity.token;
+    let tenant = token
+        .tenant_id
+        .clone()
+        .unwrap_or_else(|| "default".to_owned());
+    let (token_id, user_id) = auth::token_owner(&token);
+    let token_group = token
+        .token_group
+        .clone()
+        .unwrap_or_else(|| "default".to_owned());
+    let group_ratio = group_ratio_of(&state.pool, &token_group).await;
+
+    let Some(model) = body
+        .get("model")
+        .and_then(|m| m.as_str())
+        .map(str::to_owned)
+    else {
+        return openai_error(
+            StatusCode::BAD_REQUEST,
+            "invalid_request_error",
+            "missing model".into(),
+        );
+    };
+    if !auth::model_allowed(&token, &model) {
+        return openai_error(
+            StatusCode::FORBIDDEN,
+            "invalid_request_error",
+            format!("model not allowed: {model}"),
+        );
+    }
+    let Some(info) = state.llm_router.model_info(&tenant, &model) else {
+        return openai_error(
+            StatusCode::BAD_REQUEST,
+            "invalid_request_error",
+            format!("unknown model: {model}"),
+        );
+    };
+    if !(spec.type_ok)(&info.model_type) {
+        return openai_error(
+            StatusCode::BAD_REQUEST,
+            "invalid_request_error",
+            format!(
+                "model {} is not valid for this endpoint: {}",
+                model,
+                info.model_type.as_str()
+            ),
+        );
+    }
+
+    let estimate =
+        billing::estimate_precharge(&info.pricing, info.model_type, &body, group_ratio, None);
+    let charge =
+        match billing::pre_consume(&state.pool, token_id, token.unlimited_quota, estimate).await {
+            Ok(c) => c,
+            Err(_) => {
+                return openai_error(
+                    StatusCode::TOO_MANY_REQUESTS,
+                    "rate_limit_error",
+                    "insufficient quota".into(),
+                );
+            }
+        };
+
+    let router = state.llm_router.clone();
+    let ctx = ResolveCtx {
+        tenant: &tenant,
+        group: None,
+        pin_channel: None,
+    };
+    let mut retry = RetryState::default();
+    let deadline = Instant::now() + Duration::from_secs(RELAY_TIER.max_wait_secs);
+    let body_bytes = body.to_string().len();
+    let mut attempts_log: Vec<String> = Vec::new();
+    let mut last_error: Option<(u16, String)> = None;
+
+    for attempt in 0..=DEFAULT_RETRY_TIMES {
+        // Fresh snapshot per attempt (design §6.2 — see chat pipeline).
+        let cache = router.cache_snapshot();
+        let acquired = router
+            .acquire_slot(
+                &crate::llm::service::SlotRequest {
+                    cache: &cache,
+                    ctx: &ctx,
+                    model: &model,
+                    tier: RELAY_TIER,
+                    caller: Some((token_id, user_id)),
+                    body_bytes,
+                    deadline,
+                },
+                &mut retry,
+            )
+            .await;
+        let (channel, key_index, _permit) = match acquired {
+            Ok(triple) => triple,
+            Err(SlotError::NoRoute(err)) => {
+                billing::refund_all(&state.pool, &charge).await;
+                let (status, message) = last_error.clone().unwrap_or((400, err.to_string()));
+                let typ = if status == 429 {
+                    "rate_limit_error"
+                } else {
+                    "api_error"
+                };
+                return openai_error(
+                    StatusCode::from_u16(status).unwrap_or(StatusCode::BAD_REQUEST),
+                    typ,
+                    message,
+                );
+            }
+            Err(SlotError::Rejected {
+                status,
+                message,
+                retry_after_secs,
+            }) => {
+                billing::refund_all(&state.pool, &charge).await;
+                let mut hdrs = HeaderMap::new();
+                if let Some(secs) = retry_after_secs
+                    && let Ok(v) = secs.to_string().parse()
+                {
+                    hdrs.insert("retry-after", v);
+                }
+                let code = StatusCode::from_u16(status).unwrap_or(StatusCode::TOO_MANY_REQUESTS);
+                let typ = if status == 503 {
+                    "server_error"
+                } else {
+                    "rate_limit_error"
+                };
+                let resp = openai_error(code, typ, message);
+                return (code, hdrs, resp).into_response();
+            }
+        };
+
+        let upstream_model = crate::llm::service::mapped_model(&channel, &model);
+        let converted = match crate::llm::relay::adaptor::OpenaiAdaptor::convert_plain(
+            body.clone(),
+            &upstream_model,
+            channel.param_override.as_ref(),
+        ) {
+            Ok(converted) => converted,
+            Err(err) => {
+                return openai_error(
+                    StatusCode::BAD_REQUEST,
+                    "invalid_request_error",
+                    err.to_string(),
+                );
+            }
+        };
+        let url = crate::llm::relay::adaptor::OpenaiAdaptor::request_url(
+            &channel.base_url,
+            spec.endpoint,
+        );
+        let client = shared_client();
+        let resp = client
+            .post(&url)
+            .headers(crate::llm::relay::adaptor::OpenaiAdaptor::setup_headers(
+                &channel.keys[key_index].plain.clone().unwrap_or_default(),
+                channel.header_override.as_ref(),
+            ))
+            .json(&converted)
+            .send()
+            .await;
+
+        match resp {
+            Ok(upstream) if upstream.status().is_success() => {
+                match crate::llm::relay::adaptor::OpenaiAdaptor::handle_response(upstream).await {
+                    Ok((resp_body, parsed)) => {
+                        let mut usage = (spec.usage_of)(&resp_body);
+                        if parsed.prompt_tokens > 0 || parsed.completion_tokens > 0 {
+                            usage = parsed;
+                        }
+                        if usage.prompt_tokens == 0 && usage.completion_tokens == 0 {
+                            // §8.4 no-usage fallback — estimate from the
+                            // request payload instead of billing zero.
+                            usage = (spec.estimate_of)(&body);
+                            tracing::warn!(
+                                prompt_tokens = usage.prompt_tokens,
+                                "llm upstream returned no usage; billing by char estimation"
+                            );
+                        }
+                        let actual = billing::settle_quota(&info.pricing, &usage, group_ratio);
+                        let cost = billing::cost_quota(
+                            &info.pricing,
+                            &usage,
+                            channel.cost_mode,
+                            channel.cost_discount,
+                        );
+                        billing::settle(&state.pool, &charge, actual).await;
+                        router.report_success(channel.id, key_index);
+                        router.record_latency(&tenant, &model, 1.0);
+                        let log = NewLog {
+                            tenant_id: Some(tenant.clone()),
+                            user_id: Some(user_id),
+                            token_id: Some(token_id),
+                            source: LogSource::Relay,
+                            channel_id: Some(channel.id),
+                            key_index: Some(key_index as i32),
+                            model_name: model.clone(),
+                            is_stream: false,
+                            prompt_tokens: usage.prompt_tokens as i32,
+                            completion_tokens: usage.completion_tokens as i32,
+                            cache_read_tokens: usage.cache_read_tokens as i32,
+                            cache_write_tokens: usage.cache_write_tokens as i32,
+                            quota: actual,
+                            cost_quota: cost,
+                            detail: Some(serde_json::json!({
+                                "pre_consumed": charge.pre_consumed,
+                                "group_ratio": group_ratio,
+                                "cost_mode": channel.cost_mode.as_str(),
+                                "cost_discount": channel.cost_discount,
+                                "attempts": attempts_log.len() + 1,
+                            })),
+                            elapsed_ms: None,
+                            status_code: Some(200),
+                            error_message: None,
+                            request_id: None,
+                            day: None,
+                        };
+                        write_log(&state, log).await;
+                        return (StatusCode::OK, Json(resp_body)).into_response();
+                    }
+                    Err(err) => {
+                        attempts_log.push(format!("ch{} parse: {err}", channel.id.0));
+                        last_error = Some((502, err.to_string()));
+                        break;
+                    }
+                }
+            }
+            Ok(upstream) => {
+                let status = upstream.status().as_u16();
+                let retry_after =
+                    crate::llm::relay::adaptor::parse_reset_deadline(upstream.headers());
+                let text = upstream.text().await.unwrap_or_default();
+                attempts_log.push(format!("ch{} key{key_index}: {status}", channel.id.0));
+                if status != 400 {
+                    router.report_failure(
+                        channel.id,
+                        key_index,
+                        &crate::llm::service::UpstreamFailure {
+                            status: Some(status),
+                            message: text.clone(),
+                            retry_after,
+                        },
+                    );
+                }
+                last_error = Some((status, text));
+                if matches!(status, 400 | 408 | 504 | 524) {
+                    break;
+                }
+            }
+            Err(err) => {
+                attempts_log.push(format!(
+                    "ch{} key{key_index}: transport {err}",
+                    channel.id.0
+                ));
+                router.report_failure(
+                    channel.id,
+                    key_index,
+                    &crate::llm::service::UpstreamFailure {
+                        status: None,
+                        message: err.to_string(),
+                        retry_after: None,
+                    },
+                );
+                last_error = Some((502, err.to_string()));
+            }
+        }
+        if attempt < DEFAULT_RETRY_TIMES {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    }
+
+    billing::refund_all(&state.pool, &charge).await;
+    let (status, message) = last_error.unwrap_or((502, "upstream failed".to_owned()));
+    let status = StatusCode::from_u16(if (400..600).contains(&status) {
+        status
+    } else {
+        502
+    })
+    .unwrap_or(StatusCode::BAD_GATEWAY);
+    openai_error(status, "api_error", message)
+}
+
+// ── audio modalities: /v1/audio/* ────────────────────────────────
+
+/// POST /v1/audio/transcriptions — speech-to-text (multipart).
+async fn audio_transcriptions(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    mut multipart: axum::extract::Multipart,
+) -> Response {
+    audio_stt(
+        state,
+        headers,
+        &mut multipart,
+        RelayEndpoint::AudioTranscriptions,
+    )
+    .await
+}
+
+/// POST /v1/audio/translations — speech-to-text translated to English.
+async fn audio_translations(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    mut multipart: axum::extract::Multipart,
+) -> Response {
+    audio_stt(
+        state,
+        headers,
+        &mut multipart,
+        RelayEndpoint::AudioTranslations,
+    )
+    .await
+}
+
+/// One buffered multipart field (rebuilt into a reqwest Form per attempt).
+struct SttField {
+    name: String,
+    filename: Option<String>,
+    mime: Option<String>,
+    bytes: Vec<u8>,
+}
+
+/// Shared STT pipeline: multipart in → JSON out; billed by audio duration
+/// (seconds × input_price; `per_call` = flat). Duration comes from the
+/// upstream `duration` field (verbose_json) or a file-size estimate.
+#[allow(clippy::too_many_lines)]
+async fn audio_stt(
+    state: AppState,
+    headers: HeaderMap,
+    multipart: &mut axum::extract::Multipart,
+    endpoint: RelayEndpoint,
+) -> Response {
+    // Buffer the multipart once (25MB cap — DefaultBodyLimit guards it).
+    let mut fields: Vec<SttField> = Vec::new();
+    let mut model = String::new();
+    let mut file_bytes_total = 0usize;
+    loop {
+        let field = match multipart.next_field().await {
+            Ok(Some(f)) => f,
+            Ok(None) => break,
+            Err(err) => {
+                return openai_error(
+                    StatusCode::BAD_REQUEST,
+                    "invalid_request_error",
+                    format!("invalid multipart body: {err}"),
+                );
+            }
+        };
+        let name = field.name().unwrap_or_default().to_owned();
+        let filename = field.file_name().map(str::to_owned);
+        let mime = field.content_type().map(str::to_owned);
+        let bytes = field.bytes().await.unwrap_or_default().to_vec();
+        if name == "model"
+            && filename.is_none()
+            && let Ok(m) = std::str::from_utf8(&bytes)
+        {
+            model = m.trim().to_owned();
+        }
+        file_bytes_total += bytes.len();
+        fields.push(SttField {
+            name,
+            filename,
+            mime,
+            bytes,
+        });
+    }
+
+    let Some(bearer) = bearer_of(&headers) else {
+        return openai_error(
+            StatusCode::UNAUTHORIZED,
+            "invalid_request_error",
+            "missing bearer token".into(),
+        );
+    };
+    let identity = match auth::authenticate(&state.pool, &bearer, &client_ip_of(&headers)).await {
+        Ok(id) => id,
+        Err(err) => {
+            return openai_error(
+                StatusCode::UNAUTHORIZED,
+                "invalid_request_error",
+                err.to_string(),
+            );
+        }
+    };
+    let token = identity.token;
+    let tenant = token
+        .tenant_id
+        .clone()
+        .unwrap_or_else(|| "default".to_owned());
+    let (token_id, user_id) = auth::token_owner(&token);
+    let token_group = token
+        .token_group
+        .clone()
+        .unwrap_or_else(|| "default".to_owned());
+    let group_ratio = group_ratio_of(&state.pool, &token_group).await;
+
+    if model.is_empty() {
+        return openai_error(
+            StatusCode::BAD_REQUEST,
+            "invalid_request_error",
+            "missing model".into(),
+        );
+    }
+    if !auth::model_allowed(&token, &model) {
+        return openai_error(
+            StatusCode::FORBIDDEN,
+            "invalid_request_error",
+            format!("model not allowed: {model}"),
+        );
+    }
+    let Some(info) = state.llm_router.model_info(&tenant, &model) else {
+        return openai_error(
+            StatusCode::BAD_REQUEST,
+            "invalid_request_error",
+            format!("unknown model: {model}"),
+        );
+    };
+    if !matches!(info.model_type, LlmModelType::Asr) {
+        return openai_error(
+            StatusCode::BAD_REQUEST,
+            "invalid_request_error",
+            format!(
+                "model {} is not an asr model: {}",
+                model,
+                info.model_type.as_str()
+            ),
+        );
+    }
+
+    // Pre-charge: per-call flat, else duration estimate from file size.
+    let est_secs = billing::estimate_audio_secs(file_bytes_total);
+    let estimate = match info.pricing.price_mode {
+        crate::llm::models::model::LlmPriceMode::PerCall => {
+            billing::settle_quota(&info.pricing, &RelayUsage::default(), group_ratio)
+        }
+        _ => billing::flat_token_quota(info.pricing.input_price, est_secs, group_ratio),
+    };
+    let charge =
+        match billing::pre_consume(&state.pool, token_id, token.unlimited_quota, estimate).await {
+            Ok(c) => c,
+            Err(_) => {
+                return openai_error(
+                    StatusCode::TOO_MANY_REQUESTS,
+                    "rate_limit_error",
+                    "insufficient quota".into(),
+                );
+            }
+        };
+
+    let router = state.llm_router.clone();
+    let ctx = ResolveCtx {
+        tenant: &tenant,
+        group: None,
+        pin_channel: None,
+    };
+    let mut retry = RetryState::default();
+    let deadline = Instant::now() + Duration::from_secs(RELAY_TIER.max_wait_secs);
+    let mut attempts_log: Vec<String> = Vec::new();
+    let mut last_error: Option<(u16, String)> = None;
+
+    for attempt in 0..=DEFAULT_RETRY_TIMES {
+        let cache = router.cache_snapshot();
+        let acquired = router
+            .acquire_slot(
+                &crate::llm::service::SlotRequest {
+                    cache: &cache,
+                    ctx: &ctx,
+                    model: &model,
+                    tier: RELAY_TIER,
+                    caller: Some((token_id, user_id)),
+                    body_bytes: file_bytes_total,
+                    deadline,
+                },
+                &mut retry,
+            )
+            .await;
+        let (channel, key_index, _permit) = match acquired {
+            Ok(triple) => triple,
+            Err(SlotError::NoRoute(err)) => {
+                billing::refund_all(&state.pool, &charge).await;
+                let (status, message) = last_error.clone().unwrap_or((400, err.to_string()));
+                let typ = if status == 429 {
+                    "rate_limit_error"
+                } else {
+                    "api_error"
+                };
+                return openai_error(
+                    StatusCode::from_u16(status).unwrap_or(StatusCode::BAD_REQUEST),
+                    typ,
+                    message,
+                );
+            }
+            Err(SlotError::Rejected {
+                status,
+                message,
+                retry_after_secs,
+            }) => {
+                billing::refund_all(&state.pool, &charge).await;
+                let mut hdrs = HeaderMap::new();
+                if let Some(secs) = retry_after_secs
+                    && let Ok(v) = secs.to_string().parse()
+                {
+                    hdrs.insert("retry-after", v);
+                }
+                let code = StatusCode::from_u16(status).unwrap_or(StatusCode::TOO_MANY_REQUESTS);
+                let typ = if status == 503 {
+                    "server_error"
+                } else {
+                    "rate_limit_error"
+                };
+                let resp = openai_error(code, typ, message);
+                return (code, hdrs, resp).into_response();
+            }
+        };
+
+        let upstream_model = crate::llm::service::mapped_model(&channel, &model);
+        // Rebuild the multipart form per attempt: model rewritten, other
+        // fields (file, language, prompt, ...) passed through untouched.
+        let mut form = reqwest::multipart::Form::new();
+        for f in &fields {
+            let mut part = reqwest::multipart::Part::bytes(f.bytes.clone());
+            if let Some(fname) = f.filename.clone().or_else(|| Some(f.name.clone())) {
+                part = part.file_name(fname);
+            }
+            let part = match &f.mime {
+                Some(mime) => part
+                    .mime_str(mime)
+                    .unwrap_or_else(|_| reqwest::multipart::Part::bytes(f.bytes.clone())),
+                None => part,
+            };
+            let part = if f.name == "model" {
+                reqwest::multipart::Part::text(upstream_model.clone())
+            } else {
+                part
+            };
+            form = form.part(f.name.clone(), part);
+        }
+        let url =
+            crate::llm::relay::adaptor::OpenaiAdaptor::request_url(&channel.base_url, endpoint);
+        let client = shared_client();
+        let resp = client
+            .post(&url)
+            .headers(crate::llm::relay::adaptor::OpenaiAdaptor::setup_headers(
+                &channel.keys[key_index].plain.clone().unwrap_or_default(),
+                channel.header_override.as_ref(),
+            ))
+            .multipart(form)
+            .send()
+            .await;
+
+        match resp {
+            Ok(upstream) if upstream.status().is_success() => {
+                match crate::llm::relay::adaptor::OpenaiAdaptor::handle_response(upstream).await {
+                    Ok((resp_body, _)) => {
+                        // Duration from verbose_json `duration`, else the
+                        // file-size estimate (§8.4 spirit: never free).
+                        let secs = resp_body
+                            .get("duration")
+                            .and_then(|d| d.as_f64())
+                            .map(|d| d.ceil() as i64)
+                            .filter(|d| *d > 0)
+                            .unwrap_or(est_secs);
+                        let usage = RelayUsage {
+                            prompt_tokens: secs,
+                            completion_tokens: 0,
+                            cache_read_tokens: 0,
+                            cache_write_tokens: 0,
+                        };
+                        let actual = billing::settle_quota(&info.pricing, &usage, group_ratio);
+                        let cost = billing::cost_quota(
+                            &info.pricing,
+                            &usage,
+                            channel.cost_mode,
+                            channel.cost_discount,
+                        );
+                        billing::settle(&state.pool, &charge, actual).await;
+                        router.report_success(channel.id, key_index);
+                        router.record_latency(&tenant, &model, 1.0);
+                        let log = NewLog {
+                            tenant_id: Some(tenant.clone()),
+                            user_id: Some(user_id),
+                            token_id: Some(token_id),
+                            source: LogSource::Relay,
+                            channel_id: Some(channel.id),
+                            key_index: Some(key_index as i32),
+                            model_name: model.clone(),
+                            is_stream: false,
+                            prompt_tokens: usage.prompt_tokens as i32,
+                            completion_tokens: 0,
+                            cache_read_tokens: 0,
+                            cache_write_tokens: 0,
+                            quota: actual,
+                            cost_quota: cost,
+                            detail: Some(serde_json::json!({
+                                "pre_consumed": charge.pre_consumed,
+                                "group_ratio": group_ratio,
+                                "cost_mode": channel.cost_mode.as_str(),
+                                "cost_discount": channel.cost_discount,
+                                "audio_secs": secs,
+                                "duration_estimated": !resp_body
+                                    .get("duration")
+                                    .is_some_and(|d| d.as_f64().is_some_and(|d| d > 0.0)),
+                                "attempts": attempts_log.len() + 1,
+                            })),
+                            elapsed_ms: None,
+                            status_code: Some(200),
+                            error_message: None,
+                            request_id: None,
+                            day: None,
+                        };
+                        write_log(&state, log).await;
+                        return (StatusCode::OK, Json(resp_body)).into_response();
+                    }
+                    Err(err) => {
+                        attempts_log.push(format!("ch{} parse: {err}", channel.id.0));
+                        last_error = Some((502, err.to_string()));
+                        break;
+                    }
+                }
+            }
+            Ok(upstream) => {
+                let status = upstream.status().as_u16();
+                let retry_after =
+                    crate::llm::relay::adaptor::parse_reset_deadline(upstream.headers());
+                let text = upstream.text().await.unwrap_or_default();
+                attempts_log.push(format!("ch{} key{key_index}: {status}", channel.id.0));
+                if status != 400 {
+                    router.report_failure(
+                        channel.id,
+                        key_index,
+                        &crate::llm::service::UpstreamFailure {
+                            status: Some(status),
+                            message: text.clone(),
+                            retry_after,
+                        },
+                    );
+                }
+                last_error = Some((status, text));
+                if matches!(status, 400 | 408 | 504 | 524) {
+                    break;
+                }
+            }
+            Err(err) => {
+                attempts_log.push(format!(
+                    "ch{} key{key_index}: transport {err}",
+                    channel.id.0
+                ));
+                router.report_failure(
+                    channel.id,
+                    key_index,
+                    &crate::llm::service::UpstreamFailure {
+                        status: None,
+                        message: err.to_string(),
+                        retry_after: None,
+                    },
+                );
+                last_error = Some((502, err.to_string()));
+            }
+        }
+        if attempt < DEFAULT_RETRY_TIMES {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    }
+
+    billing::refund_all(&state.pool, &charge).await;
+    let (status, message) = last_error.unwrap_or((502, "upstream failed".to_owned()));
+    let status = StatusCode::from_u16(if (400..600).contains(&status) {
+        status
+    } else {
+        502
+    })
+    .unwrap_or(StatusCode::BAD_GATEWAY);
+    openai_error(status, "api_error", message)
+}
+
+/// POST /v1/audio/speech — text-to-speech: JSON in, binary audio out.
+/// Billed entirely on the request side (input chars × input_price), so
+/// settlement happens before the audio streams — client aborts can't
+/// under-bill (§9.3 input-side semantics).
+async fn audio_speech(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<serde_json::Value>,
+) -> Response {
+    let Some(bearer) = bearer_of(&headers) else {
+        return openai_error(
+            StatusCode::UNAUTHORIZED,
+            "invalid_request_error",
+            "missing bearer token".into(),
+        );
+    };
+    let identity = match auth::authenticate(&state.pool, &bearer, &client_ip_of(&headers)).await {
+        Ok(id) => id,
+        Err(err) => {
+            return openai_error(
+                StatusCode::UNAUTHORIZED,
+                "invalid_request_error",
+                err.to_string(),
+            );
+        }
+    };
+    let token = identity.token;
+    let tenant = token
+        .tenant_id
+        .clone()
+        .unwrap_or_else(|| "default".to_owned());
+    let (token_id, user_id) = auth::token_owner(&token);
+    let token_group = token
+        .token_group
+        .clone()
+        .unwrap_or_else(|| "default".to_owned());
+    let group_ratio = group_ratio_of(&state.pool, &token_group).await;
+
+    let Some(model) = body
+        .get("model")
+        .and_then(|m| m.as_str())
+        .map(str::to_owned)
+    else {
+        return openai_error(
+            StatusCode::BAD_REQUEST,
+            "invalid_request_error",
+            "missing model".into(),
+        );
+    };
+    if !auth::model_allowed(&token, &model) {
+        return openai_error(
+            StatusCode::FORBIDDEN,
+            "invalid_request_error",
+            format!("model not allowed: {model}"),
+        );
+    }
+    let Some(info) = state.llm_router.model_info(&tenant, &model) else {
+        return openai_error(
+            StatusCode::BAD_REQUEST,
+            "invalid_request_error",
+            format!("unknown model: {model}"),
+        );
+    };
+    if !matches!(info.model_type, LlmModelType::Tts) {
+        return openai_error(
+            StatusCode::BAD_REQUEST,
+            "invalid_request_error",
+            format!(
+                "model {} is not a tts model: {}",
+                model,
+                info.model_type.as_str()
+            ),
+        );
+    }
+
+    // Billable unit known upfront: input chars (token mode) / flat per call.
+    let chars = billing::count_prompt_chars(&body).max(1) as i64;
+    let usage = RelayUsage {
+        prompt_tokens: chars,
+        completion_tokens: 0,
+        cache_read_tokens: 0,
+        cache_write_tokens: 0,
+    };
+    let estimate = billing::settle_quota(&info.pricing, &usage, group_ratio);
+    let charge =
+        match billing::pre_consume(&state.pool, token_id, token.unlimited_quota, estimate).await {
+            Ok(c) => c,
+            Err(_) => {
+                return openai_error(
+                    StatusCode::TOO_MANY_REQUESTS,
+                    "rate_limit_error",
+                    "insufficient quota".into(),
+                );
+            }
+        };
+
+    let router = state.llm_router.clone();
+    let ctx = ResolveCtx {
+        tenant: &tenant,
+        group: None,
+        pin_channel: None,
+    };
+    let mut retry = RetryState::default();
+    let deadline = Instant::now() + Duration::from_secs(RELAY_TIER.max_wait_secs);
+    let body_bytes = body.to_string().len();
+    let mut attempts_log: Vec<String> = Vec::new();
+    let mut last_error: Option<(u16, String)> = None;
+
+    for attempt in 0..=DEFAULT_RETRY_TIMES {
+        let cache = router.cache_snapshot();
+        let acquired = router
+            .acquire_slot(
+                &crate::llm::service::SlotRequest {
+                    cache: &cache,
+                    ctx: &ctx,
+                    model: &model,
+                    tier: RELAY_TIER,
+                    caller: Some((token_id, user_id)),
+                    body_bytes,
+                    deadline,
+                },
+                &mut retry,
+            )
+            .await;
+        let (channel, key_index, _permit) = match acquired {
+            Ok(triple) => triple,
+            Err(SlotError::NoRoute(err)) => {
+                billing::refund_all(&state.pool, &charge).await;
+                let (status, message) = last_error.clone().unwrap_or((400, err.to_string()));
+                let typ = if status == 429 {
+                    "rate_limit_error"
+                } else {
+                    "api_error"
+                };
+                return openai_error(
+                    StatusCode::from_u16(status).unwrap_or(StatusCode::BAD_REQUEST),
+                    typ,
+                    message,
+                );
+            }
+            Err(SlotError::Rejected {
+                status,
+                message,
+                retry_after_secs,
+            }) => {
+                billing::refund_all(&state.pool, &charge).await;
+                let mut hdrs = HeaderMap::new();
+                if let Some(secs) = retry_after_secs
+                    && let Ok(v) = secs.to_string().parse()
+                {
+                    hdrs.insert("retry-after", v);
+                }
+                let code = StatusCode::from_u16(status).unwrap_or(StatusCode::TOO_MANY_REQUESTS);
+                let typ = if status == 503 {
+                    "server_error"
+                } else {
+                    "rate_limit_error"
+                };
+                let resp = openai_error(code, typ, message);
+                return (code, hdrs, resp).into_response();
+            }
+        };
+
+        let upstream_model = crate::llm::service::mapped_model(&channel, &model);
+        let converted = match crate::llm::relay::adaptor::OpenaiAdaptor::convert_plain(
+            body.clone(),
+            &upstream_model,
+            channel.param_override.as_ref(),
+        ) {
+            Ok(converted) => converted,
+            Err(err) => {
+                return openai_error(
+                    StatusCode::BAD_REQUEST,
+                    "invalid_request_error",
+                    err.to_string(),
+                );
+            }
+        };
+        let url = crate::llm::relay::adaptor::OpenaiAdaptor::request_url(
+            &channel.base_url,
+            RelayEndpoint::AudioSpeech,
+        );
+        let client = shared_client();
+        let resp = client
+            .post(&url)
+            .headers(crate::llm::relay::adaptor::OpenaiAdaptor::setup_headers(
+                &channel.keys[key_index].plain.clone().unwrap_or_default(),
+                channel.header_override.as_ref(),
+            ))
+            .json(&converted)
+            .send()
+            .await;
+
+        match resp {
+            Ok(upstream) if upstream.status().is_success() => {
+                // Input-side billing: settle now (actual == hold), then
+                // stream the audio through untouched.
+                let actual = billing::settle_quota(&info.pricing, &usage, group_ratio);
+                let cost = billing::cost_quota(
+                    &info.pricing,
+                    &usage,
+                    channel.cost_mode,
+                    channel.cost_discount,
+                );
+                billing::settle(&state.pool, &charge, actual).await;
+                router.report_success(channel.id, key_index);
+                router.record_latency(&tenant, &model, 1.0);
+                let log = NewLog {
+                    tenant_id: Some(tenant.clone()),
+                    user_id: Some(user_id),
+                    token_id: Some(token_id),
+                    source: LogSource::Relay,
+                    channel_id: Some(channel.id),
+                    key_index: Some(key_index as i32),
+                    model_name: model.clone(),
+                    is_stream: false,
+                    prompt_tokens: usage.prompt_tokens as i32,
+                    completion_tokens: 0,
+                    cache_read_tokens: 0,
+                    cache_write_tokens: 0,
+                    quota: actual,
+                    cost_quota: cost,
+                    detail: Some(serde_json::json!({
+                        "pre_consumed": charge.pre_consumed,
+                        "group_ratio": group_ratio,
+                        "cost_mode": channel.cost_mode.as_str(),
+                        "cost_discount": channel.cost_discount,
+                        "tts_chars": usage.prompt_tokens,
+                        "attempts": attempts_log.len() + 1,
+                    })),
+                    elapsed_ms: None,
+                    status_code: Some(200),
+                    error_message: None,
+                    request_id: None,
+                    day: None,
+                };
+                write_log(&state, log).await;
+                let content_type = upstream
+                    .headers()
+                    .get(header::CONTENT_TYPE)
+                    .and_then(|v| v.to_str().ok())
+                    .unwrap_or("audio/mpeg")
+                    .to_owned();
+                let stream = upstream.bytes_stream();
+                return Response::builder()
+                    .status(StatusCode::OK)
+                    .header(header::CONTENT_TYPE, content_type)
+                    .body(Body::from_stream(stream))
+                    .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response());
+            }
+            Ok(upstream) => {
+                let status = upstream.status().as_u16();
+                let retry_after =
+                    crate::llm::relay::adaptor::parse_reset_deadline(upstream.headers());
+                let text = upstream.text().await.unwrap_or_default();
+                attempts_log.push(format!("ch{} key{key_index}: {status}", channel.id.0));
+                if status != 400 {
+                    router.report_failure(
+                        channel.id,
+                        key_index,
+                        &crate::llm::service::UpstreamFailure {
+                            status: Some(status),
+                            message: text.clone(),
+                            retry_after,
+                        },
+                    );
+                }
+                last_error = Some((status, text));
+                if matches!(status, 400 | 408 | 504 | 524) {
+                    break;
+                }
+            }
+            Err(err) => {
+                attempts_log.push(format!(
+                    "ch{} key{key_index}: transport {err}",
+                    channel.id.0
+                ));
+                router.report_failure(
+                    channel.id,
+                    key_index,
+                    &crate::llm::service::UpstreamFailure {
+                        status: None,
+                        message: err.to_string(),
+                        retry_after: None,
+                    },
+                );
+                last_error = Some((502, err.to_string()));
+            }
+        }
+        if attempt < DEFAULT_RETRY_TIMES {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    }
+
+    billing::refund_all(&state.pool, &charge).await;
+    let (status, message) = last_error.unwrap_or((502, "upstream failed".to_owned()));
+    let status = StatusCode::from_u16(if (400..600).contains(&status) {
+        status
+    } else {
+        502
+    })
+    .unwrap_or(StatusCode::BAD_GATEWAY);
+    openai_error(status, "api_error", message)
 }
 
 /// body conversion helper namespace (keeps the handler readable).

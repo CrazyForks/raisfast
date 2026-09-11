@@ -154,12 +154,32 @@ pub fn estimate_precharge(
             Quota::from_usd_ceil(pricing.call_price.unwrap_or(0.0) * group_ratio)
         }
         LlmPriceMode::Token => {
+            if model_type == LlmModelType::Image {
+                // Images are billed per generated image (completion side):
+                // hold = input×1 + n×output_price. The generic path below
+                // would reserve the 4096-token output default — a huge
+                // over-hold when output_price is a per-image price.
+                let n = body
+                    .get("n")
+                    .and_then(|v| v.as_i64())
+                    .filter(|v| *v > 0)
+                    .unwrap_or(1);
+                let usd = (pricing.input_price + n as f64 * pricing.output_price) / 1_000_000.0;
+                return Quota::from_usd_ceil(usd * group_ratio);
+            }
+            if model_type == LlmModelType::Tts {
+                // TTS bills on request-side input chars (openai: $/1M chars)
+                // — known upfront, so hold == settle.
+                let chars = count_prompt_chars(body).max(1);
+                let usd = chars as f64 * pricing.input_price / 1_000_000.0;
+                return Quota::from_usd_ceil(usd * group_ratio);
+            }
             let prompt_chars = count_prompt_chars(body);
             let mut prompt_est = (prompt_chars / 4).max(500) as f64;
             if has_cjk(body) {
                 prompt_est = (prompt_chars as f64 / 1.5).max(500.0);
             }
-            let usd = if model_type == LlmModelType::Embedding {
+            let usd = if matches!(model_type, LlmModelType::Embedding | LlmModelType::Rerank) {
                 // No output tokens — don't reserve the 4096 output default.
                 prompt_est * pricing.input_price / 1_000_000.0
             } else {
@@ -216,42 +236,88 @@ pub fn cost_quota(
     }
 }
 
-/// Count prompt content chars across the request messages (estimation
-/// source for the §8.4 no-usage fallback; CJK-awareness lives in the
-/// precharge estimate only).
+/// Count prompt-side content chars across the request's text payload
+/// (estimation source for the §8.4 no-usage fallback; CJK-awareness lives
+/// in the precharge estimate only). Shape-aware: chat `messages`, embeddings
+/// `input` (string or array), rerank `query` + `documents`.
 pub(crate) fn count_prompt_chars(body: &serde_json::Value) -> usize {
-    body.get("messages")
-        .and_then(|m| m.as_array())
-        .map(|arr| {
-            arr.iter()
-                .map(|m| match m.get("content") {
-                    Some(serde_json::Value::String(s)) => s.chars().count(),
-                    Some(serde_json::Value::Array(parts)) => parts
-                        .iter()
-                        .map(|p| {
-                            p.get("text")
-                                .and_then(|t| t.as_str())
-                                .map(|t| t.chars().count())
-                                .unwrap_or(0)
-                        })
-                        .sum(),
-                    _ => 0,
-                })
-                .sum()
-        })
+    payload_texts(body)
+        .map(|texts| texts.iter().map(|s| s.chars().count()).sum())
         .unwrap_or(0)
 }
 
+/// Borrowed text payload of a relay request body: `messages[].content`
+/// (string or content-part arrays), embeddings `input` (string or array),
+/// or rerank `query` + `documents[]`. `None` when no known shape matches.
+fn payload_texts(body: &serde_json::Value) -> Option<Vec<&str>> {
+    if let Some(arr) = body.get("messages").and_then(|m| m.as_array()) {
+        let mut out = Vec::with_capacity(arr.len());
+        for m in arr {
+            match m.get("content") {
+                Some(serde_json::Value::String(s)) => out.push(s.as_str()),
+                Some(serde_json::Value::Array(parts)) => {
+                    for p in parts {
+                        if let Some(t) = p.get("text").and_then(|t| t.as_str()) {
+                            out.push(t);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        return Some(out);
+    }
+    // embeddings: input = "text" | ["a", "b"]
+    if let Some(input) = body.get("input") {
+        return Some(input_texts(input));
+    }
+    // rerank: query + documents[]
+    if body.get("query").is_some() || body.get("documents").is_some() {
+        let mut out = Vec::new();
+        if let Some(q) = body.get("query").and_then(|q| q.as_str()) {
+            out.push(q);
+        }
+        if let Some(docs) = body.get("documents").and_then(|d| d.as_array()) {
+            for d in docs {
+                if let Some(s) = d.as_str() {
+                    out.push(s);
+                }
+            }
+        }
+        return Some(out);
+    }
+    None
+}
+
+fn input_texts(input: &serde_json::Value) -> Vec<&str> {
+    match input {
+        serde_json::Value::String(s) => vec![s.as_str()],
+        serde_json::Value::Array(arr) => {
+            arr.iter().filter_map(|v| v.as_str()).collect::<Vec<&str>>()
+        }
+        _ => Vec::new(),
+    }
+}
+
+/// Flat token-side quota helper: `tokens × price × group_ratio` (used by the
+/// audio paths where the billable unit is seconds/chars, not a JSON body).
+pub(crate) fn flat_token_quota(price_per_m: f64, units: i64, group_ratio: f64) -> Quota {
+    Quota::from_usd_ceil(units as f64 * price_per_m / 1_000_000.0 * group_ratio)
+}
+
+/// Rough audio duration fallback (seconds) from uploaded file size when the
+/// upstream response carries no `duration`: ≈32KB/s covers 16kHz·16bit mono
+/// PCM and typical speech codecs; never below 1s.
+pub(crate) fn estimate_audio_secs(file_bytes: usize) -> i64 {
+    ((file_bytes / 32_768) as i64).max(1)
+}
+
 fn has_cjk(body: &serde_json::Value) -> bool {
-    body.get("messages")
-        .and_then(|m| m.as_array())
-        .is_some_and(|arr| {
-            arr.iter().any(|m| {
-                m.get("content")
-                    .and_then(|c| c.as_str())
-                    .is_some_and(|s| s.chars().any(|ch| ('\u{4E00}'..='\u{9FFF}').contains(&ch)))
-            })
-        })
+    payload_texts(body).is_some_and(|texts| {
+        texts
+            .iter()
+            .any(|s| s.chars().any(|ch| ('\u{4E00}'..='\u{9FFF}').contains(&ch)))
+    })
 }
 
 #[cfg(test)]
