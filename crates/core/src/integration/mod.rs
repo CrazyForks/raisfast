@@ -100,11 +100,13 @@ impl IntegrationPlane {
         registry: std::sync::Arc<crate::content_type::ContentTypeRegistry>,
         emitter: crate::event::EventEmitter,
         jwt_secret: String,
+        app_key: Option<&str>,
     ) -> crate::errors::app_error::AppResult<Self> {
-        let vault = config
-            .vault_key
-            .as_ref()
-            .map(|secret| vault::Vault::from_secret(secret))
+        // Credential vault keyed off APP_KEY (SHA-256 domain-separated
+        // derivation) — the same at-rest secret as api_token/payment/llm.
+        let vault = app_key
+            .filter(|s| !s.is_empty())
+            .map(vault::Vault::from_secret)
             .transpose()?;
         let pool_handle = pool.clone();
         let alert_emitter = emitter.clone();

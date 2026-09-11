@@ -19,7 +19,7 @@ define_enum!(
 
 define_enum!(
     LlmPriceMode {
-        Ratio = "ratio",
+        Token = "token",
         PerCall = "per_call",
     }
 );
@@ -31,7 +31,9 @@ define_enum!(
     }
 );
 
-/// One model-directory row: type, pricing and params metadata.
+/// One model-directory row: type, USD pricing and params metadata
+/// (pricing.md §2 — prices are USD per 1M tokens, filled from the vendor's
+/// list price; cache prices default to `input_price` when NULL).
 #[derive(Debug, Serialize, Deserialize, Clone, sqlx::FromRow)]
 pub struct LlmModel {
     pub id: SnowflakeId,
@@ -39,10 +41,10 @@ pub struct LlmModel {
     pub name: String,
     pub model_type: LlmModelType,
     pub price_mode: LlmPriceMode,
-    pub model_ratio: f64,
-    pub completion_ratio: f64,
-    pub cache_ratio: Option<f64>,
-    pub cache_write_ratio: Option<f64>,
+    pub input_price: f64,
+    pub output_price: f64,
+    pub cache_read_price: Option<f64>,
+    pub cache_write_price: Option<f64>,
     pub call_price: Option<f64>,
     pub params: Option<serde_json::Value>,
     pub status: LlmModelStatus,
@@ -56,10 +58,10 @@ pub struct ModelChanges {
     pub name: String,
     pub model_type: LlmModelType,
     pub price_mode: LlmPriceMode,
-    pub model_ratio: f64,
-    pub completion_ratio: f64,
-    pub cache_ratio: Option<f64>,
-    pub cache_write_ratio: Option<f64>,
+    pub input_price: f64,
+    pub output_price: f64,
+    pub cache_read_price: Option<f64>,
+    pub cache_write_price: Option<f64>,
     pub call_price: Option<f64>,
     pub params: Option<serde_json::Value>,
     pub status: LlmModelStatus,
@@ -81,10 +83,10 @@ pub async fn create_model(
             "name" => m.name,
             "model_type" => m.model_type.as_str(),
             "price_mode" => m.price_mode.as_str(),
-            "model_ratio" => m.model_ratio,
-            "completion_ratio" => m.completion_ratio,
-            "cache_ratio" => m.cache_ratio,
-            "cache_write_ratio" => m.cache_write_ratio,
+            "input_price" => m.input_price,
+            "output_price" => m.output_price,
+            "cache_read_price" => m.cache_read_price,
+            "cache_write_price" => m.cache_write_price,
             "call_price" => m.call_price,
             "params" => m.params,
             "status" => m.status.as_str(),
@@ -166,10 +168,10 @@ pub async fn update_model(
             "name" => m.name,
             "model_type" => m.model_type.as_str(),
             "price_mode" => m.price_mode.as_str(),
-            "model_ratio" => m.model_ratio,
-            "completion_ratio" => m.completion_ratio,
-            "cache_ratio" => m.cache_ratio,
-            "cache_write_ratio" => m.cache_write_ratio,
+            "input_price" => m.input_price,
+            "output_price" => m.output_price,
+            "cache_read_price" => m.cache_read_price,
+            "cache_write_price" => m.cache_write_price,
             "call_price" => m.call_price,
             "params" => m.params,
             "status" => m.status.as_str(),

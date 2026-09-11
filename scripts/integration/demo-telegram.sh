@@ -10,7 +10,7 @@
 # 前置:
 #   1. @BotFather 建机器人，拿 TELEGRAM_BOT_TOKEN
 #   2. 公网 HTTPS URL（本地开发可用 tunnel）能到达 {host}/api/v1/ingress/telegram
-#   3. 服务已启动（INTEGRATION_VAULT_KEY=dev-secret just dev）
+#   3. 服务已启动（just dev）
 #
 # 用法:
 #   TELEGRAM_BOT_TOKEN=123:abc ADMIN_TOKEN=... \

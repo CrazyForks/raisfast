@@ -7,7 +7,7 @@
 #       + SSE integration.message → 全程 trace(receipts → egress_log tokens)
 #
 # 前置:
-#   1. INTEGRATION_VAULT_KEY=dev-secret just dev   (需含本脚本新代码的构建)
+#   1. just dev   (需含本脚本新代码的构建)
 #   2. GLM_API_KEY — 智谱开放平台 API key
 #   3. ADMIN_TOKEN  — 管理员 token
 #

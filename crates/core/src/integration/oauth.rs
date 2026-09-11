@@ -281,7 +281,7 @@ fn vault(state: &AppState) -> AppResult<&crate::integration::vault::Vault> {
         .integration
         .as_ref()
         .and_then(|p| p.vault())
-        .ok_or_else(|| AppError::BadRequest("vault sealed (set INTEGRATION_VAULT_KEY)".into()))
+        .ok_or_else(|| AppError::BadRequest("vault sealed (set APP_KEY)".into()))
 }
 
 fn unseal_client_creds(state: &AppState, client: &ItgApiClient) -> AppResult<Option<Value>> {

@@ -11,7 +11,7 @@
 #      - ngrok:  ngrok http 9898  （另一个终端）
 #      - cloudflared: cloudflared tunnel --url http://localhost:9898
 #   2. GitHub 仓库的管理员权限（设置 webhook）
-#   3. 服务已启动: INTEGRATION_VAULT_KEY=dev-secret just dev
+#   3. 服务已启动: just dev
 #
 # 用法:
 #   GITHUB_SECRET=whsec_xxx GITHUB_PUBLIC_URL=https://xxxx.ngrok.app \

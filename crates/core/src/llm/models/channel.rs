@@ -28,6 +28,17 @@ define_enum!(
     }
 );
 
+// Upstream cost model (pricing.md §7): `usage` bills per token via a discount
+// on the directory price; `fixed` is a subscription upstream whose per-token
+// cost is undefined — cost lives in `monthly_cost` and per-request
+// `cost_quota` stays 0.
+define_enum!(
+    LlmCostMode {
+        Usage = "usage",
+        Fixed = "fixed",
+    }
+);
+
 /// One key inside the channel pool (`keys` JSONB array element, design §5.1).
 /// `key` holds the AES ciphertext (`enc:v1:…`).
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -73,6 +84,9 @@ pub struct LlmChannel {
     pub header_override: Option<serde_json::Value>,
     pub config: Option<serde_json::Value>,
     pub used_quota: i64,
+    pub cost_mode: LlmCostMode,
+    pub cost_discount: f64,
+    pub monthly_cost: Option<f64>,
     pub test_model: Option<String>,
     pub test_time: Option<Timestamp>,
     pub response_time: Option<i32>,
@@ -97,6 +111,9 @@ pub struct NewChannel {
     pub param_override: Option<serde_json::Value>,
     pub header_override: Option<serde_json::Value>,
     pub config: Option<serde_json::Value>,
+    pub cost_mode: LlmCostMode,
+    pub cost_discount: f64,
+    pub monthly_cost: Option<f64>,
     pub test_model: Option<String>,
 }
 
@@ -116,6 +133,9 @@ pub struct ChannelChanges {
     pub param_override: Option<serde_json::Value>,
     pub header_override: Option<serde_json::Value>,
     pub config: Option<serde_json::Value>,
+    pub cost_mode: LlmCostMode,
+    pub cost_discount: f64,
+    pub monthly_cost: Option<f64>,
     pub test_model: Option<String>,
 }
 
@@ -147,6 +167,9 @@ pub async fn create_channel(
             "param_override" => n.param_override,
             "header_override" => n.header_override,
             "config" => n.config,
+            "cost_mode" => n.cost_mode.as_str(),
+            "cost_discount" => n.cost_discount,
+            "monthly_cost" => n.monthly_cost,
             "test_model" => n.test_model,
             "created_at" => &now,
             "updated_at" => &now
@@ -214,6 +237,9 @@ pub async fn update_channel(
             "param_override" => c.param_override,
             "header_override" => c.header_override,
             "config" => c.config,
+            "cost_mode" => c.cost_mode.as_str(),
+            "cost_discount" => c.cost_discount,
+            "monthly_cost" => c.monthly_cost,
             "test_model" => c.test_model,
             "updated_at" => &now
         ],
@@ -279,10 +305,15 @@ pub async fn update_key_status(
             return Err(AppError::NotFound("llm_channel_key".to_owned()));
         }
         entries[key_index].status = status;
-        entries[key_index].disabled_reason = reason
-            .map(|r| r.to_owned())
-            .or(entries[key_index].disabled_reason.clone());
-        entries[key_index].disabled_at = Some(crate::utils::tz::now_str());
+        if status == LlmKeyStatus::Active {
+            // Enabling clears the disable bookkeeping — an active key must
+            // not carry a stale reason/timestamp (§6.3 recovery semantics).
+            entries[key_index].disabled_reason = None;
+            entries[key_index].disabled_at = None;
+        } else {
+            entries[key_index].disabled_reason = reason.map(|r| r.to_owned());
+            entries[key_index].disabled_at = Some(crate::utils::tz::now_str());
+        }
         let now = now_utc();
         let result = raisfast_derive::crud_update!(
             &mut *tx,

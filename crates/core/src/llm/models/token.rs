@@ -4,6 +4,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::errors::app_error::{AppError, AppResult};
+use crate::types::quota::Quota;
 use crate::types::snowflake_id::SnowflakeId;
 use crate::utils::tz::{Timestamp, now_utc};
 
@@ -16,7 +17,9 @@ define_enum!(
     }
 );
 
-/// One downstream sk- token row (key stored as sha256 hash only).
+/// One downstream sk- token row. Auth looks up by `key_hash` (sha256);
+/// `key_enc` holds the plaintext reversibly encrypted with APP_KEY for
+/// later reveal/copy in the UI — the same pattern as `api_token`.
 #[derive(Debug, Serialize, Deserialize, Clone, sqlx::FromRow)]
 pub struct LlmToken {
     pub id: SnowflakeId,
@@ -24,9 +27,10 @@ pub struct LlmToken {
     pub user_id: SnowflakeId,
     pub name: String,
     pub key_hash: String,
+    pub key_enc: Option<String>,
     pub status: LlmTokenStatus,
-    pub remain_quota: i64,
-    pub used_quota: i64,
+    pub remain_quota: Quota,
+    pub used_quota: Quota,
     pub unlimited_quota: bool,
     pub expired_at: Option<Timestamp>,
     pub allowed_models: Option<String>,
@@ -37,22 +41,26 @@ pub struct LlmToken {
     pub updated_at: Timestamp,
 }
 
-/// Create a token row (key_hash pre-computed by the caller).
+/// Create a token row from the plaintext key: sha256 for auth lookup +
+/// APP_KEY-encrypted copy for reveal.
 #[allow(clippy::too_many_arguments)]
 pub async fn create_token(
     pool: &crate::db::Pool,
     tenant_id: Option<&str>,
     user_id: SnowflakeId,
     name: &str,
-    key_hash: &str,
-    remain_quota: i64,
+    key_plain: &str,
+    remain_quota: Quota,
     unlimited_quota: bool,
     expired_at: Option<Timestamp>,
     allowed_models: Option<&str>,
     allowed_ips: Option<&str>,
+    token_group: Option<&str>,
 ) -> AppResult<LlmToken> {
     let id = crate::utils::id::new_snowflake_id();
     let now = now_utc();
+    let key_hash = crate::services::api_token::hash_token(key_plain);
+    let key_enc = crate::llm::crypto::encrypt(key_plain)?;
     raisfast_derive::crud_insert!(
         pool,
         "llm_tokens",
@@ -61,12 +69,14 @@ pub async fn create_token(
             "user_id" => user_id,
             "name" => name,
             "key_hash" => key_hash,
+            "key_enc" => key_enc,
             "status" => LlmTokenStatus::Enabled.as_str(),
             "remain_quota" => remain_quota,
             "unlimited_quota" => unlimited_quota,
             "expired_at" => expired_at,
             "allowed_models" => allowed_models,
             "allowed_ips" => allowed_ips,
+            "token_group" => token_group,
             "created_at" => &now,
             "updated_at" => &now
         ],

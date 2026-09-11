@@ -1,7 +1,7 @@
 //! Credential vault — L0 trust.
 //!
 //! Channel credentials are sealed with AES-256-GCM (reusing
-//! `payment::crypto`) under a master key from `INTEGRATION_VAULT_KEY`.
+//! `payment::crypto`) under a master key derived from `APP_KEY`.
 //! Plaintext never leaves this module: admin APIs return only a
 //! "has credentials" flag, plugins never see it at all.
 
@@ -23,7 +23,7 @@ impl Vault {
     pub fn from_secret(secret: &str) -> AppResult<Self> {
         if secret.is_empty() {
             return Err(AppError::BadRequest(
-                "INTEGRATION_VAULT_KEY must not be empty".into(),
+                "vault master secret must not be empty".into(),
             ));
         }
         let key: [u8; 32] = Sha256::digest(secret.as_bytes()).into();

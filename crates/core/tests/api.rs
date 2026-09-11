@@ -53,8 +53,6 @@ pub(crate) fn test_config() -> AppConfig {
         .to_string_lossy()
         .into();
     cfg.base_url = "http://localhost:9000".into();
-    // Vault key so integration credential sealing works in tests.
-    cfg.integration.vault_key = Some("test-vault-secret".into());
     // Short app-bundle drain window so drain tests don't wait 60s.
     cfg.apps.drain_window_secs = 1;
     let mut key_bytes = [0u8; 32];
@@ -84,6 +82,11 @@ pub(crate) async fn test_app_with_tenants() -> (axum::Router, AppState) {
 
 async fn build_test_app(pool: raisfast::db::Pool) -> (axum::Router, AppState) {
     let config = Arc::new(test_config());
+    // Install the at-rest key (first-wins across tests in this process) —
+    // channel create/replace via the admin API encrypts keys (§11).
+    if let Some(app_key) = &config.app_key {
+        let _ = raisfast::llm::crypto::install_from_app_key(app_key);
+    }
     let shared_bus = raisfast::eventbus::EventBus::new(256);
     let emitter = raisfast::event::EventEmitter::eventbus_only(shared_bus.clone());
     let content_registry = Arc::new(raisfast::content_type::ContentTypeRegistry::new());
@@ -219,6 +222,7 @@ async fn build_test_app(pool: raisfast::db::Pool) -> (axum::Router, AppState) {
                 content_registry.clone(),
                 emitter.clone(),
                 config.jwt_secret.clone(),
+                config.app_key.as_deref(),
             )
             .await
             .expect("integration plane init"),
@@ -905,6 +909,10 @@ mod cron;
 mod flows;
 #[path = "api/health.rs"]
 mod health;
+#[path = "api/llm_admin.rs"]
+mod llm_admin;
+#[path = "api/llm_relay.rs"]
+mod llm_relay;
 #[path = "api/media.rs"]
 mod media;
 #[path = "api/options.rs"]

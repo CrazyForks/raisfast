@@ -956,7 +956,6 @@ impl KbConfig {
 /// | Env | Type | Default | Description |
 /// |-----|------|---------|-------------|
 /// | `INTEGRATION_ENABLED` | bool | `true` | Master switch for the integration plane |
-/// | `INTEGRATION_VAULT_KEY` | String | (empty) | Master key for credential encryption (any length; SHA-256 stretched to AES-256). Empty = vault sealed: credential writes are rejected |
 /// | `INTEGRATION_INGRESS_BODY_LIMIT` | usize | `1048576` | Max inbound request body size (bytes) |
 /// | `INTEGRATION_RECEIPTS_RETENTION_DAYS` | u64 | `90` | Receipt retention before archiving/cleanup |
 /// | `INTEGRATION_EGRESS_TIMEOUT_SECS` | u64 | `20` | Outbound api-client call timeout |
@@ -965,9 +964,6 @@ impl KbConfig {
 pub struct IntegrationConfig {
     #[serde(default = "default_true")]
     pub enabled: bool,
-    /// Master key material for the credential vault. Never logged or exposed via API.
-    #[serde(default, skip_serializing)]
-    pub vault_key: Option<String>,
     /// Max inbound push request body size in bytes (per-channel override possible).
     #[serde(default = "default_ingress_body_limit")]
     pub ingress_body_limit: usize,
@@ -986,7 +982,6 @@ impl Default for IntegrationConfig {
     fn default() -> Self {
         Self {
             enabled: true,
-            vault_key: None,
             ingress_body_limit: default_ingress_body_limit(),
             receipts_retention_days: default_receipts_retention_days(),
             egress_timeout_secs: default_egress_timeout_secs(),
@@ -1034,9 +1029,6 @@ impl IntegrationConfig {
                 .ok()
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(true),
-            vault_key: env::var("INTEGRATION_VAULT_KEY")
-                .ok()
-                .filter(|s| !s.is_empty()),
             ingress_body_limit: env::var("INTEGRATION_INGRESS_BODY_LIMIT")
                 .ok()
                 .and_then(|v| v.parse().ok())

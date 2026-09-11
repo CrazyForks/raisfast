@@ -6,7 +6,7 @@
 #       egress-log / push→receipt→SSE / trace 端点 / CT 写入。
 #
 # 前置: 服务已启动且带 vault key:
-#   INTEGRATION_VAULT_KEY=dev-secret just dev
+#   just dev
 #
 # 用法:
 #   ADMIN_TOKEN=<管理员JWT或API Token> scripts/smoke-integration.sh
@@ -49,7 +49,7 @@ api() { # api <METHOD> <path> [json-body] → 输出 "code\nbody"
 # ── 0. 前置检查 ──────────────────────────────────────────────
 sec "preflight"
 curl -sf "$BASE_URL/health" >/dev/null 2>&1 \
-  || die "服务未启动。请先: INTEGRATION_VAULT_KEY=dev-secret just dev"
+  || die "服务未启动。请先: just dev"
 ok "server reachable"
 
 MOCK_PID=""
@@ -113,7 +113,7 @@ RES=$(api POST /admin/integration/api-clients "{\"client_key\":\"llm-$RUN\",\"ba
 CODE=$(echo "$RES" | head -1); BODY=$(echo "$RES" | sed '1d')
 CLIENT_ID=$(jget "$BODY" 'd["data"]["id"]')
 if [ "$CODE" = "200" ] && [ -n "$CLIENT_ID" ]; then ok "client llm-$RUN created"; else
-  case "$BODY" in *vault*) die "vault 未解锁 — 请用 INTEGRATION_VAULT_KEY=xxx just dev 重启";; esac
+  case "$BODY" in *vault*) die "vault 未解锁 — 请用 just dev 重启";; esac
   bad "client create: $RES"
 fi
 

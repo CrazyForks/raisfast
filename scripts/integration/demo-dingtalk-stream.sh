@@ -10,7 +10,7 @@
 #   2. 添加「机器人」能力；消息接收模式选「Stream 模式」；发布应用
 #   3. 拿到 Client ID (ding_xxx/AppKey) / Client Secret (AppSecret)
 #   4. 服务已启动（可出网访问 api.dingtalk.com）:
-#      INTEGRATION_VAULT_KEY=dev-secret just dev
+#      just dev
 #
 # 用法:
 #   DING_APP_ID=ding_xxx DING_APP_SECRET=xxx ADMIN_TOKEN=... \

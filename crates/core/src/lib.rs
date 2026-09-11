@@ -190,6 +190,15 @@ pub async fn build_app_state(
     config: &AppConfig,
     shutdown_rx: tokio::sync::watch::Receiver<bool>,
 ) -> anyhow::Result<AppState> {
+    // Install the at-rest credential key (LLM upstream keys, §11) before
+    // anything can load/decrypt channels. APP_KEY is always present here
+    // (auto-generated in AppConfig::init when unset).
+    if let Some(app_key) = &config.app_key
+        && let Err(err) = crate::llm::crypto::install_from_app_key(app_key)
+    {
+        tracing::warn!(%err, "llm at-rest key install failed; channel key writes disabled");
+    }
+
     let pool = crate::db::connection::init_pool(&config.database_url, config.db_pool_size).await?;
     crate::db::connection::ensure_schema(&pool).await?;
 
@@ -320,6 +329,7 @@ pub async fn build_app_state(
                 ct_registry.clone(),
                 emitter.clone(),
                 config.jwt_secret.clone(),
+                config.app_key.as_deref(),
             )
             .await?,
         );

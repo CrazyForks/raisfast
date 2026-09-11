@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO llm_tokens (id, user_id, name, key_hash, key_enc, status, remain_quota, unlimited_quota, expired_at, allowed_models, allowed_ips, token_group, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 14
+    },
+    "nullable": []
+  },
+  "hash": "4e2c689246ae7d3966e1abff2ac39bd07004f1d8a6ab775339c572c33b0bdbb2"
+}

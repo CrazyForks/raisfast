@@ -1379,7 +1379,8 @@ INSERT OR IGNORE INTO options (id, tenant_id, option_key, value, type, group_nam
     (10013, 'default', 'theme', '"default"', 'select', 'appearance', 'Current theme', NULL, '{"values":["default","corporate","minimal","warm"]}', 1, 1, 30, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     (10014, 'default', 'maintenance_mode', 'false', 'boolean', 'appearance', 'Maintenance mode', 'When enabled, a maintenance page is shown to visitors', NULL, 1, 1, 31, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     (10015, 'default', 'default_currency', '"USD"', 'select', 'ecommerce', 'Default currency', 'Currency code for products and orders', '{"values":["USD","CNY","EUR","GBP","JPY","KRW","HKD","TWD","SGD","AUD","CAD"]}', 1, 1, 40, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
-    (10017, 'default', 'reserved_usernames', '"admin,administrator,root,system,official,support,staff,moderator,mod,help,info,mail,webmaster,security,billing,sales,owner,superuser,operator"', 'text', 'general', 'Reserved usernames', 'Comma-separated usernames that cannot be registered', '{"max_length":10000}', 0, 1, 5, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'));
+    (10017, 'default', 'reserved_usernames', '"admin,administrator,root,system,official,support,staff,moderator,mod,help,info,mail,webmaster,security,billing,sales,owner,superuser,operator"', 'text', 'general', 'Reserved usernames', 'Comma-separated usernames that cannot be registered', '{"max_length":10000}', 0, 1, 5, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    (10018, 'default', 'llm_group_ratios', '"{\"default\":1.0}"', 'text', 'llm', 'LLM billing group ratios', 'JSON map of group name to sell-price multiplier (pricing.md §2)', NULL, 0, 1, 10, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'));
 
 -- ============================================================
 -- Flow orchestration engine v2 (dev-docs/workflow) — P0-P1 5 tables
@@ -1778,6 +1779,9 @@ CREATE TABLE IF NOT EXISTS llm_channels (
     header_override TEXT,
     config TEXT,
     used_quota INTEGER NOT NULL DEFAULT 0,
+    cost_mode VARCHAR(10) NOT NULL DEFAULT 'usage',
+    cost_discount REAL NOT NULL DEFAULT 1.0,
+    monthly_cost REAL,
     test_model VARCHAR(255),
     test_time TEXT,
     response_time INTEGER,
@@ -1793,6 +1797,7 @@ CREATE TABLE IF NOT EXISTS llm_tokens (
     user_id INTEGER NOT NULL,
     name TEXT NOT NULL,
     key_hash VARCHAR(128) NOT NULL UNIQUE,
+    key_enc TEXT,
     status VARCHAR(20) NOT NULL DEFAULT 'enabled',
     remain_quota INTEGER NOT NULL DEFAULT 0,
     used_quota INTEGER NOT NULL DEFAULT 0,
@@ -1812,11 +1817,11 @@ CREATE TABLE IF NOT EXISTS llm_models (
     tenant_id TEXT NOT NULL DEFAULT 'default',
     name VARCHAR(255) NOT NULL,
     model_type VARCHAR(20) NOT NULL DEFAULT 'chat',
-    price_mode VARCHAR(20) NOT NULL DEFAULT 'ratio',
-    model_ratio REAL NOT NULL DEFAULT 1.0,
-    completion_ratio REAL NOT NULL DEFAULT 1.0,
-    cache_ratio REAL,
-    cache_write_ratio REAL,
+    price_mode VARCHAR(20) NOT NULL DEFAULT 'token',
+    input_price REAL NOT NULL DEFAULT 1.0,
+    output_price REAL NOT NULL DEFAULT 1.0,
+    cache_read_price REAL,
+    cache_write_price REAL,
     call_price REAL,
     params TEXT,
     status VARCHAR(20) NOT NULL DEFAULT 'active',
@@ -1841,6 +1846,7 @@ CREATE TABLE IF NOT EXISTS llm_logs (
     cache_read_tokens INTEGER NOT NULL DEFAULT 0,
     cache_write_tokens INTEGER NOT NULL DEFAULT 0,
     quota INTEGER NOT NULL DEFAULT 0,
+    cost_quota INTEGER NOT NULL DEFAULT 0,
     detail TEXT,
     elapsed_ms INTEGER,
     status_code INTEGER,

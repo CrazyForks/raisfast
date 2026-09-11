@@ -165,7 +165,7 @@ pub(crate) fn seal_credentials(
     };
     let Some(vault) = vault else {
         return Err(AppError::BadRequest(
-            "credentials provided but vault sealed — set INTEGRATION_VAULT_KEY".into(),
+            "credentials provided but vault sealed — set APP_KEY".into(),
         ));
     };
     Ok(Some(vault.seal(&creds.to_string())?))

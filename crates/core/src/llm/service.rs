@@ -725,6 +725,7 @@ impl Drop for SlotPermit {
 }
 
 /// Slot acquisition failure.
+#[derive(Debug)]
 pub enum SlotError {
     /// No route / no candidate at all — bubble the selection error.
     NoRoute(AppError),
@@ -790,11 +791,14 @@ impl LlmRouter {
     }
 
     fn route_has_active_key(&self, cache: &ChannelCache, route: &RouteKey) -> bool {
+        // §7.6: the wait queue exists for keys that are "merely at full
+        // capacity" (permits held, key otherwise ready). A cooled-down key
+        // releases nothing — queueing behind it would deadlock the request
+        // until its full wait budget burns out.
         cache.candidates(route).is_some_and(|cands| {
-            cands.iter().any(|ch| {
-                ch.status == LlmChannelStatus::Enabled
-                    && ch.keys.iter().any(|k| k.status == LlmKeyStatus::Active)
-            })
+            cands
+                .iter()
+                .any(|ch| ch.status == LlmChannelStatus::Enabled && self.any_ready_key(ch))
         })
     }
 
@@ -844,7 +848,15 @@ impl LlmRouter {
         let (token, user) = match caller {
             Some((t, u)) => {
                 Self::try_inflight(&self.token_inflight, t, TOKEN_MAX_CONCURRENT, "token")?;
-                Self::try_inflight(&self.user_inflight, u, USER_MAX_CONCURRENT, "user")?;
+                // RAII pin (§7.6): a user-cap rejection must roll back the
+                // token counter taken above — leaking it permanently 429s
+                // an innocent token (no permit will ever drop to balance).
+                if let Err(e) =
+                    Self::try_inflight(&self.user_inflight, u, USER_MAX_CONCURRENT, "user")
+                {
+                    Self::rollback_inflight(&self.token_inflight, Some(t));
+                    return Err(e);
+                }
                 (Some(t), Some(u))
             }
             None => (None, None),
@@ -986,6 +998,9 @@ mod tests {
             header_override: None,
             config: None,
             used_quota: 0,
+            cost_mode: crate::llm::models::channel::LlmCostMode::Usage,
+            cost_discount: 1.0,
+            monthly_cost: None,
             test_model: None,
             test_time: None,
             response_time: None,

@@ -103,7 +103,7 @@ pub async fn authenticate(pool: &Pool, bearer: &str, client_ip: &str) -> AppResu
             token::update_status(pool, None, token.id, LlmTokenStatus::Expired).await?;
             return Err(AppError::Unauthorized);
         }
-        if !token.unlimited_quota && token.remain_quota <= 0 {
+        if !token.unlimited_quota && token.remain_quota.0 <= 0 {
             token::update_status(pool, None, token.id, LlmTokenStatus::Exhausted).await?;
             return Err(AppError::Unauthorized);
         }
@@ -173,9 +173,10 @@ mod tests {
             user_id: SnowflakeId(2),
             name: "t".to_owned(),
             key_hash: "h".to_owned(),
+            key_enc: None,
             status: LlmTokenStatus::Enabled,
-            remain_quota: 100,
-            used_quota: 0,
+            remain_quota: crate::types::quota::Quota(100),
+            used_quota: crate::types::quota::Quota(0),
             unlimited_quota: false,
             expired_at: None,
             allowed_models: None,

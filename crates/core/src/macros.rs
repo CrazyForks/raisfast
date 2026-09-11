@@ -416,6 +416,11 @@ macro_rules! bind_tenant {
 #[macro_export]
 macro_rules! test_pool {
     () => {{
+        // Install the at-rest test key (llm token encryption) once per
+        // test binary — first-wins, so every pool in the process shares it.
+        let _ = $crate::llm::crypto::install_from_app_key(
+            "cmFpc2Zhc3QtdGVzdC1hdC1yZXN0LWtleS0zMmJ5dCE=",
+        );
         #[cfg(feature = "db-sqlite")]
         {
             let pool = $crate::db::Pool::connect("sqlite::memory:").await.unwrap();

@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO llm_models (id, name, model_type, price_mode, input_price, output_price, cache_read_price, cache_write_price, call_price, params, status, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 13
+    },
+    "nullable": []
+  },
+  "hash": "f62986e4fb974c4e1de7cb210d8307d1f3366fbf4296f15bd39440c98780f867"
+}

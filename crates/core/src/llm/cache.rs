@@ -26,13 +26,14 @@ pub struct RouteKey {
 
 /// Pricing snapshot carried on `ModelInfo` (design §9.3: same cache, same
 /// invalidation — the relay hot path never queries the DB for prices).
+/// USD per 1M tokens (pricing.md §2); cache prices fall back to `input_price`.
 #[derive(Debug, Clone)]
 pub struct Pricing {
     pub price_mode: LlmPriceMode,
-    pub model_ratio: f64,
-    pub completion_ratio: f64,
-    pub cache_ratio: Option<f64>,
-    pub cache_write_ratio: Option<f64>,
+    pub input_price: f64,
+    pub output_price: f64,
+    pub cache_read_price: Option<f64>,
+    pub cache_write_price: Option<f64>,
     pub call_price: Option<f64>,
 }
 
@@ -78,6 +79,10 @@ pub struct CachedChannel {
     pub param_override: Option<serde_json::Value>,
     pub header_override: Option<serde_json::Value>,
     pub config: Option<serde_json::Value>,
+    /// Upstream cost model (pricing.md §7): per-token discount for `usage`,
+    /// undefined per-token for `fixed` (cost lives in monthly_cost).
+    pub cost_mode: crate::llm::models::channel::LlmCostMode,
+    pub cost_discount: f64,
 }
 
 fn tenant_of(row: &LlmChannel) -> String {
@@ -94,23 +99,24 @@ fn split_csv(s: &str) -> Vec<String> {
 }
 
 /// Built-in common-model seed (design §5.4: directory lookup = DB row →
-/// built-in → 400; both count as "registered").
+/// built-in → 400; both count as "registered"). Final pair = USD / 1M tokens
+/// (input, output) — vendor list prices (pricing.md §2).
 const BUILTIN_MODELS: &[(&str, &str, f64, f64)] = &[
-    ("gpt-4o", "chat", 2.5, 2.0),
-    ("gpt-4o-mini", "chat", 0.15, 4.0),
-    ("o3-mini", "chat", 1.1, 4.0),
-    ("claude-sonnet-4-5", "chat", 1.5, 5.0),
-    ("claude-haiku-4-5", "chat", 0.5, 4.0),
-    ("deepseek-chat", "chat", 0.27, 2.0),
-    ("deepseek-reasoner", "chat", 0.55, 2.0),
-    ("gemini-2.0-flash", "chat", 0.15, 4.0),
-    ("qwen-plus", "chat", 0.4, 3.0),
-    ("text-embedding-3-small", "embedding", 0.02, 1.0),
-    ("text-embedding-3-large", "embedding", 0.13, 1.0),
+    ("gpt-4o", "chat", 2.5, 10.0),
+    ("gpt-4o-mini", "chat", 0.15, 0.6),
+    ("o3-mini", "chat", 1.1, 4.4),
+    ("claude-sonnet-4-5", "chat", 3.0, 15.0),
+    ("claude-haiku-4-5", "chat", 1.0, 5.0),
+    ("deepseek-chat", "chat", 0.27, 1.1),
+    ("deepseek-reasoner", "chat", 0.55, 2.19),
+    ("gemini-2.0-flash", "chat", 0.15, 0.6),
+    ("qwen-plus", "chat", 0.4, 1.2),
+    ("text-embedding-3-small", "embedding", 0.02, 0.02),
+    ("text-embedding-3-large", "embedding", 0.13, 0.13),
 ];
 
 fn builtin_model(name: &str) -> Option<Arc<ModelInfo>> {
-    let (_, _, ratio, completion) = BUILTIN_MODELS.iter().find(|(n, ..)| *n == name)?;
+    let (_, _, input, output) = BUILTIN_MODELS.iter().find(|(n, ..)| *n == name)?;
     let model_type = LlmModelType::from_str(
         BUILTIN_MODELS
             .iter()
@@ -123,11 +129,11 @@ fn builtin_model(name: &str) -> Option<Arc<ModelInfo>> {
         name: name.to_owned(),
         model_type,
         pricing: Pricing {
-            price_mode: LlmPriceMode::Ratio,
-            model_ratio: *ratio,
-            completion_ratio: *completion,
-            cache_ratio: None,
-            cache_write_ratio: None,
+            price_mode: LlmPriceMode::Token,
+            input_price: *input,
+            output_price: *output,
+            cache_read_price: None,
+            cache_write_price: None,
             call_price: None,
         },
         params: None,
@@ -165,10 +171,10 @@ impl ChannelCache {
                     model_type: row.model_type,
                     pricing: Pricing {
                         price_mode: row.price_mode,
-                        model_ratio: row.model_ratio,
-                        completion_ratio: row.completion_ratio,
-                        cache_ratio: row.cache_ratio,
-                        cache_write_ratio: row.cache_write_ratio,
+                        input_price: row.input_price,
+                        output_price: row.output_price,
+                        cache_read_price: row.cache_read_price,
+                        cache_write_price: row.cache_write_price,
                         call_price: row.call_price,
                     },
                     params: row.params.clone(),
@@ -285,6 +291,8 @@ fn cached_from_row(row: &LlmChannel) -> CachedChannel {
         param_override: row.param_override.clone(),
         header_override: row.header_override.clone(),
         config: row.config.clone(),
+        cost_mode: row.cost_mode,
+        cost_discount: row.cost_discount,
     }
 }
 
@@ -323,6 +331,9 @@ mod tests {
             header_override: None,
             config: None,
             used_quota: 0,
+            cost_mode: crate::llm::models::channel::LlmCostMode::Usage,
+            cost_discount: 1.0,
+            monthly_cost: None,
             test_model: None,
             test_time: None,
             response_time: None,
@@ -337,11 +348,11 @@ mod tests {
             tenant_id: Some("default".to_owned()),
             name: name.to_owned(),
             model_type,
-            price_mode: LlmPriceMode::Ratio,
-            model_ratio: 2.0,
-            completion_ratio: 2.0,
-            cache_ratio: None,
-            cache_write_ratio: None,
+            price_mode: LlmPriceMode::Token,
+            input_price: 2.0,
+            output_price: 4.0,
+            cache_read_price: None,
+            cache_write_price: None,
             call_price: None,
             params: None,
             status,

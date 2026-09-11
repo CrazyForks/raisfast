@@ -175,6 +175,9 @@ impl LlmRouter {
         let mut last_err: Option<AppError> = None;
 
         for attempt in 0..=DEFAULT_RETRY_TIMES {
+            // Fresh snapshot per attempt — an arrears-banned key must evict
+            // its channel from selection mid-request (design §6.2).
+            let cache = self.cache.read().expect("llm cache lock").clone();
             let (channel, key_index, _permit) = {
                 match self
                     .acquire_slot(
@@ -277,7 +280,11 @@ impl LlmRouter {
                         message: pe.to_string(),
                         retry_after: None,
                     };
-                    self.report_failure(channel.id, key_index, &failure);
+                    // §6.2 class 4): a plain 400 is the caller's fault — the
+                    // key is innocent, no cooldown, no ban judgment.
+                    if failure.status != Some(400) {
+                        self.report_failure(channel.id, key_index, &failure);
+                    }
                     let retryable = Self::upstream_retryable(&pe) && !guard.side_effects();
                     self.log_call(LogCall {
                         tenant: ctx.tenant,
@@ -309,13 +316,14 @@ impl LlmRouter {
         Self::upstream_retryable_impl(pe)
     }
 
-    /// §7.3 retry conditions: 429/408/5xx/transport retry; 4xx never.
-    /// (split out for unit testing)
+    /// §7.3 retry conditions: channel-side errors (401-403 arrears, 404,
+    /// 409+, 429, 5xx) and transport errors retry on another channel;
+    /// 400 (deterministic client error) and the timeout class 408/504/524
+    /// (upstream may already have processed and billed — retrying means
+    /// double billing) never retry. (split out for unit testing)
     fn upstream_retryable_impl(pe: &ProviderError) -> bool {
         match pe {
-            ProviderError::Http { status, .. } => {
-                matches!(status, 429 | 408 | 500..=599)
-            }
+            ProviderError::Http { status, .. } => !matches!(status, 400 | 408 | 504 | 524),
             ProviderError::Transport(_) => true,
             ProviderError::Parse(_) => false,
             ProviderError::Config(_) => false,
@@ -482,6 +490,9 @@ mod tests {
             header_override: None,
             config: None,
             used_quota: 0,
+            cost_mode: crate::llm::models::channel::LlmCostMode::Usage,
+            cost_discount: 1.0,
+            monthly_cost: None,
             test_model: None,
             test_time: None,
             response_time: None,
@@ -503,11 +514,11 @@ mod tests {
                 name: "mock-model".to_owned(),
                 model_type: crate::llm::models::model::LlmModelType::Chat,
                 pricing: crate::llm::cache::Pricing {
-                    price_mode: crate::llm::models::model::LlmPriceMode::Ratio,
-                    model_ratio: 1.0,
-                    completion_ratio: 1.0,
-                    cache_ratio: None,
-                    cache_write_ratio: None,
+                    price_mode: crate::llm::models::model::LlmPriceMode::Token,
+                    input_price: 1.0,
+                    output_price: 1.0,
+                    cache_read_price: None,
+                    cache_write_price: None,
                     call_price: None,
                 },
                 params: None,
@@ -707,15 +718,34 @@ mod tests {
             status: s,
             body: String::new(),
         };
+        // 渠道侧错误 → 换渠道重试（§7.3）。
         assert!(LlmRouter::upstream_retryable_impl(&http(429)));
-        assert!(LlmRouter::upstream_retryable_impl(&http(408)));
+        assert!(
+            LlmRouter::upstream_retryable_impl(&http(401)),
+            "arrears failover"
+        );
+        assert!(
+            LlmRouter::upstream_retryable_impl(&http(402)),
+            "arrears failover"
+        );
+        assert!(
+            LlmRouter::upstream_retryable_impl(&http(403)),
+            "arrears failover"
+        );
+        assert!(
+            LlmRouter::upstream_retryable_impl(&http(404)),
+            "channel coverage differs"
+        );
         assert!(LlmRouter::upstream_retryable_impl(&http(500)));
         assert!(LlmRouter::upstream_retryable_impl(&http(503)));
-        assert!(!LlmRouter::upstream_retryable_impl(&http(400)));
-        assert!(!LlmRouter::upstream_retryable_impl(&http(401)));
         assert!(LlmRouter::upstream_retryable_impl(
             &ProviderError::Transport("t".to_owned())
         ));
+        // 400 = 确定性失败；408/504/524 = 上游可能已计费的超时类。
+        assert!(!LlmRouter::upstream_retryable_impl(&http(400)));
+        assert!(!LlmRouter::upstream_retryable_impl(&http(408)));
+        assert!(!LlmRouter::upstream_retryable_impl(&http(504)));
+        assert!(!LlmRouter::upstream_retryable_impl(&http(524)));
         assert!(!LlmRouter::upstream_retryable_impl(&ProviderError::Parse(
             "p".to_owned()
         )));

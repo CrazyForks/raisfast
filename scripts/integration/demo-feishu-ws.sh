@@ -12,7 +12,7 @@
 #   3. 订阅事件 im.message.receive_v1；发布应用（本企业可用）
 #   4. 拿到 App ID (cli_xxx) / App Secret
 #   5. 服务已启动（可出网访问 open.feishu.cn）:
-#      INTEGRATION_VAULT_KEY=dev-secret just dev
+#      just dev
 #
 # 用法:
 #   FEISHU_APP_ID=cli_xxx FEISHU_APP_SECRET=xxx ADMIN_TOKEN=... \

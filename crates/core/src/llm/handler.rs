@@ -217,6 +217,28 @@ pub fn routes(
         r,
         registry,
         restful,
+        "/admin/llm/group-ratios",
+        get,
+        get_group_ratios,
+        "system",
+        "admin/llm/group-ratios",
+        "admin"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        restful,
+        "/admin/llm/group-ratios",
+        put,
+        put_group_ratios,
+        "system",
+        "admin/llm/group-ratios",
+        "admin"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        restful,
         "/llm/tokens",
         get,
         list_own_tokens,
@@ -233,6 +255,17 @@ pub fn routes(
         create_own_token,
         "system",
         "llm/tokens",
+        "authed"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        restful,
+        "/llm/models",
+        get,
+        selectable_models,
+        "system",
+        "llm/models",
         "authed"
     );
     let r = reg_route!(
@@ -311,6 +344,9 @@ pub struct ChannelResponse {
     pub header_override: Option<serde_json::Value>,
     pub config: Option<serde_json::Value>,
     pub used_quota: i64,
+    pub cost_mode: String,
+    pub cost_discount: f64,
+    pub monthly_cost: Option<f64>,
     pub test_model: Option<String>,
     pub response_time: Option<i32>,
     pub keys: Vec<KeyView>,
@@ -339,6 +375,9 @@ impl ChannelResponse {
             header_override: row.header_override.clone(),
             config: row.config.clone(),
             used_quota: row.used_quota,
+            cost_mode: row.cost_mode.as_str().to_owned(),
+            cost_discount: row.cost_discount,
+            monthly_cost: row.monthly_cost,
             test_model: row.test_model.clone(),
             response_time: row.response_time,
             keys: entries
@@ -386,6 +425,12 @@ pub struct CreateChannelReq {
     #[serde(default)]
     pub config: Option<serde_json::Value>,
     #[serde(default)]
+    pub cost_mode: Option<String>,
+    #[serde(default = "default_cost_discount")]
+    pub cost_discount: f64,
+    #[serde(default)]
+    pub monthly_cost: Option<f64>,
+    #[serde(default)]
     pub test_model: Option<String>,
     pub initial_keys: Vec<KeyInput>,
 }
@@ -400,6 +445,10 @@ fn default_groups() -> String {
 
 fn default_true_fn() -> bool {
     true
+}
+
+fn default_cost_discount() -> f64 {
+    1.0
 }
 
 /// Update-channel payload — keys are ignored here (write-only sub-resource,
@@ -429,6 +478,12 @@ pub struct UpdateChannelReq {
     #[serde(default)]
     pub config: Option<serde_json::Value>,
     #[serde(default)]
+    pub cost_mode: Option<String>,
+    #[serde(default = "default_cost_discount")]
+    pub cost_discount: f64,
+    #[serde(default)]
+    pub monthly_cost: Option<f64>,
+    #[serde(default)]
     pub test_model: Option<String>,
     #[serde(default)]
     pub keys: Option<serde_json::Value>,
@@ -446,6 +501,16 @@ fn parse_key_mode(raw: &Option<String>) -> AppResult<channel::LlmKeyMode> {
         Some("random") => Ok(channel::LlmKeyMode::Random),
         Some(other) => Err(AppError::BadRequest(format!(
             "invalid key_mode: {other} (polling|random)"
+        ))),
+    }
+}
+
+fn parse_cost_mode(raw: &Option<String>) -> AppResult<channel::LlmCostMode> {
+    match raw.as_deref() {
+        None | Some("usage") => Ok(channel::LlmCostMode::Usage),
+        Some("fixed") => Ok(channel::LlmCostMode::Fixed),
+        Some(other) => Err(AppError::BadRequest(format!(
+            "invalid cost_mode: {other} (usage|fixed)"
         ))),
     }
 }
@@ -577,6 +642,9 @@ pub async fn create_channel(
             param_override: body.param_override,
             header_override: body.header_override,
             config: body.config,
+            cost_mode: parse_cost_mode(&body.cost_mode)?,
+            cost_discount: body.cost_discount,
+            monthly_cost: body.monthly_cost,
             test_model: body.test_model,
         },
     )
@@ -646,6 +714,9 @@ pub async fn update_channel(
             param_override: body.param_override,
             header_override: body.header_override,
             config: body.config,
+            cost_mode: parse_cost_mode(&body.cost_mode)?,
+            cost_discount: body.cost_discount,
+            monthly_cost: body.monthly_cost,
             test_model: body.test_model,
         },
     )
@@ -833,14 +904,14 @@ pub struct ModelReq {
     pub model_type: String,
     #[serde(default = "default_price_mode")]
     pub price_mode: String,
-    #[serde(default = "default_ratio")]
-    pub model_ratio: f64,
-    #[serde(default = "default_ratio")]
-    pub completion_ratio: f64,
+    #[serde(default = "default_price")]
+    pub input_price: f64,
+    #[serde(default = "default_price")]
+    pub output_price: f64,
     #[serde(default)]
-    pub cache_ratio: Option<f64>,
+    pub cache_read_price: Option<f64>,
     #[serde(default)]
-    pub cache_write_ratio: Option<f64>,
+    pub cache_write_price: Option<f64>,
     #[serde(default)]
     pub call_price: Option<f64>,
     #[serde(default)]
@@ -854,10 +925,10 @@ fn default_model_type() -> String {
 }
 
 fn default_price_mode() -> String {
-    "ratio".to_owned()
+    "token".to_owned()
 }
 
-fn default_ratio() -> f64 {
+fn default_price() -> f64 {
     1.0
 }
 
@@ -881,10 +952,10 @@ impl ModelReq {
             name: self.name.trim().to_owned(),
             model_type,
             price_mode,
-            model_ratio: self.model_ratio,
-            completion_ratio: self.completion_ratio,
-            cache_ratio: self.cache_ratio,
-            cache_write_ratio: self.cache_write_ratio,
+            input_price: self.input_price,
+            output_price: self.output_price,
+            cache_read_price: self.cache_read_price,
+            cache_write_price: self.cache_write_price,
             call_price: self.call_price,
             params: self.params,
             status,
@@ -994,18 +1065,60 @@ pub async fn delete_model(
 
 // ---------- user self-service tokens (§12) ----------
 
-/// Token view (no hash).
+/// Models selectable for a token allowlist (§8.1 semantics, JWT-authed):
+/// ALL models declared by enabled channels of the caller's tenant, split
+/// into `models` (priced/relay-able — the /v1/models pool) and `unpriced`
+/// (not in the active directory: relay rejects them until priced, so the
+/// picker shows them disabled instead of silently hiding them).
+#[utoipa::path(get, path = "/api/v1/llm/models", tag = "llm",
+    security(("bearer_auth" = [])),
+    responses((status = 200, description = "Selectable + unpriced model names"))
+)]
+pub async fn selectable_models(
+    auth: AuthUser,
+    State(state): State<AppState>,
+) -> AppResult<ApiResponse<serde_json::Value>> {
+    let _ = auth.ensure_snowflake_user_id()?;
+    let tenant = auth.tenant_id().unwrap_or("default").to_owned();
+    let cache = state.llm_router.cache_snapshot();
+    let mut names: Vec<String> = cache
+        .channels
+        .values()
+        .filter(|ch| ch.tenant == tenant && ch.status == channel::LlmChannelStatus::Enabled)
+        .flat_map(|ch| ch.models.iter().cloned())
+        .collect();
+    names.sort();
+    names.dedup();
+    let mut models = Vec::new();
+    let mut unpriced = Vec::new();
+    for name in names {
+        if cache.model_info(&tenant, &name).is_some() {
+            models.push(name);
+        } else {
+            unpriced.push(name);
+        }
+    }
+    Ok(ApiResponse::success(serde_json::json!({
+        "models": models,
+        "unpriced": unpriced,
+    })))
+}
+
+/// Token view (decrypted key for reveal/copy — api_token pattern; masked
+/// client-side in the UI).
 #[derive(Debug, Serialize)]
 pub struct TokenResponse {
     pub id: SnowflakeId,
     pub name: String,
     pub status: String,
-    pub remain_quota: i64,
-    pub used_quota: i64,
+    pub remain_quota: crate::types::quota::Quota,
+    pub used_quota: crate::types::quota::Quota,
     pub unlimited_quota: bool,
     pub expired_at: Option<String>,
     pub allowed_models: Option<String>,
+    pub group: String,
     pub created_at: String,
+    pub key: Option<String>,
 }
 
 impl TokenResponse {
@@ -1019,7 +1132,12 @@ impl TokenResponse {
             unlimited_quota: row.unlimited_quota,
             expired_at: row.expired_at.map(|t| t.to_rfc3339()),
             allowed_models: row.allowed_models.clone(),
+            group: row
+                .token_group
+                .clone()
+                .unwrap_or_else(|| "default".to_owned()),
             created_at: row.created_at.to_rfc3339(),
+            key: row.key_enc.as_deref().and_then(crypto::decrypt),
         }
     }
 }
@@ -1029,7 +1147,7 @@ impl TokenResponse {
 pub struct CreateTokenReq {
     pub name: String,
     #[serde(default)]
-    pub remain_quota: i64,
+    pub remain_quota: crate::types::quota::Quota,
     #[serde(default)]
     pub unlimited_quota: bool,
     #[serde(default)]
@@ -1038,6 +1156,8 @@ pub struct CreateTokenReq {
     pub allowed_models: Option<String>,
     #[serde(default)]
     pub allowed_ips: Option<String>,
+    #[serde(default)]
+    pub token_group: Option<String>,
 }
 
 /// Update-token payload.
@@ -1045,7 +1165,7 @@ pub struct CreateTokenReq {
 pub struct UpdateTokenReq {
     pub name: String,
     #[serde(default)]
-    pub remain_quota: Option<i64>,
+    pub remain_quota: Option<crate::types::quota::Quota>,
     #[serde(default)]
     pub allowed_models: Option<String>,
     #[serde(default)]
@@ -1054,6 +1174,8 @@ pub struct UpdateTokenReq {
     pub expired_at: Option<String>,
     #[serde(default)]
     pub enabled: Option<bool>,
+    #[serde(default)]
+    pub token_group: Option<String>,
 }
 
 #[derive(Debug, Deserialize, utoipa::IntoParams)]
@@ -1104,12 +1226,13 @@ pub async fn create_own_token(
         auth.tenant_id(),
         user,
         body.name.trim(),
-        &crate::llm::relay::auth_hash(&plain),
-        body.remain_quota.max(0),
+        &plain,
+        body.remain_quota,
         body.unlimited_quota,
         expired_at,
         body.allowed_models.as_deref().filter(|s| !s.is_empty()),
         body.allowed_ips.as_deref().filter(|s| !s.is_empty()),
+        body.token_group.as_deref().filter(|s| !s.is_empty()),
     )
     .await?;
     Ok(ApiResponse::success(serde_json::json!({
@@ -1149,7 +1272,8 @@ pub async fn update_own_token(
     let now = crate::utils::tz::now_utc();
     let sql = format!(
         "UPDATE llm_tokens SET name = {p1}, remain_quota = {p2}, allowed_models = {p3}, \
-         allowed_ips = {p4}, expired_at = {p5}, status = {p6}, updated_at = {p7} WHERE id = {p8}",
+         allowed_ips = {p4}, expired_at = {p5}, status = {p6}, token_group = {p7}, \
+         updated_at = {p8} WHERE id = {p9}",
         p1 = ph(1),
         p2 = ph(2),
         p3 = ph(3),
@@ -1157,17 +1281,26 @@ pub async fn update_own_token(
         p5 = ph(5),
         p6 = ph(6),
         p7 = ph(7),
-        p8 = ph(8)
+        p8 = ph(8),
+        p9 = ph(9)
     );
     let expired_at =
         crate::utils::tz::parse_rfc3339_opt(body.expired_at.as_deref()).or(existing.expired_at);
+    let remain = body.remain_quota.unwrap_or(existing.remain_quota);
+    let remain = crate::types::quota::Quota(remain.0.max(0));
+    let token_group = body
+        .token_group
+        .clone()
+        .filter(|s| !s.is_empty())
+        .or(existing.token_group);
     let result = sqlx::query(crate::db::safe_sql(&sql))
         .bind(body.name.trim())
-        .bind(body.remain_quota.unwrap_or(existing.remain_quota).max(0))
+        .bind(remain)
         .bind(body.allowed_models.clone().filter(|s| !s.is_empty()))
         .bind(body.allowed_ips.clone().filter(|s| !s.is_empty()))
         .bind(expired_at)
         .bind(status.as_str())
+        .bind(token_group)
         .bind(now)
         .bind(id)
         .execute(&state.pool)
@@ -1236,6 +1369,96 @@ pub async fn list_logs(
             page_size,
         },
     ))
+}
+
+// ---------- billing group ratios (pricing.md §2) ----------
+
+/// Sell-price multipliers by Key billing group (runtime-adjustable option
+/// `llm_group_ratios`, stored as a JSON string; unset → {"default":1.0}).
+#[utoipa::path(get, path = "/api/v1/admin/llm/group-ratios", tag = "llm",
+    security(("bearer_auth" = [])),
+    responses((status = 200, description = "Group ratios")))]
+pub async fn get_group_ratios(
+    auth: AuthUser,
+    State(state): State<AppState>,
+) -> AppResult<ApiResponse<serde_json::Value>> {
+    auth.ensure_admin()?;
+    Ok(ApiResponse::success(serde_json::json!({
+        "ratios": read_group_ratios(&state.pool).await,
+    })))
+}
+
+/// Replace the group-ratio map. Keys are arbitrary group names; values must be
+/// finite and > 0 (a 0 sell price is a legitimate free group for *models*, but
+/// a whole group priced at 0 is almost always a mistake).
+#[utoipa::path(put, path = "/api/v1/admin/llm/group-ratios", tag = "llm",
+    security(("bearer_auth" = [])),
+    responses((status = 200, description = "Group ratios replaced")))]
+pub async fn put_group_ratios(
+    auth: AuthUser,
+    State(state): State<AppState>,
+    Json(body): Json<GroupRatiosReq>,
+) -> AppResult<ApiResponse<serde_json::Value>> {
+    auth.ensure_admin()?;
+    if body.ratios.is_empty() {
+        return Err(AppError::BadRequest("at least one group is required".to_owned()));
+    }
+    for (name, ratio) in &body.ratios {
+        if name.trim().is_empty() {
+            return Err(AppError::BadRequest("group name cannot be empty".to_owned()));
+        }
+        if !ratio.is_finite() || *ratio < 0.0 {
+            return Err(AppError::BadRequest(format!(
+                "invalid ratio for group {name}: must be a finite number >= 0"
+            )));
+        }
+    }
+    let value = serde_json::to_string(&body.ratios)
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("serialize group ratios: {e}")))?;
+    crate::models::options::upsert_value(
+        &state.pool,
+        "llm_group_ratios",
+        &serde_json::Value::String(value),
+        None,
+    )
+    .await?;
+    Ok(ApiResponse::success(serde_json::json!({
+        "ratios": body.ratios,
+    })))
+}
+
+/// Group-ratio map payload.
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub struct GroupRatiosReq {
+    pub ratios: std::collections::BTreeMap<String, f64>,
+}
+
+/// Read + parse the `llm_group_ratios` option (JSON string or object),
+/// defaulting to `{"default": 1.0}` when unset/malformed.
+pub(crate) async fn read_group_ratios(
+    pool: &crate::db::Pool,
+) -> std::collections::BTreeMap<String, f64> {
+    let mut out = std::collections::BTreeMap::new();
+    let Ok(Some(row)) = crate::models::options::find_by_key(pool, "llm_group_ratios", None).await
+    else {
+        out.insert("default".to_owned(), 1.0);
+        return out;
+    };
+    let parsed = match &row.value {
+        serde_json::Value::String(s) => serde_json::from_str::<serde_json::Value>(s).ok(),
+        other => Some(other.clone()),
+    };
+    if let Some(serde_json::Value::Object(map)) = parsed {
+        for (k, v) in map {
+            if let Some(f) = v.as_f64() {
+                out.insert(k, f);
+            }
+        }
+    }
+    if out.is_empty() {
+        out.insert("default".to_owned(), 1.0);
+    }
+    out
 }
 
 // ---------- channel connectivity test (§7.5 manual) ----------

@@ -4,6 +4,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::errors::app_error::AppResult;
+use crate::types::quota::Quota;
 use crate::types::snowflake_id::SnowflakeId;
 use crate::utils::tz::{Timestamp, now_utc};
 
@@ -34,7 +35,8 @@ pub struct LlmLog {
     pub completion_tokens: i32,
     pub cache_read_tokens: i32,
     pub cache_write_tokens: i32,
-    pub quota: i64,
+    pub quota: Quota,
+    pub cost_quota: Quota,
     pub detail: Option<serde_json::Value>,
     pub elapsed_ms: Option<i32>,
     pub status_code: Option<i32>,
@@ -58,7 +60,8 @@ pub struct NewLog {
     pub completion_tokens: i32,
     pub cache_read_tokens: i32,
     pub cache_write_tokens: i32,
-    pub quota: i64,
+    pub quota: Quota,
+    pub cost_quota: Quota,
     pub detail: Option<serde_json::Value>,
     pub elapsed_ms: Option<i32>,
     pub status_code: Option<i32>,
@@ -81,7 +84,8 @@ impl Default for NewLog {
             completion_tokens: 0,
             cache_read_tokens: 0,
             cache_write_tokens: 0,
-            quota: 0,
+            quota: Quota::default(),
+            cost_quota: Quota::default(),
             detail: None,
             elapsed_ms: None,
             status_code: None,
@@ -112,6 +116,7 @@ pub async fn insert_log(pool: &crate::db::Pool, l: NewLog) -> AppResult<()> {
             "cache_read_tokens" => l.cache_read_tokens,
             "cache_write_tokens" => l.cache_write_tokens,
             "quota" => l.quota,
+            "cost_quota" => l.cost_quota,
             "detail" => l.detail,
             "elapsed_ms" => l.elapsed_ms,
             "status_code" => l.status_code,

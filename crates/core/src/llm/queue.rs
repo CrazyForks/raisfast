@@ -43,6 +43,14 @@ struct WaiterSlot {
 pub struct WaitQueue {
     next_ticket: AtomicU64,
     serving: AtomicU64,
+    /// Unclaimed turn credits. A waiter may only consume its turn when
+    /// `ticket == serving` AND a credit exists — credits are produced by
+    /// slot-release notifies (`notify_all`) and head-cancels. Without the
+    /// pairing, a waiter that takes its turn but loses the slot race
+    /// re-enqueues with a ticket equal to the just-advanced `serving` and
+    /// self-serves turns in a microsecond spin (burns the 64-spin budget
+    /// → spurious 429 while the slot is merely busy, never released).
+    credits: AtomicU64,
     state: Mutex<QueueState>,
     notify: Notify,
 }
@@ -67,6 +75,7 @@ impl WaitQueue {
         Self {
             next_ticket: AtomicU64::new(0),
             serving: AtomicU64::new(0),
+            credits: AtomicU64::new(0),
             state: Mutex::new(QueueState {
                 waiters: VecDeque::new(),
                 bytes: 0,
@@ -113,7 +122,11 @@ impl WaitQueue {
 
     async fn wait_turn(&self, slot: &WaiterSlot, deadline: Instant) -> Result<(), Duration> {
         loop {
-            if slot.ticket == self.serving.load(Ordering::Acquire) {
+            // Turn granted only when it is this waiter's place AND a real
+            // turn credit backs it (slot release / head cancel).
+            if slot.ticket == self.serving.load(Ordering::Acquire)
+                && self.credits.load(Ordering::Acquire) > 0
+            {
                 return Ok(());
             }
             let remaining = deadline.saturating_duration_since(Instant::now());
@@ -133,11 +146,14 @@ impl WaitQueue {
         }
         self.remove_slot(slot);
         self.serving.fetch_add(1, Ordering::AcqRel);
+        self.credits.fetch_sub(1, Ordering::AcqRel);
         self.notify.notify_waiters();
     }
 
     /// Notify all current waiters (slot-release fan-out / state changes).
+    /// Each notify carries one turn credit.
     pub fn notify_all(&self) {
+        self.credits.fetch_add(1, Ordering::AcqRel);
         self.notify.notify_waiters();
     }
 
@@ -193,11 +209,14 @@ impl Drop for OwnedWaitTicket {
     fn drop(&mut self) {
         // Cancellation path (timeout handled by caller, disconnect = drop):
         // remove the waiter; if it was the head, advance `serving` and wake
-        // the next — the head-cancel deadlock guard.
+        // the next — the head-cancel deadlock guard. The skipped place
+        // passes a turn credit to the new head (the cancelled waiter never
+        // consumed one), so the queue pins hold without a slot release.
         if !self.slot.done.swap(true, Ordering::AcqRel) {
             self.queue.remove_slot(&self.slot);
             if self.slot.ticket == self.queue.serving.load(Ordering::Acquire) {
                 self.queue.serving.fetch_add(1, Ordering::AcqRel);
+                self.queue.credits.fetch_add(1, Ordering::AcqRel);
                 self.queue.notify.notify_waiters();
             }
         }

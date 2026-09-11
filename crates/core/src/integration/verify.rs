@@ -88,7 +88,7 @@ fn credentials_json(channel: &ItgChannel, vault: Option<&Vault>) -> Result<Value
     let Some(vault) = vault else {
         return Err(reject(
             503,
-            "credentials present but vault sealed (set INTEGRATION_VAULT_KEY)",
+            "credentials present but vault sealed (set APP_KEY)",
         ));
     };
     match vault.unseal(sealed) {

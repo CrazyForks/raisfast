@@ -25,8 +25,19 @@ use crate::llm::service::{
 };
 use crate::types::snowflake_id::SnowflakeId;
 
+/// Resolve the sell-price multiplier for a Key's billing group from the
+/// `llm_group_ratios` option (pricing.md §2). Unset/unknown group → 1.0.
+/// Runtime-adjustable, so read per request.
+async fn group_ratio_of(pool: &crate::db::Pool, group: &str) -> f64 {
+    crate::llm::handler::read_group_ratios(pool)
+        .await
+        .get(group)
+        .copied()
+        .unwrap_or(1.0)
+}
+
 pub use auth::generate_sk;
-pub use billing::QUOTA_PER_USD;
+pub use crate::types::quota::QUOTA_PER_USD;
 
 /// Hash helper re-exported for the token self-service endpoints.
 pub fn auth_hash(plain: &str) -> String {
@@ -120,6 +131,12 @@ async fn chat_completions(
         .clone()
         .unwrap_or_else(|| "default".to_owned());
     let (token_id, user_id) = auth::token_owner(&token);
+    // Sell-price multiplier for the Key's billing group (pricing.md §2).
+    let token_group = token
+        .token_group
+        .clone()
+        .unwrap_or_else(|| "default".to_owned());
+    let group_ratio = group_ratio_of(&state.pool, &token_group).await;
 
     let Some(model) = body
         .get("model")
@@ -159,7 +176,18 @@ async fn chat_completions(
         .unwrap_or(false);
 
     // Pre-consume (§9.3) — rejection refunds nothing (no hold taken).
-    let estimate = billing::estimate_precharge(&info.pricing, info.model_type, &body);
+    let params_max_output = info
+        .params
+        .as_ref()
+        .and_then(|p| p.get("max_output_tokens"))
+        .and_then(serde_json::Value::as_i64);
+    let estimate = billing::estimate_precharge(
+        &info.pricing,
+        info.model_type,
+        &body,
+        group_ratio,
+        params_max_output,
+    );
     let charge =
         match billing::pre_consume(&state.pool, token_id, token.unlimited_quota, estimate).await {
             Ok(c) => c,
@@ -173,7 +201,6 @@ async fn chat_completions(
         };
 
     let router = state.llm_router.clone();
-    let cache = router.cache_snapshot();
     let ctx = ResolveCtx {
         tenant: &tenant,
         group: None,
@@ -182,11 +209,17 @@ async fn chat_completions(
     let mut retry = RetryState::default();
     let deadline = Instant::now() + Duration::from_secs(RELAY_TIER.max_wait_secs);
     let body_bytes = body.to_string().len();
+    // §8.4 estimation source: prompt side of the no-usage fallback.
+    let prompt_chars = billing::count_prompt_chars(&body);
 
     let mut attempts_log: Vec<String> = Vec::new();
     let mut last_error: Option<(u16, String)> = None;
 
     for attempt in 0..=DEFAULT_RETRY_TIMES {
+        // Fresh snapshot per attempt: an arrears-banned key evicts its
+        // channel from the routing table mid-request — a stale snapshot
+        // would keep retrying the banned channel (design §6.2).
+        let cache = router.cache_snapshot();
         let acquired = router
             .acquire_slot(
                 &crate::llm::service::SlotRequest {
@@ -205,10 +238,20 @@ async fn chat_completions(
             Ok(triple) => triple,
             Err(SlotError::NoRoute(err)) => {
                 billing::refund_all(&state.pool, &charge).await;
+                // When the route died mid-request (this request's failure
+                // banned the only channel, or cooldowns evicted everything),
+                // prefer the real upstream error over the routing-level
+                // message — clients should see why it actually failed.
+                let (status, message) = last_error.clone().unwrap_or((400, err.to_string()));
+                let typ = if status == 429 {
+                    "rate_limit_error"
+                } else {
+                    "api_error"
+                };
                 return openai_error(
-                    StatusCode::BAD_REQUEST,
-                    "invalid_request_error",
-                    err.to_string(),
+                    StatusCode::from_u16(status).unwrap_or(StatusCode::BAD_REQUEST),
+                    typ,
+                    message,
                 );
             }
             Err(SlotError::Rejected {
@@ -264,11 +307,15 @@ async fn chat_completions(
         match resp {
             Ok(upstream) if upstream.status().is_success() => {
                 let usage_cell = Arc::new(std::sync::Mutex::new(RelayUsage::default()));
+                let chars_cell = Arc::new(std::sync::Mutex::new(0usize));
                 if stream {
                     let inner = crate::llm::relay::adaptor::OpenaiAdaptor::handle_stream(
                         upstream,
                         usage_cell.clone(),
+                        chars_cell.clone(),
                     );
+                    // §7.6 槽生命周期：流终止（含客户端中断 drop）才释放槽
+                    // 与在飞计数 —— permit 必须随流存活，不能随 handler 返回。
                     let settle_stream = SettleStream {
                         inner,
                         state: SettleCtx {
@@ -276,6 +323,11 @@ async fn chat_completions(
                             charge: charge.clone(),
                             pricing: info.pricing.clone(),
                             usage: usage_cell,
+                            content_chars: chars_cell,
+                            prompt_chars,
+                            group_ratio,
+                            cost_mode: channel.cost_mode,
+                            cost_discount: channel.cost_discount,
                             router: router.clone(),
                             tenant: tenant.clone(),
                             token_id: Some(token_id),
@@ -283,6 +335,7 @@ async fn chat_completions(
                             channel_id: channel.id,
                             key_index,
                             model: model.clone(),
+                            _permit,
                         },
                         settled: false,
                     };
@@ -295,7 +348,14 @@ async fn chat_completions(
                 }
                 match crate::llm::relay::adaptor::OpenaiAdaptor::handle_response(upstream).await {
                     Ok((resp_body, usage)) => {
-                        let actual = billing::settle_quota(&info.pricing, &usage);
+                        let usage = estimate_usage_if_missing(&body, &resp_body, usage);
+                        let actual = billing::settle_quota(&info.pricing, &usage, group_ratio);
+                        let cost = billing::cost_quota(
+                            &info.pricing,
+                            &usage,
+                            channel.cost_mode,
+                            channel.cost_discount,
+                        );
                         billing::settle(&state.pool, &charge, actual).await;
                         router.report_success(channel.id, key_index);
                         router.record_latency(&tenant, &model, 1.0);
@@ -313,8 +373,12 @@ async fn chat_completions(
                             cache_read_tokens: usage.cache_read_tokens as i32,
                             cache_write_tokens: usage.cache_write_tokens as i32,
                             quota: actual,
+                            cost_quota: cost,
                             detail: Some(serde_json::json!({
                                 "pre_consumed": charge.pre_consumed,
+                                "group_ratio": group_ratio,
+                                "cost_mode": channel.cost_mode.as_str(),
+                                "cost_discount": channel.cost_discount,
                                 "attempts": attempts_log.len() + 1,
                             })),
                             elapsed_ms: None,
@@ -328,23 +392,40 @@ async fn chat_completions(
                     Err(err) => {
                         attempts_log.push(format!("ch{} parse: {err}", channel.id.0));
                         last_error = Some((502, err.to_string()));
+                        // §7.3：解析失败不重试——上游响应体异常，重发大概率同果。
+                        break;
                     }
                 }
             }
             Ok(upstream) => {
                 let status = upstream.status().as_u16();
+                // §6.2 头信号：Retry-After / *-ratelimit-*-reset 是窗口判定
+                // 与冷却时长在文案之外的另一半数据源（内部 execute 路径
+                // ProviderError 不携带响应头，仅靠文案）。
+                let retry_after =
+                    crate::llm::relay::adaptor::parse_reset_deadline(upstream.headers());
                 let text = upstream.text().await.unwrap_or_default();
                 attempts_log.push(format!("ch{} key{key_index}: {status}", channel.id.0));
-                router.report_failure(
-                    channel.id,
-                    key_index,
-                    &crate::llm::service::UpstreamFailure {
-                        status: Some(status),
-                        message: text.clone(),
-                        retry_after: None,
-                    },
-                );
+                // §6.2 class 4)：400 是客户端自身的错误，key 无过错——豁免
+                // 失败上报（不冷却不封禁不计连续失败）。其余照常上报：
+                // 401-403 触发欠费封禁判定，超时类冷却分流（§7.3）。
+                if status != 400 {
+                    router.report_failure(
+                        channel.id,
+                        key_index,
+                        &crate::llm::service::UpstreamFailure {
+                            status: Some(status),
+                            message: text.clone(),
+                            retry_after,
+                        },
+                    );
+                }
                 last_error = Some((status, text));
+                // §7.3 重试边界：400 确定性失败；408/504/524 超时类——上游
+                // 可能已处理已计费，重试 = 双重计费。其余渠道侧错误换渠道重试。
+                if matches!(status, 400 | 408 | 504 | 524) {
+                    break;
+                }
             }
             Err(err) => {
                 attempts_log.push(format!(
@@ -448,12 +529,55 @@ impl OpenaiBody {
     }
 }
 
+/// §8.4 no-usage estimation fallback: upstreams that report no usage at
+/// all (some compatible implementations) get billed by char estimation
+/// (chars/4) with a warning — never a zero-cost free ride.
+fn estimate_usage_if_missing(
+    req: &serde_json::Value,
+    resp: &serde_json::Value,
+    usage: RelayUsage,
+) -> RelayUsage {
+    if usage.prompt_tokens != 0 || usage.completion_tokens != 0 {
+        return usage;
+    }
+    let completion_chars: usize = resp
+        .get("choices")
+        .and_then(|c| c.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|ch| {
+                    ch.get("message")
+                        .and_then(|m| m.get("content"))
+                        .and_then(|c| c.as_str())
+                })
+                .map(|s| s.chars().count())
+                .sum()
+        })
+        .unwrap_or(0);
+    let est = RelayUsage::estimate(billing::count_prompt_chars(req), completion_chars);
+    tracing::warn!(
+        prompt_tokens = est.prompt_tokens,
+        completion_tokens = est.completion_tokens,
+        "llm upstream returned no usage; billing by char estimation"
+    );
+    est
+}
+
 /// Settlement context carried by the streaming response.
 struct SettleCtx {
     pool: crate::db::Pool,
     charge: billing::PreCharge,
     pricing: crate::llm::cache::Pricing,
     usage: Arc<std::sync::Mutex<RelayUsage>>,
+    /// Delta-content chars forwarded (completion side of §8.4 estimation).
+    content_chars: Arc<std::sync::Mutex<usize>>,
+    /// Request prompt chars (prompt side of §8.4 estimation).
+    prompt_chars: usize,
+    /// Sell-price multiplier of the Key's billing group (pricing.md §2).
+    group_ratio: f64,
+    /// Upstream cost model of the channel that served the stream (§7).
+    cost_mode: crate::llm::models::channel::LlmCostMode,
+    cost_discount: f64,
     router: Arc<LlmRouter>,
     tenant: String,
     token_id: Option<SnowflakeId>,
@@ -461,12 +585,33 @@ struct SettleCtx {
     channel_id: SnowflakeId,
     key_index: usize,
     model: String,
+    /// Held until the stream terminates (design §7.6 — releasing earlier
+    /// would let the next request reach an upstream that still counts this
+    /// streaming connection against its concurrency quota).
+    _permit: crate::llm::service::SlotPermit,
 }
 
 impl SettleCtx {
     fn settle_now(&mut self) {
-        let usage = self.usage.lock().map(|u| u.clone()).unwrap_or_default();
-        let actual = billing::settle_quota(&self.pricing, &usage);
+        let mut usage = self.usage.lock().map(|u| u.clone()).unwrap_or_default();
+        if usage.prompt_tokens == 0 && usage.completion_tokens == 0 {
+            // §8.4: upstream sent no usage frame — estimate by forwarded
+            // content chars instead of settling (and billing) zero.
+            let chars = self.content_chars.lock().map(|c| *c).unwrap_or(0);
+            usage = RelayUsage::estimate(self.prompt_chars, chars);
+            tracing::warn!(
+                prompt_tokens = usage.prompt_tokens,
+                completion_tokens = usage.completion_tokens,
+                "llm stream ended without usage; billing by char estimation"
+            );
+        }
+        let actual = billing::settle_quota(&self.pricing, &usage, self.group_ratio);
+        let cost = billing::cost_quota(
+            &self.pricing,
+            &usage,
+            self.cost_mode,
+            self.cost_discount,
+        );
         let charge = self.charge.clone();
         let pool = self.pool.clone();
         tokio::spawn(async move {
@@ -487,9 +632,14 @@ impl SettleCtx {
             cache_read_tokens: usage.cache_read_tokens as i32,
             cache_write_tokens: usage.cache_write_tokens as i32,
             quota: actual,
-            detail: Some(
-                serde_json::json!({ "pre_consumed": self.charge.pre_consumed, "stream": true }),
-            ),
+            cost_quota: cost,
+            detail: Some(serde_json::json!({
+                "pre_consumed": self.charge.pre_consumed,
+                "group_ratio": self.group_ratio,
+                "cost_mode": self.cost_mode.as_str(),
+                "cost_discount": self.cost_discount,
+                "stream": true,
+            })),
             elapsed_ms: None,
             status_code: Some(200),
             error_message: None,

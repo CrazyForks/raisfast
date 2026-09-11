@@ -172,7 +172,7 @@ pub async fn resolve_auth_code_token(
     };
     let Some(vault) = vault else {
         return Err(AppError::BadRequest(
-            "oauth2-auth-code: vault sealed (set INTEGRATION_VAULT_KEY)".into(),
+            "oauth2-auth-code: vault sealed (set APP_KEY)".into(),
         ));
     };
 

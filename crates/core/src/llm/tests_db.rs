@@ -6,6 +6,7 @@ use crate::commands::CreateUserCmd;
 use crate::llm::models::token::{self, LlmTokenStatus};
 use crate::llm::relay::auth;
 use crate::models::user::{self, UserStatus};
+use crate::types::quota::Quota;
 use crate::types::snowflake_id::SnowflakeId;
 
 async fn pool() -> crate::db::Pool {
@@ -36,9 +37,10 @@ async fn make_token(
         None,
         user_id,
         "test",
-        &crate::services::api_token::hash_token(&plain),
-        remain,
+        &plain,
+        Quota(remain),
         unlimited,
+        None,
         None,
         None,
         None,
@@ -119,12 +121,13 @@ async fn auth_ip_allowlist_enforced() {
         None,
         uid,
         "ip",
-        &crate::services::api_token::hash_token(&plain),
-        100,
+        &plain,
+        Quota(100),
         false,
         None,
         None,
         Some("10.1.0.0/16\n127.0.0.1"),
+        None,
     )
     .await
     .expect("token");
@@ -140,26 +143,26 @@ async fn billing_preconsume_settle_refund_cycle() {
     let (_plain, t) = make_token(&p, uid, 1000, false).await;
 
     // Pre-consume 300 → remain 700.
-    let charge = crate::llm::relay::billing::pre_consume(&p, t.id, false, 300)
+    let charge = crate::llm::relay::billing::pre_consume(&p, t.id, false, Quota(300))
         .await
         .expect("hold");
-    assert_eq!(charge.pre_consumed, 300);
+    assert_eq!(charge.pre_consumed, Quota(300));
     let mid = token::find_by_id(&p, t.id, None).await.unwrap().unwrap();
-    assert_eq!(mid.remain_quota, 700);
+    assert_eq!(mid.remain_quota, Quota(700));
 
     // Actual 100 → refund 200 → remain 900, used tracks the actual 100.
-    crate::llm::relay::billing::settle(&p, &charge, 100).await;
+    crate::llm::relay::billing::settle(&p, &charge, Quota(100)).await;
     let after = token::find_by_id(&p, t.id, None).await.unwrap().unwrap();
-    assert_eq!(after.remain_quota, 900);
-    assert_eq!(after.used_quota, 100);
+    assert_eq!(after.remain_quota, Quota(900));
+    assert_eq!(after.used_quota, Quota(100));
 
     // Full refund restores to the original hold.
-    let charge2 = crate::llm::relay::billing::pre_consume(&p, t.id, false, 250)
+    let charge2 = crate::llm::relay::billing::pre_consume(&p, t.id, false, Quota(250))
         .await
         .expect("hold2");
     crate::llm::relay::billing::refund_all(&p, &charge2).await;
     let final_row = token::find_by_id(&p, t.id, None).await.unwrap().unwrap();
-    assert_eq!(final_row.remain_quota, 900);
+    assert_eq!(final_row.remain_quota, Quota(900));
 }
 
 #[tokio::test]
@@ -167,7 +170,7 @@ async fn billing_preconsume_rejects_insufficient() {
     let p = pool().await;
     let uid = make_user(&p, UserStatus::Active).await;
     let (_plain, t) = make_token(&p, uid, 50, false).await;
-    let err = crate::llm::relay::billing::pre_consume(&p, t.id, false, 300)
+    let err = crate::llm::relay::billing::pre_consume(&p, t.id, false, Quota(300))
         .await
         .expect_err("must reject");
     assert!(matches!(
@@ -176,7 +179,7 @@ async fn billing_preconsume_rejects_insufficient() {
     ));
     // Overdraw protection: unchanged balance.
     let row = token::find_by_id(&p, t.id, None).await.unwrap().unwrap();
-    assert_eq!(row.remain_quota, 50);
+    assert_eq!(row.remain_quota, Quota(50));
 }
 
 #[tokio::test]
@@ -184,13 +187,13 @@ async fn billing_under_hold_top_up_collects_or_logs() {
     let p = pool().await;
     let uid = make_user(&p, UserStatus::Active).await;
     let (_plain, t) = make_token(&p, uid, 500, false).await;
-    let charge = crate::llm::relay::billing::pre_consume(&p, t.id, false, 100)
+    let charge = crate::llm::relay::billing::pre_consume(&p, t.id, false, Quota(100))
         .await
         .expect("hold");
     // Actual 150 > hold 100 → collects the 50 diff.
-    crate::llm::relay::billing::settle(&p, &charge, 150).await;
+    crate::llm::relay::billing::settle(&p, &charge, Quota(150)).await;
     let row = token::find_by_id(&p, t.id, None).await.unwrap().unwrap();
-    assert_eq!(row.remain_quota, 350);
+    assert_eq!(row.remain_quota, Quota(350));
 }
 
 #[tokio::test]
@@ -198,13 +201,13 @@ async fn billing_unlimited_token_skips_holds() {
     let p = pool().await;
     let uid = make_user(&p, UserStatus::Active).await;
     let (_plain, t) = make_token(&p, uid, 0, true).await;
-    let charge = crate::llm::relay::billing::pre_consume(&p, t.id, true, 12345)
+    let charge = crate::llm::relay::billing::pre_consume(&p, t.id, true, Quota(12345))
         .await
         .expect("no hold for unlimited");
-    crate::llm::relay::billing::settle(&p, &charge, 999).await;
+    crate::llm::relay::billing::settle(&p, &charge, Quota(999)).await;
     crate::llm::relay::billing::refund_all(&p, &charge).await;
     let row = token::find_by_id(&p, t.id, None).await.unwrap().unwrap();
-    assert_eq!(row.remain_quota, 0, "unlimited never touches remain_quota");
+    assert_eq!(row.remain_quota, Quota(0), "unlimited never touches remain_quota");
 }
 
 #[tokio::test]
@@ -236,6 +239,9 @@ async fn key_status_persists_in_pool_json() {
             param_override: None,
             header_override: None,
             config: None,
+            cost_mode: crate::llm::models::channel::LlmCostMode::Usage,
+            cost_discount: 1.0,
+            monthly_cost: None,
             test_model: None,
         },
     )
@@ -282,7 +288,7 @@ async fn log_insert_roundtrip() {
             model_name: "gpt-4o".to_owned(),
             prompt_tokens: 10,
             completion_tokens: 5,
-            quota: 42,
+            quota: Quota(42),
             is_stream: true,
             ..Default::default()
         },
@@ -303,5 +309,5 @@ async fn log_insert_roundtrip() {
     .expect("query");
     assert_eq!(total, 1);
     assert_eq!(items[0].model_name, "gpt-4o");
-    assert_eq!(items[0].quota, 42);
+    assert_eq!(items[0].quota, Quota(42));
 }

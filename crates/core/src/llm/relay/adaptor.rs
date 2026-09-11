@@ -38,8 +38,8 @@ impl RelayUsage {
         }
     }
 
-    /// Fallback estimation when the upstream reports no usage (design §8.4).
-    #[allow(dead_code)]
+    /// Fallback estimation when the upstream reports no usage (design §8.4):
+    /// chars / 4 per side.
     pub fn estimate(prompt_chars: usize, completion_chars: usize) -> Self {
         Self {
             prompt_tokens: (prompt_chars / 4) as i64,
@@ -84,6 +84,62 @@ pub fn apply_header_override(headers: &mut HeaderMap, override_hdr: Option<&serd
             }
         }
     }
+}
+
+/// §6.2 reset-signal sources beyond message keywords: `Retry-After`
+/// (delta-seconds / HTTP-date) plus `anthropic-ratelimit-*-reset` (RFC 3339)
+/// and `x-ratelimit-reset*` headers. Returns the remaining window duration;
+/// `None` when no parseable signal exists (callers keep transient handling).
+/// Past deadlines yield `None` — an expired window is not a signal.
+pub(crate) fn parse_reset_deadline(headers: &HeaderMap) -> Option<std::time::Duration> {
+    const DAY_SECS: i64 = 24 * 60 * 60;
+    let now = crate::utils::tz::now_utc();
+
+    fn parse_value(v: &str, now: chrono::DateTime<chrono::Utc>) -> Option<i64> {
+        let v = v.trim();
+        if let Ok(n) = v.parse::<i64>() {
+            // Bare number: relative seconds when small, unix epoch when
+            // large (GitHub style) — epochs have exceeded DAY_SECS since
+            // 2001-09-09, so the split is unambiguous.
+            if n > DAY_SECS {
+                let remaining = n - now.timestamp();
+                return (remaining > 0).then_some(remaining);
+            }
+            return (n > 0).then_some(n);
+        }
+        // Retry-After HTTP-date (RFC 1123/2822) / anthropic ISO 8601.
+        let parsed = chrono::DateTime::parse_from_rfc2822(v)
+            .ok()
+            .map(|t| t.with_timezone(&chrono::Utc))
+            .or_else(|| {
+                chrono::DateTime::parse_from_rfc3339(v)
+                    .ok()
+                    .map(|t| t.with_timezone(&chrono::Utc))
+            });
+        if let Some(t) = parsed {
+            let secs = (t - now).num_seconds();
+            return (secs > 0).then_some(secs);
+        }
+        None
+    }
+
+    if let Some(secs) = headers
+        .get("retry-after")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| parse_value(v, now))
+    {
+        return Some(std::time::Duration::from_secs(secs as u64));
+    }
+    // First parseable reset header wins (they share the deadline).
+    for (name, value) in headers.iter() {
+        let n = name.as_str();
+        let is_reset = (n.starts_with("anthropic-ratelimit-") && n.ends_with("-reset"))
+            || n.starts_with("x-ratelimit-reset");
+        if is_reset && let Some(secs) = value.to_str().ok().and_then(|v| parse_value(v, now)) {
+            return Some(std::time::Duration::from_secs(secs as u64));
+        }
+    }
+    None
 }
 
 /// The OpenAI-compatible adaptor (near-passthrough).
@@ -188,30 +244,40 @@ impl OpenaiAdaptor {
     /// Stream response: an SSE byte-frame stream that forwards frames
     /// verbatim while accumulating usage. Callers attach settlement to the
     /// stream's termination (settle-on-complete, design §8.2/8.4).
+    /// `content_chars_out` accumulates delta-content char counts — the
+    /// completion side of the no-usage estimation fallback (§8.4).
     pub fn handle_stream(
         resp: reqwest::Response,
         usage_out: std::sync::Arc<std::sync::Mutex<RelayUsage>>,
+        content_chars_out: std::sync::Arc<std::sync::Mutex<usize>>,
     ) -> Pin<Box<dyn Stream<Item = Result<Vec<u8>, std::io::Error>> + Send>> {
-        Box::pin(SseForwardStream::new(resp, usage_out))
+        Box::pin(SseForwardStream::new(resp, usage_out, content_chars_out))
     }
 }
 
 /// Line-buffered SSE forwarding stream (design §8.4): forwards every raw
-/// frame, parses `data:` payloads only to accumulate usage.
+/// frame, parses `data:` payloads only to accumulate usage and content
+/// chars.
 struct SseForwardStream {
     upstream: Pin<Box<dyn Stream<Item = Result<Vec<u8>, reqwest::Error>> + Send>>,
     buffer: String,
     usage: std::sync::Arc<std::sync::Mutex<RelayUsage>>,
+    content_chars: std::sync::Arc<std::sync::Mutex<usize>>,
     done: bool,
 }
 
 impl SseForwardStream {
-    fn new(resp: reqwest::Response, usage: std::sync::Arc<std::sync::Mutex<RelayUsage>>) -> Self {
+    fn new(
+        resp: reqwest::Response,
+        usage: std::sync::Arc<std::sync::Mutex<RelayUsage>>,
+        content_chars: std::sync::Arc<std::sync::Mutex<usize>>,
+    ) -> Self {
         use futures::StreamExt;
         Self {
             upstream: Box::pin(resp.bytes_stream().map(|r| r.map(|b| b.to_vec()))),
             buffer: String::new(),
             usage,
+            content_chars,
             done: false,
         }
     }
@@ -222,12 +288,28 @@ impl SseForwardStream {
             if data == "[DONE]" {
                 return;
             }
-            if let Ok(v) = serde_json::from_str::<serde_json::Value>(data)
-                && v.get("usage").is_some_and(|u| !u.is_null())
-            {
-                let parsed = RelayUsage::from_openai(v.get("usage").unwrap_or(&v));
-                if let Ok(mut u) = self.usage.lock() {
-                    *u = parsed;
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(data) {
+                if v.get("usage").is_some_and(|u| !u.is_null()) {
+                    let parsed = RelayUsage::from_openai(v.get("usage").unwrap_or(&v));
+                    if let Ok(mut u) = self.usage.lock() {
+                        *u = parsed;
+                    }
+                }
+                if let Some(choices) = v.get("choices").and_then(|c| c.as_array()) {
+                    let delta_chars: usize = choices
+                        .iter()
+                        .filter_map(|c| {
+                            c.get("delta")
+                                .and_then(|d| d.get("content"))
+                                .and_then(|s| s.as_str())
+                        })
+                        .map(|s| s.chars().count())
+                        .sum();
+                    if delta_chars > 0
+                        && let Ok(mut total) = self.content_chars.lock()
+                    {
+                        *total += delta_chars;
+                    }
                 }
             }
         }
@@ -379,5 +461,82 @@ mod tests {
         let h = OpenaiAdaptor::setup_headers("k", Some(&over));
         assert_eq!(h.get("x-custom").unwrap(), "v");
         assert_eq!(h.get(reqwest::header::AUTHORIZATION).unwrap(), "Bearer k");
+    }
+
+    // ── reset-deadline header parsing（§6.2 头信号）─────────────────
+
+    fn hm(pairs: &[(&str, &str)]) -> HeaderMap {
+        let mut h = HeaderMap::new();
+        for (k, v) in pairs {
+            h.insert(
+                HeaderName::try_from(*k).unwrap(),
+                HeaderValue::try_from(*v).unwrap(),
+            );
+        }
+        h
+    }
+
+    fn in_minutes(mins: i64) -> String {
+        let t = crate::utils::tz::now_utc() + chrono::Duration::minutes(mins);
+        t.with_timezone(&chrono::FixedOffset::east_opt(0).unwrap())
+            .to_rfc2822()
+    }
+
+    #[test]
+    fn retry_after_delta_seconds() {
+        let h = hm(&[("retry-after", "18000")]);
+        assert_eq!(
+            parse_reset_deadline(&h),
+            Some(std::time::Duration::from_secs(18000))
+        );
+    }
+
+    #[test]
+    fn retry_after_http_date() {
+        let h = hm(&[("retry-after", &in_minutes(300))]); // +5h
+        let d = parse_reset_deadline(&h).expect("parsed");
+        let secs = d.as_secs() as i64;
+        assert!((299 * 60..=300 * 60).contains(&secs), "secs: {secs}");
+    }
+
+    #[test]
+    fn anthropic_reset_iso_header() {
+        let iso = (crate::utils::tz::now_utc() + chrono::Duration::hours(5)).to_rfc3339();
+        let h = hm(&[("anthropic-ratelimit-tokens-reset", &iso)]);
+        let d = parse_reset_deadline(&h).expect("parsed");
+        let secs = d.as_secs() as i64;
+        assert!((4 * 3600..=5 * 3600).contains(&secs), "secs: {secs}");
+    }
+
+    #[test]
+    fn x_ratelimit_epoch_vs_relative() {
+        // 大数值 = unix epoch（GitHub 风格）；小数值 = 相对秒数。
+        let epoch = crate::utils::tz::now_utc().timestamp() + 7200;
+        let h = hm(&[("x-ratelimit-reset", &epoch.to_string())]);
+        let d = parse_reset_deadline(&h).expect("epoch parsed");
+        assert!((7100..=7200).contains(&(d.as_secs() as i64)));
+
+        let h2 = hm(&[("x-ratelimit-reset-requests", "45")]);
+        assert_eq!(
+            parse_reset_deadline(&h2),
+            Some(std::time::Duration::from_secs(45))
+        );
+    }
+
+    #[test]
+    fn garbage_and_past_deadlines_yield_none() {
+        assert_eq!(parse_reset_deadline(&hm(&[("retry-after", "soon")])), None);
+        assert_eq!(parse_reset_deadline(&hm(&[])), None);
+        // 过期 deadline 不是窗口信号。
+        assert_eq!(parse_reset_deadline(&hm(&[("retry-after", "0")])), None);
+        assert_eq!(
+            parse_reset_deadline(&hm(&[("retry-after", &in_minutes(-10))])),
+            None
+        );
+        // 非数值/日期的 ratelimit 头忽略。
+        assert_eq!(
+            parse_reset_deadline(&hm(&[("x-ratelimit-reset", "unlimited")])),
+            None
+        );
     }
 }
