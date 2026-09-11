@@ -2,8 +2,10 @@
 //! Mounted at the application root (not `/api/v1`) — sk- auth, not JWT.
 
 pub(crate) mod adaptor;
+pub(crate) mod anthropic;
 pub(crate) mod auth;
 pub(crate) mod billing;
+pub(crate) mod tasks;
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -67,6 +69,7 @@ pub fn routes() -> axum::Router<AppState> {
             "/v1/chat/completions",
             axum::routing::post(chat_completions),
         )
+        .route("/v1/messages", axum::routing::post(messages))
         .route("/v1/models", axum::routing::get(list_models))
         .route("/v1/embeddings", axum::routing::post(embeddings))
         .route("/v1/rerank", axum::routing::post(rerank))
@@ -85,6 +88,12 @@ pub fn routes() -> axum::Router<AppState> {
                 .layer(axum::extract::DefaultBodyLimit::max(AUDIO_BODY_LIMIT)),
         )
         .route("/v1/audio/speech", axum::routing::post(audio_speech))
+        .route("/v1/videos", axum::routing::post(tasks::submit_video))
+        .route("/v1/videos/{id}", axum::routing::get(tasks::get_video))
+        .route(
+            "/v1/videos/{id}/content",
+            axum::routing::get(tasks::get_video_content),
+        )
 }
 
 /// Error body in the OpenAI-compatible wire shape (design §8.5): SDKs parse errors from this
@@ -102,6 +111,39 @@ fn bearer_of(headers: &HeaderMap) -> Option<String> {
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.strip_prefix("Bearer "))
         .map(str::to_owned)
+}
+
+/// Client key: `x-api-key` (Anthropic SDK) with Bearer fallback.
+fn api_key_of(headers: &HeaderMap) -> Option<String> {
+    if let Some(v) = headers.get("x-api-key").and_then(|v| v.to_str().ok())
+        && !v.is_empty()
+    {
+        return Some(v.to_owned());
+    }
+    bearer_of(headers)
+}
+
+/// Error body in the Anthropic wire shape (SDKs parse `error.type`).
+fn anthropic_error(status: StatusCode, typ: &str, message: String) -> Response {
+    let body = serde_json::json!({
+        "type": "error",
+        "error": { "type": typ, "message": message },
+    });
+    (status, Json(body)).into_response()
+}
+
+/// HTTP status → anthropic error `type` vocabulary.
+fn anthropic_error_type(status: u16) -> &'static str {
+    match status {
+        400 => "invalid_request_error",
+        401 => "authentication_error",
+        403 => "permission_error",
+        404 => "not_found_error",
+        413 => "request_too_large",
+        429 => "rate_limit_error",
+        503 => "overloaded_error",
+        _ => "api_error",
+    }
 }
 
 fn client_ip_of(headers: &HeaderMap) -> String {
@@ -306,20 +348,46 @@ async fn chat_completions(
         };
 
         let upstream_model = crate::llm::service::mapped_model(&channel, &model);
-        let converted = OpenaiBody::convert(
-            body.clone(),
-            &upstream_model,
-            channel.param_override.as_ref(),
-            stream,
-        );
-        let url = adaptor_request_url(&channel.base_url);
+        // Protocol selection rides the channel `provider` (design §8.2):
+        // anthropic-native channels speak /v1/messages, everything else is
+        // OpenAI-compatible. The model name never picks the adaptor.
+        let native_anthropic = channel.provider == "anthropic";
+        let converted = if native_anthropic {
+            OpenaiBody::convert_anthropic(
+                body.clone(),
+                &upstream_model,
+                channel.param_override.as_ref(),
+                stream,
+            )
+        } else {
+            OpenaiBody::convert(
+                body.clone(),
+                &upstream_model,
+                channel.param_override.as_ref(),
+                stream,
+            )
+        };
+        let url = if native_anthropic {
+            anthropic::AnthropicAdaptor::request_url(&channel.base_url)
+        } else {
+            adaptor_request_url(&channel.base_url)
+        };
+        let upstream_key = &channel.keys[key_index].plain.clone().unwrap_or_default();
+        let upstream_headers = if native_anthropic {
+            anthropic::AnthropicAdaptor::setup_headers(
+                upstream_key,
+                channel.header_override.as_ref(),
+            )
+        } else {
+            crate::llm::relay::adaptor::OpenaiAdaptor::setup_headers(
+                upstream_key,
+                channel.header_override.as_ref(),
+            )
+        };
         let client = shared_client();
         let resp = client
             .post(&url)
-            .headers(crate::llm::relay::adaptor::OpenaiAdaptor::setup_headers(
-                &channel.keys[key_index].plain.clone().unwrap_or_default(),
-                channel.header_override.as_ref(),
-            ))
+            .headers(upstream_headers)
             .json(&converted)
             .send()
             .await;
@@ -329,11 +397,20 @@ async fn chat_completions(
                 let usage_cell = Arc::new(std::sync::Mutex::new(RelayUsage::default()));
                 let chars_cell = Arc::new(std::sync::Mutex::new(0usize));
                 if stream {
-                    let inner = crate::llm::relay::adaptor::OpenaiAdaptor::handle_stream(
-                        upstream,
-                        usage_cell.clone(),
-                        chars_cell.clone(),
-                    );
+                    let inner = if native_anthropic {
+                        anthropic::AnthropicAdaptor::handle_stream(
+                            upstream,
+                            usage_cell.clone(),
+                            chars_cell.clone(),
+                            &model,
+                        )
+                    } else {
+                        crate::llm::relay::adaptor::OpenaiAdaptor::handle_stream(
+                            upstream,
+                            usage_cell.clone(),
+                            chars_cell.clone(),
+                        )
+                    };
                     // §7.6 槽生命周期：流终止（含客户端中断 drop）才释放槽
                     // 与在飞计数 —— permit 必须随流存活，不能随 handler 返回。
                     let settle_stream = SettleStream {
@@ -366,7 +443,12 @@ async fn chat_completions(
                         .body(Body::from_stream(settle_stream))
                         .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response());
                 }
-                match crate::llm::relay::adaptor::OpenaiAdaptor::handle_response(upstream).await {
+                let handled = if native_anthropic {
+                    anthropic::AnthropicAdaptor::handle_response(upstream, &model).await
+                } else {
+                    crate::llm::relay::adaptor::OpenaiAdaptor::handle_response(upstream).await
+                };
+                match handled {
                     Ok((resp_body, usage)) => {
                         let usage = estimate_usage_if_missing(&body, &resp_body, usage);
                         let actual = billing::settle_quota(&info.pricing, &usage, group_ratio);
@@ -479,6 +561,421 @@ async fn chat_completions(
     })
     .unwrap_or(StatusCode::BAD_GATEWAY);
     openai_error(status, "api_error", message)
+}
+
+/// POST /v1/messages — the Anthropic-native inbound face (design §8.2 P4):
+/// Anthropic SDK / Claude Code clients hit the same routing + billing
+/// pipeline as /v1/chat/completions. openai-compatible channels get the
+/// request converted both ways; anthropic-native channels are a
+/// near-passthrough (model rewrite + param_override). Errors always wear
+/// the anthropic envelope. [照抄 new-api claude relay 双向 convert]
+#[allow(clippy::too_many_lines)]
+async fn messages(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<serde_json::Value>,
+) -> Response {
+    let Some(key) = api_key_of(&headers) else {
+        return anthropic_error(
+            StatusCode::UNAUTHORIZED,
+            "authentication_error",
+            "missing api key".into(),
+        );
+    };
+    let identity = match auth::authenticate(&state.pool, &key, &client_ip_of(&headers)).await {
+        Ok(id) => id,
+        Err(err) => {
+            let (status, typ) = match &err {
+                crate::errors::app_error::AppError::Forbidden => {
+                    (StatusCode::FORBIDDEN, "permission_error")
+                }
+                _ => (StatusCode::UNAUTHORIZED, "authentication_error"),
+            };
+            return anthropic_error(status, typ, err.to_string());
+        }
+    };
+    let token = identity.token;
+    let tenant = token
+        .tenant_id
+        .clone()
+        .unwrap_or_else(|| "default".to_owned());
+    let (token_id, user_id) = auth::token_owner(&token);
+    let token_group = token
+        .token_group
+        .clone()
+        .unwrap_or_else(|| "default".to_owned());
+    let group_ratio = group_ratio_of(&state.pool, &token_group).await;
+
+    let Some(model) = body
+        .get("model")
+        .and_then(|m| m.as_str())
+        .map(str::to_owned)
+    else {
+        return anthropic_error(
+            StatusCode::BAD_REQUEST,
+            "invalid_request_error",
+            "missing model".into(),
+        );
+    };
+    if !auth::model_allowed(&token, &model) {
+        return anthropic_error(
+            StatusCode::FORBIDDEN,
+            "permission_error",
+            format!("model not allowed: {model}"),
+        );
+    }
+    let Some(info) = state.llm_router.model_info(&tenant, &model) else {
+        return anthropic_error(
+            StatusCode::BAD_REQUEST,
+            "invalid_request_error",
+            format!("unknown model: {model}"),
+        );
+    };
+    if !matches!(info.model_type, LlmModelType::Chat | LlmModelType::Vlm) {
+        return anthropic_error(
+            StatusCode::BAD_REQUEST,
+            "invalid_request_error",
+            format!("model is not a chat model: {model}"),
+        );
+    }
+    let stream = body
+        .get("stream")
+        .and_then(|s| s.as_bool())
+        .unwrap_or(false);
+    // Canonical openai body: the estimation + conversion source for
+    // openai-compatible channels (anthropic channels forward the original).
+    let openai_body = match anthropic::AnthropicAdaptor::to_openai_body(body.clone()) {
+        Ok(b) => b,
+        Err(err) => {
+            return anthropic_error(
+                StatusCode::BAD_REQUEST,
+                "invalid_request_error",
+                err.to_string(),
+            );
+        }
+    };
+
+    // Pre-consume (§9.3) on the converted shape so the max_tokens chain and
+    // prompt estimation match what the upstream will actually see.
+    let params_max_output = info
+        .params
+        .as_ref()
+        .and_then(|p| p.get("max_output_tokens"))
+        .and_then(serde_json::Value::as_i64);
+    let estimate = billing::estimate_precharge(
+        &info.pricing,
+        info.model_type,
+        &openai_body,
+        group_ratio,
+        params_max_output,
+    );
+    let charge =
+        match billing::pre_consume(&state.pool, token_id, token.unlimited_quota, estimate).await {
+            Ok(c) => c,
+            Err(_) => {
+                return anthropic_error(
+                    StatusCode::TOO_MANY_REQUESTS,
+                    "rate_limit_error",
+                    "insufficient quota".into(),
+                );
+            }
+        };
+
+    let router = state.llm_router.clone();
+    let ctx = ResolveCtx {
+        tenant: &tenant,
+        group: None,
+        pin_channel: None,
+    };
+    let mut retry = RetryState::default();
+    let deadline = Instant::now() + Duration::from_secs(RELAY_TIER.max_wait_secs);
+    let body_bytes = body.to_string().len();
+    let prompt_chars = billing::count_prompt_chars(&openai_body);
+    let prompt_est = (prompt_chars / 4).max(1) as i64;
+    let mut attempts_log: Vec<String> = Vec::new();
+    let mut last_error: Option<(u16, String)> = None;
+
+    for attempt in 0..=DEFAULT_RETRY_TIMES {
+        // Fresh snapshot per attempt (design §6.2 — see chat pipeline).
+        let cache = router.cache_snapshot();
+        let acquired = router
+            .acquire_slot(
+                &crate::llm::service::SlotRequest {
+                    cache: &cache,
+                    ctx: &ctx,
+                    model: &model,
+                    tier: RELAY_TIER,
+                    caller: Some((token_id, user_id)),
+                    body_bytes,
+                    deadline,
+                },
+                &mut retry,
+            )
+            .await;
+        let (channel, key_index, _permit) = match acquired {
+            Ok(triple) => triple,
+            Err(SlotError::NoRoute(err)) => {
+                billing::refund_all(&state.pool, &charge).await;
+                let (status, message) = last_error.clone().unwrap_or((400, err.to_string()));
+                return anthropic_error(
+                    StatusCode::from_u16(status).unwrap_or(StatusCode::BAD_REQUEST),
+                    anthropic_error_type(status),
+                    message,
+                );
+            }
+            Err(SlotError::Rejected {
+                status,
+                message,
+                retry_after_secs,
+            }) => {
+                billing::refund_all(&state.pool, &charge).await;
+                let mut hdrs = HeaderMap::new();
+                if let Some(secs) = retry_after_secs
+                    && let Ok(v) = secs.to_string().parse()
+                {
+                    hdrs.insert("retry-after", v);
+                }
+                let code = StatusCode::from_u16(status).unwrap_or(StatusCode::TOO_MANY_REQUESTS);
+                let resp = anthropic_error(code, anthropic_error_type(status), message);
+                return (code, hdrs, resp).into_response();
+            }
+        };
+
+        let upstream_model = crate::llm::service::mapped_model(&channel, &model);
+        let native_anthropic = channel.provider == "anthropic";
+        let (url, upstream_headers) = if native_anthropic {
+            (
+                anthropic::AnthropicAdaptor::request_url(&channel.base_url),
+                anthropic::AnthropicAdaptor::setup_headers(
+                    &channel.keys[key_index].plain.clone().unwrap_or_default(),
+                    channel.header_override.as_ref(),
+                ),
+            )
+        } else {
+            (
+                adaptor_request_url(&channel.base_url),
+                crate::llm::relay::adaptor::OpenaiAdaptor::setup_headers(
+                    &channel.keys[key_index].plain.clone().unwrap_or_default(),
+                    channel.header_override.as_ref(),
+                ),
+            )
+        };
+        let fwd_body = if native_anthropic {
+            match anthropic::AnthropicAdaptor::convert_native(
+                body.clone(),
+                &upstream_model,
+                channel.param_override.as_ref(),
+                stream,
+            ) {
+                Ok(b) => b,
+                Err(err) => {
+                    billing::refund_all(&state.pool, &charge).await;
+                    return anthropic_error(
+                        StatusCode::BAD_REQUEST,
+                        "invalid_request_error",
+                        err.to_string(),
+                    );
+                }
+            }
+        } else {
+            OpenaiBody::convert(
+                openai_body.clone(),
+                &upstream_model,
+                channel.param_override.as_ref(),
+                stream,
+            )
+        };
+        let client = shared_client();
+        let resp = client
+            .post(&url)
+            .headers(upstream_headers)
+            .json(&fwd_body)
+            .send()
+            .await;
+
+        match resp {
+            Ok(upstream) if upstream.status().is_success() => {
+                let usage_cell = Arc::new(std::sync::Mutex::new(RelayUsage::default()));
+                let chars_cell = Arc::new(std::sync::Mutex::new(0usize));
+                if stream {
+                    let inner = if native_anthropic {
+                        anthropic::AnthropicAdaptor::handle_passthrough_stream(
+                            upstream,
+                            usage_cell.clone(),
+                            chars_cell.clone(),
+                        )
+                    } else {
+                        anthropic::AnthropicAdaptor::handle_openai_stream(
+                            upstream,
+                            usage_cell.clone(),
+                            chars_cell.clone(),
+                            &model,
+                            prompt_est,
+                        )
+                    };
+                    let settle_stream = SettleStream {
+                        inner,
+                        state: SettleCtx {
+                            pool: state.pool.clone(),
+                            charge: charge.clone(),
+                            pricing: info.pricing.clone(),
+                            usage: usage_cell,
+                            content_chars: chars_cell,
+                            prompt_chars,
+                            group_ratio,
+                            cost_mode: channel.cost_mode,
+                            cost_discount: channel.cost_discount,
+                            router: router.clone(),
+                            tenant: tenant.clone(),
+                            token_id: Some(token_id),
+                            user_id: Some(user_id),
+                            channel_id: channel.id,
+                            key_index,
+                            model: model.clone(),
+                            _permit,
+                        },
+                        settled: false,
+                    };
+                    return Response::builder()
+                        .status(StatusCode::OK)
+                        .header(header::CONTENT_TYPE, "text/event-stream")
+                        .header(header::CACHE_CONTROL, "no-cache")
+                        .body(Body::from_stream(settle_stream))
+                        .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response());
+                }
+                let handled = if native_anthropic {
+                    anthropic::AnthropicAdaptor::read_message_response(upstream).await
+                } else {
+                    crate::llm::relay::adaptor::OpenaiAdaptor::handle_response(upstream).await
+                };
+                match handled {
+                    Ok((upstream_body, parsed)) => {
+                        // openai channels convert back to a claude message;
+                        // anthropic channels pass the body through.
+                        let (resp_body, usage) = if native_anthropic {
+                            let usage = if parsed.prompt_tokens == 0
+                                && parsed.completion_tokens == 0
+                            {
+                                let completion_chars =
+                                    anthropic::AnthropicAdaptor::message_text_chars(&upstream_body);
+                                RelayUsage::estimate(prompt_chars, completion_chars)
+                            } else {
+                                parsed
+                            };
+                            (upstream_body, usage)
+                        } else {
+                            let usage =
+                                estimate_usage_if_missing(&openai_body, &upstream_body, parsed);
+                            (
+                                anthropic::AnthropicAdaptor::completion_to_message(
+                                    &upstream_body,
+                                    &model,
+                                ),
+                                usage,
+                            )
+                        };
+                        let actual = billing::settle_quota(&info.pricing, &usage, group_ratio);
+                        let cost = billing::cost_quota(
+                            &info.pricing,
+                            &usage,
+                            channel.cost_mode,
+                            channel.cost_discount,
+                        );
+                        billing::settle(&state.pool, &charge, actual).await;
+                        router.report_success(channel.id, key_index);
+                        router.record_latency(&tenant, &model, 1.0);
+                        let log = NewLog {
+                            tenant_id: Some(tenant.clone()),
+                            user_id: Some(user_id),
+                            token_id: Some(token_id),
+                            source: LogSource::Relay,
+                            channel_id: Some(channel.id),
+                            key_index: Some(key_index as i32),
+                            model_name: model.clone(),
+                            is_stream: false,
+                            prompt_tokens: usage.prompt_tokens as i32,
+                            completion_tokens: usage.completion_tokens as i32,
+                            cache_read_tokens: usage.cache_read_tokens as i32,
+                            cache_write_tokens: usage.cache_write_tokens as i32,
+                            quota: actual,
+                            cost_quota: cost,
+                            detail: Some(serde_json::json!({
+                                "pre_consumed": charge.pre_consumed,
+                                "group_ratio": group_ratio,
+                                "cost_mode": channel.cost_mode.as_str(),
+                                "cost_discount": channel.cost_discount,
+                                "anthropic_face": true,
+                                "attempts": attempts_log.len() + 1,
+                            })),
+                            elapsed_ms: None,
+                            status_code: Some(200),
+                            error_message: None,
+                            request_id: None,
+                            day: None,
+                        };
+                        write_log(&state, log).await;
+                        return (StatusCode::OK, Json(resp_body)).into_response();
+                    }
+                    Err(err) => {
+                        attempts_log.push(format!("ch{} parse: {err}", channel.id.0));
+                        last_error = Some((502, err.to_string()));
+                        break;
+                    }
+                }
+            }
+            Ok(upstream) => {
+                let status = upstream.status().as_u16();
+                let retry_after =
+                    crate::llm::relay::adaptor::parse_reset_deadline(upstream.headers());
+                let text = upstream.text().await.unwrap_or_default();
+                attempts_log.push(format!("ch{} key{key_index}: {status}", channel.id.0));
+                if status != 400 {
+                    router.report_failure(
+                        channel.id,
+                        key_index,
+                        &crate::llm::service::UpstreamFailure {
+                            status: Some(status),
+                            message: text.clone(),
+                            retry_after,
+                        },
+                    );
+                }
+                last_error = Some((status, text));
+                if matches!(status, 400 | 408 | 504 | 524) {
+                    break;
+                }
+            }
+            Err(err) => {
+                attempts_log.push(format!(
+                    "ch{} key{key_index}: transport {err}",
+                    channel.id.0
+                ));
+                router.report_failure(
+                    channel.id,
+                    key_index,
+                    &crate::llm::service::UpstreamFailure {
+                        status: None,
+                        message: err.to_string(),
+                        retry_after: None,
+                    },
+                );
+                last_error = Some((502, err.to_string()));
+            }
+        }
+        if attempt < DEFAULT_RETRY_TIMES {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    }
+
+    billing::refund_all(&state.pool, &charge).await;
+    let (status, message) = last_error.unwrap_or((502, "upstream failed".to_owned()));
+    let status = StatusCode::from_u16(if (400..600).contains(&status) {
+        status
+    } else {
+        502
+    })
+    .unwrap_or(StatusCode::BAD_GATEWAY);
+    anthropic_error(status, anthropic_error_type(status.as_u16()), message)
 }
 
 /// GET /v1/models — token-visible models (design §8.1):
@@ -800,6 +1297,20 @@ async fn relay_json(
         };
 
         let upstream_model = crate::llm::service::mapped_model(&channel, &model);
+        // anthropic-native channels speak /v1/messages only — skip them for
+        // OpenAI-shaped modalities (config mismatch is not an upstream
+        // health signal, so no failure report; retry picks another channel).
+        if channel.provider == "anthropic" {
+            attempts_log.push(format!(
+                "ch{} skip: anthropic serves chat only",
+                channel.id.0
+            ));
+            last_error = Some((
+                400,
+                "provider 'anthropic' does not support this endpoint".to_owned(),
+            ));
+            continue;
+        }
         let converted = match crate::llm::relay::adaptor::OpenaiAdaptor::convert_plain(
             body.clone(),
             &upstream_model,
@@ -1183,6 +1694,18 @@ async fn audio_stt(
         };
 
         let upstream_model = crate::llm::service::mapped_model(&channel, &model);
+        // anthropic-native channels serve chat only (see relay_json guard).
+        if channel.provider == "anthropic" {
+            attempts_log.push(format!(
+                "ch{} skip: anthropic serves chat only",
+                channel.id.0
+            ));
+            last_error = Some((
+                400,
+                "provider 'anthropic' does not support this endpoint".to_owned(),
+            ));
+            continue;
+        }
         // Rebuild the multipart form per attempt: model rewritten, other
         // fields (file, language, prompt, ...) passed through untouched.
         let mut form = reqwest::multipart::Form::new();
@@ -1506,6 +2029,18 @@ async fn audio_speech(
         };
 
         let upstream_model = crate::llm::service::mapped_model(&channel, &model);
+        // anthropic-native channels serve chat only (see relay_json guard).
+        if channel.provider == "anthropic" {
+            attempts_log.push(format!(
+                "ch{} skip: anthropic serves chat only",
+                channel.id.0
+            ));
+            last_error = Some((
+                400,
+                "provider 'anthropic' does not support this endpoint".to_owned(),
+            ));
+            continue;
+        }
         let converted = match crate::llm::relay::adaptor::OpenaiAdaptor::convert_plain(
             body.clone(),
             &upstream_model,
@@ -1658,6 +2193,24 @@ impl OpenaiBody {
         stream: bool,
     ) -> serde_json::Value {
         match crate::llm::relay::adaptor::OpenaiAdaptor::convert_chat(
+            body.clone(),
+            upstream_model,
+            param_override,
+            stream,
+        ) {
+            Ok(converted) => converted,
+            Err(_) => body,
+        }
+    }
+
+    /// openai canonical → anthropic native (anthropic channels, design §8.3).
+    fn convert_anthropic(
+        body: serde_json::Value,
+        upstream_model: &str,
+        param_override: Option<&serde_json::Value>,
+        stream: bool,
+    ) -> serde_json::Value {
+        match anthropic::AnthropicAdaptor::convert_chat(
             body.clone(),
             upstream_model,
             param_override,

@@ -20,6 +20,7 @@ define_enum!(
         Tts = "tts",
         Vlm = "vlm",
         Image = "image",
+        Video = "video",
     }
 );
 

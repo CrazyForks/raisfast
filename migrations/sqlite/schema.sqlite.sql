@@ -1858,3 +1858,33 @@ CREATE INDEX IF NOT EXISTS idx_llm_logs_tenant ON llm_logs(tenant_id, created_at
 CREATE INDEX IF NOT EXISTS idx_llm_logs_day ON llm_logs(tenant_id, day);
 CREATE INDEX IF NOT EXISTS idx_llm_logs_channel ON llm_logs(channel_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_llm_logs_token ON llm_logs(token_id, created_at);
+
+-- Generic LLM async tasks (video now; batch/image-async later). Lifecycle
+-- columns are strongly typed; kind-specific request/response live in
+-- payload/result JSON (llm_logs source+detail pattern).
+CREATE TABLE IF NOT EXISTS llm_tasks (
+    id INTEGER PRIMARY KEY,
+    tenant_id TEXT NOT NULL DEFAULT 'default',
+    kind VARCHAR(20) NOT NULL,
+    user_id INTEGER,
+    token_id INTEGER,
+    channel_id INTEGER,
+    key_index INTEGER,
+    upstream_task_id VARCHAR(128),
+    status VARCHAR(20) NOT NULL DEFAULT 'queued',
+    progress INTEGER NOT NULL DEFAULT 0,
+    model_name VARCHAR(255) NOT NULL,
+    pre_consumed INTEGER NOT NULL DEFAULT 0,
+    quota INTEGER NOT NULL DEFAULT 0,
+    cost_quota INTEGER NOT NULL DEFAULT 0,
+    unlimited_quota INTEGER NOT NULL DEFAULT 0,
+    payload TEXT,
+    result TEXT,
+    error_message TEXT,
+    expires_at TEXT,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_llm_tasks_status ON llm_tasks(status, updated_at);
+CREATE INDEX IF NOT EXISTS idx_llm_tasks_token ON llm_tasks(token_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_llm_tasks_upstream ON llm_tasks(upstream_task_id);

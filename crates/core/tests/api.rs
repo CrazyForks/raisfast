@@ -913,6 +913,8 @@ mod health;
 mod llm_admin;
 #[path = "api/llm_relay.rs"]
 mod llm_relay;
+#[path = "api/llm_relay_anthropic.rs"]
+mod llm_relay_anthropic;
 #[path = "api/media.rs"]
 mod media;
 #[path = "api/options.rs"]

@@ -174,6 +174,21 @@ pub fn estimate_precharge(
                 let usd = chars as f64 * pricing.input_price / 1_000_000.0;
                 return Quota::from_usd_ceil(usd * group_ratio);
             }
+            if model_type == LlmModelType::Video {
+                // Video bills per generated second (completion side),
+                // fixed at submit — hold == settle; failure refunds.
+                let seconds = body
+                    .get("seconds")
+                    .and_then(|v| {
+                        v.as_i64()
+                            .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
+                    })
+                    .filter(|v| *v > 0)
+                    .unwrap_or(12);
+                let usd =
+                    (pricing.input_price + seconds as f64 * pricing.output_price) / 1_000_000.0;
+                return Quota::from_usd_ceil(usd * group_ratio);
+            }
             let prompt_chars = count_prompt_chars(body);
             let mut prompt_est = (prompt_chars / 4).max(500) as f64;
             if has_cjk(body) {

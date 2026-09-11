@@ -1968,17 +1968,29 @@ pub async fn test_channel(
     }
     let started = std::time::Instant::now();
     let client = crate::llm::relay::shared_client();
-    let url = format!("{}/chat/completions", row.base_url.trim_end_matches('/'));
-    let body = serde_json::json!({ "model": model, "messages": [{"role":"user","content":"ping"}], "max_tokens": 1 });
-    let resp = client
-        .post(&url)
-        .headers(crate::llm::relay::OpenaiHeaders::for_key(
-            &key,
-            row.header_override.as_ref(),
-        ))
-        .json(&body)
-        .send()
-        .await;
+    // Probe in the channel's own protocol (design §7.5): anthropic-native
+    // channels get a /v1/messages ping, everything else OpenAI chat.
+    let native_anthropic = row.provider == "anthropic";
+    let (url, headers, body) = if native_anthropic {
+        (
+            crate::llm::relay::anthropic::AnthropicAdaptor::request_url(&row.base_url),
+            crate::llm::relay::anthropic::AnthropicAdaptor::setup_headers(
+                &key,
+                row.header_override.as_ref(),
+            ),
+            serde_json::json!({
+                "model": model, "max_tokens": 1,
+                "messages": [{"role":"user","content":"ping"}]
+            }),
+        )
+    } else {
+        (
+            format!("{}/chat/completions", row.base_url.trim_end_matches('/')),
+            crate::llm::relay::OpenaiHeaders::for_key(&key, row.header_override.as_ref()),
+            serde_json::json!({ "model": model, "messages": [{"role":"user","content":"ping"}], "max_tokens": 1 }),
+        )
+    };
+    let resp = client.post(&url).headers(headers).json(&body).send().await;
     let elapsed_ms = started.elapsed().as_millis() as i32;
     let (ok, detail) = match resp {
         Ok(r) if r.status().is_success() => (true, format!("{} ok", r.status().as_u16())),

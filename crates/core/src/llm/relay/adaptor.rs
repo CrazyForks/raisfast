@@ -1,6 +1,7 @@
 //! Relay adaptors (design §8.2): OpenAI canonical format in, per-provider
-//! conversion out. v1 ships the openai-compatible adaptor (deepseek/moonshot/
-//! ollama/siliconflow/generic all ride it); anthropic lands in P4.
+//! conversion out. The openai-compatible adaptor is the default (deepseek/
+//! moonshot/ollama/siliconflow/generic all ride it); anthropic-native
+//! channels branch to `relay::anthropic::AnthropicAdaptor` by `provider`.
 
 use std::pin::Pin;
 
@@ -38,6 +39,21 @@ impl RelayUsage {
         }
     }
 
+    /// Parse an Anthropic-shaped usage object (§9.3 normalization contract:
+    /// `prompt_tokens` includes cache — anthropic reports input and the cache
+    /// splits separately, so the splits are summed back into the prompt side).
+    pub fn from_anthropic(v: &serde_json::Value) -> Self {
+        let get = |name: &str| v.get(name).and_then(|x| x.as_i64()).unwrap_or(0);
+        let cache_read = get("cache_read_input_tokens");
+        let cache_write = get("cache_creation_input_tokens");
+        Self {
+            prompt_tokens: get("input_tokens") + cache_read + cache_write,
+            completion_tokens: get("output_tokens"),
+            cache_read_tokens: cache_read,
+            cache_write_tokens: cache_write,
+        }
+    }
+
     /// Fallback estimation when the upstream reports no usage (design §8.4):
     /// chars / 4 per side.
     pub fn estimate(prompt_chars: usize, completion_chars: usize) -> Self {
@@ -69,6 +85,9 @@ pub enum RelayEndpoint {
     AudioTranslations,
     /// `/audio/speech` — text-to-speech (JSON in, binary audio out).
     AudioSpeech,
+    /// `/videos` — async video generation (OpenAI Videos API shape). The
+    /// `/{id}` and `/{id}/content` suffixes are appended by the caller.
+    Videos,
 }
 
 /// One shared HTTP client for the whole module (design §7.6: per-host
@@ -169,6 +188,7 @@ impl OpenaiAdaptor {
             RelayEndpoint::AudioTranscriptions => format!("{base_url}/audio/transcriptions"),
             RelayEndpoint::AudioTranslations => format!("{base_url}/audio/translations"),
             RelayEndpoint::AudioSpeech => format!("{base_url}/audio/speech"),
+            RelayEndpoint::Videos => format!("{base_url}/videos"),
         }
     }
 
@@ -490,6 +510,27 @@ mod tests {
         let bare = serde_json::json!({ "prompt_tokens": 10, "completion_tokens": 5 });
         let u3 = RelayUsage::from_openai(&bare);
         assert_eq!((u3.prompt_tokens, u3.cache_read_tokens), (10, 0));
+    }
+
+    #[test]
+    fn usage_from_anthropic_sums_cache_splits() {
+        // §9.3: prompt side = input + cache_read + cache_write.
+        let v = serde_json::json!({
+            "input_tokens": 100,
+            "output_tokens": 40,
+            "cache_read_input_tokens": 60,
+            "cache_creation_input_tokens": 10
+        });
+        let u = RelayUsage::from_anthropic(&v);
+        assert_eq!(u.prompt_tokens, 170);
+        assert_eq!(u.completion_tokens, 40);
+        assert_eq!(u.cache_read_tokens, 60);
+        assert_eq!(u.cache_write_tokens, 10);
+
+        let bare = serde_json::json!({ "input_tokens": 10, "output_tokens": 5 });
+        let u2 = RelayUsage::from_anthropic(&bare);
+        assert_eq!((u2.prompt_tokens, u2.completion_tokens), (10, 5));
+        assert_eq!((u2.cache_read_tokens, u2.cache_write_tokens), (0, 0));
     }
 
     #[test]

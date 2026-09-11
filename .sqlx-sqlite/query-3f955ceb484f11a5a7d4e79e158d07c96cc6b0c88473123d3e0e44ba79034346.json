@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO llm_tasks (id, kind, user_id, token_id, channel_id, key_index, upstream_task_id, status, model_name, pre_consumed, unlimited_quota, payload, expires_at, created_at, updated_at, tenant_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 16
+    },
+    "nullable": []
+  },
+  "hash": "3f955ceb484f11a5a7d4e79e158d07c96cc6b0c88473123d3e0e44ba79034346"
+}

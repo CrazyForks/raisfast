@@ -1798,3 +1798,33 @@ CREATE TABLE IF NOT EXISTS llm_logs (
     INDEX idx_llm_logs_channel (channel_id, created_at),
     INDEX idx_llm_logs_token (token_id, created_at)
 );
+
+-- Generic LLM async tasks (video now; batch/image-async later). Lifecycle
+-- columns are strongly typed; kind-specific request/response live in
+-- payload/result JSON (llm_logs source+detail pattern).
+CREATE TABLE IF NOT EXISTS llm_tasks (
+    id BIGINT PRIMARY KEY,
+    tenant_id VARCHAR(36) NOT NULL DEFAULT 'default',
+    kind VARCHAR(20) NOT NULL,
+    user_id BIGINT,
+    token_id BIGINT,
+    channel_id BIGINT,
+    key_index INT,
+    upstream_task_id VARCHAR(128),
+    status VARCHAR(20) NOT NULL DEFAULT 'queued',
+    progress INT NOT NULL DEFAULT 0,
+    model_name VARCHAR(255) NOT NULL,
+    pre_consumed BIGINT NOT NULL DEFAULT 0,
+    quota BIGINT NOT NULL DEFAULT 0,
+    cost_quota BIGINT NOT NULL DEFAULT 0,
+    unlimited_quota TINYINT(1) NOT NULL DEFAULT 0,
+    payload JSON,
+    result JSON,
+    error_message TEXT,
+    expires_at DATETIME,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_llm_tasks_status (status, updated_at),
+    INDEX idx_llm_tasks_token (token_id, created_at),
+    INDEX idx_llm_tasks_upstream (upstream_task_id)
+);

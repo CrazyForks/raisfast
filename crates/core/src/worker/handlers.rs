@@ -76,6 +76,7 @@ pub mod ingress_retry;
 pub mod itg_egress_cleanup;
 pub mod kb;
 pub mod llm_health;
+pub mod llm_task_sweep;
 pub mod order_expire;
 pub mod payment_expire;
 pub mod payment_reconcile;

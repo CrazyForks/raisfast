@@ -2477,3 +2477,207 @@ async fn relay_tts_bills_by_input_chars_and_streams_audio() {
     assert_eq!(logs[0].prompt_tokens, 11);
     assert_eq!(logs[0].quota, expected);
 }
+
+// ── /v1/videos（异步视频生成数据面）───────────────────────────────
+
+/// 全链路：提交（预扣）→ 轮询（结算+落日志）→ 下载内容。
+#[tokio::test]
+async fn relay_video_submit_poll_and_settle() {
+    let (_, state) = crate::test_app().await;
+    let server = MockServer::start().await;
+
+    // 提交 → 返回上游任务 id。
+    Mock::given(method("POST"))
+        .and(path("/videos"))
+        .and(body_partial_json(json!({ "model": "vid-1", "seconds": 8 })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "id": "vid-upstream-1", "object": "video", "status": "queued"
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    // 轮询 → completed。
+    Mock::given(method("GET"))
+        .and(path("/videos/vid-upstream-1"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "id": "vid-upstream-1", "status": "completed", "progress": 100,
+            "url": "https://up.test/v/1.mp4"
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    // 内容下载 → mp4 字节。
+    Mock::given(method("GET"))
+        .and(path("/videos/vid-upstream-1/content"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("content-type", "video/mp4")
+                .set_body_bytes(vec![0x00, 0x00, 0x00, 0x18, 0x66, 0x74]),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    // output_price 10_000 → $0.01/秒；input 0。
+    let mut model = model_row("vid-1", LlmPriceMode::Token, 0.0, 10_000.0, None, None);
+    model.model_type = LlmModelType::Video;
+    let mut channel = chan(1, &server.uri(), "sk-up-vid", 0, None);
+    channel.models = "vid-1".to_owned();
+    let (mut app, _r) = relay_router_with_models(&state, vec![channel], vec![model]);
+
+    let (sk, token) = make_llm_token(&state.pool, 1_000_000, false, None).await;
+
+    // 提交：预扣 8s × $0.01 = 80_000 quota。
+    let body = json!({ "model": "vid-1", "prompt": "a cat surfing", "seconds": 8 });
+    let (status, resp) = crate::send(&mut app, json_req("/v1/videos", &sk, body)).await;
+    assert_eq!(status, StatusCode::OK, "body: {resp:?}");
+    assert_eq!(resp["status"], "queued");
+    let task_id = resp["id"].as_str().unwrap().to_owned();
+    let held = token_row(&state.pool, token.id).await;
+    assert_eq!(
+        held.remain_quota,
+        Quota(1_000_000 - 80_000),
+        "hold taken at submit"
+    );
+
+    // 轮询：completed → 结算（hold == actual，无差额）。
+    let req = Request::builder()
+        .method("GET")
+        .uri(format!("/v1/videos/{task_id}"))
+        .header(header::AUTHORIZATION, format!("Bearer {sk}"))
+        .body(Body::empty())
+        .unwrap();
+    let (status, resp) = crate::send(&mut app, req).await;
+    assert_eq!(status, StatusCode::OK, "body: {resp:?}");
+    assert_eq!(resp["status"], "completed");
+    assert_eq!(resp["result"]["url"], "https://up.test/v/1.mp4");
+    let row = token_row(&state.pool, token.id).await;
+    assert_eq!(row.used_quota, Quota(80_000));
+    assert_eq!(row.remain_quota, Quota(1_000_000 - 80_000));
+    let logs = wait_logs_of(&state.pool, &token).await;
+    assert_eq!(logs[0].completion_tokens, 8, "billed on the seconds side");
+    assert_eq!(logs[0].quota, Quota(80_000));
+
+    // 内容下载：mp4 字节透传。
+    let req = Request::builder()
+        .method("GET")
+        .uri(format!("/v1/videos/{task_id}/content"))
+        .header(header::AUTHORIZATION, format!("Bearer {sk}"))
+        .body(Body::empty())
+        .unwrap();
+    let (status, bytes) = crate::send_raw(&mut app, req).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(bytes, vec![0x00, 0x00, 0x00, 0x18, 0x66, 0x74]);
+    server.verify().await;
+}
+
+/// 上游 failed → 全额退款 + failed 终态 + 错误日志。
+#[tokio::test]
+async fn relay_video_fail_refunds() {
+    let (_, state) = crate::test_app().await;
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/videos"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "id": "vid-up-2", "status": "queued"
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/videos/vid-up-2"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "id": "vid-up-2", "status": "failed",
+            "error": { "message": "content policy violation" }
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let mut model = model_row("vid-1", LlmPriceMode::Token, 0.0, 10_000.0, None, None);
+    model.model_type = LlmModelType::Video;
+    let mut channel = chan(1, &server.uri(), "sk-up-vid", 0, None);
+    channel.models = "vid-1".to_owned();
+    let (mut app, _r) = relay_router_with_models(&state, vec![channel], vec![model]);
+
+    let (sk, token) = make_llm_token(&state.pool, 1_000_000, false, None).await;
+    let body = json!({ "model": "vid-1", "prompt": "a dog", "seconds": 5 });
+    let (status, resp) = crate::send(&mut app, json_req("/v1/videos", &sk, body)).await;
+    assert_eq!(status, StatusCode::OK, "body: {resp:?}");
+    let task_id = resp["id"].as_str().unwrap().to_owned();
+    let held = token_row(&state.pool, token.id).await;
+    assert_eq!(
+        held.remain_quota,
+        Quota(1_000_000 - 50_000),
+        "hold at submit"
+    );
+
+    let req = Request::builder()
+        .method("GET")
+        .uri(format!("/v1/videos/{task_id}"))
+        .header(header::AUTHORIZATION, format!("Bearer {sk}"))
+        .body(Body::empty())
+        .unwrap();
+    let (status, resp) = crate::send(&mut app, req).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(resp["status"], "failed");
+    assert_eq!(resp["error"]["message"], "content policy violation");
+
+    // 全额退款：remain 恢复，used 不变。
+    let row = token_row(&state.pool, token.id).await;
+    assert_eq!(row.remain_quota, Quota(1_000_000), "full refund");
+    assert_eq!(row.used_quota, Quota(0));
+    let logs = wait_logs_of(&state.pool, &token).await;
+    assert_eq!(logs[0].quota, Quota(0));
+    assert!(logs[0].error_message.is_some());
+    server.verify().await;
+}
+
+/// 他人 token 访问任务 → 404（token 作用域）。
+#[tokio::test]
+async fn relay_video_task_scoped_to_token() {
+    let (_, state) = crate::test_app().await;
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/videos"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "id": "vid-up-3", "status": "queued"
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let mut model = model_row("vid-1", LlmPriceMode::Token, 0.0, 10_000.0, None, None);
+    model.model_type = LlmModelType::Video;
+    let mut channel = chan(1, &server.uri(), "sk-up-vid", 0, None);
+    channel.models = "vid-1".to_owned();
+    let (mut app, _r) = relay_router_with_models(&state, vec![channel], vec![model]);
+
+    let (sk, token) = make_llm_token(&state.pool, 1_000_000, false, None).await;
+    let (sk_other, _t2) = make_llm_token(&state.pool, 1_000_000, false, None).await;
+    let (status, resp) = crate::send(
+        &mut app,
+        json_req(
+            "/v1/videos",
+            &sk,
+            json!({ "model": "vid-1", "prompt": "p", "seconds": 4 }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "body: {resp:?}");
+    let task_id = resp["id"].as_str().unwrap().to_owned();
+
+    let req = Request::builder()
+        .method("GET")
+        .uri(format!("/v1/videos/{task_id}"))
+        .header(header::AUTHORIZATION, format!("Bearer {sk_other}"))
+        .body(Body::empty())
+        .unwrap();
+    let (status, _) = crate::send(&mut app, req).await;
+    assert_eq!(
+        status,
+        StatusCode::NOT_FOUND,
+        "task hidden from other tokens"
+    );
+    let _ = token;
+}
