@@ -1,0 +1,12 @@
+{
+  "db_name": "MySQL",
+  "query": "INSERT INTO `payment_refunds` (`id`, `payment_order_id`, `order_id`, `user_id`, `amount`, `currency`, `reason`, `provider_refund_id`, `status`, `metadata`, `created_at`, `updated_at`, `tenant_id`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 13
+    },
+    "nullable": []
+  },
+  "hash": "4abe269febbc73d0757a6c494fc3960e6f98ad4e0b32b297959f10a51ef7b627"
+}

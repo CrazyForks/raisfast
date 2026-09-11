@@ -1,0 +1,12 @@
+{
+  "db_name": "MySQL",
+  "query": "INSERT INTO `apps` (`id`, `app_id`, `version`, `status`, `source`, `source_ref`, `signature_ok`, `install_log`, `last_error`, `tenant_scope`, `options`, `installed_at`, `updated_at`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 13
+    },
+    "nullable": []
+  },
+  "hash": "cf53378c1bab374a671ea72b66cf0d5e80c566e29c5a6b0a1c75467b686b9c88"
+}

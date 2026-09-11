@@ -1,0 +1,12 @@
+{
+  "db_name": "MySQL",
+  "query": "INSERT INTO `llm_models` (`id`, `name`, `model_type`, `price_mode`, `model_ratio`, `completion_ratio`, `cache_ratio`, `cache_write_ratio`, `call_price`, `params`, `status`, `created_at`, `updated_at`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 13
+    },
+    "nullable": []
+  },
+  "hash": "a208da98c5632b9eb873e8d2f076d90c0f662309539c4e7aeac772c6c1a5b24e"
+}

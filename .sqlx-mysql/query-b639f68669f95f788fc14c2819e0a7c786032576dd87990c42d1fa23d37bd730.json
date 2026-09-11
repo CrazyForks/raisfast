@@ -1,0 +1,12 @@
+{
+  "db_name": "MySQL",
+  "query": "INSERT INTO `email_verification_tokens` (`id`, `user_id`, `token`, `email`, `expires_at`, `created_at`) VALUES (?, ?, ?, ?, ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 6
+    },
+    "nullable": []
+  },
+  "hash": "b639f68669f95f788fc14c2819e0a7c786032576dd87990c42d1fa23d37bd730"
+}

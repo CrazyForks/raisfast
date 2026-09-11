@@ -1,0 +1,12 @@
+{
+  "db_name": "MySQL",
+  "query": "INSERT INTO `tags` (`id`, `name`, `slug`, `created_by`, `updated_by`, `created_at`, `updated_at`, `tenant_id`) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 8
+    },
+    "nullable": []
+  },
+  "hash": "f2aee52b49b4f457b919560fc37a61daed0de1f5acbe328a967fea7083598ccf"
+}

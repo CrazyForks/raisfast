@@ -1,0 +1,33 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO \"llm_channels\" (\"id\", \"name\", \"provider\", \"base_url\", \"api_keys\", \"key_mode\", \"status\", \"models\", \"model_mapping\", \"priority\", \"weight\", \"channel_groups\", \"auto_ban\", \"param_override\", \"header_override\", \"config\", \"test_model\", \"created_at\", \"updated_at\", \"tenant_id\") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Jsonb",
+        "Varchar",
+        "Varchar",
+        "Text",
+        "Jsonb",
+        "Int8",
+        "Int4",
+        "Text",
+        "Bool",
+        "Jsonb",
+        "Jsonb",
+        "Jsonb",
+        "Varchar",
+        "Timestamptz",
+        "Timestamptz",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "62c4a2d43a44e5f41a157a8f72a2a3fad99d902045e42aca7c9df0d3c767ed5d"
+}

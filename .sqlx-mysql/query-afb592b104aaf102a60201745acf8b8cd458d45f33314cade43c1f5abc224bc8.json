@@ -1,0 +1,12 @@
+{
+  "db_name": "MySQL",
+  "query": "INSERT INTO `kb_documents` (`id`, `kb_id`, `title`, `source`, `storage_key`, `mime_type`, `size`, `created_by`, `created_at`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 9
+    },
+    "nullable": []
+  },
+  "hash": "afb592b104aaf102a60201745acf8b8cd458d45f33314cade43c1f5abc224bc8"
+}

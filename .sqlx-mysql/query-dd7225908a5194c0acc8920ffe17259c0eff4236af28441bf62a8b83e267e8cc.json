@@ -1,0 +1,12 @@
+{
+  "db_name": "MySQL",
+  "query": "INSERT INTO `taggings` (`id`, `tag_id`, `taggable_type`, `taggable_id`) VALUES (?, ?, ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 4
+    },
+    "nullable": []
+  },
+  "hash": "dd7225908a5194c0acc8920ffe17259c0eff4236af28441bf62a8b83e267e8cc"
+}

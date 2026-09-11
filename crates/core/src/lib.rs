@@ -26,6 +26,7 @@ pub mod config;
 pub mod constants;
 pub mod content_type;
 pub mod db;
+pub mod llm;
 pub use db::DbDriver;
 pub mod dto;
 pub mod errors;
@@ -138,6 +139,8 @@ pub struct AppState {
     pub search: Arc<dyn SearchEngine>,
     /// Knowledge-base runtime singletons; `None` when KB disabled (M2+).
     pub kb_runtime: Option<Arc<crate::kb::KbRuntime>>,
+    /// LLM foundation routing core (channels/key pools/model directory).
+    pub llm_router: Arc<crate::llm::service::LlmRouter>,
     pub content_type_registry: Arc<ContentTypeRegistry>,
     pub emitter: crate::event::EventEmitter,
     pub protocol_registry: Arc<crate::protocols::ProtocolRegistry>,
@@ -436,6 +439,8 @@ pub async fn build_app_state(
         }
     };
 
+    let llm_router = crate::llm::service::LlmRouter::new(pool.clone()).await;
+
     let state = AppState {
         pool: pool.clone(),
         config: Arc::new(config.clone()),
@@ -461,6 +466,7 @@ pub async fn build_app_state(
         payment_service,
         search,
         kb_runtime,
+        llm_router,
         content_type_registry: ct_registry,
         emitter,
         protocol_registry,

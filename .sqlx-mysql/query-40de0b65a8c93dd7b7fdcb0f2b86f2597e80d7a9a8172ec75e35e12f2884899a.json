@@ -1,0 +1,12 @@
+{
+  "db_name": "MySQL",
+  "query": "INSERT INTO `webhook_deliveries` (`id`, `webhook_id`, `event`, `status`, `status_code`, `error`, `duration_ms`, `created_at`) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 8
+    },
+    "nullable": []
+  },
+  "hash": "40de0b65a8c93dd7b7fdcb0f2b86f2597e80d7a9a8172ec75e35e12f2884899a"
+}

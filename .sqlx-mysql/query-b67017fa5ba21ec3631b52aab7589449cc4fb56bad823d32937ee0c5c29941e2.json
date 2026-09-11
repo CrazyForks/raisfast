@@ -1,0 +1,12 @@
+{
+  "db_name": "MySQL",
+  "query": "INSERT INTO `llm_tokens` (`id`, `user_id`, `name`, `key_hash`, `status`, `remain_quota`, `unlimited_quota`, `expired_at`, `allowed_models`, `allowed_ips`, `created_at`, `updated_at`, `tenant_id`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 13
+    },
+    "nullable": []
+  },
+  "hash": "b67017fa5ba21ec3631b52aab7589449cc4fb56bad823d32937ee0c5c29941e2"
+}

@@ -1,0 +1,12 @@
+{
+  "db_name": "MySQL",
+  "query": "INSERT INTO `plugin_storage` (`plugin_id`, `storage_key`, `value`, `expires_at`, `updated_at`) VALUES (?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE `value` = VALUES(`value`), `expires_at` = VALUES(`expires_at`), `updated_at` = VALUES(`updated_at`)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 5
+    },
+    "nullable": []
+  },
+  "hash": "684642237c10edcb617a4a7af9fc654c9cf6a84870f035994aacdca12add153d"
+}

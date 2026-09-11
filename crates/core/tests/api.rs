@@ -192,6 +192,9 @@ async fn build_test_app(pool: raisfast::db::Pool) -> (axum::Router, AppState) {
             pool.clone(),
         ))),
         search: Arc::new(NoopSearchEngine),
+        llm_router: raisfast::llm::service::LlmRouter::from_cache_for_test(
+            raisfast::llm::cache::ChannelCache::default(),
+        ),
         content_type_registry: content_registry.clone(),
         emitter: emitter.clone(),
         protocol_registry: test_protocols.clone(),

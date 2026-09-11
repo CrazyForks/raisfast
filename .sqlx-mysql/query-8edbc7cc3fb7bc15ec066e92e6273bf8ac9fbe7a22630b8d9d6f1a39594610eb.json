@@ -1,0 +1,12 @@
+{
+  "db_name": "MySQL",
+  "query": "INSERT INTO `itg_api_clients` (`id`, `client_key`, `display_name`, `base_url`, `auth`, `credentials`, `rate_limit`, `ops`, `enabled`, `created_at`, `updated_at`, `tenant_id`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 12
+    },
+    "nullable": []
+  },
+  "hash": "8edbc7cc3fb7bc15ec066e92e6273bf8ac9fbe7a22630b8d9d6f1a39594610eb"
+}

@@ -1,0 +1,12 @@
+{
+  "db_name": "MySQL",
+  "query": "INSERT INTO `app_ct_refs` (`id`, `app_id`, `ct_table`, `schema_toml`, `version`, `created_at`) VALUES (?, ?, ?, ?, ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 6
+    },
+    "nullable": []
+  },
+  "hash": "372b32862ce6720c26a7a6441544b443db7304465f7d6df20fbcef39e0b537b2"
+}

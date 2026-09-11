@@ -273,6 +273,10 @@ async fn build_app(
         api_v1 = api_v1.merge(crate::flows::handler::routes(&mut registry, config));
     }
 
+    if config.builtins.llm_gateway {
+        api_v1 = api_v1.merge(crate::llm::handler::routes(&mut registry, config));
+    }
+
     api_v1 = crate::content_type::handler::register_content_routes(
         api_v1,
         &state.content_type_registry,
@@ -478,6 +482,11 @@ async fn build_app(
         .route("/feed.xml", get(rss::feed))
         .route("/api/v1/info", get(server_info_handler))
         .nest(crate::constants::API_PREFIX, api_v1)
+        .merge(if config.builtins.llm_gateway {
+            crate::llm::relay::routes()
+        } else {
+            axum::Router::new()
+        })
         .nest_service("/uploads", ServeDir::new(&upload_dir))
         .nest_service("/static", ServeDir::new(&static_dir))
         .nest_service("/widget", ServeDir::new(&config.widget_dir))

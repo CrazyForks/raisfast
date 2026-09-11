@@ -1,0 +1,26 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO \"llm_models\" (\"id\", \"name\", \"model_type\", \"price_mode\", \"model_ratio\", \"completion_ratio\", \"cache_ratio\", \"cache_write_ratio\", \"call_price\", \"params\", \"status\", \"created_at\", \"updated_at\") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Float8",
+        "Float8",
+        "Float8",
+        "Float8",
+        "Float8",
+        "Jsonb",
+        "Varchar",
+        "Timestamptz",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "3821271fa1d410b6f1aacde8a086035a5f3f9eb98e413f55468e1ecfc4de57a3"
+}

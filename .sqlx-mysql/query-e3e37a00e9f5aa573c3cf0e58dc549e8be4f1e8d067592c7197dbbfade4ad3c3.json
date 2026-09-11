@@ -1,0 +1,12 @@
+{
+  "db_name": "MySQL",
+  "query": "INSERT INTO `sms_codes` (`id`, `phone`, `code`, `purpose`, `expires_at`, `ip_address`, `created_at`) VALUES (?, ?, ?, ?, ?, ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 7
+    },
+    "nullable": []
+  },
+  "hash": "e3e37a00e9f5aa573c3cf0e58dc549e8be4f1e8d067592c7197dbbfade4ad3c3"
+}

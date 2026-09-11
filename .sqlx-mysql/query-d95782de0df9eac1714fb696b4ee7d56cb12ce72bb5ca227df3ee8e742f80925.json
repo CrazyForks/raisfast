@@ -1,0 +1,12 @@
+{
+  "db_name": "MySQL",
+  "query": "INSERT INTO `kb_faqs` (`id`, `kb_id`, `standard_question`, `similar_questions`, `answers`, `enabled`, `created_by`, `created_at`) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 8
+    },
+    "nullable": []
+  },
+  "hash": "d95782de0df9eac1714fb696b4ee7d56cb12ce72bb5ca227df3ee8e742f80925"
+}

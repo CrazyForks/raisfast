@@ -1,0 +1,12 @@
+{
+  "db_name": "MySQL",
+  "query": "INSERT INTO `product_comments` (`id`, `product_id`, `order_id`, `user_id`, `rating`, `title`, `content`, `images`, `status`, `created_at`, `updated_at`, `tenant_id`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 12
+    },
+    "nullable": []
+  },
+  "hash": "c2ad5b81e8dbab0c513e46a2e0f01e7f4b88faf7277f580b0115c3006579b41e"
+}

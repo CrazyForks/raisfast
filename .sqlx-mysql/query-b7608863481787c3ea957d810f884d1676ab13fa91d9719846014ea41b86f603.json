@@ -1,0 +1,12 @@
+{
+  "db_name": "MySQL",
+  "query": "INSERT INTO `kb_query_logs` (`id`, `kb_id`, `question`, `answer`, `cited_units`, `status`, `top_score`, `user_id`, `rewritten_question`, `kb_ids`, `latency_ms`, `run_id`, `error`, `source`, `created_at`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 15
+    },
+    "nullable": []
+  },
+  "hash": "b7608863481787c3ea957d810f884d1676ab13fa91d9719846014ea41b86f603"
+}

@@ -1,0 +1,25 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO \"llm_tokens\" (\"id\", \"user_id\", \"name\", \"key_hash\", \"status\", \"remain_quota\", \"unlimited_quota\", \"expired_at\", \"allowed_models\", \"allowed_ips\", \"created_at\", \"updated_at\") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Int8",
+        "Bool",
+        "Timestamptz",
+        "Text",
+        "Text",
+        "Timestamptz",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "1219b1b6a8155c70d0f5a974f7f671f550446838c6fee096fb121a651528391d"
+}

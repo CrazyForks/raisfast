@@ -1,0 +1,12 @@
+{
+  "db_name": "MySQL",
+  "query": "INSERT INTO `content_revisions` (`content_type`, `record_id`, `revision_number`, `snapshot`, `created_by`) VALUES (?, ?, ?, ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 5
+    },
+    "nullable": []
+  },
+  "hash": "643a4f56b641dc844ff21acdfa7e4d13b3b18f33e83ad9b99b0a1d0227a9cffb"
+}

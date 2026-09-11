@@ -275,6 +275,10 @@ pub struct BuiltinsConfig {
     /// and the `raisfast mcp serve` stdio subcommand (default true).
     #[serde(default = "default_true")]
     pub mcp: bool,
+    /// Whether to enable the LLM foundation (channels/key pools/model
+    /// directory admin API; the `/v1` relay lands in P3) — default true.
+    #[serde(default = "default_true")]
+    pub llm_gateway: bool,
 }
 
 impl Default for BuiltinsConfig {
@@ -289,6 +293,7 @@ impl Default for BuiltinsConfig {
             payment: true,
             wallet: true,
             mcp: true,
+            llm_gateway: true,
         }
     }
 }
@@ -329,6 +334,10 @@ impl BuiltinsConfig {
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(true),
             mcp: env::var("BUILTIN_MCP")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(true),
+            llm_gateway: env::var("BUILTIN_LLM_GATEWAY")
                 .ok()
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(true),
@@ -2038,6 +2047,7 @@ mod tests {
             payment: false,
             wallet: false,
             mcp: false,
+            llm_gateway: false,
         };
         assert!(b.is_all_disabled());
     }

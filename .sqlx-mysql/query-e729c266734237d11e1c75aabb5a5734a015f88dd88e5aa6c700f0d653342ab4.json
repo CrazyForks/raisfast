@@ -1,0 +1,12 @@
+{
+  "db_name": "MySQL",
+  "query": "INSERT INTO `wallets` (`id`, `user_id`, `currency`, `created_at`, `updated_at`) VALUES (?, ?, ?, ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 5
+    },
+    "nullable": []
+  },
+  "hash": "e729c266734237d11e1c75aabb5a5734a015f88dd88e5aa6c700f0d653342ab4"
+}

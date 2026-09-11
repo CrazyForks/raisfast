@@ -1,0 +1,12 @@
+{
+  "db_name": "MySQL",
+  "query": "INSERT INTO `kb_wiki_sources` (`id`, `page_id`, `page_revision`, `doc_id`, `span_start`, `span_end`, `created_at`) VALUES (?, ?, ?, ?, ?, ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 7
+    },
+    "nullable": []
+  },
+  "hash": "7aac439c515b6f5044c8a1884a7f10a8cc52a3711641595046a8084d496685f8"
+}

@@ -154,10 +154,7 @@ pub async fn list(
     let filter = JobFilter {
         status: match params.status.as_deref() {
             None | Some("") => None,
-            Some(s) => Some(
-                s.parse::<JobStatus>()
-                    .map_err(AppError::BadRequest)?,
-            ),
+            Some(s) => Some(s.parse::<JobStatus>().map_err(AppError::BadRequest)?),
         },
         job_type: params
             .job_type

@@ -1,0 +1,12 @@
+{
+  "db_name": "MySQL",
+  "query": "INSERT INTO `payment_transactions` (`id`, `payment_order_id`, `order_id`, `user_id`, `tx_type`, `amount`, `currency`, `provider_tx_id`, `status`, `raw_payload`, `created_at`, `tenant_id`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 12
+    },
+    "nullable": []
+  },
+  "hash": "b099dcc0d81fb281e3116a19b5dfd976b0649521feb42c881acd8f8be09406f0"
+}

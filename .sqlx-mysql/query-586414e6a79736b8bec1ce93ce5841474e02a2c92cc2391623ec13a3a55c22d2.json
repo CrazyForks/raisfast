@@ -1,0 +1,12 @@
+{
+  "db_name": "MySQL",
+  "query": "INSERT INTO `order_items` (`id`, `order_id`, `product_id`, `variant_id`, `title`, `description`, `sku`, `unit_price`, `quantity`, `subtotal`, `tax_amount`, `cover_url`, `attributes`, `created_at`, `tenant_id`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 15
+    },
+    "nullable": []
+  },
+  "hash": "586414e6a79736b8bec1ce93ce5841474e02a2c92cc2391623ec13a3a55c22d2"
+}

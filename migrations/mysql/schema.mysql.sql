@@ -425,7 +425,6 @@ CREATE TABLE IF NOT EXISTS categories (
     name VARCHAR(255) NOT NULL,
     description TEXT,
     slug VARCHAR(255) NOT NULL,
-    description TEXT,
     parent_id BIGINT,
     sort_order BIGINT NOT NULL DEFAULT 0,
     created_by BIGINT,
@@ -1696,4 +1695,98 @@ CREATE TABLE IF NOT EXISTS kb_runs (
     INDEX idx_kb_runs_agent (agent_id, created_at),
     INDEX idx_kb_runs_kind (kind, status, created_at),
     INDEX idx_kb_runs_sweep (status, created_at)
+);
+
+-- ===== LLM foundation (dev-docs/llm/design.md §5) =====
+
+CREATE TABLE IF NOT EXISTS llm_channels (
+    id BIGINT PRIMARY KEY,
+    tenant_id VARCHAR(36) NOT NULL DEFAULT 'default',
+    name VARCHAR(255) NOT NULL,
+    provider VARCHAR(50) NOT NULL,
+    base_url VARCHAR(500) NOT NULL,
+    api_keys JSON NOT NULL,
+    key_mode VARCHAR(20) NOT NULL DEFAULT 'polling',
+    status VARCHAR(20) NOT NULL DEFAULT 'enabled',
+    models TEXT NOT NULL,
+    model_mapping JSON,
+    priority BIGINT NOT NULL DEFAULT 0,
+    weight INT NOT NULL DEFAULT 0,
+    channel_groups TEXT NOT NULL,
+    auto_ban TINYINT(1) NOT NULL DEFAULT 1,
+    param_override JSON,
+    header_override JSON,
+    config JSON,
+    used_quota BIGINT NOT NULL DEFAULT 0,
+    test_model VARCHAR(255),
+    test_time DATETIME,
+    response_time INT,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE (tenant_id, name),
+    INDEX idx_llm_channels_tenant (tenant_id, status)
+);
+
+CREATE TABLE IF NOT EXISTS llm_tokens (
+    id BIGINT PRIMARY KEY,
+    tenant_id VARCHAR(36) NOT NULL DEFAULT 'default',
+    user_id BIGINT NOT NULL,
+    name VARCHAR(255) NOT NULL,
+    key_hash VARCHAR(128) NOT NULL UNIQUE,
+    status VARCHAR(20) NOT NULL DEFAULT 'enabled',
+    remain_quota BIGINT NOT NULL DEFAULT 0,
+    used_quota BIGINT NOT NULL DEFAULT 0,
+    unlimited_quota TINYINT(1) NOT NULL DEFAULT 0,
+    expired_at DATETIME,
+    allowed_models TEXT,
+    allowed_ips TEXT,
+    token_group VARCHAR(255),
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    accessed_at DATETIME,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_llm_tokens_user (user_id)
+);
+
+CREATE TABLE IF NOT EXISTS llm_models (
+    id BIGINT PRIMARY KEY,
+    tenant_id VARCHAR(36) NOT NULL DEFAULT 'default',
+    name VARCHAR(255) NOT NULL,
+    model_type VARCHAR(20) NOT NULL DEFAULT 'chat',
+    price_mode VARCHAR(20) NOT NULL DEFAULT 'ratio',
+    model_ratio DOUBLE NOT NULL DEFAULT 1.0,
+    completion_ratio DOUBLE NOT NULL DEFAULT 1.0,
+    cache_ratio DOUBLE,
+    cache_write_ratio DOUBLE,
+    call_price DOUBLE,
+    params JSON,
+    status VARCHAR(20) NOT NULL DEFAULT 'active',
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE (tenant_id, name)
+);
+
+CREATE TABLE IF NOT EXISTS llm_logs (
+    id BIGINT PRIMARY KEY,
+    tenant_id VARCHAR(36) NOT NULL DEFAULT 'default',
+    request_id VARCHAR(64),
+    user_id BIGINT,
+    token_id BIGINT,
+    source VARCHAR(20) NOT NULL DEFAULT 'relay',
+    channel_id BIGINT,
+    key_index INT,
+    model_name VARCHAR(255) NOT NULL,
+    is_stream TINYINT(1) NOT NULL DEFAULT 0,
+    prompt_tokens INT NOT NULL DEFAULT 0,
+    completion_tokens INT NOT NULL DEFAULT 0,
+    cache_read_tokens INT NOT NULL DEFAULT 0,
+    cache_write_tokens INT NOT NULL DEFAULT 0,
+    quota BIGINT NOT NULL DEFAULT 0,
+    detail JSON,
+    elapsed_ms INT,
+    status_code INT,
+    error_message TEXT,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_llm_logs_tenant (tenant_id, created_at),
+    INDEX idx_llm_logs_channel (channel_id, created_at),
+    INDEX idx_llm_logs_token (token_id, created_at)
 );

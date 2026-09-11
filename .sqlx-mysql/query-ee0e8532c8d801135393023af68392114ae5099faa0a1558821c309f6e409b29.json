@@ -1,0 +1,12 @@
+{
+  "db_name": "MySQL",
+  "query": "INSERT INTO `ai_messages` (`id`, `session_id`, `seq`, `role`, `kind`, `content`, `tool_calls`, `tool_call_id`, `tool_name`, `tool_success`, `tool_error`, `tool_elapsed_ms`, `tool_truncated`, `reasoning_content`, `call_usage`, `created_at`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 16
+    },
+    "nullable": []
+  },
+  "hash": "ee0e8532c8d801135393023af68392114ae5099faa0a1558821c309f6e409b29"
+}

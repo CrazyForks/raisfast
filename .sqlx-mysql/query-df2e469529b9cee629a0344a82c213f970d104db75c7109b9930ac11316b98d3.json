@@ -1,0 +1,12 @@
+{
+  "db_name": "MySQL",
+  "query": "INSERT INTO `cron_schedules` (`id`, `label`, `job_type`, `payload`, `cron_expr`, `enabled`, `next_run_at`, `plugin_id`, `exec_kind`, `handler_id`, `params`, `script_lang`, `script_source`, `script_entry`, `use_shell`, `timeout_secs`, `created_at`, `updated_at`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 18
+    },
+    "nullable": []
+  },
+  "hash": "df2e469529b9cee629a0344a82c213f970d104db75c7109b9930ac11316b98d3"
+}

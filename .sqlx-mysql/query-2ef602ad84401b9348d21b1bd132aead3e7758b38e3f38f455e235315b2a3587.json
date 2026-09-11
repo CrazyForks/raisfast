@@ -1,0 +1,12 @@
+{
+  "db_name": "MySQL",
+  "query": "INSERT INTO `wallet_outbox` (`id`, `user_id`, `currency`, `amount`, `entry_type`, `tx_type`, `transaction_no`, `reference_type`, `reference_id`, `metadata`, `status`, `created_at`, `updated_at`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 13
+    },
+    "nullable": []
+  },
+  "hash": "2ef602ad84401b9348d21b1bd132aead3e7758b38e3f38f455e235315b2a3587"
+}

@@ -1,0 +1,12 @@
+{
+  "db_name": "MySQL",
+  "query": "INSERT INTO `user_credentials` (`id`, `user_id`, `auth_type`, `identifier`, `credential_data`, `verified`, `created_at`, `updated_at`) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 8
+    },
+    "nullable": []
+  },
+  "hash": "993e6fa2ea86bf9dd8333b682e9bb2c728dc7cd3f2e7e8787d26c4f73dec405c"
+}

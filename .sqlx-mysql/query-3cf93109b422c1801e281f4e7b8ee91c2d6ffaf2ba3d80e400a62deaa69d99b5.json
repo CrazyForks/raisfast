@@ -1,0 +1,12 @@
+{
+  "db_name": "MySQL",
+  "query": "INSERT INTO `kb_wiki_pages` (`id`, `kb_id`, `title`, `slug`, `status`, `content`, `summary`, `linked_page_ids`, `created_by`, `created_at`, `tenant_id`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 11
+    },
+    "nullable": []
+  },
+  "hash": "3cf93109b422c1801e281f4e7b8ee91c2d6ffaf2ba3d80e400a62deaa69d99b5"
+}

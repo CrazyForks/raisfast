@@ -468,9 +468,9 @@ impl JobQueue for DefaultJobQueue {
         query = query.bind(page_size).bind(offset);
         let rows: Vec<crate::db::pool::DbRow> = query.fetch_all(&self.pool).await?;
 
-        let mut count_query = sqlx::query_scalar::<crate::db::pool::Db, i64>(
-            crate::db::safe_sql(&format!("SELECT COUNT(*) FROM jobs{where_sql}")),
-        );
+        let mut count_query = sqlx::query_scalar::<crate::db::pool::Db, i64>(crate::db::safe_sql(
+            &format!("SELECT COUNT(*) FROM jobs{where_sql}"),
+        ));
         if let Some(s) = filter.status {
             count_query = count_query.bind(s);
         }
@@ -502,11 +502,10 @@ impl JobQueue for DefaultJobQueue {
     }
 
     async fn list_job_types(&self) -> AppResult<Vec<String>> {
-        let rows: Vec<(String,)> = sqlx::query_as(
-            "SELECT DISTINCT job_type FROM jobs ORDER BY job_type",
-        )
-        .fetch_all(&self.pool)
-        .await?;
+        let rows: Vec<(String,)> =
+            sqlx::query_as("SELECT DISTINCT job_type FROM jobs ORDER BY job_type")
+                .fetch_all(&self.pool)
+                .await?;
         Ok(rows.into_iter().map(|(t,)| t).collect())
     }
 
@@ -813,10 +812,30 @@ mod tests {
         let jobs = q.dequeue(1).await.unwrap();
         q.complete(&jobs[0].id).await.unwrap();
 
-        let (pending, _) = q.list(JobFilter { status: Some(JobStatus::Pending), ..Default::default() }, 1, 10).await.unwrap();
+        let (pending, _) = q
+            .list(
+                JobFilter {
+                    status: Some(JobStatus::Pending),
+                    ..Default::default()
+                },
+                1,
+                10,
+            )
+            .await
+            .unwrap();
         assert_eq!(pending.len(), 1);
 
-        let (completed, _) = q.list(JobFilter { status: Some(JobStatus::Completed), ..Default::default() }, 1, 10).await.unwrap();
+        let (completed, _) = q
+            .list(
+                JobFilter {
+                    status: Some(JobStatus::Completed),
+                    ..Default::default()
+                },
+                1,
+                10,
+            )
+            .await
+            .unwrap();
         assert_eq!(completed.len(), 1);
     }
 

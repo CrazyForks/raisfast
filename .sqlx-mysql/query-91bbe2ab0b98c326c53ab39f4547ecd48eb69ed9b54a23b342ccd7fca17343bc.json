@@ -1,0 +1,12 @@
+{
+  "db_name": "MySQL",
+  "query": "INSERT INTO `kb_knowledge_bases` (`id`, `name`, `description`, `slug`, `kind`, `indexing_strategy`, `embedding_model`, `embedding_dim`, `created_at`, `tenant_id`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 10
+    },
+    "nullable": []
+  },
+  "hash": "91bbe2ab0b98c326c53ab39f4547ecd48eb69ed9b54a23b342ccd7fca17343bc"
+}

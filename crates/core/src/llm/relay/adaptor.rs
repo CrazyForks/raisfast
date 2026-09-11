@@ -1,0 +1,383 @@
+//! Relay adaptors (design §8.2): OpenAI canonical format in, per-provider
+//! conversion out. v1 ships the openai-compatible adaptor (deepseek/moonshot/
+//! ollama/siliconflow/generic all ride it); anthropic lands in P4.
+
+use std::pin::Pin;
+
+use futures::Stream;
+use reqwest::header::{AUTHORIZATION, HeaderMap, HeaderName, HeaderValue};
+
+use crate::errors::app_error::{AppError, AppResult};
+
+/// Normalized usage (design §9.3 normalization contract:
+/// `prompt_tokens` includes cache; OpenAI/DeepSeek are native, the anthropic
+/// adaptor must sum its split fields).
+#[derive(Debug, Clone, Default)]
+pub struct RelayUsage {
+    pub prompt_tokens: i64,
+    pub completion_tokens: i64,
+    pub cache_read_tokens: i64,
+    pub cache_write_tokens: i64,
+}
+
+impl RelayUsage {
+    /// Parse an OpenAI-shaped usage object.
+    pub fn from_openai(v: &serde_json::Value) -> Self {
+        let get = |name: &str| v.get(name).and_then(|x| x.as_i64()).unwrap_or(0);
+        let cache_read = v
+            .get("prompt_tokens_details")
+            .and_then(|d| d.get("cached_tokens"))
+            .and_then(|x| x.as_i64())
+            .or_else(|| v.get("prompt_cache_hit_tokens").and_then(|x| x.as_i64()))
+            .unwrap_or(0);
+        Self {
+            prompt_tokens: get("prompt_tokens"),
+            completion_tokens: get("completion_tokens"),
+            cache_read_tokens: cache_read,
+            cache_write_tokens: 0,
+        }
+    }
+
+    /// Fallback estimation when the upstream reports no usage (design §8.4).
+    #[allow(dead_code)]
+    pub fn estimate(prompt_chars: usize, completion_chars: usize) -> Self {
+        Self {
+            prompt_tokens: (prompt_chars / 4) as i64,
+            completion_tokens: (completion_chars / 4) as i64,
+            cache_read_tokens: 0,
+            cache_write_tokens: 0,
+        }
+    }
+}
+
+/// Upstream endpoint selector.
+#[derive(Debug, Clone, Copy)]
+pub enum RelayEndpoint {
+    ChatCompletions,
+    /// Reserved for the proxied models listing (P4).
+    #[allow(dead_code)]
+    Models,
+}
+
+/// One shared HTTP client for the whole module (design §7.6: per-host
+/// connection reuse + h2 multiplexing; one client per provider would cause
+/// handshake storms under load).
+pub fn shared_client() -> &'static reqwest::Client {
+    static CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
+    CLIENT.get_or_init(|| {
+        reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(600))
+            .build()
+            .unwrap_or_default()
+    })
+}
+
+/// Apply channel header overrides onto the request headers.
+pub fn apply_header_override(headers: &mut HeaderMap, override_hdr: Option<&serde_json::Value>) {
+    if let Some(serde_json::Value::Object(map)) = override_hdr {
+        for (k, v) in map {
+            if let Some(vs) = v.as_str()
+                && let (Ok(name), Ok(value)) =
+                    (HeaderName::try_from(k.as_str()), HeaderValue::try_from(vs))
+            {
+                headers.insert(name, value);
+            }
+        }
+    }
+}
+
+/// The OpenAI-compatible adaptor (near-passthrough).
+pub struct OpenaiAdaptor;
+
+impl OpenaiAdaptor {
+    /// Upstream URL for an endpoint.
+    pub fn request_url(base_url: &str, endpoint: RelayEndpoint) -> String {
+        match endpoint {
+            RelayEndpoint::ChatCompletions => format!("{base_url}/chat/completions"),
+            RelayEndpoint::Models => format!("{base_url}/models"),
+        }
+    }
+
+    /// Auth headers + channel overrides.
+    pub fn setup_headers(key: &str, header_override: Option<&serde_json::Value>) -> HeaderMap {
+        let mut headers = HeaderMap::new();
+        if let Ok(value) = HeaderValue::try_from(format!("Bearer {key}")) {
+            headers.insert(AUTHORIZATION, value);
+        }
+        apply_header_override(&mut headers, header_override);
+        headers
+    }
+
+    /// Convert a request body (design §8.3): upstream model rewrite →
+    /// param_override shallow merge → stream_options.include_usage key-level
+    /// merge (admin override wins).
+    pub fn convert_chat(
+        mut body: serde_json::Value,
+        upstream_model: &str,
+        param_override: Option<&serde_json::Value>,
+        stream: bool,
+    ) -> AppResult<serde_json::Value> {
+        let Some(obj) = body.as_object_mut() else {
+            return Err(AppError::BadRequest(
+                "request body must be an object".to_owned(),
+            ));
+        };
+        obj.insert(
+            "model".to_owned(),
+            serde_json::Value::String(upstream_model.to_owned()),
+        );
+        if let Some(serde_json::Value::Object(over)) = param_override {
+            for (k, v) in over {
+                obj.insert(k.clone(), v.clone());
+            }
+        }
+        if stream {
+            // §8.3 merge semantics: `include_usage` injection is KEY-LEVEL
+            // (client's other stream_options keys survive); an explicit
+            // `stream_options` in param_override replaces wholesale (admin
+            // intent wins) — the shallow merge above already did that.
+            let admin_forces = param_override
+                .and_then(|p| p.get("stream_options"))
+                .is_some();
+            if !admin_forces {
+                let mut so = obj
+                    .get("stream_options")
+                    .cloned()
+                    .unwrap_or_else(|| serde_json::json!({}));
+                if !so.is_object() {
+                    so = serde_json::json!({});
+                }
+                if let Some(so_obj) = so.as_object_mut() {
+                    so_obj.insert("include_usage".to_owned(), serde_json::Value::Bool(true));
+                }
+                obj.insert("stream_options".to_owned(), so);
+            }
+        }
+        Ok(body)
+    }
+
+    /// Non-stream response: full body + usage extraction.
+    pub async fn handle_response(
+        resp: reqwest::Response,
+    ) -> AppResult<(serde_json::Value, RelayUsage)> {
+        let status = resp.status();
+        let text = resp
+            .text()
+            .await
+            .map_err(|e| AppError::Internal(anyhow::anyhow!("read upstream: {e}")))?;
+        let body: serde_json::Value = serde_json::from_str(&text).map_err(|_| {
+            AppError::Internal(anyhow::anyhow!(
+                "upstream non-JSON body: {}",
+                &text[..text.len().min(200)]
+            ))
+        })?;
+        if !status.is_success() {
+            return Err(AppError::Internal(anyhow::anyhow!(
+                "upstream {}: {}",
+                status.as_u16(),
+                text.chars().take(500).collect::<String>()
+            )));
+        }
+        let usage = body
+            .get("usage")
+            .map(RelayUsage::from_openai)
+            .unwrap_or_default();
+        Ok((body, usage))
+    }
+
+    /// Stream response: an SSE byte-frame stream that forwards frames
+    /// verbatim while accumulating usage. Callers attach settlement to the
+    /// stream's termination (settle-on-complete, design §8.2/8.4).
+    pub fn handle_stream(
+        resp: reqwest::Response,
+        usage_out: std::sync::Arc<std::sync::Mutex<RelayUsage>>,
+    ) -> Pin<Box<dyn Stream<Item = Result<Vec<u8>, std::io::Error>> + Send>> {
+        Box::pin(SseForwardStream::new(resp, usage_out))
+    }
+}
+
+/// Line-buffered SSE forwarding stream (design §8.4): forwards every raw
+/// frame, parses `data:` payloads only to accumulate usage.
+struct SseForwardStream {
+    upstream: Pin<Box<dyn Stream<Item = Result<Vec<u8>, reqwest::Error>> + Send>>,
+    buffer: String,
+    usage: std::sync::Arc<std::sync::Mutex<RelayUsage>>,
+    done: bool,
+}
+
+impl SseForwardStream {
+    fn new(resp: reqwest::Response, usage: std::sync::Arc<std::sync::Mutex<RelayUsage>>) -> Self {
+        use futures::StreamExt;
+        Self {
+            upstream: Box::pin(resp.bytes_stream().map(|r| r.map(|b| b.to_vec()))),
+            buffer: String::new(),
+            usage,
+            done: false,
+        }
+    }
+
+    fn feed_line(&mut self, line: &str) {
+        let data = line.strip_prefix("data:").map(str::trim);
+        if let Some(data) = data {
+            if data == "[DONE]" {
+                return;
+            }
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(data)
+                && v.get("usage").is_some_and(|u| !u.is_null())
+            {
+                let parsed = RelayUsage::from_openai(v.get("usage").unwrap_or(&v));
+                if let Ok(mut u) = self.usage.lock() {
+                    *u = parsed;
+                }
+            }
+        }
+    }
+}
+
+impl Stream for SseForwardStream {
+    type Item = Result<Vec<u8>, std::io::Error>;
+
+    fn poll_next(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Self::Item>> {
+        use futures::StreamExt;
+        if self.done {
+            return std::task::Poll::Ready(None);
+        }
+        match self.upstream.poll_next_unpin(cx) {
+            std::task::Poll::Ready(Some(Ok(chunk))) => {
+                let text = String::from_utf8_lossy(&chunk).to_string();
+                self.buffer.push_str(&text);
+                let mut out = Vec::new();
+                while let Some(pos) = self.buffer.find('\n') {
+                    let line: String = self.buffer.drain(..=pos).collect();
+                    let trimmed_end = line.trim_end_matches(['\n', '\r']);
+                    self.feed_line(trimmed_end);
+                    out.extend_from_slice(line.as_bytes());
+                }
+                if out.is_empty() {
+                    cx.waker().wake_by_ref();
+                    return std::task::Poll::Pending;
+                }
+                std::task::Poll::Ready(Some(Ok(out)))
+            }
+            std::task::Poll::Ready(Some(Err(e))) => {
+                self.done = true;
+                std::task::Poll::Ready(Some(Err(std::io::Error::other(e))))
+            }
+            std::task::Poll::Ready(None) => {
+                self.done = true;
+                std::task::Poll::Ready(None)
+            }
+            std::task::Poll::Pending => std::task::Poll::Pending,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn body(model: &str) -> serde_json::Value {
+        serde_json::json!({ "model": model, "messages": [] })
+    }
+
+    #[test]
+    fn model_rewritten_to_upstream_name() {
+        let out = OpenaiAdaptor::convert_chat(body("public"), "upstream-x", None, false)
+            .expect("convert");
+        assert_eq!(out["model"], "upstream-x");
+    }
+
+    #[test]
+    fn non_object_body_rejected() {
+        assert!(OpenaiAdaptor::convert_chat(serde_json::json!([]), "m", None, false).is_err());
+    }
+
+    #[test]
+    fn param_override_shallow_merges() {
+        let over = serde_json::json!({ "temperature": 0.1 });
+        let mut b = body("m");
+        b["temperature"] = serde_json::json!(0.9);
+        let out = OpenaiAdaptor::convert_chat(b, "m", Some(&over), false).expect("convert");
+        assert_eq!(out["temperature"], 0.1);
+    }
+
+    #[test]
+    fn non_stream_never_injects_stream_options() {
+        let out = OpenaiAdaptor::convert_chat(body("m"), "m", None, false).expect("convert");
+        assert!(out.get("stream_options").is_none());
+    }
+
+    #[test]
+    fn include_usage_injection_is_key_level() {
+        let mut b = body("m");
+        b["stream"] = serde_json::json!(true);
+        b["stream_options"] = serde_json::json!({ "x_custom": 42 });
+        let out = OpenaiAdaptor::convert_chat(b, "m", None, true).expect("convert");
+        assert_eq!(out["stream_options"]["include_usage"], true);
+        assert_eq!(
+            out["stream_options"]["x_custom"], 42,
+            "client keys must survive (§8.3)"
+        );
+    }
+
+    #[test]
+    fn admin_stream_options_override_wins() {
+        let over = serde_json::json!({ "stream_options": { "include_usage": false } });
+        let mut b = body("m");
+        b["stream"] = serde_json::json!(true);
+        let out = OpenaiAdaptor::convert_chat(b, "m", Some(&over), true).expect("convert");
+        assert_eq!(out["stream_options"]["include_usage"], false);
+    }
+
+    #[test]
+    fn request_urls() {
+        assert_eq!(
+            OpenaiAdaptor::request_url("https://x/v1", RelayEndpoint::ChatCompletions),
+            "https://x/v1/chat/completions"
+        );
+        assert_eq!(
+            OpenaiAdaptor::request_url("https://x/v1", RelayEndpoint::Models),
+            "https://x/v1/models"
+        );
+    }
+
+    #[test]
+    fn usage_from_openai_variants() {
+        let openai = serde_json::json!({
+            "prompt_tokens": 100,
+            "completion_tokens": 40,
+            "prompt_tokens_details": { "cached_tokens": 60 }
+        });
+        let u = RelayUsage::from_openai(&openai);
+        assert_eq!((u.prompt_tokens, u.cache_read_tokens), (100, 60));
+
+        let deepseek = serde_json::json!({
+            "prompt_tokens": 100,
+            "completion_tokens": 40,
+            "prompt_cache_hit_tokens": 70
+        });
+        let u2 = RelayUsage::from_openai(&deepseek);
+        assert_eq!(u2.cache_read_tokens, 70);
+
+        let bare = serde_json::json!({ "prompt_tokens": 10, "completion_tokens": 5 });
+        let u3 = RelayUsage::from_openai(&bare);
+        assert_eq!((u3.prompt_tokens, u3.cache_read_tokens), (10, 0));
+    }
+
+    #[test]
+    fn usage_estimate_fallback() {
+        let u = RelayUsage::estimate(400, 80);
+        assert_eq!((u.prompt_tokens, u.completion_tokens), (100, 20));
+    }
+
+    #[test]
+    fn header_override_applies() {
+        let over = serde_json::json!({ "x-custom": "v", "not-a-string": 9 });
+        let h = OpenaiAdaptor::setup_headers("k", Some(&over));
+        assert_eq!(h.get("x-custom").unwrap(), "v");
+        assert_eq!(h.get(reqwest::header::AUTHORIZATION).unwrap(), "Bearer k");
+    }
+}

@@ -1756,3 +1756,97 @@ CREATE INDEX IF NOT EXISTS idx_kb_runs_kb ON kb_runs(kb_id, kind, created_at);
 CREATE INDEX IF NOT EXISTS idx_kb_runs_agent ON kb_runs(agent_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_kb_runs_kind ON kb_runs(kind, status, created_at);
 CREATE INDEX IF NOT EXISTS idx_kb_runs_sweep ON kb_runs(status, created_at);
+
+-- ===== LLM foundation (dev-docs/llm/design.md §5) =====
+
+CREATE TABLE IF NOT EXISTS llm_channels (
+    id INTEGER PRIMARY KEY,
+    tenant_id TEXT NOT NULL DEFAULT 'default',
+    name TEXT NOT NULL,
+    provider VARCHAR(50) NOT NULL,
+    base_url VARCHAR(500) NOT NULL,
+    api_keys TEXT NOT NULL,
+    key_mode VARCHAR(20) NOT NULL DEFAULT 'polling',
+    status VARCHAR(20) NOT NULL DEFAULT 'enabled',
+    models TEXT NOT NULL,
+    model_mapping TEXT,
+    priority INTEGER NOT NULL DEFAULT 0,
+    weight INTEGER NOT NULL DEFAULT 0,
+    channel_groups TEXT NOT NULL DEFAULT 'default',
+    auto_ban INTEGER NOT NULL DEFAULT 1,
+    param_override TEXT,
+    header_override TEXT,
+    config TEXT,
+    used_quota INTEGER NOT NULL DEFAULT 0,
+    test_model VARCHAR(255),
+    test_time TEXT,
+    response_time INTEGER,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+    UNIQUE (tenant_id, name)
+);
+CREATE INDEX IF NOT EXISTS idx_llm_channels_tenant ON llm_channels(tenant_id, status);
+
+CREATE TABLE IF NOT EXISTS llm_tokens (
+    id INTEGER PRIMARY KEY,
+    tenant_id TEXT NOT NULL DEFAULT 'default',
+    user_id INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    key_hash VARCHAR(128) NOT NULL UNIQUE,
+    status VARCHAR(20) NOT NULL DEFAULT 'enabled',
+    remain_quota INTEGER NOT NULL DEFAULT 0,
+    used_quota INTEGER NOT NULL DEFAULT 0,
+    unlimited_quota INTEGER NOT NULL DEFAULT 0,
+    expired_at TEXT,
+    allowed_models TEXT,
+    allowed_ips TEXT,
+    token_group VARCHAR(255),
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+    accessed_at TEXT,
+    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_llm_tokens_user ON llm_tokens(user_id);
+
+CREATE TABLE IF NOT EXISTS llm_models (
+    id INTEGER PRIMARY KEY,
+    tenant_id TEXT NOT NULL DEFAULT 'default',
+    name VARCHAR(255) NOT NULL,
+    model_type VARCHAR(20) NOT NULL DEFAULT 'chat',
+    price_mode VARCHAR(20) NOT NULL DEFAULT 'ratio',
+    model_ratio REAL NOT NULL DEFAULT 1.0,
+    completion_ratio REAL NOT NULL DEFAULT 1.0,
+    cache_ratio REAL,
+    cache_write_ratio REAL,
+    call_price REAL,
+    params TEXT,
+    status VARCHAR(20) NOT NULL DEFAULT 'active',
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+    UNIQUE (tenant_id, name)
+);
+
+CREATE TABLE IF NOT EXISTS llm_logs (
+    id INTEGER PRIMARY KEY,
+    tenant_id TEXT NOT NULL DEFAULT 'default',
+    request_id VARCHAR(64),
+    user_id INTEGER,
+    token_id INTEGER,
+    source VARCHAR(20) NOT NULL DEFAULT 'relay',
+    channel_id INTEGER,
+    key_index INTEGER,
+    model_name VARCHAR(255) NOT NULL,
+    is_stream INTEGER NOT NULL DEFAULT 0,
+    prompt_tokens INTEGER NOT NULL DEFAULT 0,
+    completion_tokens INTEGER NOT NULL DEFAULT 0,
+    cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+    cache_write_tokens INTEGER NOT NULL DEFAULT 0,
+    quota INTEGER NOT NULL DEFAULT 0,
+    detail TEXT,
+    elapsed_ms INTEGER,
+    status_code INTEGER,
+    error_message TEXT,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_llm_logs_tenant ON llm_logs(tenant_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_llm_logs_channel ON llm_logs(channel_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_llm_logs_token ON llm_logs(token_id, created_at);

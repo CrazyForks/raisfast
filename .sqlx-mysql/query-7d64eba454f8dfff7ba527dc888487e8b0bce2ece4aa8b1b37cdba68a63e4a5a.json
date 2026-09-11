@@ -1,0 +1,12 @@
+{
+  "db_name": "MySQL",
+  "query": "INSERT INTO `kb_runs` (`id`, `tenant_id`, `kind`, `trigger_src`, `kb_id`, `doc_id`, `agent_id`, `session_id`, `job_id`, `attempt`, `status`, `latency_ms`, `error`, `config_snapshot`, `stages`, `created_at`, `updated_at`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 17
+    },
+    "nullable": []
+  },
+  "hash": "7d64eba454f8dfff7ba527dc888487e8b0bce2ece4aa8b1b37cdba68a63e4a5a"
+}

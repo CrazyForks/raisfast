@@ -1,0 +1,12 @@
+{
+  "db_name": "MySQL",
+  "query": "INSERT INTO `products` (`id`, `category_id`, `title`, `description`, `cover_url`, `product_type`, `fulfillment_type`, `delivery_hook`, `weight`, `price`, `currency`, `attributes`, `sort_order`, `slug`, `content`, `image_ids`, `original_price`, `specs`, `unit`, `min_purchase`, `max_purchase`, `virtual_sales`, `meta_title`, `meta_description`, `og_title`, `og_description`, `og_image`, `stock`, `cost_price`, `sale_price`, `has_variants`, `created_at`, `updated_at`, `tenant_id`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 34
+    },
+    "nullable": []
+  },
+  "hash": "acadb66024ea14bee925ff20f3873bcab990ef65358dcb099427a468a039ec27"
+}
