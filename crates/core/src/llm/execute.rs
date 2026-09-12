@@ -108,6 +108,55 @@ impl ModelProvider for SideEffectGuard {
             })
             .await
     }
+
+    async fn rerank(
+        &self,
+        query: &str,
+        documents: &[&str],
+        model: &str,
+    ) -> Result<Vec<raisfast_agent::provider::RerankResult>, ProviderError> {
+        self.inner.rerank(query, documents, model).await
+    }
+
+    async fn generate_image(
+        &self,
+        request: &raisfast_agent::provider::ImageRequest,
+        model: &str,
+    ) -> Result<Vec<raisfast_agent::provider::GeneratedImage>, ProviderError> {
+        self.inner.generate_image(request, model).await
+    }
+
+    async fn transcribe(
+        &self,
+        audio: &raisfast_agent::provider::AudioInput<'_>,
+        model: &str,
+    ) -> Result<raisfast_agent::provider::Transcription, ProviderError> {
+        self.inner.transcribe(audio, model).await
+    }
+
+    async fn speech(&self, text: &str, voice: &str, model: &str) -> Result<Vec<u8>, ProviderError> {
+        self.inner.speech(text, voice, model).await
+    }
+
+    async fn video_submit(
+        &self,
+        request: &raisfast_agent::provider::VideoRequest,
+        model: &str,
+    ) -> Result<raisfast_agent::provider::VideoTask, ProviderError> {
+        self.inner.video_submit(request, model).await
+    }
+
+    async fn video_query(
+        &self,
+        task_id: &str,
+        model: &str,
+    ) -> Result<raisfast_agent::provider::VideoTask, ProviderError> {
+        self.inner.video_query(task_id, model).await
+    }
+
+    async fn video_content(&self, task_id: &str, model: &str) -> Result<Vec<u8>, ProviderError> {
+        self.inner.video_content(task_id, model).await
+    }
 }
 
 /// Log entry passed to [`LlmRouter::log_call`] (keeps the arg list flat).
@@ -122,31 +171,33 @@ struct LogCall<'a> {
 }
 
 impl LlmRouter {
-    /// Resolve an endpoint to a cached bare provider (design §10.2): v1
-    /// internal consumption supports OpenAI-compatible providers only;
-    /// native anthropic/gemini channels relay externally but reject here
-    /// until their provider impls ship. The guard wraps per call; the bare provider
-    /// is cached by `(channel_id, key_index)`.
+    /// Resolve an endpoint to a cached bare provider (design §10.2) by the
+    /// channel `provider` field (§8.2: the channel picks the protocol):
+    /// openai-compatible family (openai/deepseek/moonshot/ollama/siliconflow/
+    /// generic/**gemini** — its registry preset is the OpenAI-compat surface)
+    /// → `OpenAiCompatProvider`; native anthropic → `AnthropicProvider`
+    /// (§10.2 P4 item: chat unlocks internal consumption; its non-chat
+    /// modalities report unsupported and the kernel skips such channels).
+    /// The guard wraps per call; the bare provider is cached by
+    /// `(channel_id, key_index)`.
     pub fn provider_for(&self, ep: &ResolvedEndpoint) -> AppResult<Arc<dyn ModelProvider>> {
-        match ep.provider.as_str() {
-            "anthropic" | "gemini" => Err(AppError::BadRequest(format!(
-                "provider '{}' is not available for internal calls yet",
-                ep.provider
-            ))),
-            _ => {
-                let entry = self
-                    .providers
-                    .entry((ep.channel_id, ep.key_index))
-                    .or_insert_with(|| {
-                        Arc::new(raisfast_agent::provider::openai::OpenAiCompatProvider::new(
-                            ep.base_url.clone(),
-                            Some(ep.api_key.clone()),
-                        )) as Arc<dyn ModelProvider>
-                    })
-                    .clone();
-                Ok(entry)
-            }
-        }
+        let entry = self
+            .providers
+            .entry((ep.channel_id, ep.key_index))
+            .or_insert_with(|| match ep.provider.as_str() {
+                "anthropic" => Arc::new(crate::llm::provider_anthropic::AnthropicProvider::new(
+                    ep.base_url.clone(),
+                    Some(ep.api_key.clone()),
+                    ep.param_override.clone(),
+                    ep.header_override.clone(),
+                )) as Arc<dyn ModelProvider>,
+                _ => Arc::new(raisfast_agent::provider::openai::OpenAiCompatProvider::new(
+                    ep.base_url.clone(),
+                    Some(ep.api_key.clone()),
+                )) as Arc<dyn ModelProvider>,
+            })
+            .clone();
+        Ok(entry)
     }
 
     /// Unified execution kernel (design §10.1). The closure receives the
@@ -274,6 +325,27 @@ impl LlmRouter {
                     .await;
                     return Err(err);
                 }
+                Err(ExecError::Upstream(ProviderError::Config(msg))) => {
+                    // Endpoint cannot serve this request (modality unsupported
+                    // on this provider / channel misconfig): deterministic for
+                    // the endpoint, not an upstream health signal — mark the
+                    // key tried and fail over WITHOUT a failure report (same
+                    // semantics as the relay's anthropic guard, design §7.3).
+                    retry.tried.insert((channel.id, key_index));
+                    let err = AppError::BadRequest(msg.clone());
+                    self.log_call(LogCall {
+                        tenant: ctx.tenant,
+                        source,
+                        channel_id: Some(channel.id),
+                        key_index: Some(key_index),
+                        model,
+                        elapsed_ms: Some(elapsed.as_millis() as i32),
+                        error: Some(&err),
+                    })
+                    .await;
+                    last_err = Some(err);
+                    continue;
+                }
                 Err(ExecError::Upstream(pe)) => {
                     let failure = UpstreamFailure {
                         status: provider_status(&pe),
@@ -281,8 +353,13 @@ impl LlmRouter {
                         retry_after: None,
                     };
                     // §6.2 class 4): a plain 400 is the caller's fault — the
-                    // key is innocent, no cooldown, no ban judgment.
-                    if failure.status != Some(400) {
+                    // key is innocent, no cooldown, no ban judgment. Gateway
+                    // flakes disguised as 400s are upstream infra issues —
+                    // they count toward failure judgment [照抄 claw-code
+                    // `is_retryable_400`].
+                    let flake_400 = matches!(&pe, ProviderError::Http { status: 400, .. })
+                        && Self::upstream_retryable(&pe);
+                    if failure.status != Some(400) || flake_400 {
                         self.report_failure(channel.id, key_index, &failure);
                     }
                     let retryable = Self::upstream_retryable(&pe) && !guard.side_effects();
@@ -320,14 +397,31 @@ impl LlmRouter {
     /// 409+, 429, 5xx) and transport errors retry on another channel;
     /// 400 (deterministic client error) and the timeout class 408/504/524
     /// (upstream may already have processed and billed — retrying means
-    /// double billing) never retry. (split out for unit testing)
+    /// double billing) never retry. Exception [照抄 claw-code
+    /// `is_retryable_400`]: a 400 whose body carries gateway-flake markers
+    /// ("no parseable body" / "connection reset" / "broken pipe" / "empty
+    /// reply from server") is a transient network blip, retryable.
+    /// (split out for unit testing)
     fn upstream_retryable_impl(pe: &ProviderError) -> bool {
         match pe {
-            ProviderError::Http { status, .. } => !matches!(status, 400 | 408 | 504 | 524),
+            ProviderError::Http { status, body } => {
+                if *status == 400 {
+                    return Self::gateway_flake_body(body);
+                }
+                !matches!(status, 400 | 408 | 504 | 524)
+            }
             ProviderError::Transport(_) => true,
             ProviderError::Parse(_) => false,
             ProviderError::Config(_) => false,
         }
+    }
+
+    fn gateway_flake_body(body: &str) -> bool {
+        let lowered = body.to_ascii_lowercase();
+        lowered.contains("no parseable body")
+            || lowered.contains("connection reset")
+            || lowered.contains("broken pipe")
+            || lowered.contains("empty reply from server")
     }
 
     fn upstream_to_app_error(pe: &ProviderError) -> AppResult<()> {
@@ -376,9 +470,13 @@ mod tests {
 
     enum MockStep {
         Ok,
-        StreamThenBreak { events_before_break: usize },
+        StreamThenBreak {
+            events_before_break: usize,
+        },
         Http(u16),
         Transport,
+        /// Provider cannot serve this request (modality unsupported).
+        Config,
     }
 
     impl Clone for MockStep {
@@ -392,6 +490,7 @@ mod tests {
                 },
                 MockStep::Http(s) => MockStep::Http(*s),
                 MockStep::Transport => MockStep::Transport,
+                MockStep::Config => MockStep::Config,
             }
         }
     }
@@ -416,6 +515,9 @@ mod tests {
                     body: "boom".to_owned(),
                 }),
                 MockStep::Transport => Err(ProviderError::Transport("net down".to_owned())),
+                MockStep::Config => Err(ProviderError::Config(
+                    "provider mock does not support chat".to_owned(),
+                )),
             }
         }
 
@@ -502,12 +604,23 @@ mod tests {
     }
 
     fn router_with_mock(steps: Vec<MockStep>) -> std::sync::Arc<crate::llm::service::LlmRouter> {
-        let row = channel_row(1);
+        router_with_mocks(vec![(1, 1, steps)])
+    }
+
+    /// Multi-channel harness: `(id, priority, script)` per channel — channel
+    /// 1 defaults to a higher priority so it is attempted first.
+    fn router_with_mocks(
+        channels: Vec<(i64, i64, Vec<MockStep>)>,
+    ) -> std::sync::Arc<crate::llm::service::LlmRouter> {
         let mut cache = ChannelCache::default();
-        let cached = ChannelCache::from_row(&row);
-        cache
-            .channels
-            .insert(cached.id, std::sync::Arc::new(cached));
+        for (id, priority, _) in &channels {
+            let mut row = channel_row(*id);
+            row.priority = *priority;
+            let cached = ChannelCache::from_row(&row);
+            cache
+                .channels
+                .insert(cached.id, std::sync::Arc::new(cached));
+        }
         cache.models.insert(
             ("default".to_owned(), "mock-model".to_owned()),
             std::sync::Arc::new(crate::llm::cache::ModelInfo {
@@ -528,12 +641,14 @@ mod tests {
         let router = crate::llm::service::LlmRouter::from_cache_for_test(cache);
         // Seed the provider cache with the mock (provider_for hits cache
         // first), so execute() never constructs OpenAiCompatProvider.
-        router.providers.insert(
-            (SnowflakeId(1), 0),
-            std::sync::Arc::new(MockProvider {
-                script: std::sync::Mutex::new(steps),
-            }) as std::sync::Arc<dyn ModelProvider>,
-        );
+        for (id, _, steps) in channels {
+            router.providers.insert(
+                (SnowflakeId(id), 0),
+                std::sync::Arc::new(MockProvider {
+                    script: std::sync::Mutex::new(steps),
+                }) as std::sync::Arc<dyn ModelProvider>,
+            );
+        }
         router
     }
 
@@ -741,8 +856,28 @@ mod tests {
         assert!(LlmRouter::upstream_retryable_impl(
             &ProviderError::Transport("t".to_owned())
         ));
-        // 400 = 确定性失败；408/504/524 = 上游可能已计费的超时类。
+        // 400 = 确定性失败（除非是网关抖动 [照抄 claw-code]）；408/504/524 =
+        // 上游可能已计费的超时类。
         assert!(!LlmRouter::upstream_retryable_impl(&http(400)));
+        assert!(!LlmRouter::upstream_retryable_impl(&ProviderError::Http {
+            status: 400,
+            body: "invalid model".to_owned(),
+        }));
+        // 网关抖动伪装的 400 是瞬时网络故障，可重试。
+        for marker in [
+            "no parseable body",
+            "HTTP 400 from backend (connection reset)",
+            "broken pipe while reading",
+            "empty reply from server",
+        ] {
+            assert!(
+                LlmRouter::upstream_retryable_impl(&ProviderError::Http {
+                    status: 400,
+                    body: marker.to_owned(),
+                }),
+                "flake marker should retry: {marker}"
+            );
+        }
         assert!(!LlmRouter::upstream_retryable_impl(&http(408)));
         assert!(!LlmRouter::upstream_retryable_impl(&http(504)));
         assert!(!LlmRouter::upstream_retryable_impl(&http(524)));
@@ -752,5 +887,34 @@ mod tests {
         assert!(!LlmRouter::upstream_retryable_impl(&ProviderError::Config(
             "c".to_owned()
         )));
+    }
+
+    // ── Config → Skip 换渠道（§10.2 六模态解锁的内核语义）─────────
+
+    #[tokio::test]
+    async fn config_error_skips_channel_without_failure_report() {
+        // 高优先级渠道不支持该模态（如 anthropic 渠道被请求 embed）→
+        // 跳过且不计失败，低优先级渠道兜底成功。
+        let router = router_with_mocks(vec![
+            (1, 1, vec![MockStep::Config]),
+            (2, 0, vec![MockStep::Ok]),
+        ]);
+        let out = run_chat(&router).await.expect("fails over to channel 2");
+        assert_eq!(out.text.as_deref(), Some("done"));
+        assert!(
+            router.cooldown_snapshot().is_empty(),
+            "skip must not report failure: {:?}",
+            router.cooldown_snapshot()
+        );
+    }
+
+    #[tokio::test]
+    async fn all_config_errors_surface_bad_request() {
+        let router = router_with_mocks(vec![
+            (1, 1, vec![MockStep::Config]),
+            (2, 0, vec![MockStep::Config]),
+        ]);
+        let err = run_chat(&router).await.expect_err("all channels skip");
+        assert!(matches!(err, AppError::BadRequest(_)), "{err}");
     }
 }

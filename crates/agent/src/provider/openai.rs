@@ -13,7 +13,10 @@ use futures_util::StreamExt;
 use serde::Deserialize;
 use serde_json::{Map, Value};
 
-use super::{ChatRequest, ChatResponse, ModelProvider, ProviderError, StreamEvent};
+use super::{
+    AudioInput, ChatRequest, ChatResponse, GeneratedImage, ImageRequest, ModelProvider,
+    ProviderError, RerankResult, StreamEvent, Transcription, VideoRequest, VideoStatus, VideoTask,
+};
 use crate::messages::{ChatMessage, ChatRole, TokenUsage, ToolCall};
 use crate::tool::ToolSpec;
 
@@ -22,6 +25,21 @@ const ENDPOINT: &str = "chat/completions";
 
 /// `POST {base_url}/embeddings` (OpenAI-compatible embeddings wire protocol).
 const EMBEDDINGS_ENDPOINT: &str = "embeddings";
+
+/// `POST {base_url}/rerank` (Jina/Cohere-compatible reranking).
+const RERANK_ENDPOINT: &str = "rerank";
+
+/// `POST {base_url}/images/generations`.
+const IMAGES_ENDPOINT: &str = "images/generations";
+
+/// `POST {base_url}/audio/transcriptions` (multipart).
+const TRANSCRIPTIONS_ENDPOINT: &str = "audio/transcriptions";
+
+/// `POST {base_url}/audio/speech` (binary audio out).
+const SPEECH_ENDPOINT: &str = "audio/speech";
+
+/// `POST {base_url}/videos` (+ `/{id}` and `/{id}/content`).
+const VIDEOS_ENDPOINT: &str = "videos";
 
 /// Wire shape of the `/embeddings` response (`data[i].embedding` + `index`).
 #[derive(Debug, Deserialize)]
@@ -173,6 +191,169 @@ impl ModelProvider for OpenAiCompatProvider {
         data.sort_by_key(|d| d.index);
         Ok(data.into_iter().map(|d| d.embedding).collect())
     }
+
+    async fn rerank(
+        &self,
+        query: &str,
+        documents: &[&str],
+        model: &str,
+    ) -> Result<Vec<RerankResult>, ProviderError> {
+        let body = serde_json::json!({
+            "model": model,
+            "query": query,
+            "documents": documents,
+        });
+        let text = self.send_json_to(RERANK_ENDPOINT, &body).await?;
+        let parsed: OpenAiRerankResponse = serde_json::from_str(&text)
+            .map_err(|e| ProviderError::Parse(format!("{e}: {text}")))?;
+        let mut results: Vec<RerankResult> = parsed
+            .results
+            .into_iter()
+            .map(|r| RerankResult {
+                index: r.index,
+                relevance_score: r.relevance_score,
+            })
+            .collect();
+        // Providers return best-first; sort defensively so the contract holds
+        // even for upstreams that don't.
+        results.sort_by(|a, b| b.relevance_score.total_cmp(&a.relevance_score));
+        Ok(results)
+    }
+
+    async fn generate_image(
+        &self,
+        request: &ImageRequest,
+        model: &str,
+    ) -> Result<Vec<GeneratedImage>, ProviderError> {
+        let mut body = serde_json::json!({
+            "model": model,
+            "prompt": request.prompt,
+            "n": request.n.max(1),
+        });
+        if let Some(size) = &request.size {
+            body["size"] = Value::String(size.clone());
+        }
+        let text = self.send_json_to(IMAGES_ENDPOINT, &body).await?;
+        let parsed: OpenAiImagesResponse = serde_json::from_str(&text)
+            .map_err(|e| ProviderError::Parse(format!("{e}: {text}")))?;
+        Ok(parsed
+            .data
+            .into_iter()
+            .map(|d| GeneratedImage {
+                b64_json: d.b64_json,
+                url: d.url,
+            })
+            .collect())
+    }
+
+    async fn transcribe(
+        &self,
+        audio: &AudioInput<'_>,
+        model: &str,
+    ) -> Result<Transcription, ProviderError> {
+        let url = format!(
+            "{}/{}",
+            self.base_url.trim_end_matches('/'),
+            TRANSCRIPTIONS_ENDPOINT
+        );
+        let part = reqwest::multipart::Part::bytes(audio.data.to_vec())
+            .file_name(audio.filename.clone())
+            .mime_str(audio.mime.as_deref().unwrap_or("application/octet-stream"))
+            .map_err(|e| ProviderError::Config(e.to_string()))?;
+        let mut form = reqwest::multipart::Form::new()
+            .text("model", model.to_owned())
+            .part("file", part);
+        if let Some(language) = &audio.language {
+            form = form.text("language", language.clone());
+        }
+        let mut http_req = self.http.post(&url).multipart(form);
+        if let Some(key) = &self.api_key {
+            http_req = http_req.bearer_auth(key);
+        }
+        let resp = http_req
+            .send()
+            .await
+            .map_err(|e| ProviderError::Transport(e.to_string()))?;
+        let status = resp.status().as_u16();
+        let text = resp
+            .text()
+            .await
+            .map_err(|e| ProviderError::Transport(e.to_string()))?;
+        if !(200..300).contains(&status) {
+            return Err(ProviderError::Http { status, body: text });
+        }
+        let parsed: OpenAiTranscriptionResponse = serde_json::from_str(&text)
+            .map_err(|e| ProviderError::Parse(format!("{e}: {text}")))?;
+        Ok(Transcription { text: parsed.text })
+    }
+
+    async fn speech(&self, text: &str, voice: &str, model: &str) -> Result<Vec<u8>, ProviderError> {
+        let body = serde_json::json!({
+            "model": model,
+            "input": text,
+            "voice": voice,
+        });
+        self.send_bytes_to(SPEECH_ENDPOINT, &body).await
+    }
+
+    async fn video_submit(
+        &self,
+        request: &VideoRequest,
+        model: &str,
+    ) -> Result<VideoTask, ProviderError> {
+        let mut body = serde_json::json!({
+            "model": model,
+            "prompt": request.prompt,
+        });
+        if let Some(seconds) = &request.seconds {
+            body["seconds"] = Value::String(seconds.clone());
+        }
+        if let Some(size) = &request.size {
+            body["size"] = Value::String(size.clone());
+        }
+        let text = self.send_json_to(VIDEOS_ENDPOINT, &body).await?;
+        let parsed: OpenAiVideoTask = serde_json::from_str(&text)
+            .map_err(|e| ProviderError::Parse(format!("{e}: {text}")))?;
+        Ok(parsed.into_task())
+    }
+
+    async fn video_query(&self, task_id: &str, _model: &str) -> Result<VideoTask, ProviderError> {
+        let text = self
+            .send_get_to(&format!("{VIDEOS_ENDPOINT}/{task_id}"))
+            .await?;
+        let parsed: OpenAiVideoTask = serde_json::from_str(&text)
+            .map_err(|e| ProviderError::Parse(format!("{e}: {text}")))?;
+        Ok(parsed.into_task())
+    }
+
+    async fn video_content(&self, task_id: &str, _model: &str) -> Result<Vec<u8>, ProviderError> {
+        let url = format!(
+            "{}/{}/{}/content",
+            self.base_url.trim_end_matches('/'),
+            VIDEOS_ENDPOINT,
+            task_id
+        );
+        let mut http_req = self.http.get(&url);
+        if let Some(key) = &self.api_key {
+            http_req = http_req.bearer_auth(key);
+        }
+        let resp = http_req
+            .send()
+            .await
+            .map_err(|e| ProviderError::Transport(e.to_string()))?;
+        let status = resp.status().as_u16();
+        let bytes = resp
+            .bytes()
+            .await
+            .map_err(|e| ProviderError::Transport(e.to_string()))?;
+        if !(200..300).contains(&status) {
+            return Err(ProviderError::Http {
+                status,
+                body: String::from_utf8_lossy(&bytes).into_owned(),
+            });
+        }
+        Ok(bytes.to_vec())
+    }
 }
 
 impl OpenAiCompatProvider {
@@ -182,39 +363,7 @@ impl OpenAiCompatProvider {
         model: &str,
         stream: bool,
     ) -> Result<Value, ProviderError> {
-        let mut payload = Map::new();
-        payload.insert("model".into(), Value::String(model.to_string()));
-        payload.insert(
-            "messages".into(),
-            Value::Array(request.messages.iter().map(to_wire_message).collect()),
-        );
-        if let Some(tools) = request.tools
-            && !tools.is_empty()
-        {
-            payload.insert(
-                "tools".into(),
-                Value::Array(tools.iter().map(to_wire_tool).collect()),
-            );
-        }
-        if let Some(temperature) = request.temperature {
-            payload.insert("temperature".into(), Value::from(temperature));
-        }
-        if let Some(max_tokens) = request.max_tokens {
-            payload.insert("max_tokens".into(), Value::from(max_tokens));
-        }
-        if let Some(stop) = &request.stop
-            && !stop.is_empty()
-        {
-            payload.insert(
-                "stop".into(),
-                Value::Array(stop.iter().map(|s| Value::String(s.clone())).collect()),
-            );
-        }
-        if stream {
-            payload.insert("stream".into(), Value::Bool(true));
-            payload.insert("stream_options".into(), json!({ "include_usage": true }));
-        }
-        Ok(Value::Object(payload))
+        Ok(wire_chat_body(request, model, stream))
     }
 
     async fn send_json(&self, body: &Value) -> Result<String, ProviderError> {
@@ -241,6 +390,119 @@ impl OpenAiCompatProvider {
             return Err(ProviderError::Http { status, body: text });
         }
         Ok(text)
+    }
+
+    /// POST a JSON body expecting raw bytes back (TTS audio).
+    async fn send_bytes_to(&self, path: &str, body: &Value) -> Result<Vec<u8>, ProviderError> {
+        let url = format!("{}/{}", self.base_url.trim_end_matches('/'), path);
+        let mut http_req = self.http.post(&url).json(body);
+        if let Some(key) = &self.api_key {
+            http_req = http_req.bearer_auth(key);
+        }
+        let resp = http_req
+            .send()
+            .await
+            .map_err(|e| ProviderError::Transport(e.to_string()))?;
+        let status = resp.status().as_u16();
+        let bytes = resp
+            .bytes()
+            .await
+            .map_err(|e| ProviderError::Transport(e.to_string()))?;
+        if !(200..300).contains(&status) {
+            return Err(ProviderError::Http {
+                status,
+                body: String::from_utf8_lossy(&bytes).into_owned(),
+            });
+        }
+        Ok(bytes.to_vec())
+    }
+
+    /// GET `{base_url}/{path}` expecting JSON (video task polling).
+    async fn send_get_to(&self, path: &str) -> Result<String, ProviderError> {
+        let url = format!("{}/{}", self.base_url.trim_end_matches('/'), path);
+        let mut http_req = self.http.get(&url);
+        if let Some(key) = &self.api_key {
+            http_req = http_req.bearer_auth(key);
+        }
+        let resp = http_req
+            .send()
+            .await
+            .map_err(|e| ProviderError::Transport(e.to_string()))?;
+        let status = resp.status().as_u16();
+        let text = resp
+            .text()
+            .await
+            .map_err(|e| ProviderError::Transport(e.to_string()))?;
+        if !(200..300).contains(&status) {
+            return Err(ProviderError::Http { status, body: text });
+        }
+        Ok(text)
+    }
+}
+
+// ── modality wire response types ────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+struct OpenAiRerankResponse {
+    #[serde(default)]
+    results: Vec<OpenAiRerankResult>,
+}
+
+#[derive(Debug, Deserialize)]
+struct OpenAiRerankResult {
+    #[serde(default)]
+    index: usize,
+    #[serde(default)]
+    relevance_score: f32,
+}
+
+#[derive(Debug, Deserialize)]
+struct OpenAiImagesResponse {
+    #[serde(default)]
+    data: Vec<OpenAiImageData>,
+}
+
+#[derive(Debug, Deserialize)]
+struct OpenAiImageData {
+    #[serde(default)]
+    b64_json: Option<String>,
+    #[serde(default)]
+    url: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct OpenAiTranscriptionResponse {
+    #[serde(default)]
+    text: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct OpenAiVideoTask {
+    id: String,
+    #[serde(default)]
+    status: String,
+    #[serde(default)]
+    progress: Option<i32>,
+    #[serde(default)]
+    error: Option<Value>,
+}
+
+impl OpenAiVideoTask {
+    fn into_task(self) -> VideoTask {
+        // Wire error is `{code, message}` [照抄 async-openai
+        // `VideoResourceError`] — surface the human message.
+        let error = match self.error {
+            Some(Value::String(s)) => Some(s),
+            Some(Value::Object(o)) => o.get("message").and_then(Value::as_str).map(str::to_owned),
+            Some(other) => Some(other.to_string()),
+            None => None,
+        };
+        VideoTask {
+            id: self.id,
+            status: VideoStatus::from_wire(&self.status),
+            progress: self.progress,
+            error,
+        }
     }
 }
 
@@ -331,6 +593,45 @@ fn feed_line(state: &mut StreamState, on_event: &mut (dyn FnMut(StreamEvent) + S
 }
 
 // ── wire mapping ────────────────────────────────────────────────────────────
+
+/// Serialize a chat request into the OpenAI chat-completions wire body.
+/// Public so the host can re-target the canonical body at other protocols
+/// (e.g. the anthropic `/v1/messages` adaptor consumes this).
+pub fn wire_chat_body(request: &ChatRequest<'_>, model: &str, stream: bool) -> Value {
+    let mut payload = Map::new();
+    payload.insert("model".into(), Value::String(model.to_string()));
+    payload.insert(
+        "messages".into(),
+        Value::Array(request.messages.iter().map(to_wire_message).collect()),
+    );
+    if let Some(tools) = request.tools
+        && !tools.is_empty()
+    {
+        payload.insert(
+            "tools".into(),
+            Value::Array(tools.iter().map(to_wire_tool).collect()),
+        );
+    }
+    if let Some(temperature) = request.temperature {
+        payload.insert("temperature".into(), Value::from(temperature));
+    }
+    if let Some(max_tokens) = request.max_tokens {
+        payload.insert("max_tokens".into(), Value::from(max_tokens));
+    }
+    if let Some(stop) = &request.stop
+        && !stop.is_empty()
+    {
+        payload.insert(
+            "stop".into(),
+            Value::Array(stop.iter().map(|s| Value::String(s.clone())).collect()),
+        );
+    }
+    if stream {
+        payload.insert("stream".into(), Value::Bool(true));
+        payload.insert("stream_options".into(), json!({ "include_usage": true }));
+    }
+    Value::Object(payload)
+}
 
 fn to_wire_role(role: ChatRole) -> &'static str {
     role.as_wire()

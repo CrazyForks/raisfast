@@ -371,23 +371,80 @@ impl LlmRouter {
         let mut tiers: Vec<i64> = alive.iter().map(|ch| ch.priority).collect();
         tiers.sort_unstable_by(|a, b| b.cmp(a));
         tiers.dedup();
-        let tier = tiers[attempt.min(tiers.len() - 1)];
-        let tier_channels: Vec<Arc<CachedChannel>> = alive
-            .iter()
-            .filter(|ch| ch.priority == tier)
-            .cloned()
-            .collect();
+        // Walk tiers high→low; the first tier with an un-tried ready key
+        // wins. A tier whose keys are all hard-tried in this request
+        // (relay failures cool; internal Config-skip marks tried, design
+        // §7.2/§10.1) is skipped instead of blocking lower tiers.
+        for tier in tiers.iter().skip(attempt) {
+            let tier_channels: Vec<Arc<CachedChannel>> = alive
+                .iter()
+                .filter(|ch| ch.priority == *tier)
+                .filter(|ch| {
+                    ch.keys
+                        .iter()
+                        .enumerate()
+                        .any(|(i, _)| !retry.tried.contains(&(ch.id, i)))
+                })
+                .cloned()
+                .collect();
+            if !tier_channels.is_empty() {
+                let channel = weighted_pick(&tier_channels);
+                let idx = self
+                    .select_key_excluding(&channel, &retry.tried)
+                    .ok_or_else(|| {
+                        AppError::Internal(anyhow::anyhow!("selected channel has no ready key"))
+                    })?;
+                return Ok((channel, idx));
+            }
+        }
+        // Every un-tried key of the route is exhausted for this request.
+        // Fast-fail instead of queueing: a queue turn frees a slot but never
+        // clears the per-request tried set, so waiting cannot help.
+        let all_tried = candidates.iter().all(|ch| {
+            ch.status != LlmChannelStatus::Enabled
+                || ch
+                    .keys
+                    .iter()
+                    .enumerate()
+                    .all(|(i, _)| retry.tried.contains(&(ch.id, i)))
+        });
+        if all_tried {
+            return Err(AppError::BadRequest(format!(
+                "all channels for model {model} were tried in this request"
+            )));
+        }
+        // Sweep transient-cooled keys as the last resort (§7.2 step 5).
+        self.last_resort(&candidates, retry, model)
+    }
 
-        let channel = weighted_pick(&tier_channels);
-        let idx = self.select_key(&channel).ok_or_else(|| {
-            AppError::Internal(anyhow::anyhow!("selected channel has no ready key"))
-        })?;
-        Ok((channel, idx))
+    /// Whether every key of every enabled candidate for the route is in the
+    /// per-request tried set (queueing for a slot cannot help then).
+    fn route_all_tried(&self, cache: &ChannelCache, route: &RouteKey, retry: &RetryState) -> bool {
+        let Some(candidates) = cache.candidates(route) else {
+            return false;
+        };
+        candidates.iter().all(|ch| {
+            ch.status != LlmChannelStatus::Enabled
+                || ch
+                    .keys
+                    .iter()
+                    .enumerate()
+                    .all(|(i, _)| retry.tried.contains(&(ch.id, i)))
+        })
     }
 
     /// Pick one key inside a channel (design §6.1): active + not cooled;
     /// polling advances the router-level cursor, random draws uniformly.
     pub fn select_key(&self, channel: &CachedChannel) -> Option<usize> {
+        self.select_key_excluding(channel, &std::collections::HashSet::new())
+    }
+
+    /// [`Self::select_key`] with a per-request exclusion set.
+    fn select_key_excluding(
+        &self,
+        channel: &CachedChannel,
+        tried: &std::collections::HashSet<(SnowflakeId, usize)>,
+    ) -> Option<usize> {
         let ready: Vec<usize> = channel
             .keys
             .iter()
@@ -395,6 +452,7 @@ impl LlmRouter {
             .filter(|(i, k)| {
                 k.status == LlmKeyStatus::Active
                     && k.plain.is_some()
+                    && !tried.contains(&(channel.id, *i))
                     && !self.cooldown_active(channel.id, *i)
             })
             .map(|(i, _)| i)
@@ -909,7 +967,9 @@ impl LlmRouter {
                     }
                 }
                 Err(err) => {
-                    if !self.route_has_active_key(cache, &route) {
+                    if !self.route_has_active_key(cache, &route)
+                        || self.route_all_tried(cache, &route, retry)
+                    {
                         rollback(token, user);
                         return Err(SlotError::NoRoute(err));
                     }
