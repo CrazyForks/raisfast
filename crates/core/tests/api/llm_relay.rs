@@ -977,6 +977,7 @@ async fn slot_admission_queue_full_and_wait_timeout() {
         tenant: "default",
         group: None,
         pin_channel: None,
+        caller: None,
     };
     // 深度上限压到 1：第二个排队者即满员。
     let tiny = QueueTier {
@@ -1011,6 +1012,7 @@ async fn slot_admission_queue_full_and_wait_timeout() {
             tenant: "default",
             group: None,
             pin_channel: None,
+            caller: None,
         };
         r2.acquire_slot(
             &SlotRequest {
@@ -1090,6 +1092,7 @@ async fn slot_admission_token_and_user_concurrency_caps() {
         tenant: "default",
         group: None,
         pin_channel: None,
+        caller: None,
     };
     let far = std::time::Instant::now() + std::time::Duration::from_secs(60);
     let req = |token, user| SlotRequest {
@@ -1097,7 +1100,10 @@ async fn slot_admission_token_and_user_concurrency_caps() {
         ctx: &ctx,
         model: "gpt-4o",
         tier: RELAY_TIER_FOR_TEST,
-        caller: Some((SnowflakeId(token), SnowflakeId(user))),
+        caller: Some(raisfast::llm::service::Caller::relay(
+            SnowflakeId(token),
+            SnowflakeId(user),
+        )),
         body_bytes: 8,
         deadline: far,
     };

@@ -20,6 +20,8 @@ define_enum!(
         Refund = "refund",
         TransferOut = "transfer_out",
         TransferIn = "transfer_in",
+        LlmHold = "llm_hold",
+        LlmSettle = "llm_settle",
     }
 );
 

@@ -112,12 +112,55 @@ pub struct RetryState {
     pub tried: HashSet<(SnowflakeId, usize)>,
 }
 
+/// Who is making this call (design §7.6/§9.3): drives per-caller concurrency
+/// caps and `llm_logs` attribution. Relay requests carry both the sk- token
+/// and its owner; internal consumers carry the triggering user only (cron/
+/// webhook runs may carry neither).
+#[derive(Debug, Clone, Copy)]
+pub struct Caller {
+    pub token: Option<SnowflakeId>,
+    pub user: Option<SnowflakeId>,
+}
+
+impl Caller {
+    /// Relay caller: sk- token + owner user (both accounted).
+    pub fn relay(token_id: SnowflakeId, user_id: SnowflakeId) -> Self {
+        Self {
+            token: Some(token_id),
+            user: Some(user_id),
+        }
+    }
+
+    /// Internal caller: just the triggering user (no sk- token exists).
+    pub fn user(user_id: SnowflakeId) -> Self {
+        Self {
+            token: None,
+            user: Some(user_id),
+        }
+    }
+}
+
 /// Resolution context (design §10.1); `group` stays `None` → `"default"`
 /// until group routing ships (§16).
 pub struct ResolveCtx<'a> {
     pub tenant: &'a str,
     pub group: Option<&'a str>,
     pub pin_channel: Option<SnowflakeId>,
+    /// Who triggered the call — per-user concurrency + log attribution
+    /// (`None` = system-triggered, e.g. cron).
+    pub caller: Option<Caller>,
+}
+
+impl<'a> ResolveCtx<'a> {
+    /// Plain tenant-scoped context, no caller (system-triggered).
+    pub fn for_tenant(tenant: &'a str) -> Self {
+        Self {
+            tenant,
+            group: None,
+            pin_channel: None,
+            caller: None,
+        }
+    }
 }
 
 /// One selected upstream endpoint (design §10.1 `ResolvedEndpoint`).
@@ -229,6 +272,12 @@ impl LlmRouter {
     /// Test constructor: preloaded cache, no DB (persistence disabled).
     pub fn from_cache_for_test(cache: ChannelCache) -> Arc<Self> {
         Arc::new(Self::empty(None).with_cache(cache))
+    }
+
+    /// Test constructor: preloaded cache + DB pool (billing paths enabled, §10.3).
+    #[cfg(test)]
+    pub(crate) fn from_cache_for_test_with_pool(cache: ChannelCache, pool: Pool) -> Arc<Self> {
+        Arc::new(Self::empty(Some(pool)).with_cache(cache))
     }
 
     fn with_cache(mut self, cache: ChannelCache) -> Self {
@@ -802,8 +851,9 @@ pub struct SlotRequest<'a> {
     pub ctx: &'a ResolveCtx<'a>,
     pub model: &'a str,
     pub tier: QueueTier,
-    /// (token_id, user_id) — per-caller concurrency accounting.
-    pub caller: Option<(SnowflakeId, SnowflakeId)>,
+    /// Who is calling — per-caller concurrency accounting (§7.6). Relay
+    /// fills both token+user; internal consumers fill user only.
+    pub caller: Option<Caller>,
     pub body_bytes: usize,
     /// Per-request wait budget shared across retry attempts (§7.6).
     pub deadline: Instant,
@@ -904,18 +954,26 @@ impl LlmRouter {
             deadline,
         } = *req;
         let (token, user) = match caller {
-            Some((t, u)) => {
-                Self::try_inflight(&self.token_inflight, t, TOKEN_MAX_CONCURRENT, "token")?;
+            Some(c) => {
+                let mut token = None;
+                if let Some(t) = c.token {
+                    Self::try_inflight(&self.token_inflight, t, TOKEN_MAX_CONCURRENT, "token")?;
+                    token = Some(t);
+                }
                 // RAII pin (§7.6): a user-cap rejection must roll back the
                 // token counter taken above — leaking it permanently 429s
                 // an innocent token (no permit will ever drop to balance).
-                if let Err(e) =
-                    Self::try_inflight(&self.user_inflight, u, USER_MAX_CONCURRENT, "user")
-                {
-                    Self::rollback_inflight(&self.token_inflight, Some(t));
-                    return Err(e);
+                let mut user = None;
+                if let Some(u) = c.user {
+                    if let Err(e) =
+                        Self::try_inflight(&self.user_inflight, u, USER_MAX_CONCURRENT, "user")
+                    {
+                        Self::rollback_inflight(&self.token_inflight, token);
+                        return Err(e);
+                    }
+                    user = Some(u);
                 }
-                (Some(t), Some(u))
+                (token, user)
             }
             None => (None, None),
         };
@@ -1099,6 +1157,7 @@ mod tests {
             tenant: "default",
             group: None,
             pin_channel: None,
+            caller: None,
         }
     }
 

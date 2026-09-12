@@ -123,6 +123,7 @@ pub(crate) async fn submit_video(
         tenant: &tenant,
         group: None,
         pin_channel: None,
+        caller: None,
     };
     let mut retry = RetryState::default();
     let deadline = Instant::now() + Duration::from_secs(RELAY_TIER.max_wait_secs);
@@ -138,7 +139,7 @@ pub(crate) async fn submit_video(
                     ctx: &ctx,
                     model: &model,
                     tier: RELAY_TIER,
-                    caller: Some((token_id, user_id)),
+                    caller: Some(crate::llm::service::Caller::relay(token_id, user_id)),
                     body_bytes,
                     deadline,
                 },

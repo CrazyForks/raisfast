@@ -8,6 +8,7 @@
 //! `AppState::llm_router`), `server.rs` (route merge behind
 //! `builtins.llm_gateway`) and `migrations/` (four `llm_*` tables).
 
+pub mod billing;
 pub mod cache;
 pub mod crypto;
 pub mod execute;

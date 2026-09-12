@@ -83,28 +83,22 @@ pub fn provider_from_config(ai: &AiConfig) -> AppResult<Arc<dyn ModelProvider>> 
     )))
 }
 
-/// Process-wide shared LLM runtime for the flows `llm` node — set once at
-/// startup (mirrors `integration::set_shared`), read by executors constructed
-/// before/outside AppState. `None` when `[ai]` is disabled/unconfigured.
-pub struct SharedLlm {
-    pub provider: Arc<dyn ModelProvider>,
-    /// `[ai].model` — default when the node config omits one.
-    pub default_model: Option<String>,
-    /// `[ai].timeout_secs` in milliseconds (node `timeout_ms` overrides).
-    pub timeout_ms: u64,
+/// Process-wide LLM router handle for executors constructed before/outside
+/// AppState (the flows `llm` node) — set once at startup. This replaces the
+/// retired `[ai]`-env singleton: the ONLY model entry is the llm 底座
+/// (design §10.2).
+static ROUTER_HANDLE: std::sync::OnceLock<Option<Arc<crate::llm::service::LlmRouter>>> =
+    std::sync::OnceLock::new();
+
+/// Install the router handle (called once from `build_app_state`).
+pub fn set_router_handle(router: Arc<crate::llm::service::LlmRouter>) {
+    let _ = ROUTER_HANDLE.set(Some(router));
 }
 
-static SHARED_LLM: std::sync::OnceLock<Option<Arc<SharedLlm>>> = std::sync::OnceLock::new();
-
-/// Install the shared LLM runtime (called once from `build_app_state`).
-pub fn set_shared_llm(runtime: Option<Arc<SharedLlm>>) {
-    let _ = SHARED_LLM.set(runtime);
-}
-
-/// Access the shared LLM runtime, if initialized.
+/// Access the router handle, if initialized.
 #[must_use]
-pub fn shared_llm() -> Option<Arc<SharedLlm>> {
-    SHARED_LLM.get().cloned().flatten()
+pub fn router_handle() -> Option<Arc<crate::llm::service::LlmRouter>> {
+    ROUTER_HANDLE.get().and_then(Clone::clone)
 }
 
 /// Create the model provider for an agent from the `[ai]` config section.

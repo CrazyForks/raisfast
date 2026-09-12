@@ -572,6 +572,136 @@ pub async fn reverse_transaction(
     })
 }
 
+// ── LLM 内部消费预扣/结算（design §10.3 严格预扣）────────────────
+//
+// 与 relay 的 token 预扣同一语义（pricing.md §3.2）：调用前 hold，事后按
+// 真实 usage 结算差额——多退少补，补扣失败不追（钱包不允许负余额，§9.3）。
+// 走 user_id 直连（内部消费没有 AuthUser），幂等键 = transaction_no。
+
+/// 内部消费通用钱包事务：find_or_create 钱包 → 原子增减 → 流水。
+#[allow(clippy::too_many_arguments)]
+async fn llm_wallet_tx(
+    pool: &crate::db::Pool,
+    tenant_id: Option<&str>,
+    user_id: crate::types::snowflake_id::SnowflakeId,
+    currency: &str,
+    amount: Price,
+    transaction_no: &str,
+    tx_type: crate::models::wallet_transaction::WalletTxType,
+    entry_type: crate::models::wallet_transaction::WalletEntryType,
+) -> AppResult<()> {
+    if amount.0 <= 0 {
+        return Ok(());
+    }
+    let delta = match entry_type {
+        crate::models::wallet_transaction::WalletEntryType::Credit => amount.0,
+        _ => -amount.0,
+    };
+    crate::in_transaction!(pool, tx, {
+        if let Some(existing) = tx_find_tx_by_transaction_no(&mut tx, transaction_no).await? {
+            let _ = existing;
+            return Ok(());
+        }
+        ensure_currency_active(&mut tx, currency, tenant_id).await?;
+        let w = tx_find_or_create(&mut tx, user_id, currency).await?;
+        if w.status != WalletStatus::Active {
+            return Err(AppError::BadRequest("wallet_frozen".into()));
+        }
+        apply_wallet_delta(&mut tx, w.id, w.version, delta, w.balance.0).await?;
+        let updated = tx_find_wallet_by_id(&mut tx, w.id)
+            .await?
+            .ok_or_else(|| AppError::not_found("wallet"))?;
+        insert_tx(
+            &mut tx,
+            tenant_id,
+            updated.id,
+            user_id,
+            entry_type,
+            amount,
+            updated.balance,
+            tx_type,
+            currency,
+            transaction_no,
+            None,
+            Some(crate::models::wallet_transaction::WalletReferenceType::ApiUsage),
+            None,
+            None,
+            None,
+        )
+        .await?;
+        Ok(())
+    })
+}
+
+/// 调用前预扣（hold）。余额不足 → 钱包原子拒绝（负余额不可能出现）。
+pub async fn llm_hold(
+    pool: &crate::db::Pool,
+    tenant_id: Option<&str>,
+    user_id: crate::types::snowflake_id::SnowflakeId,
+    currency: &str,
+    amount: Price,
+    hold_no: &str,
+) -> AppResult<()> {
+    llm_wallet_tx(
+        pool,
+        tenant_id,
+        user_id,
+        currency,
+        amount,
+        hold_no,
+        crate::models::wallet_transaction::WalletTxType::LlmHold,
+        crate::models::wallet_transaction::WalletEntryType::Debit,
+    )
+    .await
+}
+
+/// 调用后结算：actual < hold 退差额（credit）；actual > hold 补扣差额，
+/// 补扣失败只记日志不追（§9.3）。actual == hold 幂等跳过。
+pub async fn llm_settle(
+    pool: &crate::db::Pool,
+    tenant_id: Option<&str>,
+    user_id: crate::types::snowflake_id::SnowflakeId,
+    currency: &str,
+    hold: Price,
+    actual: Price,
+    hold_no: &str,
+) -> AppResult<()> {
+    let diff = hold.0 - actual.0;
+    if diff == 0 {
+        return Ok(());
+    }
+    if diff > 0 {
+        return llm_wallet_tx(
+            pool,
+            tenant_id,
+            user_id,
+            currency,
+            Price(diff),
+            &format!("{hold_no}-r"),
+            crate::models::wallet_transaction::WalletTxType::LlmSettle,
+            crate::models::wallet_transaction::WalletEntryType::Credit,
+        )
+        .await;
+    }
+    // 补扣（少预扣了）：失败不追——用户余额已耗尽，下一次调用的预检会拦截。
+    let extra = Price(-diff);
+    if let Err(err) = llm_wallet_tx(
+        pool,
+        tenant_id,
+        user_id,
+        currency,
+        extra,
+        &format!("{hold_no}-x"),
+        crate::models::wallet_transaction::WalletTxType::LlmSettle,
+        crate::models::wallet_transaction::WalletEntryType::Debit,
+    )
+    .await
+    {
+        tracing::warn!(%err, user = %user_id.0, "llm settle extra debit failed (logged, not chased)");
+    }
+    Ok(())
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn insert_tx(
     tx: &mut DbConnection,

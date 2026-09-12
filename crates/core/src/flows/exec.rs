@@ -155,12 +155,10 @@ impl NodeExecutor for FlowsExec {
             nodes::T_CT => super::ct::run_ct(node, pool, self.tenant_id.as_deref()).await,
             nodes::T_LLM => {
                 let runtime = match &self.llm {
-                    Some(rt) => super::llm::LlmRuntime {
-                        provider: rt.provider.clone(),
-                        default_model: rt.default_model.clone(),
-                        timeout_ms: rt.timeout_ms,
-                    },
-                    None => super::llm::LlmRuntime::shared()?,
+                    Some(rt) => rt.clone(),
+                    None => super::llm::LlmRuntime::shared(
+                        self.tenant_id.as_deref().unwrap_or("default"),
+                    )?,
                 };
                 super::llm::run_llm(&runtime, node, pool).await
             }

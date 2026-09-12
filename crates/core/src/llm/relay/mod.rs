@@ -267,6 +267,7 @@ async fn chat_completions(
         tenant: &tenant,
         group: None,
         pin_channel: None,
+        caller: None,
     };
     let mut retry = RetryState::default();
     let deadline = Instant::now() + Duration::from_secs(RELAY_TIER.max_wait_secs);
@@ -289,7 +290,7 @@ async fn chat_completions(
                     ctx: &ctx,
                     model: &model,
                     tier: RELAY_TIER,
-                    caller: Some((token_id, user_id)),
+                    caller: Some(crate::llm::service::Caller::relay(token_id, user_id)),
                     body_bytes,
                     deadline,
                 },
@@ -686,6 +687,7 @@ async fn messages(
         tenant: &tenant,
         group: None,
         pin_channel: None,
+        caller: None,
     };
     let mut retry = RetryState::default();
     let deadline = Instant::now() + Duration::from_secs(RELAY_TIER.max_wait_secs);
@@ -705,7 +707,7 @@ async fn messages(
                     ctx: &ctx,
                     model: &model,
                     tier: RELAY_TIER,
-                    caller: Some((token_id, user_id)),
+                    caller: Some(crate::llm::service::Caller::relay(token_id, user_id)),
                     body_bytes,
                     deadline,
                 },
@@ -1233,6 +1235,7 @@ async fn relay_json(
         tenant: &tenant,
         group: None,
         pin_channel: None,
+        caller: None,
     };
     let mut retry = RetryState::default();
     let deadline = Instant::now() + Duration::from_secs(RELAY_TIER.max_wait_secs);
@@ -1250,7 +1253,7 @@ async fn relay_json(
                     ctx: &ctx,
                     model: &model,
                     tier: RELAY_TIER,
-                    caller: Some((token_id, user_id)),
+                    caller: Some(crate::llm::service::Caller::relay(token_id, user_id)),
                     body_bytes,
                     deadline,
                 },
@@ -1632,6 +1635,7 @@ async fn audio_stt(
         tenant: &tenant,
         group: None,
         pin_channel: None,
+        caller: None,
     };
     let mut retry = RetryState::default();
     let deadline = Instant::now() + Duration::from_secs(RELAY_TIER.max_wait_secs);
@@ -1647,7 +1651,7 @@ async fn audio_stt(
                     ctx: &ctx,
                     model: &model,
                     tier: RELAY_TIER,
-                    caller: Some((token_id, user_id)),
+                    caller: Some(crate::llm::service::Caller::relay(token_id, user_id)),
                     body_bytes: file_bytes_total,
                     deadline,
                 },
@@ -1966,6 +1970,7 @@ async fn audio_speech(
         tenant: &tenant,
         group: None,
         pin_channel: None,
+        caller: None,
     };
     let mut retry = RetryState::default();
     let deadline = Instant::now() + Duration::from_secs(RELAY_TIER.max_wait_secs);
@@ -1982,7 +1987,7 @@ async fn audio_speech(
                     ctx: &ctx,
                     model: &model,
                     tier: RELAY_TIER,
-                    caller: Some((token_id, user_id)),
+                    caller: Some(crate::llm::service::Caller::relay(token_id, user_id)),
                     body_bytes,
                     deadline,
                 },

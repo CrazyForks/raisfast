@@ -9,53 +9,50 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use raisfast_agent::ChatMessage;
-use raisfast_agent::provider::{ChatRequest, ModelProvider, ProviderError};
+use raisfast_agent::provider::ChatRequest;
 use serde_json::{Map, Value, json};
 
 use crate::errors::app_error::{AppError, AppResult};
+use crate::llm::service::LlmRouter;
 
 use super::engine::{ExecOutcome, Pool};
 use super::expr;
 use super::graph::GraphNode;
 use super::nodes::LlmConfig;
 
-/// LLM runtime an executor resolves per call: injected mock (tests) or the
-/// process-wide shared runtime (production).
+/// LLM runtime an executor resolves per call: injected mock router (tests) or
+/// the process-wide router handle (production). 模型访问唯一入口 = llm 底座
+/// （design §10.2）——节点只带租户与（可选）触发用户，其余全在内核。
+#[derive(Clone)]
 pub struct LlmRuntime {
-    pub provider: Arc<dyn ModelProvider>,
-    pub default_model: Option<String>,
-    pub timeout_ms: u64,
+    pub router: Arc<LlmRouter>,
+    pub tenant: String,
+    /// 触发用户（计费归因/日限额）；cron/system = None。
+    pub caller: Option<crate::types::snowflake_id::SnowflakeId>,
 }
 
 impl LlmRuntime {
-    /// Production runtime from the shared `[ai]` singleton.
+    /// Production runtime from the process-wide router handle.
     ///
     /// # Errors
-    /// `BadRequest` when AI is disabled/unconfigured — an authoring-visible
+    /// `BadRequest` when the llm 底座 is not registered — an authoring-visible
     /// 400 that also short-circuits the engine retry loop.
-    pub fn shared() -> AppResult<Self> {
-        let shared = crate::agent::service::shared_llm().ok_or_else(|| {
-            AppError::BadRequest("llm 节点需要 [ai] 配置（未启用或未配置）".into())
+    pub fn shared(tenant: &str) -> AppResult<Self> {
+        let router = crate::agent::service::router_handle().ok_or_else(|| {
+            AppError::BadRequest("llm 节点需要 llm 底座（未配置渠道/默认模型）".into())
         })?;
         Ok(Self {
-            provider: shared.provider.clone(),
-            default_model: shared.default_model.clone(),
-            timeout_ms: shared.timeout_ms,
+            router,
+            tenant: tenant.to_owned(),
+            caller: None,
         })
     }
 }
 
-/// Map provider errors for the engine: 4xx non-429 (bad key/model) and config
-/// errors are authoring problems → `BadRequest` (fail fast, no retry burn);
-/// 429/5xx/transport/parse are transient → `Internal` (retryable).
-fn map_provider_error(e: ProviderError) -> AppError {
-    match &e {
-        ProviderError::Config(msg) => AppError::BadRequest(format!("llm provider config: {msg}")),
-        ProviderError::Http { status, .. } if *status >= 400 && *status < 500 && *status != 429 => {
-            AppError::BadRequest(format!("llm provider http {status}: {e}"))
-        }
-        _ => AppError::Internal(anyhow::anyhow!("llm provider: {e}")),
-    }
+/// facade/内核已把错误分类为 AppError（4xx 确定性失败 fail-fast，
+/// 429/5xx/transport → Internal 可重试）——引擎重试语义由内核承接。
+fn map_facade_error(e: AppError) -> AppError {
+    e
 }
 
 fn render_prompt_text(text: &str, pool: &Pool) -> AppResult<String> {
@@ -121,21 +118,14 @@ pub async fn run_llm(
 ) -> AppResult<ExecOutcome> {
     let cfg: LlmConfig = serde_json::from_value(node.data.config.clone())
         .map_err(|e| AppError::BadRequest(format!("llm config: {e}")))?;
-    let model = cfg
-        .model
-        .clone()
-        .or_else(|| runtime.default_model.clone().filter(|m| !m.is_empty()));
-    let Some(model) = model else {
-        return Err(AppError::BadRequest(
-            "llm: 未指定 model 且 [ai].model 未配置".into(),
-        ));
-    };
+    // 模型解析链在内核：显式指定 → 租户默认（llm.default_chat_model）→ 400。
+    let model = cfg.model.clone();
+    let call = runtime
+        .router
+        .call(&runtime.tenant, crate::llm::models::log::LogSource::Flow);
 
     let messages = to_chat_messages(&cfg, pool)?;
-    let timeout_ms = cfg
-        .timeout_ms
-        .filter(|t| *t > 0)
-        .map_or(runtime.timeout_ms, |t| t as u64);
+    let timeout_ms = cfg.timeout_ms.filter(|t| *t > 0).unwrap_or(60_000) as u64;
     let started = Instant::now();
 
     let mut call_messages = messages.clone();
@@ -156,11 +146,11 @@ pub async fn run_llm(
         };
         let response = tokio::time::timeout(
             std::time::Duration::from_millis(timeout_ms),
-            runtime.provider.chat(&request, &model),
+            call.clone().chat(model.as_deref(), &request),
         )
         .await
         .map_err(|_| AppError::Internal(anyhow::anyhow!("llm 超时 {timeout_ms}ms")))?
-        .map_err(map_provider_error)?;
+        .map_err(map_facade_error)?;
         if let Some(u) = response.usage {
             final_usage = Some(u);
         }
@@ -217,10 +207,116 @@ pub async fn run_llm(
 mod tests {
     use super::*;
     use crate::flows::graph::NodeData;
+    use crate::types::snowflake_id::SnowflakeId;
     use async_trait::async_trait;
     use raisfast_agent::TokenUsage;
-    use raisfast_agent::provider::ChatResponse;
+    use raisfast_agent::provider::{ChatResponse, ModelProvider, ProviderError};
     use std::sync::Mutex;
+
+    async fn seed_option(pool: &crate::db::Pool, key: &str, value: serde_json::Value) {
+        use crate::db::Driver;
+        use crate::db::driver::DbDriver;
+        let ph = |i: usize| Driver::ph(i);
+        let sql = format!(
+            "INSERT INTO options (id, option_key, value, type, group_name, label, autoload, sort_order, updated_at) \
+             VALUES ({}, {}, {}, 'text', 'llm', 'llm', 1, 0, {})",
+            ph(1),
+            ph(2),
+            ph(3),
+            ph(4)
+        );
+        sqlx::query(crate::db::safe_sql(&sql))
+            .bind(crate::utils::id::new_id())
+            .bind(key)
+            .bind(value.to_string())
+            .bind(crate::utils::tz::now_utc())
+            .execute(pool)
+            .await
+            .unwrap();
+    }
+
+    /// Mock 渠道行（chat 类型，$1/$1，polling 单 key）。
+    fn mock_channel(id: i64, models: &[&str]) -> crate::llm::models::channel::LlmChannel {
+        crate::llm::models::channel::LlmChannel {
+            id: SnowflakeId(id),
+            tenant_id: Some("default".to_owned()),
+            name: "mock".to_owned(),
+            provider: "openai".to_owned(),
+            base_url: "http://mock.test/v1".to_owned(),
+            api_keys: serde_json::to_value(vec![crate::llm::models::channel::LlmKeyEntry {
+                key: "plain".to_owned(),
+                status: crate::llm::models::channel::LlmKeyStatus::Active,
+                disabled_reason: None,
+                disabled_at: None,
+                max_concurrency: None,
+            }])
+            .unwrap(),
+            key_mode: crate::llm::models::channel::LlmKeyMode::Polling,
+            status: crate::llm::models::channel::LlmChannelStatus::Enabled,
+            models: models.join(","),
+            model_mapping: None,
+            priority: 0,
+            weight: 0,
+            channel_groups: "default".to_owned(),
+            auto_ban: true,
+            param_override: None,
+            header_override: None,
+            config: None,
+            used_quota: 0,
+            cost_mode: crate::llm::models::channel::LlmCostMode::Usage,
+            cost_discount: 1.0,
+            monthly_cost: None,
+            test_model: None,
+            test_time: None,
+            response_time: None,
+            created_at: crate::utils::tz::now_utc(),
+            updated_at: crate::utils::tz::now_utc(),
+        }
+    }
+
+    /// Mock 渠道 cache：单渠道服务 `models` 列表（chat 类型，$1/$1）。
+    fn cache_for(models: &[&str]) -> crate::llm::cache::ChannelCache {
+        let row = mock_channel(1, models);
+        let mut cache = crate::llm::cache::ChannelCache::default();
+        let cached = crate::llm::cache::ChannelCache::from_row(&row);
+        cache
+            .channels
+            .insert(cached.id, std::sync::Arc::new(cached));
+        for m in models {
+            cache.models.insert(
+                ("default".to_owned(), (*m).to_owned()),
+                std::sync::Arc::new(crate::llm::cache::ModelInfo {
+                    name: (*m).to_owned(),
+                    model_type: crate::llm::models::model::LlmModelType::Chat,
+                    pricing: crate::llm::cache::Pricing {
+                        price_mode: crate::llm::models::model::LlmPriceMode::Token,
+                        input_price: 1.0,
+                        output_price: 1.0,
+                        cache_read_price: None,
+                        cache_write_price: None,
+                        call_price: None,
+                    },
+                    params: None,
+                }),
+            );
+        }
+        cache.rebuild_routes();
+        cache
+    }
+
+    /// Mock router：provider 注入到 (ch1, key0)。
+    fn rt(provider: Arc<MockProvider>, models: &[&str]) -> LlmRuntime {
+        let router = LlmRouter::from_cache_for_test(cache_for(models));
+        router.providers.insert(
+            (SnowflakeId(1), 0),
+            provider as std::sync::Arc<dyn ModelProvider>,
+        );
+        LlmRuntime {
+            router,
+            tenant: "default".to_owned(),
+            caller: None,
+        }
+    }
 
     /// Scripted mock: pops queued responses, records every ChatRequest.
     struct MockProvider {
@@ -268,14 +364,6 @@ mod tests {
                 .unwrap()
                 .pop_front()
                 .unwrap_or_else(|| Ok(ChatResponse::text_only("ok")))
-        }
-    }
-
-    fn runtime(provider: Arc<MockProvider>) -> LlmRuntime {
-        LlmRuntime {
-            provider,
-            default_model: Some("default-model".into()),
-            timeout_ms: 5000,
         }
     }
 
@@ -328,7 +416,9 @@ mod tests {
             "messages": [{"role": "user", "text": "Q: {{#start.q#}}"}]
         }));
         let pool = pool_with(&[("start", "q", json!("1+1"))]);
-        let out = run_llm(&runtime(mock.clone()), &node, &pool).await.unwrap();
+        let out = run_llm(&rt(mock.clone(), &["m1"]), &node, &pool)
+            .await
+            .unwrap();
         assert_eq!(out.output["text"], "答案是42");
         assert_eq!(out.output["usage"]["total_tokens"], 962);
         assert_eq!(out.usage.as_ref().unwrap()["prompt_tokens"], 812);
@@ -337,28 +427,45 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn params_passthrough_and_default_model() {
+    async fn params_passthrough_and_default_model() -> AppResult<()> {
+        // 默认模型解析链在内核（§10.2）：租户 options llm.default_chat_model。
+        let pool = crate::test_pool!();
+        seed_option(
+            &pool,
+            "llm.default_chat_model",
+            serde_json::json!("default-model"),
+        )
+        .await;
         let mock = Arc::new(MockProvider::new(vec![resp_with_usage("ok")]));
+        let router = LlmRouter::from_cache_for_test_with_pool(cache_for(&["default-model"]), pool);
+        router.providers.insert(
+            (SnowflakeId(1), 0),
+            mock.clone() as std::sync::Arc<dyn ModelProvider>,
+        );
+        let rt = LlmRuntime {
+            router,
+            tenant: "default".to_owned(),
+            caller: None,
+        };
         let node = llm_node(json!({
             "messages": [{"role": "user", "text": "hi"}],
             "temperature": 0.2, "max_tokens": 99, "stop": ["\n"]
         }));
-        run_llm(&runtime(mock.clone()), &node, &Pool::new())
-            .await
-            .unwrap();
+        run_llm(&rt, &node, &Pool::new()).await?;
         let seen = &mock.seen.lock().unwrap()[0];
         assert_eq!(seen.model, "default-model");
         assert_eq!(seen.max_tokens, Some(99));
         assert_eq!(seen.stop.as_deref(), Some(&["\n".to_string()][..]));
+        Ok(())
     }
 
     #[tokio::test]
     async fn missing_template_ref_is_bad_request() {
         let mock = Arc::new(MockProvider::new(vec![resp_with_usage("x")]));
         let node = llm_node(json!({
-            "messages": [{"role": "user", "text": "{{#start.nope#}}"}]
+            "model": "m1", "messages": [{"role": "user", "text": "{{#start.nope#}}"}]
         }));
-        let err = run_llm(&runtime(mock), &node, &Pool::new())
+        let err = run_llm(&rt(mock, &["m1"]), &node, &Pool::new())
             .await
             .unwrap_err();
         assert!(matches!(err, AppError::BadRequest(_)), "{err}");
@@ -371,26 +478,48 @@ mod tests {
             body: "bad key".into(),
         })]));
         let node = llm_node(json!({
-            "messages": [{"role": "user", "text": "hi"}]
+            "model": "m1", "messages": [{"role": "user", "text": "hi"}]
         }));
-        let err = run_llm(&runtime(mock), &node, &Pool::new())
+        let err = run_llm(&rt(mock, &["m1"]), &node, &Pool::new())
             .await
             .unwrap_err();
         assert!(matches!(err, AppError::BadRequest(_)), "{err}");
     }
 
     #[tokio::test]
-    async fn transport_error_maps_to_internal_retryable() {
-        let mock = Arc::new(MockProvider::new(vec![Err(ProviderError::Transport(
+    async fn transport_error_fails_over_to_second_channel() {
+        // 重试已收敛到内核（§10.1）：ch1 传输失败 → 自动换 ch2 成功。
+        let p1 = Arc::new(MockProvider::new(vec![Err(ProviderError::Transport(
             "conn reset".into(),
         ))]));
+        let p2 = Arc::new(MockProvider::new(vec![resp_with_usage("ok")]));
+        let mut cache = cache_for(&["m1"]);
+        let row2 = mock_channel(2, &["m1"]);
+        let cached2 = crate::llm::cache::ChannelCache::from_row(&row2);
+        cache
+            .channels
+            .insert(cached2.id, std::sync::Arc::new(cached2));
+        cache.rebuild_routes();
+        let router = LlmRouter::from_cache_for_test(cache);
+        router
+            .providers
+            .insert((SnowflakeId(1), 0), p1 as std::sync::Arc<dyn ModelProvider>);
+        router.providers.insert(
+            (SnowflakeId(2), 0),
+            p2.clone() as std::sync::Arc<dyn ModelProvider>,
+        );
+        let rt = LlmRuntime {
+            router,
+            tenant: "default".to_owned(),
+            caller: None,
+        };
         let node = llm_node(json!({
+            "model": "m1",
             "messages": [{"role": "user", "text": "hi"}]
         }));
-        let err = run_llm(&runtime(mock), &node, &Pool::new())
-            .await
-            .unwrap_err();
-        assert!(matches!(err, AppError::Internal(_)), "{err}");
+        let out = run_llm(&rt, &node, &Pool::new()).await.unwrap();
+        assert_eq!(out.output["text"], "ok");
+        assert_eq!(p2.seen.lock().unwrap()[0].model, "m1");
     }
 
     #[tokio::test]
@@ -399,10 +528,10 @@ mod tests {
             "```json\n{\"score\": 9}\n```",
         )]));
         let node = llm_node(json!({
-            "messages": [{"role": "user", "text": "质检"}],
+            "model": "m1", "messages": [{"role": "user", "text": "质检"}],
             "json_schema": {"type":"object","properties":{"score":{"type":"number"}},"required":["score"]}
         }));
-        let out = run_llm(&runtime(mock.clone()), &node, &Pool::new())
+        let out = run_llm(&rt(mock.clone(), &["m1"]), &node, &Pool::new())
             .await
             .unwrap();
         assert_eq!(out.output["structured"]["score"], 9);
@@ -416,10 +545,10 @@ mod tests {
             resp_with_usage("{\"score\": 7}"),
         ]));
         let node = llm_node(json!({
-            "messages": [{"role": "user", "text": "质检"}],
+            "model": "m1", "messages": [{"role": "user", "text": "质检"}],
             "json_schema": {"type":"object","properties":{"score":{"type":"number"}},"required":["score"]}
         }));
-        let out = run_llm(&runtime(mock.clone()), &node, &Pool::new())
+        let out = run_llm(&rt(mock.clone(), &["m1"]), &node, &Pool::new())
             .await
             .unwrap();
         assert_eq!(out.output["structured"]["score"], 7);
@@ -438,10 +567,10 @@ mod tests {
             resp_with_usage("{\"still_nope\": 2}"),
         ]));
         let node = llm_node(json!({
-            "messages": [{"role": "user", "text": "质检"}],
+            "model": "m1", "messages": [{"role": "user", "text": "质检"}],
             "json_schema": {"type":"object","properties":{"score":{"type":"number"}},"required":["score"]}
         }));
-        let err = run_llm(&runtime(mock), &node, &Pool::new())
+        let err = run_llm(&rt(mock, &["m1"]), &node, &Pool::new())
             .await
             .unwrap_err();
         assert!(err.to_string().contains("校验失败"), "{err}");
