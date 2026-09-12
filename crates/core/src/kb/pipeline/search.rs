@@ -17,7 +17,12 @@ pub type RecallOutcome = RawHits;
 
 /// Recall from both paths in parallel for one KB. Query embedding uses the
 /// same embedder as ingestion (dimension consistency by construction).
-pub async fn recall(deps: &KbDeps, kb_id: i64, query: &UnderstoodQuery) -> AppResult<RawHits> {
+pub async fn recall(
+    deps: &KbDeps,
+    tenant: &str,
+    kb_id: i64,
+    query: &UnderstoodQuery,
+) -> AppResult<RawHits> {
     let top_k = deps.config.kb.top_k as usize;
 
     let bm25_future = {
@@ -30,9 +35,7 @@ pub async fn recall(deps: &KbDeps, kb_id: i64, query: &UnderstoodQuery) -> AppRe
         // index; best-effort rebuild from SQL before the dense search).
         crate::kb::vectors::warmup::ensure_warm(&deps.pool, &deps.vector, kb_id).await;
         let texts = [query.text.as_str()];
-        // KB 搜索路径无租户上下文（chunk 行无 tenant）——与既有
-        // `RunRecorder` 约定一致用 default 路由。
-        let vectors = deps.embedder.embed("default", &texts).await?;
+        let vectors = deps.embedder.embed(tenant, &texts).await?;
         let Some(embedding) = vectors.first() else {
             return Ok(Vec::new());
         };

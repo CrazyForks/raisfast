@@ -198,6 +198,40 @@ impl KbEmbedder for ProviderEmbedder {
     }
 }
 
+/// KB 单次 chat（S1 理解 / S9 生成 / 蒸馏）：底座 facade 优先（路由/
+/// failover/计费/日志），模型未注册或 router 未装配时回退 `[ai]` env
+/// provider（§10.2 迁移过渡）。无可用 provider → ServiceUnavailable。
+pub async fn kb_chat(
+    deps: &KbDeps,
+    tenant: &str,
+    request: &raisfast_agent::provider::ChatRequest<'_>,
+) -> AppResult<String> {
+    let model = deps.config.ai.model.clone().unwrap_or_default();
+    if let Some(router) = crate::agent::service::router_handle() {
+        let effective = (!model.is_empty()).then_some(model.as_str());
+        let routable = match effective {
+            None => true,
+            Some(m) => router.model_info(tenant, m).is_some(),
+        };
+        if routable {
+            let resp = router
+                .call(tenant, crate::llm::models::log::LogSource::Kb)
+                .chat(effective, request)
+                .await?;
+            return Ok(resp.text.unwrap_or_default());
+        }
+    }
+    let provider = deps
+        .provider
+        .as_deref()
+        .ok_or_else(|| AppError::ServiceUnavailable("kb chat provider unavailable".into()))?;
+    let resp = provider
+        .chat(request, &model)
+        .await
+        .map_err(|e| AppError::ServiceUnavailable(format!("kb chat: {e}")))?;
+    Ok(resp.text.unwrap_or_default())
+}
+
 /// Wired dependencies for service functions (built once at startup).
 pub struct KbDeps {
     pub pool: crate::db::Pool,

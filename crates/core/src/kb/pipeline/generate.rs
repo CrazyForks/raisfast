@@ -3,7 +3,7 @@
 //! + fallback.yaml 语义].
 
 use raisfast_agent::messages::{ChatMessage, ChatRole};
-use raisfast_agent::{ChatRequest, ModelProvider, StreamEvent};
+use raisfast_agent::{ChatRequest, StreamEvent};
 
 use crate::errors::app_error::{AppError, AppResult};
 use crate::kb::pipeline::ContextUnit;
@@ -57,34 +57,65 @@ fn chat_request<'a>(messages: &'a [ChatMessage]) -> ChatRequest<'a> {
     }
 }
 
-/// S9 non-streaming generation.
+/// S9 non-streaming generation（底座 facade 优先，§10.2）。
 pub async fn generate_answer(
     deps: &KbDeps,
-    provider: &dyn ModelProvider,
+    tenant: &str,
     prompt_units: &[ContextUnit],
     question: &str,
 ) -> AppResult<String> {
-    let model = deps.config.ai.model.as_deref().unwrap_or_default();
     let messages = messages_for(prompt_units, question);
     let request = chat_request(&messages);
-    let response = provider
-        .chat(&request, model)
+    crate::kb::service::kb_chat(deps, tenant, &request)
         .await
-        .map_err(|e| AppError::ServiceUnavailable(format!("kb generate: {e}")))?;
-    Ok(response.text.unwrap_or_default())
+        .map_err(|e| AppError::ServiceUnavailable(format!("kb generate: {e}")))
 }
 
-/// S9 streaming generation: forward text deltas to `on_delta`.
+/// S9 streaming generation: forward text deltas to `on_delta`
+/// （底座 facade 优先，未装配/未注册时回退 env provider）。
 pub async fn generate_answer_streaming(
     deps: &KbDeps,
-    provider: &dyn ModelProvider,
+    tenant: &str,
     prompt_units: &[ContextUnit],
     question: &str,
     on_delta: &mut (dyn FnMut(&str) + Send),
 ) -> AppResult<String> {
-    let model = deps.config.ai.model.as_deref().unwrap_or_default();
+    let model = deps.config.ai.model.clone().unwrap_or_default();
     let messages = messages_for(prompt_units, question);
     let request = chat_request(&messages);
+
+    if let Some(router) = crate::agent::service::router_handle() {
+        let effective = (!model.is_empty()).then_some(model.as_str());
+        let routable = match effective {
+            None => true,
+            Some(m) => router.model_info(tenant, m).is_some(),
+        };
+        if routable {
+            let full = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
+            let sink = full.clone();
+            let deltas = std::sync::Mutex::new(on_delta);
+            router
+                .call(tenant, crate::llm::models::log::LogSource::Kb)
+                .chat_stream(effective, &request, &mut |ev: StreamEvent| {
+                    if let StreamEvent::TextDelta { delta } = ev {
+                        if let Ok(mut f) = sink.lock() {
+                            f.push_str(&delta);
+                        }
+                        if let Ok(mut cb) = deltas.lock() {
+                            cb(&delta);
+                        }
+                    }
+                })
+                .await
+                .map_err(|e| AppError::ServiceUnavailable(format!("kb generate: {e}")))?;
+            return Ok(full.lock().map(|f| f.clone()).unwrap_or_default());
+        }
+    }
+
+    let provider = deps
+        .provider
+        .as_deref()
+        .ok_or_else(|| AppError::ServiceUnavailable("kb chat provider unavailable".into()))?;
     let mut full = String::new();
     let mut on_event = |ev: StreamEvent| {
         if let StreamEvent::TextDelta { delta } = ev {
@@ -93,7 +124,7 @@ pub async fn generate_answer_streaming(
         }
     };
     provider
-        .chat_stream(&request, model, &mut on_event)
+        .chat_stream(&request, &model, &mut on_event)
         .await
         .map_err(|e| AppError::ServiceUnavailable(format!("kb generate: {e}")))?;
     Ok(full)

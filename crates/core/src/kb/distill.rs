@@ -47,12 +47,7 @@ struct Topic {
     description: String,
 }
 
-async fn chat_json(deps: &KbDeps, system: &str, user: &str) -> AppResult<String> {
-    let provider = deps
-        .provider
-        .as_deref()
-        .ok_or_else(|| AppError::ServiceUnavailable("kb chat provider unavailable".into()))?;
-    let model = deps.config.ai.model.as_deref().unwrap_or_default();
+async fn chat_json(deps: &KbDeps, tenant: &str, system: &str, user: &str) -> AppResult<String> {
     let messages = vec![
         ChatMessage {
             role: ChatRole::System,
@@ -74,11 +69,9 @@ async fn chat_json(deps: &KbDeps, system: &str, user: &str) -> AppResult<String>
         max_tokens: None,
         stop: None,
     };
-    let response = provider
-        .chat(&request, model)
+    crate::kb::service::kb_chat(deps, tenant, &request)
         .await
-        .map_err(|e| AppError::ServiceUnavailable(format!("distill chat: {e}")))?;
-    Ok(response.text.unwrap_or_default())
+        .map_err(|e| AppError::ServiceUnavailable(format!("distill chat: {e}")))
 }
 
 /// Extract JSON from an LLM reply (tolerates fences / prose wrappers).
@@ -127,7 +120,7 @@ pub async fn distill_documents(
             "<previous_slugs>\n{}\n</previous_slugs>\n\n<document>\n{corpus}\n</document>",
             previous_slugs.join("\n")
         );
-        let reply = chat_json(deps, EXTRACT_PROMPT, &user).await?;
+        let reply = chat_json(deps, tenant_id, EXTRACT_PROMPT, &user).await?;
         let parsed: Option<serde_json::Value> = parse_json_object(&reply);
         if let Some(v) = parsed
             && let Some(arr) = v.get("topics").and_then(|t| t.as_array())
@@ -193,7 +186,7 @@ pub async fn distill_documents(
             "<available_wiki_pages>\n{available}\n</available_wiki_pages>\n\n<material>\n{material}\n</material>\n\n主题：{}（{}）",
             topic.name, topic.description
         );
-        let content = chat_json(deps, DRAFT_PROMPT, &user)
+        let content = chat_json(deps, tenant_id, DRAFT_PROMPT, &user)
             .await?
             .trim()
             .to_string();

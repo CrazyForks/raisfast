@@ -53,6 +53,7 @@ mod tests {
     #[test]
     fn faq_pinned_first() {
         let outcome = AskOutcome {
+            tenant_id: "default".to_owned(),
             status: "answered",
             question: "q".into(),
             answer: String::new(),
@@ -71,6 +72,7 @@ mod tests {
     #[test]
     fn budget_truncates() {
         let outcome = AskOutcome {
+            tenant_id: "default".to_owned(),
             status: "answered",
             question: "q".into(),
             answer: String::new(),

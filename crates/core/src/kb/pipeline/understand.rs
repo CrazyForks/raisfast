@@ -36,14 +36,7 @@ const PROMPT: &str = "你是搜索查询优化器。将用户问题改写为更�
 并抽取 2-5 个关键词。只输出 JSON：{\"query\": \"...\", \"keywords\": [\"...\"]}。\
 若问题已经足够清晰，query 原样返回。";
 
-pub async fn run(deps: &KbDeps, question: &str) -> UnderstoodQuery {
-    let Some(provider) = deps.provider.as_ref() else {
-        return UnderstoodQuery::raw(question);
-    };
-    let model = deps.config.ai.model.as_deref().unwrap_or_default();
-    if model.is_empty() {
-        return UnderstoodQuery::raw(question);
-    }
+pub async fn run(deps: &KbDeps, tenant: &str, question: &str) -> UnderstoodQuery {
     let request = ChatRequest {
         messages: &[
             ChatMessage {
@@ -64,12 +57,12 @@ pub async fn run(deps: &KbDeps, question: &str) -> UnderstoodQuery {
         max_tokens: Some(200),
         stop: None,
     };
-    let Ok(response) = provider.chat(&request, model).await else {
+    let Ok(text) = crate::kb::service::kb_chat(deps, tenant, &request).await else {
         return UnderstoodQuery::raw(question);
     };
-    let Some(text) = response.text else {
+    if text.trim().is_empty() {
         return UnderstoodQuery::raw(question);
-    };
+    }
     parse(&text).unwrap_or_else(|| UnderstoodQuery::raw(question))
 }
 

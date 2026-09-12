@@ -78,6 +78,8 @@ pub struct AskRequest {
 #[derive(Debug)]
 pub struct AskOutcome {
     pub status: &'static str,
+    /// 租户（S1/S9 走底座 facade 的路由/计费维度，§10.2）。
+    pub tenant_id: String,
     /// The (possibly rewritten) question — carried for S9 and query logging.
     pub question: String,
     pub answer: String,
@@ -123,7 +125,7 @@ pub async fn prepare_answer(deps: &KbDeps, req: &AskRequest) -> AppResult<AskOut
 
     // S1 understand (LLM rewrite + keywords; degrades to raw question).
     trace.stage("s1_understand");
-    let understood = understand::run(deps, &req.question).await;
+    let understood = understand::run(deps, &req.tenant_id, &req.question).await;
     trace.end_stage(
         if understood.degraded {
             crate::kb::trace::STAGE_DEGRADED
@@ -142,7 +144,15 @@ pub async fn prepare_answer(deps: &KbDeps, req: &AskRequest) -> AppResult<AskOut
     // S2–S7 recall → fuse → hydrate → boost → merge. On failure the run
     // row is finished `failed` before the error escapes (the outcome —
     // and its recorder — would otherwise be dropped unread).
-    let merged = recall_and_merge(deps, &kbs, &req.doc_ids, &understood, &mut trace).await;
+    let merged = recall_and_merge(
+        deps,
+        &req.tenant_id,
+        &kbs,
+        &req.doc_ids,
+        &understood,
+        &mut trace,
+    )
+    .await;
     let (top_score, units) = match merged {
         Ok(v) => v,
         Err(e) => {
@@ -160,6 +170,7 @@ pub async fn prepare_answer(deps: &KbDeps, req: &AskRequest) -> AppResult<AskOut
 
     Ok(AskOutcome {
         status: "answered",
+        tenant_id: req.tenant_id.clone(),
         question: understood.text,
         answer: String::new(),
         references: Vec::new(),
@@ -186,7 +197,7 @@ pub async fn search_units(
     }
     let kbs = resolve_kbs(deps, kb_ids, tenant_id).await?;
     let understood = understand::UnderstoodQuery::raw(query);
-    match recall_and_merge(deps, &kbs, &[], &understood, trace).await {
+    match recall_and_merge(deps, tenant_id, &kbs, &[], &understood, trace).await {
         Ok(v) => Ok(v),
         Err(e) => {
             trace.fail_stage(&e.to_string());
@@ -221,6 +232,7 @@ fn chunk_title(chunk: &KbChunk) -> String {
 /// summaries are side-recorded into `trace` (DR6 orchestration-level).
 async fn recall_and_merge(
     deps: &KbDeps,
+    tenant: &str,
     kbs: &[i64],
     doc_ids: &[i64],
     understood: &understand::UnderstoodQuery,
@@ -235,7 +247,7 @@ async fn recall_and_merge(
     let mut raw_per_kb: Vec<RawRecall> = Vec::new();
     trace.stage("s2_recall");
     for kb_id in kbs {
-        let mut recalled = search::recall(deps, *kb_id, understood).await?;
+        let mut recalled = search::recall(deps, tenant, *kb_id, understood).await?;
         raw_per_kb.push((
             *kb_id,
             recalled.bm25.iter().take(STAGE_LIST_TOP).cloned().collect(),
@@ -474,10 +486,10 @@ pub async fn finish_answer(deps: &KbDeps, outcome: &mut AskOutcome) -> AppResult
     );
     // S9 generate.
     outcome.trace.stage("s9_generate");
-    let provider = deps.provider.as_deref().ok_or_else(|| {
-        AppError::ServiceUnavailable("kb chat provider unavailable (RAISFAST_AI_*)".into())
-    })?;
-    match generate::generate_answer(deps, provider, &prompt_units, &outcome.question).await {
+
+    match generate::generate_answer(deps, &outcome.tenant_id, &prompt_units, &outcome.question)
+        .await
+    {
         Ok(answer) => {
             outcome.trace.end_stage(
                 crate::kb::trace::STAGE_OK,
@@ -538,12 +550,10 @@ pub async fn finish_answer_streaming(
         None,
     );
     outcome.trace.stage("s9_generate");
-    let provider = deps.provider.as_deref().ok_or_else(|| {
-        AppError::ServiceUnavailable("kb chat provider unavailable (RAISFAST_AI_*)".into())
-    })?;
+
     match generate::generate_answer_streaming(
         deps,
-        provider,
+        &outcome.tenant_id,
         &prompt_units,
         &outcome.question,
         on_delta,
