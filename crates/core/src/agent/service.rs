@@ -9,7 +9,6 @@
 use std::collections::{BTreeMap, HashSet};
 use std::sync::{Arc, Mutex, OnceLock};
 
-use raisfast_agent::provider::openai::OpenAiCompatProvider;
 use raisfast_agent::{
     CancellationToken, ChatMessage, ChatResponse, ChatRole, ModelProvider, TokenUsage, ToolCall,
     ToolRegistry, TurnConfig, TurnEngine, TurnError, TurnEvent, TurnOutcome, register_memory_tools,
@@ -72,74 +71,20 @@ pub struct AgentTurnResult {
     pub messages_appended: usize,
 }
 
-/// Build the platform LLM provider from the `[ai]` config section — shared by
-/// agent turns and the flows `llm` node (OpenAI-compatible endpoint).
-pub fn provider_from_config(ai: &AiConfig) -> AppResult<Arc<dyn ModelProvider>> {
-    let base = ai
-        .base_url
-        .clone()
-        .unwrap_or_else(|| "https://api.openai.com/v1".to_string());
-    Ok(Arc::new(OpenAiCompatProvider::new(
-        base,
-        ai.api_key.clone(),
-    )))
-}
-
-/// Process-wide LLM router handle for executors constructed before/outside
-/// AppState (the flows `llm` node) — set once at startup. This replaces the
-/// retired `[ai]`-env singleton: the ONLY model entry is the llm 底座
-/// (design §10.2).
-static ROUTER_HANDLE: std::sync::OnceLock<Option<Arc<crate::llm::service::LlmRouter>>> =
-    std::sync::OnceLock::new();
-
-/// Install the router handle (called once from `build_app_state`).
-pub fn set_router_handle(router: Arc<crate::llm::service::LlmRouter>) {
-    let _ = ROUTER_HANDLE.set(Some(router));
-}
-
-/// Access the router handle, if initialized.
-#[must_use]
-pub fn router_handle() -> Option<Arc<crate::llm::service::LlmRouter>> {
-    ROUTER_HANDLE.get().and_then(Clone::clone)
-}
-
-/// 内部单次 chat：底座 facade 优先（router handle + 计费/限额/日志），
-/// 未注册时回退 `[ai]` env 直连（测试/迁移过渡）。
+/// 内部单次 chat —— 唯一入口是 llm 底座（design §10.2）。
 async fn agent_chat(
-    ai: &AiConfig,
-    agent: &AiAgent,
+    router: &Arc<crate::llm::service::LlmRouter>,
     tenant: Option<&str>,
+    model: Option<&str>,
     user: Option<SnowflakeId>,
     request: &raisfast_agent::provider::ChatRequest<'_>,
 ) -> AppResult<ChatResponse> {
-    if let Some(router) = router_handle()
-        && router
-            .model_info(tenant.unwrap_or("default"), &agent.model)
-            .is_some()
-    {
-        let tenant = tenant.unwrap_or("default");
-        let mut call = router.call(tenant, crate::llm::models::log::LogSource::Agent);
-        if let Some(u) = user {
-            call = call.as_user(u);
-        }
-        return call.chat(Some(&agent.model), request).await;
+    let tenant = tenant.unwrap_or("default");
+    let mut call = router.call(tenant, crate::llm::models::log::LogSource::Agent);
+    if let Some(u) = user {
+        call = call.as_user(u);
     }
-    let provider = provider_for(agent, ai)?;
-    provider
-        .chat(request, &agent.model)
-        .await
-        .map_err(|e| AppError::Internal(anyhow::anyhow!("agent chat failed: {e}")))
-}
-
-/// Create the model provider for an agent from the `[ai]` config section.
-fn provider_for(agent: &AiAgent, ai: &AiConfig) -> AppResult<Arc<dyn ModelProvider>> {
-    if agent.provider == "ollama" && ai.base_url.is_none() {
-        return Ok(Arc::new(OpenAiCompatProvider::new(
-            "http://localhost:11434/v1".to_string(),
-            ai.api_key.clone(),
-        )));
-    }
-    provider_from_config(ai)
+    call.chat(model, request).await
 }
 
 /// Model context window (tokens), zeroclaw config semantics: per-model map
@@ -367,6 +312,7 @@ async fn persist_delta(
 pub async fn run_turn(
     pool: &crate::db::Pool,
     ai: &AiConfig,
+    router: &Arc<crate::llm::service::LlmRouter>,
     agent: &AiAgent,
     session_id: SnowflakeId,
     user: &str,
@@ -384,7 +330,7 @@ pub async fn run_turn(
 
     ai_session::set_session_status(pool, session_id, tenant_id, "running").await?;
     let executed = run_turn_inner(
-        pool, ai, agent, session_id, tenant_id, user, None, None, None,
+        pool, ai, router, agent, session_id, tenant_id, user, None, None, None,
     )
     .await;
     // Always release the busy flag before propagating errors.
@@ -408,6 +354,7 @@ pub async fn run_turn(
 pub async fn run_turn_streamed(
     pool: &crate::db::Pool,
     ai: &AiConfig,
+    router: &Arc<crate::llm::service::LlmRouter>,
     agent: &AiAgent,
     session_id: SnowflakeId,
     user: &str,
@@ -434,6 +381,7 @@ pub async fn run_turn_streamed(
     let executed = run_turn_inner(
         pool,
         ai,
+        router,
         agent,
         session_id,
         tenant_id,
@@ -465,6 +413,7 @@ pub async fn run_turn_streamed(
 async fn run_turn_inner(
     pool: &crate::db::Pool,
     ai: &AiConfig,
+    router: &Arc<crate::llm::service::LlmRouter>,
     agent: &AiAgent,
     session_id: SnowflakeId,
     tenant_id: Option<&str>,
@@ -603,7 +552,10 @@ async fn run_turn_inner(
     let prior_cover = prev_ctx.as_ref().map_or(0, |p| p.cover_seq);
     let (cover_seq, ctx_summary, folded_now) = match ctx_params {
         Some((trigger, tail)) if trigger > 0 => {
-            ensure_ctx_window(ai, agent, &existing, prev_ctx, trigger, tail, false).await?
+            ensure_ctx_window(
+                router, agent, tenant_id, &existing, prev_ctx, trigger, tail, false,
+            )
+            .await?
         }
         _ => (0, None, false),
     };
@@ -630,7 +582,7 @@ async fn run_turn_inner(
         && ai.memory_consolidate
         && let Err(e) = consolidate_folded_range(
             pool,
-            ai,
+            router,
             agent,
             tenant_id,
             memory_user,
@@ -669,124 +621,107 @@ async fn run_turn_inner(
     }
     let old_len = history.len();
 
-    // ── 底座优先（§10.2）：整轮包进 execute，内核承担选择/日志/计费。
-    // 错误分类保守走 Local（不重试）——与迁移前“无重试”行为等价；
-    // 引擎内部已有上下文溢出恢复循环。router 未注册（测试/过渡）→ env 回退。
-    let assembled_c = assembled.clone();
-    let turn = if let Some(router) = router_handle()
-        && router
-            .model_info(tenant_id.unwrap_or("default"), &agent.model)
-            .is_some()
-    {
-        let tenant = tenant_id.unwrap_or("default");
-        let prompt_chars: usize = history
-            .iter()
-            .filter_map(|m| m.content.as_deref())
-            .map(str::chars)
-            .map(|c| c.count())
-            .sum::<usize>()
-            + assembled.text.chars().count();
-        let estimate = crate::llm::relay::adaptor::RelayUsage {
-            prompt_tokens: (prompt_chars / 4).max(1) as i64,
-            completion_tokens: 4096i64 * agent.max_iterations.clamp(1, 50) as i64,
-            cache_read_tokens: 0,
-            cache_write_tokens: 0,
-        };
-        let mut billing: Option<crate::llm::billing::InternalBilling> = None;
-        if let (Some(pool), Some(user)) = (router.pool.as_ref(), memory_user) {
-            let mode = crate::llm::billing::resolve_policy(pool, tenant).await?;
-            let currency = match &mode {
-                crate::llm::billing::BillingMode::Metered { currency } => currency.clone(),
-                crate::llm::billing::BillingMode::Free { .. } => String::new(),
-            };
-            let pricing = router
-                .model_info(tenant, &agent.model)
-                .expect("checked above")
-                .pricing
-                .clone();
-            let b =
-                crate::llm::billing::InternalBilling::new(user, currency, pricing, mode, estimate);
-            let day = crate::utils::tz::now_utc().format("%Y-%m-%d").to_string();
-            crate::llm::billing::preflight(pool, tenant, &day, &b).await?;
-            billing = Some(b);
-        }
-        let caller = memory_user.map(crate::llm::service::Caller::user);
-        let ctx = crate::llm::service::ResolveCtx {
+    // ── 整轮包进 execute（§10.1）：内核承担渠道路由/日志/计费；错误分类
+    // 保守走 Local（不重试）。模型访问唯一入口 = llm 底座（§10.2）。
+    let tenant = tenant_id.unwrap_or("default");
+    let model = router
+        .resolve_default(
             tenant,
-            group: None,
-            pin_channel: None,
-            caller,
-        };
-        // 闭包 FnMut 可变捕获：emitter 用 Option::take 逐次搬入 Future；
-        // 其余用 Clone 逐次搬入 —— Future 不借用闭包环境。
-        let history_opt = Some(history);
-        let tools_opt = Some(tools);
-        let memory_opt = Some(memory);
-        let mut emitter_opt = Some(emitter.take());
-        let user_ref = user;
-        router
-            .execute(
-                &ctx,
-                &agent.model,
-                crate::llm::models::log::LogSource::Agent,
-                billing,
-                |p, ep| {
-                    let history = history_opt.clone();
-                    let tools = tools_opt.clone();
-                    let memory = memory_opt.clone();
-                    let emitter = emitter_opt.take().flatten();
-                    let cancel = cancel.clone();
-                    let agent_ref = &*agent;
-                    let ai_ref = &*ai;
-                    let assembled_ref = &assembled_c;
-                    async move {
-                        let history = history.ok_or_else(|| {
-                            ExecError::Local(AppError::Internal(anyhow::anyhow!("turn re-entry")))
-                        })?;
-                        let tools = tools.ok_or_else(|| {
-                            ExecError::Local(AppError::Internal(anyhow::anyhow!("turn re-entry")))
-                        })?;
-                        let memory = memory.ok_or_else(|| {
-                            ExecError::Local(AppError::Internal(anyhow::anyhow!("turn re-entry")))
-                        })?;
-                        let (outcome, history) = drive_turn(
-                            p,
-                            ep.upstream_model.clone(),
-                            agent_ref,
-                            ai_ref,
-                            user_ref,
-                            history,
-                            assembled_ref,
-                            tools,
-                            memory,
-                            emitter,
-                            cancel,
-                        )
-                        .await
-                        .map_err(ExecError::Local)?;
-                        Ok((outcome, history))
-                    }
-                },
-            )
-            .await
-    } else {
-        let provider = provider_for(agent, ai)?;
-        drive_turn(
-            provider,
-            agent.model.clone(),
-            agent,
-            ai,
-            user,
-            history,
-            &assembled_c,
-            tools,
-            memory,
-            emitter,
-            cancel,
+            (!agent.model.is_empty()).then_some(agent.model.as_str()),
+            "llm.default_chat_model",
+            "chat",
         )
-        .await
+        .await?;
+    let assembled_c = assembled.clone();
+    let prompt_chars: usize = history
+        .iter()
+        .filter_map(|m| m.content.as_deref())
+        .map(str::chars)
+        .map(|c| c.count())
+        .sum::<usize>()
+        + assembled.text.chars().count();
+    let estimate = crate::llm::relay::adaptor::RelayUsage {
+        prompt_tokens: (prompt_chars / 4).max(1) as i64,
+        completion_tokens: 4096i64 * agent.max_iterations.clamp(1, 50) as i64,
+        cache_read_tokens: 0,
+        cache_write_tokens: 0,
     };
-    let (outcome, history) = turn?;
+    let mut billing: Option<crate::llm::billing::InternalBilling> = None;
+    if let (Some(pool), Some(user)) = (router.pool.as_ref(), memory_user) {
+        let mode = crate::llm::billing::resolve_policy(pool, tenant).await?;
+        let currency = match &mode {
+            crate::llm::billing::BillingMode::Metered { currency } => currency.clone(),
+            crate::llm::billing::BillingMode::Free { .. } => String::new(),
+        };
+        let pricing = router
+            .model_info(tenant, &model)
+            .ok_or_else(|| AppError::BadRequest(format!("unknown model: {model}")))?
+            .pricing
+            .clone();
+        let b = crate::llm::billing::InternalBilling::new(user, currency, pricing, mode, estimate);
+        let day = crate::utils::tz::now_utc().format("%Y-%m-%d").to_string();
+        crate::llm::billing::preflight(pool, tenant, &day, &b).await?;
+        billing = Some(b);
+    }
+    let caller = memory_user.map(crate::llm::service::Caller::user);
+    let ctx = crate::llm::service::ResolveCtx {
+        tenant,
+        group: None,
+        pin_channel: None,
+        caller,
+    };
+    // 闭包 FnMut 可变捕获：emitter 用 Option::take 逐次搬入 Future；
+    // 其余用 Clone 逐次搬入 —— Future 不借用闭包环境。
+    let history_opt = Some(history);
+    let tools_opt = Some(tools);
+    let memory_opt = Some(memory);
+    let mut emitter_opt = Some(emitter.take());
+    let user_ref = user;
+    let (outcome, history) = router
+        .execute(
+            &ctx,
+            &model,
+            crate::llm::models::log::LogSource::Agent,
+            billing,
+            |p, ep| {
+                let history = history_opt.clone();
+                let tools = tools_opt.clone();
+                let memory = memory_opt.clone();
+                let emitter = emitter_opt.take().flatten();
+                let cancel = cancel.clone();
+                let agent_ref = &*agent;
+                let ai_ref = &*ai;
+                let assembled_ref = &assembled_c;
+                async move {
+                    let history = history.ok_or_else(|| {
+                        ExecError::Local(AppError::Internal(anyhow::anyhow!("turn re-entry")))
+                    })?;
+                    let tools = tools.ok_or_else(|| {
+                        ExecError::Local(AppError::Internal(anyhow::anyhow!("turn re-entry")))
+                    })?;
+                    let memory = memory.ok_or_else(|| {
+                        ExecError::Local(AppError::Internal(anyhow::anyhow!("turn re-entry")))
+                    })?;
+                    let (outcome, history) = drive_turn(
+                        p,
+                        ep.upstream_model.clone(),
+                        agent_ref,
+                        ai_ref,
+                        user_ref,
+                        history,
+                        assembled_ref,
+                        tools,
+                        memory,
+                        emitter,
+                        cancel,
+                    )
+                    .await
+                    .map_err(ExecError::Local)?;
+                    Ok((outcome, history))
+                }
+            },
+        )
+        .await?;
 
     // Two-phase (2): persist assistant/tool rows appended by the engine.
     let appended_start = old_len + usize::from(had_system);
@@ -1319,7 +1254,7 @@ async fn drive_turn(
 /// to a warn and never fail the turn.
 async fn consolidate_folded_memory(
     pool: &crate::db::Pool,
-    ai: &AiConfig,
+    router: &Arc<crate::llm::service::LlmRouter>,
     agent: &AiAgent,
     tenant: Option<&str>,
     user: Option<SnowflakeId>,
@@ -1346,7 +1281,8 @@ async fn consolidate_folded_memory(
         max_tokens: None,
         stop: None,
     };
-    let response = agent_chat(ai, agent, None, None, &request)
+    let model = (!agent.model.is_empty()).then_some(agent.model.as_str());
+    let response = agent_chat(router, tenant, model, user, &request)
         .await
         .map_err(|e| AppError::Internal(anyhow::anyhow!("memory consolidate failed: {e}")))?;
     let Some(text) = response.text.filter(|t| !t.trim().is_empty()) else {
@@ -1432,7 +1368,7 @@ async fn consolidate_folded_memory(
 #[allow(clippy::too_many_arguments)]
 async fn consolidate_folded_range(
     pool: &crate::db::Pool,
-    ai: &AiConfig,
+    router: &Arc<crate::llm::service::LlmRouter>,
     agent: &AiAgent,
     tenant: Option<&str>,
     user: Option<SnowflakeId>,
@@ -1448,7 +1384,7 @@ async fn consolidate_folded_range(
         .collect();
     if !rows.is_empty() {
         let text = crate::agent::context::fold_text(&rows);
-        consolidate_folded_memory(pool, ai, agent, tenant, user, &text).await?;
+        consolidate_folded_memory(pool, router, agent, tenant, user, &text).await?;
     }
     Ok(())
 }
@@ -1469,6 +1405,7 @@ fn latest_ctx_row(rows: &[AiMessage]) -> Option<crate::agent::context::CtxState>
 pub async fn compact_session(
     pool: &crate::db::Pool,
     ai: &AiConfig,
+    router: &Arc<crate::llm::service::LlmRouter>,
     agent: &AiAgent,
     session_id: SnowflakeId,
     tenant: Option<&str>,
@@ -1492,7 +1429,7 @@ pub async fn compact_session(
         crate::agent::models::ai_session::find_session_by_id(pool, session_id, tenant).await?;
     let compact_user: Option<SnowflakeId> = Some(session_owner.user_id);
     let (cover, summary, folded_now) =
-        ensure_ctx_window(ai, agent, &existing, prev_ctx, 0, tail, true).await?;
+        ensure_ctx_window(router, agent, tenant, &existing, prev_ctx, 0, tail, true).await?;
     if folded_now && let Some(text) = summary.as_deref() {
         let marker_seq = ai_message::next_seq(pool, session_id, tenant).await?;
         let state = crate::agent::context::CtxState {
@@ -1511,7 +1448,7 @@ pub async fn compact_session(
         if ai.memory_consolidate
             && let Err(e) = consolidate_folded_range(
                 pool,
-                ai,
+                router,
                 agent,
                 tenant,
                 compact_user,
@@ -1534,7 +1471,12 @@ pub async fn compact_session(
 
 /// Summarize a folded transcript slice with one provider call (temperature 0).
 /// Fails turn-friendly: caller degrades to no-folding on any error.
-async fn summarize_transcript(ai: &AiConfig, agent: &AiAgent, combined: &str) -> AppResult<String> {
+async fn summarize_transcript(
+    router: &Arc<crate::llm::service::LlmRouter>,
+    agent: &AiAgent,
+    tenant: Option<&str>,
+    combined: &str,
+) -> AppResult<String> {
     let messages = [ChatMessage {
         role: ChatRole::User,
         content: Some(format!(
@@ -1550,7 +1492,8 @@ async fn summarize_transcript(ai: &AiConfig, agent: &AiAgent, combined: &str) ->
         max_tokens: None,
         stop: None,
     };
-    let response = agent_chat(ai, agent, None, None, &request)
+    let model = (!agent.model.is_empty()).then_some(agent.model.as_str());
+    let response = agent_chat(router, tenant, model, None, &request)
         .await
         .map_err(|e| AppError::Internal(anyhow::anyhow!("context summarize failed: {e}")))?;
     response
@@ -1572,8 +1515,9 @@ async fn summarize_transcript(ai: &AiConfig, agent: &AiAgent, combined: &str) ->
 /// persisted by the caller (single source, opencode compaction shape).
 #[allow(clippy::too_many_arguments)]
 async fn ensure_ctx_window(
-    ai: &AiConfig,
+    router: &Arc<crate::llm::service::LlmRouter>,
     agent: &AiAgent,
+    tenant: Option<&str>,
     existing: &[AiMessage],
     prev: Option<crate::agent::context::CtxState>,
     trigger_tokens: i64,
@@ -1656,7 +1600,7 @@ async fn ensure_ctx_window(
         Some(p) if !p.text.trim().is_empty() => format!("{}\n---\n{}", p.text, slice_text),
         _ => slice_text,
     };
-    let summary = match summarize_transcript(ai, agent, &combined).await {
+    let summary = match summarize_transcript(router, agent, tenant, &combined).await {
         Ok(s) => s,
         Err(e) => {
             tracing::warn!(error = %e, "context fold summarize failed; keeping full replay");

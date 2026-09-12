@@ -426,14 +426,14 @@ pub async fn build_app_state(
     svc_builder.register(storage.clone());
     let services = svc_builder.build();
 
-    let kb_runtime = match crate::kb::build_kb_runtime(config) {
+    let llm_router = crate::llm::service::LlmRouter::new(pool.clone()).await;
+
+    let kb_runtime = match crate::kb::build_kb_runtime(config, llm_router.clone()) {
         Ok(rt) => rt,
         Err(e) => {
             return Err(anyhow::anyhow!("knowledge base config invalid (D6): {e}"));
         }
     };
-
-    let llm_router = crate::llm::service::LlmRouter::new(pool.clone()).await;
 
     let state = AppState {
         pool: pool.clone(),
@@ -503,11 +503,13 @@ pub async fn build_app_state(
     crate::flows::trigger::spawn_flow_event_subscriber(
         eventbus.clone(),
         state.pool.clone(),
+        state.llm_router.clone(),
         state.plugins.clone(),
         shutdown_rx.clone(),
     );
     crate::flows::trigger::spawn_flow_cron_subscriber(
         state.pool.clone(),
+        state.llm_router.clone(),
         state.plugins.clone(),
         shutdown_rx.clone(),
     );

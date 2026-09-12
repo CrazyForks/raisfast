@@ -21,13 +21,22 @@ use crate::worker::{Job, JobHandler};
 pub struct FlowRunHandler {
     pool: Pool,
     plugins: Arc<PluginManager>,
+    llm_router: Arc<crate::llm::service::LlmRouter>,
 }
 
 impl FlowRunHandler {
     /// Creates a new handler.
     #[must_use]
-    pub fn new(pool: Pool, plugins: Arc<PluginManager>) -> Self {
-        Self { pool, plugins }
+    pub fn new(
+        pool: Pool,
+        plugins: Arc<PluginManager>,
+        llm_router: Arc<crate::llm::service::LlmRouter>,
+    ) -> Self {
+        Self {
+            pool,
+            plugins,
+            llm_router,
+        }
     }
 }
 
@@ -91,6 +100,7 @@ impl JobHandler for FlowRunHandler {
         let inputs = payload.get("inputs").cloned().filter(|v| !v.is_null());
         crate::flows::run::run_flow_latest(
             &self.pool,
+            self.llm_router.clone(),
             crate::integration::shared(),
             Some(self.plugins.clone()),
             flow_id,

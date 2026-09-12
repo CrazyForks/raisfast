@@ -34,6 +34,8 @@ pub struct HandlerDeps {
     /// KB runtime singletons (storage rebuilt for worker use); `None` when
     /// the knowledge base is disabled.
     pub kb: Option<(Arc<crate::kb::KbRuntime>, Arc<dyn crate::storage::Storage>)>,
+    /// LLM 底座（内部消费唯一入口，§10.2）。
+    pub llm_router: Arc<crate::llm::service::LlmRouter>,
 }
 
 /// Inventory entry for a builtin cron handler. Handlers self-register via
@@ -105,6 +107,7 @@ pub fn register_all(deps: HandlerDeps) -> JobHandlerRegistry {
         plugins,
         emitter,
         kb,
+        llm_router,
     } = deps;
 
     // Clones for the inventory loop (single-use values moved into handlers above).
@@ -213,7 +216,11 @@ pub fn register_all(deps: HandlerDeps) -> JobHandlerRegistry {
 
     registry.register_with_meta(
         flow_run::META.id,
-        Box::new(flow_run::FlowRunHandler::new(pool.clone(), plugins.clone())),
+        Box::new(flow_run::FlowRunHandler::new(
+            pool.clone(),
+            plugins.clone(),
+            llm_router.clone(),
+        )),
         &flow_run::META,
     );
 
@@ -223,6 +230,7 @@ pub fn register_all(deps: HandlerDeps) -> JobHandlerRegistry {
             pool.clone(),
             config.clone(),
             emitter.clone(),
+            llm_router.clone(),
         )),
         &agent_run::META,
     );
@@ -236,6 +244,7 @@ pub fn register_all(deps: HandlerDeps) -> JobHandlerRegistry {
                 kb_storage.clone(),
                 config.clone(),
                 emitter.clone(),
+                llm_router.clone(),
             )),
         );
         registry.register(
@@ -246,6 +255,7 @@ pub fn register_all(deps: HandlerDeps) -> JobHandlerRegistry {
                 kb_storage.clone(),
                 config.clone(),
                 emitter.clone(),
+                llm_router.clone(),
             )),
         );
         registry.register(
@@ -275,6 +285,9 @@ pub fn register_all(deps: HandlerDeps) -> JobHandlerRegistry {
             plugins: plugins.clone(),
             emitter: loop_emitter.clone(),
             kb: None,
+            llm_router: crate::llm::service::LlmRouter::from_cache_for_test(
+                crate::llm::cache::ChannelCache::default(),
+            ),
         };
         let handler = (entry.factory)(&deps);
         registry.register_with_meta(entry.meta.id, handler, entry.meta);

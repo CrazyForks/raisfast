@@ -599,14 +599,6 @@ fn default_mcp_local_tenant() -> String {
 pub struct AiConfig {
     #[serde(default)]
     pub enabled: bool,
-    /// Provider API root, e.g. `https://api.openai.com/v1` or `http://localhost:11434/v1`.
-    #[serde(default)]
-    pub base_url: Option<String>,
-    #[serde(default)]
-    pub api_key: Option<String>,
-    /// Default model when the agent row doesn't pin one.
-    #[serde(default)]
-    pub model: Option<String>,
     #[serde(default = "default_ai_timeout_secs")]
     pub timeout_secs: u64,
     /// Broadcast background/agent turn events on the EventBus (`ai.turn.*`).
@@ -653,24 +645,6 @@ pub struct AiConfig {
     /// false); runs one extraction LLM call per fold.
     #[serde(default)]
     pub memory_consolidate: bool,
-    /// Embedding model for vector indexing (OpenAI-compatible `/embeddings`).
-    /// Env `RAISFAST_AI_EMBEDDING_MODEL`. Required when the knowledge base
-    /// feature is enabled (D6 startup validation, kb-technical-design §4.1).
-    #[serde(default)]
-    pub embedding_model: Option<String>,
-    /// Dimension of `embedding_model` vectors. Env `RAISFAST_AI_EMBEDDING_DIM`.
-    /// Required together with `embedding_model` when KB is enabled.
-    #[serde(default)]
-    pub embedding_dim: Option<u32>,
-    /// Separate provider for embeddings: chat stays on `base_url` while
-    /// vector calls go here (e.g. chat on DeepSeek + embeddings on a local
-    /// Ollama). Env `RAISFAST_AI_EMBEDDING_BASE_URL`; unset = share `base_url`.
-    #[serde(default)]
-    pub embedding_base_url: Option<String>,
-    /// API key for the embedding provider. Env `RAISFAST_AI_EMBEDDING_API_KEY`;
-    /// unset = fall back to `api_key`.
-    #[serde(default)]
-    pub embedding_api_key: Option<String>,
 }
 
 fn default_ai_timeout_secs() -> u64 {
@@ -681,9 +655,6 @@ impl Default for AiConfig {
     fn default() -> Self {
         Self {
             enabled: false,
-            base_url: None,
-            api_key: None,
-            model: None,
             timeout_secs: default_ai_timeout_secs(),
             broadcast_events: true,
             allow_shell: false,
@@ -695,29 +666,37 @@ impl Default for AiConfig {
             context_window_map: None,
             context_output_reserve: 0,
             mcp_servers: Vec::new(),
-            embedding_model: None,
-            embedding_dim: None,
-            embedding_base_url: None,
-            embedding_api_key: None,
         }
     }
 }
 
 impl AiConfig {
     pub fn from_env() -> Self {
+        // 旧连接 env 已废弃（§10.2：模型访问唯一入口 = llm 底座）——
+        // 检测到则提示迁移，不生效，不做任何回退。
+        for key in [
+            "RAISFAST_AI_BASE_URL",
+            "RAISFAST_AI_API_KEY",
+            "RAISFAST_AI_MODEL",
+            "RAISFAST_AI_EMBEDDING_MODEL",
+            "RAISFAST_AI_EMBEDDING_DIM",
+            "RAISFAST_AI_EMBEDDING_BASE_URL",
+            "RAISFAST_AI_EMBEDDING_API_KEY",
+            "RAISFAST_AI_MODEL_CONTEXT_JSON",
+        ] {
+            if std::env::var(key).is_ok_and(|v| !v.is_empty()) {
+                tracing::warn!(
+                    key,
+                    "deprecated AI connection env ignored; configure llm channels + model directory instead (design §10.2)"
+                );
+            }
+        }
         let defaults = Self::default();
         Self {
             enabled: env::var("RAISFAST_AI_ENABLED")
                 .ok()
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(defaults.enabled),
-            base_url: env::var("RAISFAST_AI_BASE_URL")
-                .ok()
-                .filter(|v| !v.is_empty()),
-            api_key: env::var("RAISFAST_AI_API_KEY")
-                .ok()
-                .filter(|v| !v.is_empty()),
-            model: env::var("RAISFAST_AI_MODEL").ok().filter(|v| !v.is_empty()),
             timeout_secs: env::var("RAISFAST_AI_TIMEOUT_SECS")
                 .ok()
                 .and_then(|v| v.parse().ok())
@@ -763,19 +742,6 @@ impl AiConfig {
                 .filter(|v| !v.is_empty())
                 .and_then(|v| serde_json::from_str(&v).ok())
                 .unwrap_or_default(),
-            embedding_model: env::var("RAISFAST_AI_EMBEDDING_MODEL")
-                .ok()
-                .filter(|v| !v.is_empty()),
-            embedding_dim: env::var("RAISFAST_AI_EMBEDDING_DIM")
-                .ok()
-                .filter(|v| !v.is_empty())
-                .and_then(|v| v.parse().ok()),
-            embedding_base_url: env::var("RAISFAST_AI_EMBEDDING_BASE_URL")
-                .ok()
-                .filter(|v| !v.is_empty()),
-            embedding_api_key: env::var("RAISFAST_AI_EMBEDDING_API_KEY")
-                .ok()
-                .filter(|v| !v.is_empty()),
         }
     }
 }

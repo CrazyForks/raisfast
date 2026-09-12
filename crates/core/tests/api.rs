@@ -7820,7 +7820,7 @@ async fn flow_engine_egress_e2e_acceptance() {
     let exec = FlowsExec {
         plane: Some(plane.clone()),
         plugins: Some(state.plugins.clone()),
-        llm: None,
+        router: state.llm_router.clone(),
         tenant_id: Some("default".into()),
     };
     run::execute_instance(&state.pool, instance_id, &exec)

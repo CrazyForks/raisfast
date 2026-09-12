@@ -75,6 +75,7 @@ fn filter_passes(filter: Option<&serde_json::Value>) -> bool {
 
 async fn run_trigger(
     pool: Pool,
+    router: Arc<crate::llm::service::LlmRouter>,
     plugins: Arc<PluginManager>,
     trigger: model::FlowTrigger,
     event_data: serde_json::Value,
@@ -82,6 +83,7 @@ async fn run_trigger(
     let inputs = build_inputs(trigger.inputs_map.as_ref(), &event_data);
     if let Err(e) = run::run_flow_latest(
         &pool,
+        router,
         crate::integration::shared(),
         Some(plugins),
         trigger.flow_id,
@@ -102,6 +104,7 @@ async fn run_trigger(
 pub fn spawn_flow_event_subscriber(
     eventbus: crate::eventbus::EventBus,
     pool: Pool,
+    router: Arc<crate::llm::service::LlmRouter>,
     plugins: Arc<PluginManager>,
     mut shutdown_rx: tokio::sync::watch::Receiver<bool>,
 ) {
@@ -158,6 +161,7 @@ pub fn spawn_flow_event_subscriber(
                         }
                         run_trigger(
                             pool.clone(),
+                            router.clone(),
                             plugins.clone(),
                             trigger,
                             event_data.clone(),
@@ -176,6 +180,7 @@ pub fn spawn_flow_event_subscriber(
 /// trigger (guarded by `last_triggered_at`).
 pub fn spawn_flow_cron_subscriber(
     pool: Pool,
+    router: Arc<crate::llm::service::LlmRouter>,
     plugins: Arc<PluginManager>,
     mut shutdown_rx: tokio::sync::watch::Receiver<bool>,
 ) {
@@ -225,6 +230,7 @@ pub fn spawn_flow_cron_subscriber(
                         let inputs = build_inputs(trigger.inputs_map.as_ref(), &serde_json::json!({}));
                         if let Err(e) = run::run_flow_latest(
                             &pool,
+                            router.clone(),
                             crate::integration::shared(),
                             Some(plugins.clone()),
                             trigger.flow_id,

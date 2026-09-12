@@ -280,6 +280,103 @@ impl LlmRouter {
         Arc::new(Self::empty(Some(pool)).with_cache(cache))
     }
 
+    /// Test helper (§10.2): a router backed by one channel serving `models`,
+    /// with `provider` seeded at channel 1 / key 0. `pool` enables default
+    /// model resolution + billing; the tenant default chat model is pinned
+    /// to `default_model` when a pool is given.
+    pub async fn with_provider_for_test(
+        pool: Option<Pool>,
+        provider: Arc<dyn raisfast_agent::provider::ModelProvider>,
+        models: &[&str],
+        default_model: Option<&str>,
+    ) -> Arc<Self> {
+        use crate::db::Driver;
+        use crate::db::driver::DbDriver;
+        use crate::llm::models::channel::{LlmChannel, LlmChannelStatus, LlmCostMode, LlmKeyMode};
+        // 固定租户默认 chat 模型（§10.2 解析链；无则插入）。
+        if let (Some(pool), Some(model)) = (pool.as_ref(), default_model)
+            && crate::models::options::find_by_key(pool, "llm.default_chat_model", None)
+                .await
+                .ok()
+                .flatten()
+                .is_none()
+        {
+            let ph = |i: usize| Driver::ph(i);
+            let sql = format!(
+                "INSERT INTO options (id, option_key, value, type, group_name, label, autoload, sort_order, updated_at) \
+                 VALUES ({}, {}, {}, 'text', 'llm', 'llm', 1, 0, {})",
+                ph(1),
+                ph(2),
+                ph(3),
+                ph(4)
+            );
+            let _ = sqlx::query(crate::db::safe_sql(&sql))
+                .bind(crate::utils::id::new_id())
+                .bind("llm.default_chat_model")
+                .bind(serde_json::Value::String(model.to_owned()).to_string())
+                .bind(crate::utils::tz::now_utc())
+                .execute(pool)
+                .await;
+        }
+        let now = crate::utils::tz::now_utc();
+        let row = LlmChannel {
+            id: SnowflakeId(1),
+            tenant_id: Some("default".to_owned()),
+            name: "test".to_owned(),
+            provider: "openai".to_owned(),
+            base_url: "http://test.invalid/v1".to_owned(),
+            api_keys: serde_json::json!([{ "key": "test-key", "status": "active" }]),
+            key_mode: LlmKeyMode::Polling,
+            status: LlmChannelStatus::Enabled,
+            models: models.join(","),
+            model_mapping: None,
+            priority: 0,
+            weight: 0,
+            channel_groups: "default".to_owned(),
+            auto_ban: true,
+            param_override: None,
+            header_override: None,
+            config: None,
+            used_quota: 0,
+            cost_mode: LlmCostMode::Usage,
+            cost_discount: 1.0,
+            monthly_cost: None,
+            test_model: None,
+            test_time: None,
+            response_time: None,
+            created_at: now,
+            updated_at: now,
+        };
+        let mut cache = ChannelCache::default();
+        let cached = ChannelCache::from_row(&row);
+        cache.channels.insert(cached.id, Arc::new(cached));
+        for m in models {
+            cache.models.insert(
+                ("default".to_owned(), (*m).to_owned()),
+                Arc::new(crate::llm::cache::ModelInfo {
+                    name: (*m).to_owned(),
+                    model_type: crate::llm::models::model::LlmModelType::Chat,
+                    pricing: crate::llm::cache::Pricing {
+                        price_mode: crate::llm::models::model::LlmPriceMode::Token,
+                        input_price: 0.0,
+                        output_price: 0.0,
+                        cache_read_price: None,
+                        cache_write_price: None,
+                        call_price: None,
+                    },
+                    params: None,
+                }),
+            );
+        }
+        cache.rebuild_routes();
+        let router = match pool {
+            Some(pool) => Arc::new(Self::empty(Some(pool)).with_cache(cache)),
+            None => Self::from_cache_for_test(cache),
+        };
+        router.providers.insert((SnowflakeId(1), 0), provider);
+        router
+    }
+
     fn with_cache(mut self, cache: ChannelCache) -> Self {
         self.cache = RwLock::new(Arc::new(cache));
         self

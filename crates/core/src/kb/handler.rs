@@ -485,7 +485,7 @@ impl AppState {
             vector: kb.vector.clone(),
             kbsearch: kb.kbsearch.clone(),
             embedder: kb.embedder.clone(),
-            provider: Some(kb.provider.clone()),
+            router: self.llm_router.clone(),
             emitter: self.emitter.clone(),
         })
     }
@@ -502,10 +502,10 @@ struct CreateKbRequest {
     #[serde(default = "default_kb_kind")]
     kind: String,
     /// Embedding model pinned at creation (immutable afterwards, WeKnora
-    /// vector_store_id precedent). Defaults to RAISFAST_AI_EMBEDDING_MODEL.
+    /// vector_store_id precedent). Defaults to option llm.default_embedding_model.
     #[serde(default)]
     embedding_model: Option<String>,
-    /// Dimension pinned with the model. Defaults to RAISFAST_AI_EMBEDDING_DIM.
+    /// Dimension pinned with the model (or directory params.dimension).
     #[serde(default)]
     embedding_dim: Option<u32>,
 }
@@ -527,8 +527,9 @@ async fn admin_create_kb(
                 .into(),
         ));
     }
-    let model = resolve_kb_model(&state, &req)?;
-    let dim = resolve_kb_dim(&state, &req)?;
+    let tenant = auth.tenant_id();
+    let model = resolve_kb_model(&state, tenant, &req).await?;
+    let dim = resolve_kb_dim(&state, tenant, &model, &req).await?;
     let kb = knowledge_base::create_kb(
         &state.pool,
         &knowledge_base::CreateKbCmd {
@@ -626,27 +627,59 @@ async fn admin_delete_kb(
     Ok(ApiResponse::success(json!({ "deleted": true })))
 }
 
-/// Per-KB model: request > global default; model+dim must be complete at
-/// creation (immutable afterwards, WeKnora `vector_store_id` precedent).
-fn resolve_kb_model(state: &AppState, req: &CreateKbRequest) -> AppResult<String> {
-    req.embedding_model
-        .clone()
-        .or_else(|| state.config.ai.embedding_model.clone())
-        .filter(|m| !m.is_empty())
-        .ok_or_else(|| {
-            AppError::BadRequest(
-                "embedding_model required: pass it (with embedding_dim), or set \
-                 RAISFAST_AI_EMBEDDING_MODEL/_DIM as creation defaults"
-                    .into(),
-            )
-        })
+/// Per-KB model: request > 租户 options `llm.default_embedding_model`
+/// （§10.2；模型访问唯一入口 = llm 底座）。model+dim 必须在创建时确定
+/// （此后不可变，WeKnora `vector_store_id` precedent）。
+async fn resolve_kb_model(
+    state: &AppState,
+    tenant: Option<&str>,
+    req: &CreateKbRequest,
+) -> AppResult<String> {
+    if let Some(m) = req.embedding_model.clone().filter(|m| !m.is_empty()) {
+        return Ok(m);
+    }
+    for scope in [tenant, None] {
+        if let Some(row) =
+            crate::models::options::find_by_key(&state.pool, "llm.default_embedding_model", scope)
+                .await?
+            && let Some(v) = row.value.as_str()
+            && !v.is_empty()
+        {
+            return Ok(v.to_owned());
+        }
+    }
+    Err(AppError::BadRequest(
+        "embedding_model required: pass it (with embedding_dim), or set option \
+         llm.default_embedding_model"
+            .into(),
+    ))
 }
 
-fn resolve_kb_dim(state: &AppState, req: &CreateKbRequest) -> AppResult<u32> {
-    req.embedding_dim
-        .or(state.config.ai.embedding_dim)
-        .filter(|d| *d > 0)
-        .ok_or_else(|| AppError::BadRequest("embedding_dim required (with embedding_model)".into()))
+async fn resolve_kb_dim(
+    state: &AppState,
+    tenant: Option<&str>,
+    model: &str,
+    req: &CreateKbRequest,
+) -> AppResult<u32> {
+    if let Some(d) = req.embedding_dim.filter(|d| *d > 0) {
+        return Ok(d);
+    }
+    // 目录 `params.dimension`（§5.4）。
+    if let Some(info) = state
+        .llm_router
+        .model_info(tenant.unwrap_or("default"), model)
+        && let Some(d) = info
+            .params
+            .as_ref()
+            .and_then(|p| p.get("dimension"))
+            .and_then(serde_json::Value::as_u64)
+        && d > 0
+    {
+        return Ok(d as u32);
+    }
+    Err(AppError::BadRequest(
+        "embedding_dim required (pass it, or set llm_models.params.dimension)".into(),
+    ))
 }
 
 async fn admin_list_kbs(
@@ -1959,11 +1992,7 @@ async fn admin_faq_from_log(
     let Some(log) = crate::kb::models::query_log::find_log_by_id(&state.pool, log_id).await? else {
         return Err(AppError::NotFound("kb_query_log".into()));
     };
-    let provider = deps
-        .provider
-        .as_deref()
-        .ok_or_else(|| AppError::ServiceUnavailable("kb chat provider unavailable".into()))?;
-    let model = deps.config.ai.model.as_deref().unwrap_or_default();
+    let tenant = auth.tenant_id().unwrap_or("default");
     let messages = vec![
         raisfast_agent::ChatMessage {
             role: raisfast_agent::ChatRole::System,
@@ -1994,8 +2023,10 @@ async fn admin_faq_from_log(
         max_tokens: Some(400),
         stop: None,
     };
-    let reply = provider
-        .chat(&request, model)
+    let reply = deps
+        .router
+        .call(tenant, crate::llm::models::log::LogSource::Kb)
+        .chat(None, &request)
         .await
         .map_err(|e| AppError::ServiceUnavailable(format!("faq draft: {e}")))?;
     let text = reply.text.unwrap_or_default();
@@ -2302,8 +2333,8 @@ async fn admin_kb_stats(
     Ok(ApiResponse::success(json!({
         "enabled": state.kb_runtime.is_some(),
         "vector_backend": vector_backend,
-        "default_embedding_model": state.config.ai.embedding_model,
-        "default_embedding_dim": state.config.ai.embedding_dim,
+        "default_embedding_model": serde_json::Value::Null,
+        "default_embedding_dim": serde_json::Value::Null,
         "items": items,
     })))
 }

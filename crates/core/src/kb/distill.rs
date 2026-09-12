@@ -453,6 +453,15 @@ mod tests {
         let mut config = crate::config::app::AppConfig::test_defaults();
         config.kb.enabled = true;
         let bus = crate::eventbus::EventBus::new(16);
+        let router = crate::llm::service::LlmRouter::with_provider_for_test(
+            Some(pool.clone()),
+            Arc::new(ScriptedProvider {
+                replies: Mutex::new(replies),
+            }),
+            &["kb-test-model"],
+            Some("kb-test-model"),
+        )
+        .await;
         KbDeps {
             pool,
             config: Arc::new(config),
@@ -463,9 +472,7 @@ mod tests {
             vector: Arc::new(BruteForceIndex::new()),
             kbsearch: Arc::new(crate::kb::kbsearch::KbSearchEngine::open_in_memory().unwrap()),
             embedder: Arc::new(MockEmbedder),
-            provider: Some(Arc::new(ScriptedProvider {
-                replies: Mutex::new(replies),
-            })),
+            router,
             emitter: crate::event::EventEmitter::eventbus_only(bus),
         }
     }

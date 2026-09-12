@@ -493,7 +493,7 @@ pub async fn finish_answer(deps: &KbDeps, outcome: &mut AskOutcome) -> AppResult
         Ok(answer) => {
             outcome.trace.end_stage(
                 crate::kb::trace::STAGE_OK,
-                serde_json::json!({ "model": deps.config.ai.model }),
+                serde_json::json!({ "model": serde_json::Value::Null }),
                 None,
             );
             outcome.answer = answer;
@@ -563,7 +563,7 @@ pub async fn finish_answer_streaming(
         Ok(answer) => {
             outcome.trace.end_stage(
                 crate::kb::trace::STAGE_OK,
-                serde_json::json!({ "model": deps.config.ai.model }),
+                serde_json::json!({ "model": serde_json::Value::Null }),
                 None,
             );
             outcome.answer = answer;
@@ -698,6 +698,13 @@ mod tests {
         config.kb.enabled = true;
         config.kb.fallback_threshold = 0.05; // deterministic for mocks
         let bus = crate::eventbus::EventBus::new(16);
+        let router = crate::llm::service::LlmRouter::with_provider_for_test(
+            Some(pool.clone()),
+            Arc::new(MockChatProvider),
+            &["kb-test-model"],
+            Some("kb-test-model"),
+        )
+        .await;
         KbDeps {
             pool,
             config: Arc::new(config),
@@ -708,7 +715,7 @@ mod tests {
             vector: Arc::new(BruteForceIndex::new()),
             kbsearch: Arc::new(crate::kb::kbsearch::KbSearchEngine::open_in_memory().unwrap()),
             embedder: Arc::new(MockEmbedder { dim: 4 }),
-            provider: Some(Arc::new(MockChatProvider)),
+            router,
             emitter: crate::event::EventEmitter::eventbus_only(bus),
         }
     }

@@ -164,9 +164,19 @@ async fn human_custom_actions_route_and_collected_data_lands() {
         action: "reject".into(),
         data: Some(json!({"note": "凭证不足"})),
     };
-    run::resume_instance(&pool, None, None, iid, &envelope, Some(SnowflakeId(42)))
-        .await
-        .unwrap();
+    run::resume_instance(
+        &pool,
+        raisfast::llm::service::LlmRouter::from_cache_for_test(
+            raisfast::llm::cache::ChannelCache::default(),
+        ),
+        None,
+        None,
+        iid,
+        &envelope,
+        Some(SnowflakeId(42)),
+    )
+    .await
+    .unwrap();
     let done = model::find_instance_by_id(&pool, iid).await.unwrap();
     assert_eq!(
         done.status, "success",
@@ -211,9 +221,19 @@ async fn waiting_info_renders_form_content_and_default_submit() {
         action: "submit".into(),
         data: Some(json!({"amount": 5})),
     };
-    run::resume_instance(&pool, None, None, iid, &envelope, None)
-        .await
-        .unwrap();
+    run::resume_instance(
+        &pool,
+        raisfast::llm::service::LlmRouter::from_cache_for_test(
+            raisfast::llm::cache::ChannelCache::default(),
+        ),
+        None,
+        None,
+        iid,
+        &envelope,
+        None,
+    )
+    .await
+    .unwrap();
     let done = model::find_instance_by_id(&pool, iid).await.unwrap();
     assert_eq!(done.status, "success");
 }
@@ -235,9 +255,19 @@ async fn unknown_action_is_rejected() {
         action: "smash".into(),
         data: None,
     };
-    let err = run::resume_instance(&pool, None, None, iid, &envelope, None)
-        .await
-        .unwrap_err();
+    let err = run::resume_instance(
+        &pool,
+        raisfast::llm::service::LlmRouter::from_cache_for_test(
+            raisfast::llm::cache::ChannelCache::default(),
+        ),
+        None,
+        None,
+        iid,
+        &envelope,
+        None,
+    )
+    .await
+    .unwrap_err();
     assert!(err.to_string().contains("不是该节点的操作"), "{err}");
     let inst = model::find_instance_by_id(&pool, iid).await.unwrap();
     assert_eq!(inst.status, "waiting", "claim untouched on 400");
@@ -282,9 +312,19 @@ async fn public_resume_token_addresses_the_parked_instance() {
         action: "approve".into(),
         data: None,
     };
-    run::resume_instance(&pool, None, None, hit.instance_id, &envelope, None)
-        .await
-        .unwrap();
+    run::resume_instance(
+        &pool,
+        raisfast::llm::service::LlmRouter::from_cache_for_test(
+            raisfast::llm::cache::ChannelCache::default(),
+        ),
+        None,
+        None,
+        hit.instance_id,
+        &envelope,
+        None,
+    )
+    .await
+    .unwrap();
     let done = model::find_instance_by_id(&pool, iid).await.unwrap();
     assert_eq!(done.status, "success");
     let stale = model::find_open_by_token_hash(&pool, &sha256_hex(&token))
@@ -318,8 +358,28 @@ async fn concurrent_resume_single_claim_wins() {
         data: Some(json!({"approved": true})),
     };
     let (ra, rb) = tokio::join!(
-        run::resume_instance(&pool, None, None, iid, &env, None),
-        run::resume_instance(&pool, None, None, iid, &env, None),
+        run::resume_instance(
+            &pool,
+            raisfast::llm::service::LlmRouter::from_cache_for_test(
+                raisfast::llm::cache::ChannelCache::default(),
+            ),
+            None,
+            None,
+            iid,
+            &env,
+            None
+        ),
+        run::resume_instance(
+            &pool,
+            raisfast::llm::service::LlmRouter::from_cache_for_test(
+                raisfast::llm::cache::ChannelCache::default(),
+            ),
+            None,
+            None,
+            iid,
+            &env,
+            None
+        ),
     );
     let results = [ra, rb];
     let ok = results.iter().filter(|r| r.is_ok()).count();
@@ -372,7 +432,16 @@ async fn timeout_port_wired_resumes_along_it() {
     let iid = park(&pool, &det, iid).await;
 
     force_expire(&pool, iid).await;
-    let acted = run::sweep_expired_awaits(&pool, None, None).await.unwrap();
+    let acted = run::sweep_expired_awaits(
+        &pool,
+        raisfast::llm::service::LlmRouter::from_cache_for_test(
+            raisfast::llm::cache::ChannelCache::default(),
+        ),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
     assert!(acted >= 1, "sweeper acted on the expired claim");
     let done = model::find_instance_by_id(&pool, iid).await.unwrap();
     assert_eq!(done.status, "success");
@@ -393,7 +462,16 @@ async fn timeout_unwired_fails_instance() {
     let iid = park(&pool, &det, iid).await;
 
     force_expire(&pool, iid).await;
-    run::sweep_expired_awaits(&pool, None, None).await.unwrap();
+    run::sweep_expired_awaits(
+        &pool,
+        raisfast::llm::service::LlmRouter::from_cache_for_test(
+            raisfast::llm::cache::ChannelCache::default(),
+        ),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
     let done = model::find_instance_by_id(&pool, iid).await.unwrap();
     assert_eq!(done.status, "failed");
     let err = done.error.unwrap();
@@ -464,9 +542,19 @@ async fn c4_event_sequence_park_then_resume() {
         action: "approve".into(),
         data: None,
     };
-    run::resume_instance(&pool, None, None, iid, &envelope, None)
-        .await
-        .unwrap();
+    run::resume_instance(
+        &pool,
+        raisfast::llm::service::LlmRouter::from_cache_for_test(
+            raisfast::llm::cache::ChannelCache::default(),
+        ),
+        None,
+        None,
+        iid,
+        &envelope,
+        None,
+    )
+    .await
+    .unwrap();
     let mut after = Vec::new();
     while let Ok(ev) = rx.try_recv() {
         if let raisfast::event::Event::Custom {

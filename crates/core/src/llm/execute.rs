@@ -470,7 +470,7 @@ impl LlmRouter {
     }
 
     /// 模型名解析链（§10.2）：显式指定 → 租户 options → 全局 options → 400。
-    async fn resolve_default(
+    pub(crate) async fn resolve_default(
         &self,
         tenant: &str,
         explicit: Option<&str>,

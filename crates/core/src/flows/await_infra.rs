@@ -19,6 +19,7 @@ const SWEEP_INTERVAL: Duration = Duration::from_secs(60);
 /// indexed scan per minute).
 pub fn spawn(
     pool: crate::db::Pool,
+    router: Arc<crate::llm::service::LlmRouter>,
     plane: Option<Arc<IntegrationPlane>>,
     plugins: Option<Arc<PluginManager>>,
 ) {
@@ -27,7 +28,9 @@ pub fn spawn(
         interval.tick().await; // skip the immediate first tick
         loop {
             interval.tick().await;
-            match run::sweep_expired_awaits(&pool, plane.clone(), plugins.clone()).await {
+            match run::sweep_expired_awaits(&pool, router.clone(), plane.clone(), plugins.clone())
+                .await
+            {
                 Ok(0) => {}
                 Ok(n) => tracing::info!("await timeout sweep acted on {n} claim(s)"),
                 Err(e) => tracing::error!("await timeout sweep error: {e}"),

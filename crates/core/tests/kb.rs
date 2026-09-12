@@ -93,6 +93,13 @@ async fn deps_with_provider(provider: Arc<dyn ModelProvider>) -> KbDeps {
     let mut config = raisfast::config::app::AppConfig::test_defaults();
     config.kb.enabled = true;
     config.kb.fallback_threshold = 0.05;
+    let router = raisfast::llm::service::LlmRouter::with_provider_for_test(
+        Some(pool.clone()),
+        provider,
+        &["kb-test-model"],
+        Some("kb-test-model"),
+    )
+    .await;
     KbDeps {
         pool,
         config: Arc::new(config),
@@ -102,7 +109,7 @@ async fn deps_with_provider(provider: Arc<dyn ModelProvider>) -> KbDeps {
         vector: Arc::new(BruteForceIndex::new()),
         kbsearch: Arc::new(raisfast::kb::kbsearch::KbSearchEngine::open_in_memory().unwrap()),
         embedder: Arc::new(SumEmbedder(4)),
-        provider: Some(provider),
+        router,
         emitter: raisfast::event::EventEmitter::eventbus_only(raisfast::eventbus::EventBus::new(
             16,
         )),
@@ -1124,7 +1131,7 @@ async fn s21_chunk_edit_failure_records_failed_run() {
         vector: good.vector.clone(),
         kbsearch: good.kbsearch.clone(),
         embedder: Arc::new(FailingEmbedder),
-        provider: good.provider.clone(),
+        router: good.router.clone(),
         emitter: good.emitter.clone(),
     };
     let result = service::edit_chunk_traced(&failing, &chunk, None, "改后的内容").await;
@@ -1177,7 +1184,7 @@ async fn s22_cold_bruteforce_rebuilds_on_first_search() {
         vector: Arc::new(BruteForceIndex::new()),
         kbsearch: deps.kbsearch.clone(),
         embedder: deps.embedder.clone(),
-        provider: deps.provider.clone(),
+        router: deps.router.clone(),
         emitter: deps.emitter.clone(),
     };
     let mut trace = raisfast::kb::trace::RunRecorder::disabled();

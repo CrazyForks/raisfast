@@ -31,24 +31,6 @@ pub struct LlmRuntime {
     pub caller: Option<crate::types::snowflake_id::SnowflakeId>,
 }
 
-impl LlmRuntime {
-    /// Production runtime from the process-wide router handle.
-    ///
-    /// # Errors
-    /// `BadRequest` when the llm 底座 is not registered — an authoring-visible
-    /// 400 that also short-circuits the engine retry loop.
-    pub fn shared(tenant: &str) -> AppResult<Self> {
-        let router = crate::agent::service::router_handle().ok_or_else(|| {
-            AppError::BadRequest("llm 节点需要 llm 底座（未配置渠道/默认模型）".into())
-        })?;
-        Ok(Self {
-            router,
-            tenant: tenant.to_owned(),
-            caller: None,
-        })
-    }
-}
-
 /// facade/内核已把错误分类为 AppError（4xx 确定性失败 fail-fast，
 /// 429/5xx/transport → Internal 可重试）——引擎重试语义由内核承接。
 fn map_facade_error(e: AppError) -> AppError {

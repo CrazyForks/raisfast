@@ -564,6 +564,7 @@ async fn resume_instance(
     let resumed_by = user.user_id().map(crate::types::snowflake_id::SnowflakeId);
     super::run::resume_instance(
         &state.pool,
+        state.llm_router.clone(),
         state.integration.clone(),
         Some(state.plugins.clone()),
         instance_id,
@@ -682,6 +683,7 @@ async fn public_resume(
     };
     super::run::resume_instance(
         &state.pool,
+        state.llm_router.clone(),
         state.integration.clone(),
         Some(state.plugins.clone()),
         row.instance_id,
@@ -1422,6 +1424,7 @@ async fn run_public_api(
     }
     let instance = crate::flows::run::run_flow_latest(
         &state.pool,
+        state.llm_router.clone(),
         state.integration.clone(),
         Some(state.plugins.clone()),
         flow_id,
@@ -1457,6 +1460,7 @@ async fn test_flow(
     let flow_id = parse_id(id)?;
     let instance = crate::flows::run::run_definition_latest(
         &state.pool,
+        state.llm_router.clone(),
         state.integration.clone(),
         Some(state.plugins.clone()),
         flow_id,
@@ -1478,6 +1482,7 @@ async fn run_flow(
     let flow_id = crate::types::snowflake_id::parse_id(&id)?;
     let done = crate::flows::run::run_flow_latest(
         &state.pool,
+        state.llm_router.clone(),
         state.integration.clone(),
         Some(state.plugins.clone()),
         flow_id,

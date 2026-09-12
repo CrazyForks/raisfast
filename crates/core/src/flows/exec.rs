@@ -19,7 +19,6 @@ use crate::plugins::{Permissions, PluginManager};
 
 use super::engine::{ExecOutcome, NodeExecutor};
 use super::graph::GraphNode;
-use super::llm::LlmRuntime;
 use super::nodes::{self, EgressConfig, ScriptConfig};
 
 pub struct FlowsExec {
@@ -27,9 +26,8 @@ pub struct FlowsExec {
     pub plugins: Option<Arc<PluginManager>>,
     /// Per-run tenant for tenant-scoped executors (`ct` node).
     pub tenant_id: Option<String>,
-    /// Injected LLM provider override (tests); production falls back to the
-    /// shared `[ai]` runtime (llm-node.md §3, W1).
-    pub llm: Option<LlmRuntime>,
+    /// LLM 底座（llm 节点唯一入口，§10.2）。
+    pub router: Arc<crate::llm::service::LlmRouter>,
 }
 
 impl FlowsExec {
@@ -154,11 +152,13 @@ impl NodeExecutor for FlowsExec {
             nodes::T_HTTP => super::http::run_http(node, pool).await,
             nodes::T_CT => super::ct::run_ct(node, pool, self.tenant_id.as_deref()).await,
             nodes::T_LLM => {
-                let runtime = match &self.llm {
-                    Some(rt) => rt.clone(),
-                    None => super::llm::LlmRuntime::shared(
-                        self.tenant_id.as_deref().unwrap_or("default"),
-                    )?,
+                let runtime = super::llm::LlmRuntime {
+                    router: self.router.clone(),
+                    tenant: self
+                        .tenant_id
+                        .clone()
+                        .unwrap_or_else(|| "default".to_owned()),
+                    caller: None,
                 };
                 super::llm::run_llm(&runtime, node, pool).await
             }
@@ -218,7 +218,9 @@ mod tests {
         let exec = FlowsExec {
             plane: None,
             plugins: None,
-            llm: None,
+            router: crate::llm::service::LlmRouter::from_cache_for_test(
+                crate::llm::cache::ChannelCache::default(),
+            ),
             tenant_id: None,
         };
         let err = exec
@@ -237,7 +239,9 @@ mod tests {
         let exec = FlowsExec {
             plane: None,
             plugins: None,
-            llm: None,
+            router: crate::llm::service::LlmRouter::from_cache_for_test(
+                crate::llm::cache::ChannelCache::default(),
+            ),
             tenant_id: None,
         };
         let err = exec
@@ -259,7 +263,9 @@ mod tests {
         let exec = FlowsExec {
             plane: None,
             plugins: None,
-            llm: None,
+            router: crate::llm::service::LlmRouter::from_cache_for_test(
+                crate::llm::cache::ChannelCache::default(),
+            ),
             tenant_id: None,
         };
         let err = exec

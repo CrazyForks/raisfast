@@ -945,6 +945,7 @@ pub async fn compact_session(
     let result = ai_service::compact_session(
         &state.pool,
         &state.config.ai,
+        &state.llm_router,
         &agent,
         session.id,
         auth.tenant_id(),
@@ -994,6 +995,7 @@ pub async fn run_turn(
 
     let pool = state.pool.clone();
     let ai_cfg = state.config.ai.clone();
+    let router = state.llm_router.clone();
     let emitter = state.emitter.clone();
     let broadcast = state.config.ai.broadcast_events;
     let content = body.content;
@@ -1009,6 +1011,7 @@ pub async fn run_turn(
         let result = ai_service::run_turn_streamed(
             &pool,
             &ai_cfg,
+            &router,
             &agent,
             session.id,
             &content,

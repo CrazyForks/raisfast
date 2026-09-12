@@ -168,8 +168,10 @@ fn seed_pool(
     ns
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn run_flow_latest(
     pool: &crate::db::Pool,
+    router: Arc<crate::llm::service::LlmRouter>,
     plane: Option<Arc<IntegrationPlane>>,
     plugins: Option<Arc<PluginManager>>,
     flow_id: SnowflakeId,
@@ -210,7 +212,7 @@ pub async fn run_flow_latest(
     let exec = FlowsExec {
         plane,
         plugins,
-        llm: None,
+        router: router.clone(),
         tenant_id: Some(flow.tenant_id.clone()),
     };
     execute_instance(pool, instance_id, &exec).await?;
@@ -220,8 +222,10 @@ pub async fn run_flow_latest(
 /// Run an ad-hoc definition (current canvas / draft) against a flow without
 /// publishing a version. The instance references the latest published version
 /// id; execution + node-runs reflect the provided definition. trigger='test'.
+#[allow(clippy::too_many_arguments)]
 pub async fn run_definition_latest(
     pool: &crate::db::Pool,
+    router: Arc<crate::llm::service::LlmRouter>,
     plane: Option<Arc<IntegrationPlane>>,
     plugins: Option<Arc<PluginManager>>,
     flow_id: SnowflakeId,
@@ -276,7 +280,7 @@ pub async fn run_definition_latest(
     let exec = FlowsExec {
         plane,
         plugins,
-        llm: None,
+        router: router.clone(),
         tenant_id: Some(flow.tenant_id.clone()),
     };
     engine::run_persisted(&graph, &mut snap, &exec, &persist).await?;
@@ -598,8 +602,10 @@ async fn park_instance(
 ///   the parked node's kind.
 /// - `Conflict` (409) when the open claim was already closed by a racing
 ///   resume or timeout sweep.
+#[allow(clippy::too_many_arguments)]
 pub async fn resume_instance(
     pool: &crate::db::Pool,
+    router: Arc<crate::llm::service::LlmRouter>,
     plane: Option<Arc<IntegrationPlane>>,
     plugins: Option<Arc<PluginManager>>,
     instance_id: SnowflakeId,
@@ -682,7 +688,7 @@ pub async fn resume_instance(
     let exec = FlowsExec {
         plane,
         plugins,
-        llm: None,
+        router: router.clone(),
         tenant_id: Some(inst.tenant_id.clone()),
     };
     execute_instance(pool, instance_id, &exec).await?;
@@ -698,13 +704,14 @@ pub async fn resume_instance(
 /// Propagates DB/load errors; per-claim failures are logged and skipped.
 pub async fn sweep_expired_awaits(
     pool: &crate::db::Pool,
+    router: Arc<crate::llm::service::LlmRouter>,
     plane: Option<Arc<IntegrationPlane>>,
     plugins: Option<Arc<PluginManager>>,
 ) -> AppResult<u64> {
     let rows = model::find_expired_flow_resumes(pool, crate::utils::tz::now_utc()).await?;
     let mut acted = 0_u64;
     for row in rows {
-        if let Err(e) = sweep_one(pool, plane.clone(), plugins.clone(), row).await {
+        if let Err(e) = sweep_one(pool, router.clone(), plane.clone(), plugins.clone(), row).await {
             tracing::warn!("await timeout sweep failed: {e}");
             continue;
         }
@@ -713,8 +720,10 @@ pub async fn sweep_expired_awaits(
     Ok(acted)
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn sweep_one(
     pool: &crate::db::Pool,
+    router: Arc<crate::llm::service::LlmRouter>,
     plane: Option<Arc<IntegrationPlane>>,
     plugins: Option<Arc<PluginManager>>,
     row: model::FlowResume,
@@ -767,7 +776,7 @@ async fn sweep_one(
         let exec = FlowsExec {
             plane,
             plugins,
-            llm: None,
+            router: router.clone(),
             tenant_id: Some(inst.tenant_id.clone()),
         };
         execute_instance(pool, row.instance_id, &exec).await?;

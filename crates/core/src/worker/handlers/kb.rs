@@ -14,15 +14,18 @@ pub struct KbProcessDocumentHandler {
     storage: Arc<dyn Storage>,
     config: Arc<crate::config::app::AppConfig>,
     emitter: crate::event::EventEmitter,
+    llm_router: Arc<crate::llm::service::LlmRouter>,
 }
 
 impl KbProcessDocumentHandler {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         pool: crate::db::Pool,
         runtime: Arc<KbRuntime>,
         storage: Arc<dyn Storage>,
         config: Arc<crate::config::app::AppConfig>,
         emitter: crate::event::EventEmitter,
+        llm_router: Arc<crate::llm::service::LlmRouter>,
     ) -> Self {
         Self {
             pool,
@@ -30,6 +33,7 @@ impl KbProcessDocumentHandler {
             storage,
             config,
             emitter,
+            llm_router,
         }
     }
 }
@@ -89,7 +93,7 @@ impl KbProcessDocumentHandler {
             vector: self.runtime.vector.clone(),
             kbsearch: self.runtime.kbsearch.clone(),
             embedder: self.runtime.embedder.clone(),
-            provider: Some(self.runtime.provider.clone()),
+            router: self.llm_router.clone(),
             emitter: self.emitter.clone(),
         };
         let mode = crate::kb::trace::TraceMode::parse(&self.config.kb.trace_mode);
@@ -142,15 +146,18 @@ pub struct KbDistillWikiHandler {
     storage: Arc<dyn Storage>,
     config: Arc<crate::config::app::AppConfig>,
     emitter: crate::event::EventEmitter,
+    llm_router: Arc<crate::llm::service::LlmRouter>,
 }
 
 impl KbDistillWikiHandler {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         pool: crate::db::Pool,
         runtime: Arc<KbRuntime>,
         storage: Arc<dyn Storage>,
         config: Arc<crate::config::app::AppConfig>,
         emitter: crate::event::EventEmitter,
+        llm_router: Arc<crate::llm::service::LlmRouter>,
     ) -> Self {
         Self {
             pool,
@@ -158,6 +165,7 @@ impl KbDistillWikiHandler {
             storage,
             config,
             emitter,
+            llm_router,
         }
     }
 }
@@ -218,7 +226,7 @@ impl JobHandler for KbDistillWikiHandler {
             vector: self.runtime.vector.clone(),
             kbsearch: self.runtime.kbsearch.clone(),
             embedder: self.runtime.embedder.clone(),
-            provider: Some(self.runtime.provider.clone()),
+            router: self.llm_router.clone(),
             emitter: self.emitter.clone(),
         };
         let doc_ids: Vec<crate::types::snowflake_id::SnowflakeId> =

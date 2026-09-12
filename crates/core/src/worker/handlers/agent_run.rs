@@ -22,15 +22,22 @@ pub struct AgentRunHandler {
     pool: Pool,
     config: Arc<AppConfig>,
     emitter: EventEmitter,
+    llm_router: Arc<crate::llm::service::LlmRouter>,
 }
 
 impl AgentRunHandler {
     #[must_use]
-    pub fn new(pool: Pool, config: Arc<AppConfig>, emitter: EventEmitter) -> Self {
+    pub fn new(
+        pool: Pool,
+        config: Arc<AppConfig>,
+        emitter: EventEmitter,
+        llm_router: Arc<crate::llm::service::LlmRouter>,
+    ) -> Self {
         Self {
             pool,
             config,
             emitter,
+            llm_router,
         }
     }
 }
@@ -136,8 +143,15 @@ impl JobHandler for AgentRunHandler {
             }
         };
 
-        let result =
-            ai_service::run_turn(&self.pool, &self.config.ai, &agent, session_id, content).await;
+        let result = ai_service::run_turn(
+            &self.pool,
+            &self.config.ai,
+            &self.llm_router,
+            &agent,
+            session_id,
+            content,
+        )
+        .await;
         match result {
             Ok(outcome) => {
                 if self.config.ai.broadcast_events {

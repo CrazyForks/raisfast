@@ -80,54 +80,28 @@ pub async fn generate_answer_streaming(
     question: &str,
     on_delta: &mut (dyn FnMut(&str) + Send),
 ) -> AppResult<String> {
-    let model = deps.config.ai.model.clone().unwrap_or_default();
     let messages = messages_for(prompt_units, question);
     let request = chat_request(&messages);
 
-    if let Some(router) = crate::agent::service::router_handle() {
-        let effective = (!model.is_empty()).then_some(model.as_str());
-        let routable = match effective {
-            None => true,
-            Some(m) => router.model_info(tenant, m).is_some(),
-        };
-        if routable {
-            let full = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
-            let sink = full.clone();
-            let deltas = std::sync::Mutex::new(on_delta);
-            router
-                .call(tenant, crate::llm::models::log::LogSource::Kb)
-                .chat_stream(effective, &request, &mut |ev: StreamEvent| {
-                    if let StreamEvent::TextDelta { delta } = ev {
-                        if let Ok(mut f) = sink.lock() {
-                            f.push_str(&delta);
-                        }
-                        if let Ok(mut cb) = deltas.lock() {
-                            cb(&delta);
-                        }
-                    }
-                })
-                .await
-                .map_err(|e| AppError::ServiceUnavailable(format!("kb generate: {e}")))?;
-            return Ok(full.lock().map(|f| f.clone()).unwrap_or_default());
-        }
-    }
-
-    let provider = deps
-        .provider
-        .as_deref()
-        .ok_or_else(|| AppError::ServiceUnavailable("kb chat provider unavailable".into()))?;
-    let mut full = String::new();
-    let mut on_event = |ev: StreamEvent| {
-        if let StreamEvent::TextDelta { delta } = ev {
-            full.push_str(&delta);
-            on_delta(&delta);
-        }
-    };
-    provider
-        .chat_stream(&request, &model, &mut on_event)
+    // 唯一入口 llm 底座（§10.2）：模型解析（租户默认）+ 路由/日志/计费在内核。
+    let full = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
+    let sink = full.clone();
+    let deltas = std::sync::Mutex::new(on_delta);
+    deps.router
+        .call(tenant, crate::llm::models::log::LogSource::Kb)
+        .chat_stream(None, &request, &mut |ev: StreamEvent| {
+            if let StreamEvent::TextDelta { delta } = ev {
+                if let Ok(mut f) = sink.lock() {
+                    f.push_str(&delta);
+                }
+                if let Ok(mut cb) = deltas.lock() {
+                    cb(&delta);
+                }
+            }
+        })
         .await
         .map_err(|e| AppError::ServiceUnavailable(format!("kb generate: {e}")))?;
-    Ok(full)
+    Ok(full.lock().map(|f| f.clone()).unwrap_or_default())
 }
 
 /// S10: citation list over the units actually fed to the model (numbering

@@ -23,14 +23,13 @@ pub struct KbRuntime {
     pub vector: std::sync::Arc<dyn vectors::VectorIndex>,
     pub kbsearch: std::sync::Arc<kbsearch::KbSearchEngine>,
     pub embedder: std::sync::Arc<dyn service::KbEmbedder>,
-    /// Chat provider for S1 query understanding and S9 answer generation.
-    pub provider: std::sync::Arc<dyn raisfast_agent::ModelProvider>,
 }
 
 /// Build the KB runtime from config; `Ok(None)` when the KB is disabled,
 /// loud error when enabled-but-misconfigured (D6).
 pub fn build_kb_runtime(
     config: &crate::config::app::AppConfig,
+    router: std::sync::Arc<crate::llm::service::LlmRouter>,
 ) -> crate::errors::app_error::AppResult<Option<std::sync::Arc<KbRuntime>>> {
     if !config.kb.enabled {
         return Ok(None);
@@ -39,14 +38,13 @@ pub fn build_kb_runtime(
     let vector = vectors::build_vector_index(config)?;
     let kbsearch_dir = std::path::Path::new(&config.storage_root_dir).join("kb_search_index");
     let kbsearch = kbsearch::KbSearchEngine::open(&kbsearch_dir)?;
-    let embedder: std::sync::Arc<dyn service::KbEmbedder> =
-        std::sync::Arc::new(service::ProviderEmbedder::new(config)?);
-    let provider = crate::agent::service::provider_from_config(&config.ai)?;
+    let embedder: std::sync::Arc<dyn service::KbEmbedder> = std::sync::Arc::new(
+        service::ProviderEmbedder::new(router, config.kb.embed_batch_size),
+    );
     Ok(Some(std::sync::Arc::new(KbRuntime {
         vector,
         kbsearch: std::sync::Arc::new(kbsearch),
         embedder,
-        provider,
     })))
 }
 pub mod handler;

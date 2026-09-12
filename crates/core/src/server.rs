@@ -153,6 +153,7 @@ async fn build_app(
             state.search.clone(),
             cache_for_workers,
             kb_for_workers,
+            state.llm_router.clone(),
         )
         .await;
     }
@@ -168,7 +169,12 @@ async fn build_app(
 
     // Await-node background infra (timeout sweeper) — one indexed scan per
     // minute when nothing is parked (await-node.md §5).
-    crate::flows::await_infra::spawn(pool, state.integration.clone(), Some(state.plugins.clone()));
+    crate::flows::await_infra::spawn(
+        pool,
+        state.llm_router.clone(),
+        state.integration.clone(),
+        Some(state.plugins.clone()),
+    );
 
     let cors = build_cors(config);
     let mut api_v1 = axum::Router::new();
@@ -1028,6 +1034,7 @@ async fn spawn_workers(
     search: Arc<dyn crate::search::SearchEngine>,
     cache: Arc<dyn crate::cache::CacheStore>,
     kb: Option<(Arc<crate::kb::KbRuntime>, Arc<dyn crate::storage::Storage>)>,
+    llm_router: Arc<crate::llm::service::LlmRouter>,
 ) -> Arc<crate::worker::JobHandlerRegistry> {
     use crate::worker::{
         CronScheduler, DefaultJobQueue, JobEnqueuer, PluginCronDispatcher, StuckJobSweeper,
@@ -1059,6 +1066,7 @@ async fn spawn_workers(
             plugins: plugins.clone(),
             emitter: crate::event::EventEmitter::eventbus_only(eventbus.clone()),
             kb,
+            llm_router,
         },
     ));
 

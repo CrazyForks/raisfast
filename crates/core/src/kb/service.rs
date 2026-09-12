@@ -8,8 +8,6 @@
 
 use std::sync::Arc;
 
-use raisfast_agent::ModelProvider;
-
 use crate::config::app::AppConfig;
 use crate::db::DbDriver as _;
 use crate::errors::app_error::{AppError, AppResult};
@@ -51,10 +49,30 @@ pub trait KbEmbedder: Send + Sync {
     }
 }
 
-/// Production embedder over `ModelProvider::embed` [抄EXT:OpenAI embeddings].
+/// Placeholder provider for tests where the chat path is never exercised
+/// (required because `KbDeps.router` is mandatory, §10.2).
+pub struct NoopProvider;
+
+#[async_trait::async_trait]
+impl raisfast_agent::ModelProvider for NoopProvider {
+    fn name(&self) -> &str {
+        "noop"
+    }
+
+    async fn chat(
+        &self,
+        _request: &raisfast_agent::provider::ChatRequest<'_>,
+        _model: &str,
+    ) -> Result<raisfast_agent::provider::ChatResponse, raisfast_agent::ProviderError> {
+        Err(raisfast_agent::ProviderError::Config(
+            "noop provider must not be called".to_owned(),
+        ))
+    }
+}
+
+/// Production embedder over the llm 底座 facade [§10.2] — the ONLY entry.
 pub struct ProviderEmbedder {
-    provider: Arc<dyn ModelProvider>,
-    model: String,
+    router: Arc<crate::llm::service::LlmRouter>,
     /// Texts per `/embeddings` request.
     batch_size: usize,
 }
@@ -65,25 +83,8 @@ const EMBED_RETRY_ATTEMPTS: usize = 5;
 const EMBED_RETRY_BASE_DELAY_MS: u64 = 200;
 
 impl ProviderEmbedder {
-    pub fn new(config: &AppConfig) -> AppResult<Self> {
-        // Dedicated embedding provider when configured (chat on DeepSeek +
-        // embeddings on Ollama); otherwise share the chat provider.
-        let provider = match &config.ai.embedding_base_url {
-            Some(base) => Arc::new(raisfast_agent::openai::OpenAiCompatProvider::new(
-                base.clone(),
-                config
-                    .ai
-                    .embedding_api_key
-                    .clone()
-                    .or_else(|| config.ai.api_key.clone()),
-            )) as Arc<dyn ModelProvider>,
-            None => crate::agent::service::provider_from_config(&config.ai)?,
-        };
-        Ok(Self {
-            provider,
-            model: config.ai.embedding_model.clone().unwrap_or_default(),
-            batch_size: config.kb.embed_batch_size,
-        })
+    pub fn new(router: Arc<crate::llm::service::LlmRouter>, batch_size: usize) -> Self {
+        Self { router, batch_size }
     }
 
     /// Slice texts into fixed-size batches and embed them sequentially,
@@ -143,30 +144,17 @@ impl ProviderEmbedder {
         Ok(out)
     }
 
-    /// 单批嵌入：底座 facade 优先（路由/failover/计费/日志），模型未注册或
-    /// router 未装配时回退 `[ai]` env provider（测试/迁移过渡，§10.2）。
+    /// 单批嵌入：唯一入口 llm 底座（路由/failover/计费/日志，§10.2）。
     async fn embed_once(
         &self,
         tenant: &str,
         batch: &[&str],
         model: &str,
     ) -> Result<Vec<Vec<f32>>, String> {
-        if let Some(router) = crate::agent::service::router_handle() {
-            let effective = (!model.is_empty()).then_some(model);
-            let routable = match effective {
-                None => true,
-                Some(m) => router.model_info(tenant, m).is_some(),
-            };
-            if routable {
-                return router
-                    .call(tenant, crate::llm::models::log::LogSource::Kb)
-                    .embed(effective, batch)
-                    .await
-                    .map_err(|e| e.to_string());
-            }
-        }
-        self.provider
-            .embed(batch, model)
+        let effective = (!model.is_empty()).then_some(model);
+        self.router
+            .call(tenant, crate::llm::models::log::LogSource::Kb)
+            .embed(effective, batch)
             .await
             .map_err(|e| e.to_string())
     }
@@ -194,7 +182,8 @@ impl KbEmbedder for ProviderEmbedder {
     }
 
     async fn embed(&self, tenant: &str, texts: &[&str]) -> AppResult<Vec<Vec<f32>>> {
-        self.embed_batched(tenant, texts, &self.model).await
+        // 空模型名 → facade 解析租户默认 embedding 模型（§10.2）。
+        self.embed_batched(tenant, texts, "").await
     }
 }
 
@@ -206,29 +195,11 @@ pub async fn kb_chat(
     tenant: &str,
     request: &raisfast_agent::provider::ChatRequest<'_>,
 ) -> AppResult<String> {
-    let model = deps.config.ai.model.clone().unwrap_or_default();
-    if let Some(router) = crate::agent::service::router_handle() {
-        let effective = (!model.is_empty()).then_some(model.as_str());
-        let routable = match effective {
-            None => true,
-            Some(m) => router.model_info(tenant, m).is_some(),
-        };
-        if routable {
-            let resp = router
-                .call(tenant, crate::llm::models::log::LogSource::Kb)
-                .chat(effective, request)
-                .await?;
-            return Ok(resp.text.unwrap_or_default());
-        }
-    }
-    let provider = deps
-        .provider
-        .as_deref()
-        .ok_or_else(|| AppError::ServiceUnavailable("kb chat provider unavailable".into()))?;
-    let resp = provider
-        .chat(request, &model)
-        .await
-        .map_err(|e| AppError::ServiceUnavailable(format!("kb chat: {e}")))?;
+    let resp = deps
+        .router
+        .call(tenant, crate::llm::models::log::LogSource::Kb)
+        .chat(None, request)
+        .await?;
     Ok(resp.text.unwrap_or_default())
 }
 
@@ -240,8 +211,8 @@ pub struct KbDeps {
     pub vector: Arc<dyn VectorIndex>,
     pub kbsearch: Arc<KbSearchEngine>,
     pub embedder: Arc<dyn KbEmbedder>,
-    /// Chat provider (S1/S9); injected separately so tests can stub it.
-    pub provider: Option<Arc<dyn raisfast_agent::ModelProvider>>,
+    /// LLM 底座（chat + embedding 唯一入口，§10.2）。
+    pub router: Arc<crate::llm::service::LlmRouter>,
     pub emitter: EventEmitter,
 }
 
@@ -846,6 +817,13 @@ mod tests {
         let pool = crate::test_pool!();
         let config = Arc::new(crate::config::app::AppConfig::test_defaults());
         let bus = crate::eventbus::EventBus::new(16);
+        let router = crate::llm::service::LlmRouter::with_provider_for_test(
+            Some(pool.clone()),
+            Arc::new(NoopProvider),
+            &["kb-test-model"],
+            Some("kb-test-model"),
+        )
+        .await;
         KbDeps {
             pool,
             config,
@@ -856,7 +834,7 @@ mod tests {
             vector: Arc::new(BruteForceIndex::new()),
             kbsearch: Arc::new(KbSearchEngine::open_in_memory().unwrap()),
             embedder: Arc::new(MockEmbedder { dim: 4 }),
-            provider: None,
+            router,
             emitter: EventEmitter::eventbus_only(bus),
         }
     }
@@ -1311,6 +1289,13 @@ mod faq_tests {
         let mut config = crate::config::app::AppConfig::test_defaults();
         config.kb.enabled = true;
         config.kb.fallback_threshold = 0.05;
+        let router = crate::llm::service::LlmRouter::with_provider_for_test(
+            Some(pool.clone()),
+            Arc::new(EchoProvider),
+            &["kb-test-model"],
+            Some("kb-test-model"),
+        )
+        .await;
         KbDeps {
             pool,
             config: Arc::new(config),
@@ -1320,7 +1305,7 @@ mod faq_tests {
             vector: Arc::new(BruteForceIndex::new()),
             kbsearch: Arc::new(crate::kb::kbsearch::KbSearchEngine::open_in_memory().unwrap()),
             embedder: Arc::new(OneHotEmbedder),
-            provider: Some(Arc::new(EchoProvider)),
+            router,
             emitter: crate::event::EventEmitter::eventbus_only(crate::eventbus::EventBus::new(16)),
         }
     }

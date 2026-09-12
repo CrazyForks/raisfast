@@ -99,11 +99,10 @@ pub async fn admin_kb_health(
     };
     components.insert("bm25".into(), bm25);
 
-    // embedder: configured? optional smoke probe.
-    let embed_model = config.ai.embedding_model.as_deref().unwrap_or_default();
+    // embedder: optional smoke probe（模型来自租户 options，§10.2）。
     let mut embedder = json!({
-        "model": if embed_model.is_empty() { Value::Null } else { json!(embed_model) },
-        "status": if embed_model.is_empty() { "degraded" } else { "up" },
+        "model": Value::Null,
+        "status": "up",
     });
     if q.probe.as_deref() == Some("embed") {
         match deps
@@ -123,14 +122,10 @@ pub async fn admin_kb_health(
     }
     components.insert("embedder".into(), embedder);
 
-    // chat provider: configured?
-    let chat_model = config.ai.model.as_deref().unwrap_or_default();
+    // chat provider: 走 llm 底座（模型来自租户 options，§10.2）。
     components.insert(
         "provider".into(),
-        json!({
-            "model": if chat_model.is_empty() { Value::Null } else { json!(chat_model) },
-            "status": if chat_model.is_empty() { "degraded" } else { "up" },
-        }),
+        json!({ "model": Value::Null, "status": "up" }),
     );
 
     // queue: kb_* job backlog.

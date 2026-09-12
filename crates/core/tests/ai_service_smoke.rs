@@ -18,6 +18,8 @@ use axum::Json;
 use raisfast::agent::models::ai_message::AiMessage;
 use raisfast::agent::service as ai_service;
 use raisfast::config::app::AiConfig;
+use raisfast::llm::models::channel::{LlmCostMode, LlmKeyMode, NewChannel};
+use raisfast::llm::service::LlmRouter;
 use sqlx::postgres::{PgPool, PgPoolOptions};
 
 fn test_pool() -> PgPool {
@@ -75,6 +77,35 @@ async fn agent_service_turn_end_to_end() {
     let tenant_id = tenant();
     let base_url = mock_llm_server().await;
 
+    // LLM 底座唯一入口（§10.2）：mock 上游作为一条 OpenAI 兼容渠道。
+    raisfast::llm::models::channel::create_channel(
+        &pool,
+        Some(&tenant_id),
+        NewChannel {
+            name: "mock".into(),
+            provider: "generic".into(),
+            base_url: base_url.clone(),
+            api_keys: serde_json::json!([{ "key": "test-key", "status": "active" }]),
+            key_mode: LlmKeyMode::Polling,
+            models: "gpt-4o-mini".into(),
+            model_mapping: None,
+            priority: 0,
+            weight: 0,
+            channel_groups: "default".into(),
+            auto_ban: false,
+            param_override: None,
+            header_override: None,
+            config: None,
+            cost_mode: LlmCostMode::Usage,
+            cost_discount: 1.0,
+            monthly_cost: None,
+            test_model: None,
+        },
+    )
+    .await
+    .expect("create channel");
+    let router = LlmRouter::new(pool.clone()).await;
+
     let agent = ai_service::create_agent(
         &pool,
         Some(tenant_id.clone()),
@@ -82,7 +113,7 @@ async fn agent_service_turn_end_to_end() {
         "helper".into(),
         "你是能调用工具的助手。".into(),
         "openai_compat".into(),
-        "mock-model".into(),
+        "gpt-4o-mini".into(),
         None,
         vec![],
         true,
@@ -98,17 +129,21 @@ async fn agent_service_turn_end_to_end() {
 
     let ai = AiConfig {
         enabled: true,
-        base_url: Some(base_url),
-        api_key: Some("test-key".into()),
-        model: None,
         timeout_secs: 10,
         broadcast_events: false,
         ..AiConfig::default()
     };
 
-    let result = ai_service::run_turn(&pool, &ai, &agent, session.id, "你好，记住我叫小明")
-        .await
-        .expect("run turn");
+    let result = ai_service::run_turn(
+        &pool,
+        &ai,
+        &router,
+        &agent,
+        session.id,
+        "你好，记住我叫小明",
+    )
+    .await
+    .expect("run turn");
     assert!(result.text.contains("小明"), "mock answer present");
     assert_eq!(result.iterations, 1);
     assert_eq!(result.tool_calls_made, 0);
@@ -142,7 +177,7 @@ async fn agent_service_turn_end_to_end() {
     let first_hash = meta_hash(&rows[2]);
 
     // busy released: a sequential second turn runs fine (status back to open)
-    let second = ai_service::run_turn(&pool, &ai, &agent, session.id, "第二条").await;
+    let second = ai_service::run_turn(&pool, &ai, &router, &agent, session.id, "第二条").await;
     assert!(second.is_ok(), "session is open again, second turn runs");
     assert!(second.unwrap().text.contains("小明"));
 
