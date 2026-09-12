@@ -42,7 +42,7 @@ pub trait Tool: Send + Sync {
 }
 
 /// Named collection of tools.
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct ToolRegistry {
     tools: Vec<Arc<dyn Tool>>,
 }

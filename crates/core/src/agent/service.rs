@@ -11,10 +11,12 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 use raisfast_agent::provider::openai::OpenAiCompatProvider;
 use raisfast_agent::{
-    CancellationToken, ChatMessage, ChatRole, ModelProvider, TokenUsage, ToolCall, ToolRegistry,
-    TurnConfig, TurnEngine, TurnError, TurnEvent, register_memory_tools,
+    CancellationToken, ChatMessage, ChatResponse, ChatRole, ModelProvider, TokenUsage, ToolCall,
+    ToolRegistry, TurnConfig, TurnEngine, TurnError, TurnEvent, TurnOutcome, register_memory_tools,
 };
 use serde_json::json;
+
+use crate::llm::execute::ExecError;
 
 use crate::agent::memory_sql::ScopedMemory;
 use crate::agent::models::ai_agent::AiAgent;
@@ -99,6 +101,34 @@ pub fn set_router_handle(router: Arc<crate::llm::service::LlmRouter>) {
 #[must_use]
 pub fn router_handle() -> Option<Arc<crate::llm::service::LlmRouter>> {
     ROUTER_HANDLE.get().and_then(Clone::clone)
+}
+
+/// 内部单次 chat：底座 facade 优先（router handle + 计费/限额/日志），
+/// 未注册时回退 `[ai]` env 直连（测试/迁移过渡）。
+async fn agent_chat(
+    ai: &AiConfig,
+    agent: &AiAgent,
+    tenant: Option<&str>,
+    user: Option<SnowflakeId>,
+    request: &raisfast_agent::provider::ChatRequest<'_>,
+) -> AppResult<ChatResponse> {
+    if let Some(router) = router_handle()
+        && router
+            .model_info(tenant.unwrap_or("default"), &agent.model)
+            .is_some()
+    {
+        let tenant = tenant.unwrap_or("default");
+        let mut call = router.call(tenant, crate::llm::models::log::LogSource::Agent);
+        if let Some(u) = user {
+            call = call.as_user(u);
+        }
+        return call.chat(Some(&agent.model), request).await;
+    }
+    let provider = provider_for(agent, ai)?;
+    provider
+        .chat(request, &agent.model)
+        .await
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("agent chat failed: {e}")))
 }
 
 /// Create the model provider for an agent from the `[ai]` config section.
@@ -637,61 +667,126 @@ async fn run_turn_inner(
             );
         }
     }
-    let mut old_len = history.len();
+    let old_len = history.len();
 
-    let provider = provider_for(agent, ai)?;
-    let engine = TurnEngine::new(
-        provider,
-        agent.model.clone(),
-        Arc::new(tools),
-        TurnConfig {
-            max_iterations: agent.max_iterations.clamp(1, 50) as usize,
-            temperature: agent.temperature,
-        },
-    )
-    .with_memory(memory);
-    let mut engine = engine;
-    if let Some(c) = cancel {
-        engine = engine.with_cancel(c);
-    }
-
-    // Context overflow fallback (zeroclaw loop recovery): if the provider
-    // still rejects on context length (estimation drift), drop oldest whole
-    // messages and retry once — no summarization in this path.
-    let mut overflow_trimmed = false;
-    let outcome = loop {
-        let result = match emitter.as_mut() {
-            Some(cb) => engine
-                .run_streamed(&mut history, Some(&assembled.text), user, cb)
-                .await
-                .map_err(turn_error),
-            None => engine
-                .run(&mut history, Some(&assembled.text), user)
-                .await
-                .map_err(turn_error),
+    // ── 底座优先（§10.2）：整轮包进 execute，内核承担选择/日志/计费。
+    // 错误分类保守走 Local（不重试）——与迁移前“无重试”行为等价；
+    // 引擎内部已有上下文溢出恢复循环。router 未注册（测试/过渡）→ env 回退。
+    let assembled_c = assembled.clone();
+    let turn = if let Some(router) = router_handle()
+        && router
+            .model_info(tenant_id.unwrap_or("default"), &agent.model)
+            .is_some()
+    {
+        let tenant = tenant_id.unwrap_or("default");
+        let prompt_chars: usize = history
+            .iter()
+            .filter_map(|m| m.content.as_deref())
+            .map(str::chars)
+            .map(|c| c.count())
+            .sum::<usize>()
+            + assembled.text.chars().count();
+        let estimate = crate::llm::relay::adaptor::RelayUsage {
+            prompt_tokens: (prompt_chars / 4).max(1) as i64,
+            completion_tokens: 4096i64 * agent.max_iterations.clamp(1, 50) as i64,
+            cache_read_tokens: 0,
+            cache_write_tokens: 0,
         };
-        match result {
-            Ok(outcome) => break outcome,
-            Err(e) => {
-                let Some(window) = model_context_window(agent, ai) else {
-                    return Err(e);
-                };
-                if overflow_trimmed || !is_context_overflow(&e) {
-                    return Err(e);
-                }
-                let target = (window as usize) * 8 / 10;
-                if !trim_history_to_budget(&mut history, target) {
-                    return Err(e);
-                }
-                old_len = history.len();
-                overflow_trimmed = true;
-                tracing::warn!(
-                    session = session_id.0,
-                    "context overflow: dropped old turns and retrying"
-                );
-            }
+        let mut billing: Option<crate::llm::billing::InternalBilling> = None;
+        if let (Some(pool), Some(user)) = (router.pool.as_ref(), memory_user) {
+            let mode = crate::llm::billing::resolve_policy(pool, tenant).await?;
+            let currency = match &mode {
+                crate::llm::billing::BillingMode::Metered { currency } => currency.clone(),
+                crate::llm::billing::BillingMode::Free { .. } => String::new(),
+            };
+            let pricing = router
+                .model_info(tenant, &agent.model)
+                .expect("checked above")
+                .pricing
+                .clone();
+            let b =
+                crate::llm::billing::InternalBilling::new(user, currency, pricing, mode, estimate);
+            let day = crate::utils::tz::now_utc().format("%Y-%m-%d").to_string();
+            crate::llm::billing::preflight(pool, tenant, &day, &b).await?;
+            billing = Some(b);
         }
+        let caller = memory_user.map(crate::llm::service::Caller::user);
+        let ctx = crate::llm::service::ResolveCtx {
+            tenant,
+            group: None,
+            pin_channel: None,
+            caller,
+        };
+        // 闭包 FnMut 可变捕获：emitter 用 Option::take 逐次搬入 Future；
+        // 其余用 Clone 逐次搬入 —— Future 不借用闭包环境。
+        let history_opt = Some(history);
+        let tools_opt = Some(tools);
+        let memory_opt = Some(memory);
+        let mut emitter_opt = Some(emitter.take());
+        let user_ref = user;
+        router
+            .execute(
+                &ctx,
+                &agent.model,
+                crate::llm::models::log::LogSource::Agent,
+                billing,
+                |p, ep| {
+                    let history = history_opt.clone();
+                    let tools = tools_opt.clone();
+                    let memory = memory_opt.clone();
+                    let emitter = emitter_opt.take().flatten();
+                    let cancel = cancel.clone();
+                    let agent_ref = &*agent;
+                    let ai_ref = &*ai;
+                    let assembled_ref = &assembled_c;
+                    async move {
+                        let history = history.ok_or_else(|| {
+                            ExecError::Local(AppError::Internal(anyhow::anyhow!("turn re-entry")))
+                        })?;
+                        let tools = tools.ok_or_else(|| {
+                            ExecError::Local(AppError::Internal(anyhow::anyhow!("turn re-entry")))
+                        })?;
+                        let memory = memory.ok_or_else(|| {
+                            ExecError::Local(AppError::Internal(anyhow::anyhow!("turn re-entry")))
+                        })?;
+                        let (outcome, history) = drive_turn(
+                            p,
+                            ep.upstream_model.clone(),
+                            agent_ref,
+                            ai_ref,
+                            user_ref,
+                            history,
+                            assembled_ref,
+                            tools,
+                            memory,
+                            emitter,
+                            cancel,
+                        )
+                        .await
+                        .map_err(ExecError::Local)?;
+                        Ok((outcome, history))
+                    }
+                },
+            )
+            .await
+    } else {
+        let provider = provider_for(agent, ai)?;
+        drive_turn(
+            provider,
+            agent.model.clone(),
+            agent,
+            ai,
+            user,
+            history,
+            &assembled_c,
+            tools,
+            memory,
+            emitter,
+            cancel,
+        )
+        .await
     };
+    let (outcome, history) = turn?;
 
     // Two-phase (2): persist assistant/tool rows appended by the engine.
     let appended_start = old_len + usize::from(had_system);
@@ -1152,6 +1247,74 @@ fn epoch_reason(stored: &EpochSnapshot, current: &EpochSnapshot) -> &'static str
 }
 
 /// Consolidate a folded transcript slice into durable Core memory facts
+/// 引擎驱动 + 上下文溢出恢复循环（供底座/回退两分支共用；从 run_turn_inner 抽出）。
+/// 返回循环结束后的 transcript（引擎可能追加了 assistant/tool 行）。
+#[allow(clippy::too_many_arguments)]
+async fn drive_turn(
+    provider: Arc<dyn ModelProvider>,
+    model: String,
+    agent: &AiAgent,
+    ai: &AiConfig,
+    user: &str,
+    history: Vec<ChatMessage>,
+    assembled: &crate::agent::prompt::AssembledPrompt,
+    tools: ToolRegistry,
+    memory: std::sync::Arc<ScopedMemory>,
+    mut emitter: Option<&mut (dyn FnMut(TurnEvent) + Send)>,
+    cancel: Option<CancellationToken>,
+) -> AppResult<(TurnOutcome, Vec<ChatMessage>)> {
+    let mut history = history;
+    let engine = TurnEngine::new(
+        provider,
+        model,
+        Arc::new(tools),
+        TurnConfig {
+            max_iterations: agent.max_iterations.clamp(1, 50) as usize,
+            temperature: agent.temperature,
+        },
+    )
+    .with_memory(memory);
+    let mut engine = engine;
+    if let Some(c) = cancel {
+        engine = engine.with_cancel(c);
+    }
+
+    // Context overflow fallback (zeroclaw loop recovery): if the provider
+    // still rejects on context length (estimation drift), drop oldest whole
+    // messages and retry once — no summarization in this path.
+    let mut overflow_trimmed = false;
+    let outcome = loop {
+        let result = match emitter.as_mut() {
+            Some(cb) => engine
+                .run_streamed(&mut history, Some(&assembled.text), user, cb)
+                .await
+                .map_err(turn_error),
+            None => engine
+                .run(&mut history, Some(&assembled.text), user)
+                .await
+                .map_err(turn_error),
+        };
+        match result {
+            Ok(outcome) => break outcome,
+            Err(e) => {
+                let Some(window) = model_context_window(agent, ai) else {
+                    return Err(e);
+                };
+                if overflow_trimmed || !is_context_overflow(&e) {
+                    return Err(e);
+                }
+                let target = (window as usize) * 8 / 10;
+                if !trim_history_to_budget(&mut history, target) {
+                    return Err(e);
+                }
+                overflow_trimmed = true;
+                tracing::warn!("context overflow: dropped old turns and retrying");
+            }
+        }
+    };
+    Ok((outcome, history))
+}
+
 /// (zeroclaw classify/consolidation). One extraction LLM call; failures degrade
 /// to a warn and never fail the turn.
 async fn consolidate_folded_memory(
@@ -1162,7 +1325,6 @@ async fn consolidate_folded_memory(
     user: Option<SnowflakeId>,
     slice_text: &str,
 ) -> AppResult<()> {
-    let provider = provider_for(agent, ai)?;
     let messages = [ChatMessage {
         role: ChatRole::User,
         content: Some(format!(
@@ -1184,8 +1346,7 @@ async fn consolidate_folded_memory(
         max_tokens: None,
         stop: None,
     };
-    let response = provider
-        .chat(&request, &agent.model)
+    let response = agent_chat(ai, agent, None, None, &request)
         .await
         .map_err(|e| AppError::Internal(anyhow::anyhow!("memory consolidate failed: {e}")))?;
     let Some(text) = response.text.filter(|t| !t.trim().is_empty()) else {
@@ -1374,7 +1535,6 @@ pub async fn compact_session(
 /// Summarize a folded transcript slice with one provider call (temperature 0).
 /// Fails turn-friendly: caller degrades to no-folding on any error.
 async fn summarize_transcript(ai: &AiConfig, agent: &AiAgent, combined: &str) -> AppResult<String> {
-    let provider = provider_for(agent, ai)?;
     let messages = [ChatMessage {
         role: ChatRole::User,
         content: Some(format!(
@@ -1390,8 +1550,7 @@ async fn summarize_transcript(ai: &AiConfig, agent: &AiAgent, combined: &str) ->
         max_tokens: None,
         stop: None,
     };
-    let response = provider
-        .chat(&request, &agent.model)
+    let response = agent_chat(ai, agent, None, None, &request)
         .await
         .map_err(|e| AppError::Internal(anyhow::anyhow!("context summarize failed: {e}")))?;
     response
