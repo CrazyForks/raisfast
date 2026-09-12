@@ -30,7 +30,9 @@ pub async fn recall(deps: &KbDeps, kb_id: i64, query: &UnderstoodQuery) -> AppRe
         // index; best-effort rebuild from SQL before the dense search).
         crate::kb::vectors::warmup::ensure_warm(&deps.pool, &deps.vector, kb_id).await;
         let texts = [query.text.as_str()];
-        let vectors = deps.embedder.embed(&texts).await?;
+        // KB 搜索路径无租户上下文（chunk 行无 tenant）——与既有
+        // `RunRecorder` 约定一致用 default 路由。
+        let vectors = deps.embedder.embed("default", &texts).await?;
         let Some(embedding) = vectors.first() else {
             return Ok(Vec::new());
         };

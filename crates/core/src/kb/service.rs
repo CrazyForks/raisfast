@@ -26,13 +26,19 @@ use crate::types::snowflake_id::SnowflakeId;
 /// (`/embeddings`, §4.1); tests inject a deterministic stub.
 #[async_trait::async_trait]
 pub trait KbEmbedder: Send + Sync {
-    async fn embed(&self, texts: &[&str]) -> AppResult<Vec<Vec<f32>>>;
+    async fn embed(&self, tenant: &str, texts: &[&str]) -> AppResult<Vec<Vec<f32>>>;
 
     /// Per-KB embedding: the KB row pins its model + dim at creation
     /// (immutable). Production uses the KB's model; tests fall back to
-    /// [`KbEmbedder::embed`].
-    async fn embed_for(&self, _model: &str, dim: u32, texts: &[&str]) -> AppResult<Vec<Vec<f32>>> {
-        let out = self.embed(texts).await?;
+    /// [`KbEmbedder::embed`]. `tenant` scopes gateway routing (§10.2).
+    async fn embed_for(
+        &self,
+        tenant: &str,
+        _model: &str,
+        dim: u32,
+        texts: &[&str],
+    ) -> AppResult<Vec<Vec<f32>>> {
+        let out = self.embed(tenant, texts).await?;
         for v in &out {
             if v.len() as u32 != dim {
                 return Err(AppError::Internal(anyhow::anyhow!(
@@ -83,14 +89,19 @@ impl ProviderEmbedder {
     /// Slice texts into fixed-size batches and embed them sequentially,
     /// retrying each batch with exponential backoff on failure
     /// [抄WK:models/embedding/batch.go BatchEmbedWithPool 语义，串行替代协程池].
-    async fn embed_batched(&self, texts: &[&str], model: &str) -> AppResult<Vec<Vec<f32>>> {
+    async fn embed_batched(
+        &self,
+        tenant: &str,
+        texts: &[&str],
+        model: &str,
+    ) -> AppResult<Vec<Vec<f32>>> {
         let mut out = Vec::with_capacity(texts.len());
         for batch in texts.chunks(self.batch_size.max(1)) {
             let mut delay = EMBED_RETRY_BASE_DELAY_MS;
             let mut last_err: Option<String> = None;
             let mut vectors: Option<Vec<Vec<f32>>> = None;
             for attempt in 0..EMBED_RETRY_ATTEMPTS {
-                match self.provider.embed(batch, model).await {
+                match self.embed_once(tenant, batch, model).await {
                     Ok(v) if v.len() == batch.len() => {
                         vectors = Some(v);
                         break;
@@ -131,12 +142,46 @@ impl ProviderEmbedder {
         }
         Ok(out)
     }
+
+    /// 单批嵌入：底座 facade 优先（路由/failover/计费/日志），模型未注册或
+    /// router 未装配时回退 `[ai]` env provider（测试/迁移过渡，§10.2）。
+    async fn embed_once(
+        &self,
+        tenant: &str,
+        batch: &[&str],
+        model: &str,
+    ) -> Result<Vec<Vec<f32>>, String> {
+        if let Some(router) = crate::agent::service::router_handle() {
+            let effective = (!model.is_empty()).then_some(model);
+            let routable = match effective {
+                None => true,
+                Some(m) => router.model_info(tenant, m).is_some(),
+            };
+            if routable {
+                return router
+                    .call(tenant, crate::llm::models::log::LogSource::Kb)
+                    .embed(effective, batch)
+                    .await
+                    .map_err(|e| e.to_string());
+            }
+        }
+        self.provider
+            .embed(batch, model)
+            .await
+            .map_err(|e| e.to_string())
+    }
 }
 
 #[async_trait::async_trait]
 impl KbEmbedder for ProviderEmbedder {
-    async fn embed_for(&self, model: &str, dim: u32, texts: &[&str]) -> AppResult<Vec<Vec<f32>>> {
-        let out = self.embed_batched(texts, model).await?;
+    async fn embed_for(
+        &self,
+        tenant: &str,
+        model: &str,
+        dim: u32,
+        texts: &[&str],
+    ) -> AppResult<Vec<Vec<f32>>> {
+        let out = self.embed_batched(tenant, texts, model).await?;
         for v in &out {
             if v.len() as u32 != dim {
                 return Err(AppError::Internal(anyhow::anyhow!(
@@ -148,8 +193,8 @@ impl KbEmbedder for ProviderEmbedder {
         Ok(out)
     }
 
-    async fn embed(&self, texts: &[&str]) -> AppResult<Vec<Vec<f32>>> {
-        self.embed_batched(texts, &self.model).await
+    async fn embed(&self, tenant: &str, texts: &[&str]) -> AppResult<Vec<Vec<f32>>> {
+        self.embed_batched(tenant, texts, &self.model).await
     }
 }
 
@@ -448,7 +493,10 @@ async fn process_document_inner(
         .map(|&(_, raw_i)| (raw_i, raw_chunks[raw_i].content.clone()))
         .collect();
     let texts: Vec<&str> = embed_targets.iter().map(|(_, t)| t.as_str()).collect();
-    let vectors = deps.embedder.embed_for(&model, dim, &texts).await?;
+    let vectors = deps
+        .embedder
+        .embed_for(tenant_id, &model, dim, &texts)
+        .await?;
 
     let mut items = Vec::with_capacity(embed_targets.len());
     for (idx, (raw_i, _)) in embed_targets.iter().enumerate() {
@@ -747,7 +795,7 @@ mod tests {
 
     #[async_trait::async_trait]
     impl KbEmbedder for MockEmbedder {
-        async fn embed(&self, texts: &[&str]) -> AppResult<Vec<Vec<f32>>> {
+        async fn embed(&self, _tenant: &str, texts: &[&str]) -> AppResult<Vec<Vec<f32>>> {
             Ok(texts
                 .iter()
                 .map(|t| {
@@ -1010,7 +1058,7 @@ async fn edit_chunk_inner(
     trace.end_stage(crate::kb::trace::STAGE_OK, serde_json::json!({}), None);
     trace.stage("embed");
     // Update content + re-embed + re-index both paths.
-    let vectors = deps.embedder.embed(&[content]).await?;
+    let vectors = deps.embedder.embed("default", &[content]).await?;
     let vector = vectors.first().cloned().unwrap_or_default();
     crate::kb::models::chunk::update_embedding(&deps.pool, chunk.id, &vector).await?;
     trace.end_stage(
@@ -1121,7 +1169,10 @@ pub async fn index_faq(deps: &KbDeps, faq: &crate::kb::models::faq::KbFaq) -> Ap
         .ok_or_else(|| AppError::NotFound("kb_knowledge_base".into()))?;
     let model = kb_row.embedding_model.clone().unwrap_or_default();
     let dim = u32::try_from(kb_row.embedding_dim.unwrap_or(0)).unwrap_or(0);
-    let vectors = deps.embedder.embed_for(&model, dim, &texts).await?;
+    let vectors = deps
+        .embedder
+        .embed_for("default", &model, dim, &texts)
+        .await?;
     let now = crate::utils::tz::now_utc();
     let mut items = Vec::with_capacity(variants.len());
     let mut fts = Vec::with_capacity(variants.len());
@@ -1194,7 +1245,7 @@ mod faq_tests {
     struct OneHotEmbedder;
     #[async_trait::async_trait]
     impl KbEmbedder for OneHotEmbedder {
-        async fn embed(&self, texts: &[&str]) -> AppResult<Vec<Vec<f32>>> {
+        async fn embed(&self, _tenant: &str, texts: &[&str]) -> AppResult<Vec<Vec<f32>>> {
             Ok(texts
                 .iter()
                 .map(|t| {

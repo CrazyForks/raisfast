@@ -106,7 +106,11 @@ pub async fn admin_kb_health(
         "status": if embed_model.is_empty() { "degraded" } else { "up" },
     });
     if q.probe.as_deref() == Some("embed") {
-        match deps.embedder.embed(&["ping"]).await {
+        match deps
+            .embedder
+            .embed(auth.tenant_id().unwrap_or("default"), &["ping"])
+            .await
+        {
             Ok(v) => {
                 embedder["probe"] =
                     json!({ "status": "up", "dim": v.first().map_or(0, |e| e.len()) })

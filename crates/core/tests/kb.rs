@@ -23,7 +23,11 @@ struct SumEmbedder(usize);
 
 #[async_trait::async_trait]
 impl KbEmbedder for SumEmbedder {
-    async fn embed(&self, texts: &[&str]) -> raisfast::errors::app_error::AppResult<Vec<Vec<f32>>> {
+    async fn embed(
+        &self,
+        _tenant: &str,
+        texts: &[&str],
+    ) -> raisfast::errors::app_error::AppResult<Vec<Vec<f32>>> {
         Ok(texts
             .iter()
             .map(|t| {
@@ -606,7 +610,7 @@ async fn s11_chunk_edit_reembeds_and_reindexes() {
         .unwrap();
     let vectors = deps
         .embedder
-        .embed(&["全新内容 brand-new-token"])
+        .embed("default", &["全新内容 brand-new-token"])
         .await
         .unwrap();
     models::chunk::update_embedding(&deps.pool, chunk.id, &vectors[0])
@@ -1091,6 +1095,7 @@ struct FailingEmbedder;
 impl KbEmbedder for FailingEmbedder {
     async fn embed(
         &self,
+        _tenant: &str,
         _texts: &[&str],
     ) -> raisfast::errors::app_error::AppResult<Vec<Vec<f32>>> {
         Err(raisfast::errors::app_error::AppError::ServiceUnavailable(

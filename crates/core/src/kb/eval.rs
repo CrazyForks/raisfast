@@ -231,7 +231,7 @@ mod tests {
         struct SumEmbedder;
         #[async_trait::async_trait]
         impl KbEmbedder for SumEmbedder {
-            async fn embed(&self, texts: &[&str]) -> AppResult<Vec<Vec<f32>>> {
+            async fn embed(&self, _tenant: &str, texts: &[&str]) -> AppResult<Vec<Vec<f32>>> {
                 Ok(texts
                     .iter()
                     .map(|t| {

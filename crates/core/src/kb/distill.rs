@@ -305,7 +305,10 @@ async fn index_page_units(
 
     let texts: Vec<&str> = inserts.iter().map(|c| c.content.as_str()).collect();
     let model = page_knowledge(deps, page.kb_id).await?;
-    let vectors = deps.embedder.embed_for(&model.0, model.1, &texts).await?;
+    let vectors = deps
+        .embedder
+        .embed_for(&page.tenant_id, &model.0, model.1, &texts)
+        .await?;
     let mut items = Vec::with_capacity(inserts.len());
     let mut fts = Vec::with_capacity(inserts.len());
     for (idx, ins) in inserts.iter().enumerate() {
@@ -440,7 +443,7 @@ mod tests {
 
     #[async_trait::async_trait]
     impl KbEmbedder for MockEmbedder {
-        async fn embed(&self, texts: &[&str]) -> AppResult<Vec<Vec<f32>>> {
+        async fn embed(&self, _tenant: &str, texts: &[&str]) -> AppResult<Vec<Vec<f32>>> {
             Ok(texts
                 .iter()
                 .map(|t| {
