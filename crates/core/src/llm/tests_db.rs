@@ -112,6 +112,32 @@ async fn auth_lazy_flips_expired_and_exhausted() {
 }
 
 #[tokio::test]
+async fn auth_cache_invalidated_on_status_write() {
+    let p = pool().await;
+    let uid = make_user(&p, UserStatus::Active).await;
+    let (plain, t) = make_token(&p, uid, 100, false).await;
+
+    // Warm the short-TTL cache.
+    assert!(auth::authenticate(&p, &plain, "").await.is_ok());
+    // A status write must evict immediately (write-path invalidation, §9.1) —
+    // no waiting out the 5s TTL.
+    token::update_status(&p, None, t.id, LlmTokenStatus::Disabled)
+        .await
+        .unwrap();
+    assert!(
+        auth::authenticate(&p, &plain, "").await.is_err(),
+        "disable is visible immediately despite the warm cache"
+    );
+    token::update_status(&p, None, t.id, LlmTokenStatus::Enabled)
+        .await
+        .unwrap();
+    assert!(
+        auth::authenticate(&p, &plain, "").await.is_ok(),
+        "re-enable is visible immediately"
+    );
+}
+
+#[tokio::test]
 async fn auth_ip_allowlist_enforced() {
     let p = pool().await;
     let uid = make_user(&p, UserStatus::Active).await;
@@ -367,4 +393,99 @@ async fn log_daily_stats_aggregates_by_day() {
     let stats1 = log::daily_stats(&p, None, 1).await.unwrap();
     assert_eq!(stats1.len(), 1);
     assert_eq!(stats1[0].date, d0);
+}
+
+#[tokio::test]
+async fn archive_rollup_is_idempotent_and_stats_merge_summary() {
+    use crate::llm::models::log::{self, LogSource, NewLog};
+    let p = pool().await;
+    let old = "2020-01-01";
+    let old2 = "2020-01-02";
+    let mk = |source: LogSource, day: &str, quota: i64| NewLog {
+        tenant_id: Some("default".to_owned()),
+        source,
+        model_name: "gpt-4o".to_owned(),
+        quota: Quota(quota),
+        prompt_tokens: 10,
+        completion_tokens: 5,
+        day: Some(day.to_owned()),
+        ..Default::default()
+    };
+    log::insert_log(&p, mk(LogSource::Relay, old, 100))
+        .await
+        .unwrap();
+    log::insert_log(&p, mk(LogSource::Relay, old2, 50))
+        .await
+        .unwrap();
+    log::insert_log(&p, mk(LogSource::Test, old, 7))
+        .await
+        .unwrap();
+
+    // Both default (90) and test (7) windows are far past → all 3 archived.
+    let r1 = log::archive_old_logs(&p, 90, 7).await.unwrap();
+    assert_eq!(r1.deleted_rows, 3);
+    assert!(r1.summary_rows >= 2, "relay + test grains: {r1:?}");
+
+    // Re-run: detail already gone → no rows touched, no double count.
+    let r2 = log::archive_old_logs(&p, 90, 7).await.unwrap();
+    assert_eq!(r2.deleted_rows, 0);
+    assert_eq!(r2.summary_rows, 0);
+
+    // Long-term report now reads the summary: day buckets merge all sources.
+    let buckets = log::stats_by(&p, Some("default"), "day", "2019-12-01", "2020-12-31")
+        .await
+        .unwrap();
+    let d1 = buckets.iter().find(|b| b.key == old).expect("day old");
+    assert_eq!(d1.requests, 2, "relay + test rows merged");
+    assert_eq!(d1.quota, 107);
+    let d2 = buckets.iter().find(|b| b.key == old2).expect("day old2");
+    assert_eq!(d2.requests, 1);
+    assert_eq!(d2.quota, 50);
+
+    // Detail rows are gone.
+    let (_items, total) = log::query_paged(
+        &p,
+        None,
+        &log::LogFilters {
+            model_name: Some("gpt-4o".to_owned()),
+            ..Default::default()
+        },
+        1,
+        10,
+    )
+    .await
+    .unwrap();
+    assert_eq!(total, 0, "old detail rows deleted");
+}
+
+#[tokio::test]
+async fn usage_by_user_reads_archived_summary_only_for_that_user() {
+    use crate::llm::models::log::{self, LogSource, NewLog};
+    let p = pool().await;
+    let u1 = make_user(&p, UserStatus::Active).await;
+    let u2 = make_user(&p, UserStatus::Active).await;
+    for (uid, quota) in [(u1, 100i64), (u2, 900i64)] {
+        log::insert_log(
+            &p,
+            NewLog {
+                tenant_id: Some("default".to_owned()),
+                user_id: Some(uid),
+                source: LogSource::Relay,
+                model_name: "gpt-4o".to_owned(),
+                quota: Quota(quota),
+                day: Some("2020-01-01".to_owned()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    }
+    log::archive_old_logs(&p, 90, 7).await.unwrap();
+
+    let buckets = log::usage_by_user(&p, None, u1, "model", "2019-01-01", "2020-12-31")
+        .await
+        .unwrap();
+    assert_eq!(buckets.len(), 1);
+    assert_eq!(buckets[0].quota, 100, "only the caller's archived usage");
+    assert_eq!(buckets[0].requests, 1);
 }

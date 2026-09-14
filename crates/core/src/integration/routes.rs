@@ -115,6 +115,7 @@ fn ingress_disabled() -> Response {
         .into_response()
 }
 
+#[allow(clippy::result_large_err)]
 async fn resolve_channel(
     state: &AppState,
     channel_key: &str,

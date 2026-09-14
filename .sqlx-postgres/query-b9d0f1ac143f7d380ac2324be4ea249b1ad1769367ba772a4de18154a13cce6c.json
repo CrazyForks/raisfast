@@ -1,0 +1,35 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO \"llm_logs\" (\"id\", \"request_id\", \"user_id\", \"token_id\", \"source\", \"channel_id\", \"key_index\", \"model_name\", \"is_stream\", \"prompt_tokens\", \"completion_tokens\", \"cache_read_tokens\", \"cache_write_tokens\", \"quota\", \"cost_quota\", \"detail\", \"elapsed_ms\", \"status_code\", \"error_message\", \"day\", \"created_at\", \"tenant_id\") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Varchar",
+        "Int8",
+        "Int8",
+        "Varchar",
+        "Int8",
+        "Int4",
+        "Varchar",
+        "Bool",
+        "Int4",
+        "Int4",
+        "Int4",
+        "Int4",
+        "Int8",
+        "Int8",
+        "Jsonb",
+        "Int4",
+        "Int4",
+        "Text",
+        "Varchar",
+        "Timestamptz",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "b9d0f1ac143f7d380ac2324be4ea249b1ad1769367ba772a4de18154a13cce6c"
+}

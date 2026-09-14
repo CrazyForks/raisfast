@@ -105,6 +105,27 @@ struct CooldownUntil {
     reason: String,
 }
 
+/// First-byte latency histogram upper bounds in seconds (design §7.5). The
+/// last bucket is the `+Inf` overflow catch-all.
+pub const LATENCY_BUCKETS: [f64; 11] =
+    [0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 60.0, 600.0];
+
+/// Per-(tenant, model) latency gauge: EWMA (Retry-After estimation) plus a
+/// coarse fixed-bucket histogram over the same samples (ops stats, §7.5).
+#[derive(Debug, Clone)]
+pub struct LatencyStat {
+    pub ewma: f64,
+    pub count: u64,
+    pub buckets: [u64; LATENCY_BUCKETS.len()],
+}
+
+/// One key's concurrency slot state (design §7.6): the semaphore plus its
+/// configured capacity, so the stats endpoint can report in-flight permits.
+struct KeySlot {
+    sem: Arc<Semaphore>,
+    capacity: usize,
+}
+
 /// Per-request retry state (design §7.2): the tried set only guards
 /// last-resort — normal selection is deduped implicitly by cooldowns.
 #[derive(Debug, Default)]
@@ -232,11 +253,11 @@ pub struct LlmRouter {
     cooldowns: DashMap<(SnowflakeId, usize), CooldownUntil>,
     transient_fails: DashMap<(SnowflakeId, usize), u32>,
     persist_locks: DashMap<SnowflakeId, Arc<tokio::sync::Mutex<()>>>,
-    slots: DashMap<(SnowflakeId, usize), Arc<Semaphore>>,
+    slots: DashMap<(SnowflakeId, usize), Arc<KeySlot>>,
     queues: QueueRegistry,
     token_inflight: DashMap<SnowflakeId, Arc<AtomicI64>>,
     user_inflight: DashMap<SnowflakeId, Arc<AtomicI64>>,
-    latencies: DashMap<(String, String), Arc<std::sync::Mutex<f64>>>,
+    latencies: DashMap<(String, String), Arc<std::sync::Mutex<LatencyStat>>>,
     pub(crate) providers:
         DashMap<(SnowflakeId, usize), Arc<dyn raisfast_agent::provider::ModelProvider>>,
 }
@@ -1007,15 +1028,28 @@ impl LlmRouter {
         })
     }
 
-    /// Record a request latency sample into the per-(tenant, model) EWMA
-    /// (Retry-After estimation source, design §7.6).
+    /// Record a request latency sample into the per-(tenant, model) EWMA and
+    /// histogram (Retry-After estimation + ops stats, design §7.5/§7.6).
     pub fn record_latency(&self, tenant: &str, model: &str, secs: f64) {
+        let value = secs.clamp(0.05, LATENCY_BUCKETS[LATENCY_BUCKETS.len() - 1]);
         let entry = self
             .latencies
             .entry((tenant.to_owned(), model.to_owned()))
-            .or_insert_with(|| Arc::new(std::sync::Mutex::new(30.0)));
-        if let Ok(mut ewma) = entry.lock() {
-            *ewma = *ewma * 0.8 + secs.clamp(0.05, 600.0) * 0.2;
+            .or_insert_with(|| {
+                Arc::new(std::sync::Mutex::new(LatencyStat {
+                    ewma: 30.0,
+                    count: 0,
+                    buckets: [0; LATENCY_BUCKETS.len()],
+                }))
+            });
+        if let Ok(mut stat) = entry.lock() {
+            stat.ewma = stat.ewma * 0.8 + value * 0.2;
+            stat.count += 1;
+            let idx = LATENCY_BUCKETS
+                .iter()
+                .position(|b| value <= *b)
+                .unwrap_or(LATENCY_BUCKETS.len() - 1);
+            stat.buckets[idx] += 1;
         }
     }
 
@@ -1023,13 +1057,145 @@ impl LlmRouter {
     pub fn avg_latency_secs(&self, tenant: &str, model: &str) -> f64 {
         self.latencies
             .get(&(tenant.to_owned(), model.to_owned()))
-            .and_then(|e| e.lock().ok().map(|g| *g))
+            .and_then(|e| e.lock().ok().map(|g| g.ewma))
             .unwrap_or(30.0)
     }
 
     /// Total queued waiters (metrics).
     pub fn total_waiting(&self) -> usize {
         self.queues.total_waiting()
+    }
+
+    /// Realtime ops gauge snapshot (design §7.5/§12, `[自造-钉死]`): queue
+    /// depth/bytes, in-flight per key/token/user, cooling-key split
+    /// (transient/window), enabled/disabled key counts and per-(tenant, model)
+    /// latency EWMA + cumulative histogram. Overload triage reads these live
+    /// gauges instead of paging through logs.
+    pub fn stats(&self) -> serde_json::Value {
+        use serde_json::json;
+
+        let queue_snap = self.queues.snapshot();
+        let total_waiting: usize = queue_snap.iter().map(|(_, w, _)| *w).sum();
+        let total_bytes: usize = queue_snap.iter().map(|(_, _, b)| *b).sum();
+        let routes: Vec<serde_json::Value> = queue_snap
+            .into_iter()
+            .map(|(k, waiting, bytes)| {
+                json!({
+                    "tenant": k.tenant,
+                    "group": k.group,
+                    "model": k.model,
+                    "waiting": waiting,
+                    "bytes": bytes,
+                })
+            })
+            .collect();
+
+        let key_slots: Vec<serde_json::Value> = self
+            .slots
+            .iter()
+            .map(|e| {
+                let available = e.value().sem.available_permits();
+                json!({
+                    "channel_id": e.key().0.0,
+                    "key_index": e.key().1,
+                    "capacity": e.value().capacity,
+                    "in_use": e.value().capacity.saturating_sub(available),
+                })
+            })
+            .collect();
+        let tokens: Vec<serde_json::Value> = self
+            .token_inflight
+            .iter()
+            .map(|e| {
+                json!({
+                    "token_id": e.key().0,
+                    "inflight": e.value().load(Ordering::Relaxed),
+                })
+            })
+            .collect();
+        let users: Vec<serde_json::Value> = self
+            .user_inflight
+            .iter()
+            .map(|e| {
+                json!({
+                    "user_id": e.key().0,
+                    "inflight": e.value().load(Ordering::Relaxed),
+                })
+            })
+            .collect();
+
+        let now = Instant::now();
+        let mut cooling_transient = 0usize;
+        let mut cooling_window = 0usize;
+        for e in self.cooldowns.iter() {
+            if e.value().until <= now {
+                continue;
+            }
+            match e.value().kind {
+                CooldownKind::Transient => cooling_transient += 1,
+                CooldownKind::Window => cooling_window += 1,
+            }
+        }
+
+        let (mut keys_active, mut keys_disabled) = (0usize, 0usize);
+        {
+            let cache = self.cache.read().expect("llm cache lock");
+            for ch in cache.channels.values() {
+                for key in &ch.keys {
+                    if key.status == LlmKeyStatus::Active {
+                        keys_active += 1;
+                    } else {
+                        keys_disabled += 1;
+                    }
+                }
+            }
+        }
+
+        let latency: Vec<serde_json::Value> = self
+            .latencies
+            .iter()
+            .filter_map(|e| {
+                let stat = e.value().lock().ok()?;
+                let mut cumulative = 0u64;
+                let buckets: Vec<serde_json::Value> = LATENCY_BUCKETS
+                    .iter()
+                    .enumerate()
+                    .map(|(i, le)| {
+                        cumulative += stat.buckets[i];
+                        json!({ "le": le, "count": cumulative })
+                    })
+                    .collect();
+                Some(json!({
+                    "tenant": e.key().0,
+                    "model": e.key().1,
+                    "ewma_secs": stat.ewma,
+                    "count": stat.count,
+                    "buckets": buckets,
+                }))
+            })
+            .collect();
+
+        json!({
+            "queues": {
+                "total_waiting": total_waiting,
+                "total_bytes": total_bytes,
+                "routes": routes,
+            },
+            "inflight": {
+                "keys": key_slots,
+                "tokens": tokens,
+                "users": users,
+            },
+            "keys": {
+                "active": keys_active,
+                "disabled": keys_disabled,
+            },
+            "cooldowns": {
+                "transient": cooling_transient,
+                "window": cooling_window,
+            },
+            "latency": latency,
+        })
     }
 
     /// Acquire one upstream slot for a request (design §7.6): direct
@@ -1100,12 +1266,18 @@ impl LlmRouter {
                             return Ok((ch, idx, permit));
                         }
                         Some(cap) => {
-                            let sem = self
+                            let slot = self
                                 .slots
                                 .entry((ch.id, idx))
-                                .or_insert_with(|| Arc::new(Semaphore::new(cap.max(1) as usize)))
+                                .or_insert_with(|| {
+                                    let capacity = cap.max(1) as usize;
+                                    Arc::new(KeySlot {
+                                        sem: Arc::new(Semaphore::new(capacity)),
+                                        capacity,
+                                    })
+                                })
                                 .clone();
-                            if let Ok(permit) = sem.clone().try_acquire_owned() {
+                            if let Ok(permit) = slot.sem.clone().try_acquire_owned() {
                                 let guard = SlotPermit {
                                     router: self.clone(),
                                     tenant: ch.tenant.clone(),

@@ -664,6 +664,102 @@ async fn admin_models_crud_with_immediate_cache_invalidation() {
     );
 }
 
+// ── 默认模型设置（§10.2）────────────────────────────────────────────
+
+#[tokio::test]
+async fn admin_default_models_validated_against_directory() {
+    let (_, state) = crate::test_app().await;
+    let (_admin_id, admin_jwt) = user_jwt(&state.pool, true).await;
+    let mut app = llm_admin_app(&state);
+
+    let chat = format!("def-chat-{}", raisfast::utils::id::new_id());
+    let emb_ok = format!("def-emb-{}", raisfast::utils::id::new_id());
+    let emb_nodim = format!("def-embnodim-{}", raisfast::utils::id::new_id());
+
+    // 目录：一个 chat、一个带 dimension 的 embedding、一个缺 dimension 的 embedding。
+    for (name, ty, params) in [
+        (chat.as_str(), "chat", serde_json::Value::Null),
+        (emb_ok.as_str(), "embedding", json!({ "dimension": 1536 })),
+        (emb_nodim.as_str(), "embedding", serde_json::Value::Null),
+    ] {
+        let (status, resp) = crate::send(
+            &mut app,
+            admin_req(
+                "POST",
+                "/api/v1/admin/llm/models",
+                &admin_jwt,
+                Some(json!({ "name": name, "model_type": ty, "params": params })),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "seed {name}: {resp:?}");
+    }
+
+    // 未知模型 / 类型不符 / embedding 缺 dimension → 400（写入前校验）。
+    for (body, case) in [
+        (json!({ "chat_model": "no-such-model-xyz" }), "unknown"),
+        (json!({ "chat_model": emb_ok }), "embedding into chat"),
+        (json!({ "embedding_model": chat }), "chat into embedding"),
+        (
+            json!({ "embedding_model": emb_nodim }),
+            "embedding without dimension",
+        ),
+    ] {
+        let (status, resp) = crate::send(
+            &mut app,
+            admin_req("PUT", "/api/v1/admin/llm/defaults", &admin_jwt, Some(body)),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{case}: {resp:?}");
+    }
+
+    // 合法写入 → 回读一致。
+    let (status, resp) = crate::send(
+        &mut app,
+        admin_req(
+            "PUT",
+            "/api/v1/admin/llm/defaults",
+            &admin_jwt,
+            Some(json!({ "chat_model": chat, "embedding_model": emb_ok })),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "body: {resp:?}");
+    assert_eq!(resp["data"]["chat_model"], json!(chat));
+    assert_eq!(resp["data"]["embedding_model"], json!(emb_ok));
+
+    let (status, resp) = crate::send(
+        &mut app,
+        admin_req("GET", "/api/v1/admin/llm/defaults", &admin_jwt, None),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(resp["data"]["chat_model"], json!(chat));
+    assert_eq!(resp["data"]["embedding_model"], json!(emb_ok));
+
+    // 空串清除 → 回读 null。
+    let (status, resp) = crate::send(
+        &mut app,
+        admin_req(
+            "PUT",
+            "/api/v1/admin/llm/defaults",
+            &admin_jwt,
+            Some(json!({ "chat_model": "" })),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(resp["data"]["chat_model"].is_null(), "cleared: {resp:?}");
+    assert_eq!(resp["data"]["embedding_model"], json!(emb_ok));
+
+    // 通用 options 写入路径同样被守门（钩子在 OptionsService 内）。
+    let err = state
+        .options
+        .set(None, "llm.default_chat_model", json!("no-such-model-xyz"))
+        .await;
+    assert!(err.is_err(), "generic options write is validated too");
+}
+
 // ── 用户自服务 token（§9.2/§12：unlimited 收紧、明文仅一次）──────
 
 #[tokio::test]
@@ -1245,6 +1341,159 @@ async fn health_cron_recovers_only_probed_ok_channels() {
     assert_eq!(ch_model::parse_keys(&row)[0].status, LlmKeyStatus::Disabled);
 }
 
+#[tokio::test]
+async fn health_cron_probes_anthropic_channels_natively() {
+    let (_, state) = crate::test_app().await;
+    // Anthropic-native upstream: only `/v1/messages` succeeds; a probe on the
+    // OpenAI `/chat/completions` path would get the default 404 and fail.
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "content": [{ "type": "text", "text": "pong" }]
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let ch =
+        insert_channel_with_provider(&state.pool, &server.uri(), "sk-anthropic", "anthropic").await;
+    ch_model::update_key_status(
+        &state.pool,
+        None,
+        ch.id,
+        0,
+        LlmKeyStatus::Disabled,
+        Some("arrears"),
+    )
+    .await
+    .unwrap();
+    ch_model::update_status(&state.pool, None, ch.id, LlmChannelStatus::AutoDisabled)
+        .await
+        .unwrap();
+
+    let handler = raisfast::worker::handlers::llm_health::LlmHealthHandler::new(
+        state.pool.clone(),
+        state.config.clone(),
+    );
+    use raisfast::worker::JobHandler as _;
+    let job = raisfast::worker::Job::Custom {
+        job_type: "llm_channel_health".to_owned(),
+        payload: serde_json::Value::Null,
+    };
+    handler.handle(&job).await.expect("health sweep");
+    server.verify().await;
+
+    let row = ch_model::find_by_id(&state.pool, ch.id, None)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        row.status,
+        LlmChannelStatus::Enabled,
+        "anthropic channel recovered via /v1/messages"
+    );
+}
+
+// ── 运维指标（§7.5）：实时 gauge 快照 ────────────────────────────
+
+#[tokio::test]
+async fn admin_ops_stats_snapshot_shape() {
+    let (_, state) = crate::test_app().await;
+    let (_admin_id, admin_jwt) = user_jwt(&state.pool, true).await;
+    let mut app = llm_admin_app(&state);
+
+    let (status, resp) = crate::send(
+        &mut app,
+        admin_req("GET", "/api/v1/admin/llm/stats", &admin_jwt, None),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "body: {resp:?}");
+    let d = &resp["data"];
+    assert!(d["queues"]["total_waiting"].is_number());
+    assert!(d["queues"]["routes"].is_array());
+    assert!(d["inflight"]["keys"].is_array());
+    assert!(d["inflight"]["tokens"].is_array());
+    assert!(d["inflight"]["users"].is_array());
+    assert!(d["keys"]["active"].is_number());
+    assert!(d["cooldowns"]["transient"].is_number());
+    assert!(d["cooldowns"]["window"].is_number());
+    assert!(d["latency"].is_array());
+
+    // 非 admin → 403。
+    let (_uid, reader_jwt) = user_jwt(&state.pool, false).await;
+    let (status, _) = crate::send(
+        &mut app,
+        admin_req("GET", "/api/v1/admin/llm/stats", &reader_jwt, None),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+}
+
+// ── 用户自助用量 `GET /llm/usage`（§12）─────────────────────────
+
+#[tokio::test]
+async fn user_self_service_usage_is_scoped_and_cost_free() {
+    let (_, state) = crate::test_app().await;
+    let (u1, jwt1) = user_jwt(&state.pool, false).await;
+    let (u2, _jwt2) = user_jwt(&state.pool, false).await;
+    let mut app = llm_admin_app(&state);
+
+    let day = (raisfast::utils::tz::now_utc().date_naive() - chrono::Duration::days(1))
+        .format("%Y-%m-%d")
+        .to_string();
+    // u1: $1 + $0.5; u2: $9 (must not leak into u1's report).
+    for (uid, quota, model) in [
+        (u1, 1_000_000i64, "gpt-4o"),
+        (u1, 500_000, "gpt-4o-mini"),
+        (u2, 9_000_000, "gpt-4o"),
+    ] {
+        raisfast::llm::models::log::insert_log(
+            &state.pool,
+            raisfast::llm::models::log::NewLog {
+                tenant_id: Some("default".to_owned()),
+                user_id: Some(uid),
+                source: raisfast::llm::models::log::LogSource::Relay,
+                model_name: model.to_owned(),
+                quota: raisfast::types::quota::Quota(quota),
+                day: Some(day.clone()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    }
+
+    let (status, resp) = crate::send(
+        &mut app,
+        admin_req("GET", "/api/v1/llm/usage?group_by=model", &jwt1, None),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "body: {resp:?}");
+    let data = resp["data"]["data"].as_array().unwrap();
+    assert_eq!(data.len(), 2, "only u1's two models: {data:?}");
+    assert!(
+        data.iter()
+            .all(|d| d["key"].as_str() != Some("gpt-4o") || d["charge_usd"].as_f64() != Some(9.0)),
+        "u2 usage excluded"
+    );
+    let totals = &resp["data"]["totals"];
+    assert_eq!(totals["requests"].as_i64(), Some(2));
+    assert_eq!(totals["charge_usd"].as_f64(), Some(1.5));
+    // Cost/profit must never be exposed to the end user.
+    assert!(totals.get("cost_usd").is_none());
+    assert!(data[0].get("cost_usd").is_none());
+    assert!(data[0].get("cost_quota").is_none());
+
+    // Invalid group_by → 400.
+    let (status, _) = crate::send(
+        &mut app,
+        admin_req("GET", "/api/v1/llm/usage?group_by=channel", &jwt1, None),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
 // ── 计费分组倍率端点（pricing.md §2）────────────────────────────
 
 #[tokio::test]
@@ -1441,6 +1690,15 @@ async fn insert_channel(
     base_url: &str,
     key: &str,
 ) -> raisfast::llm::models::channel::LlmChannel {
+    insert_channel_with_provider(pool, base_url, key, "openai").await
+}
+
+async fn insert_channel_with_provider(
+    pool: &raisfast::db::Pool,
+    base_url: &str,
+    key: &str,
+    provider: &str,
+) -> raisfast::llm::models::channel::LlmChannel {
     let entries = vec![raisfast::llm::models::channel::LlmKeyEntry {
         key: key.to_owned(),
         status: LlmKeyStatus::Active,
@@ -1453,7 +1711,7 @@ async fn insert_channel(
         None,
         ch_model::NewChannel {
             name: format!("cron-{}", raisfast::utils::id::new_id()),
-            provider: "openai".to_owned(),
+            provider: provider.to_owned(),
             base_url: base_url.to_owned(),
             api_keys: ch_model::keys_value(&entries),
             key_mode: ch_model::LlmKeyMode::Polling,

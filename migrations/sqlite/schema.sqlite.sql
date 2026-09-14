@@ -1380,7 +1380,9 @@ INSERT OR IGNORE INTO options (id, tenant_id, option_key, value, type, group_nam
     (10014, 'default', 'maintenance_mode', 'false', 'boolean', 'appearance', 'Maintenance mode', 'When enabled, a maintenance page is shown to visitors', NULL, 1, 1, 31, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     (10015, 'default', 'default_currency', '"USD"', 'select', 'ecommerce', 'Default currency', 'Currency code for products and orders', '{"values":["USD","CNY","EUR","GBP","JPY","KRW","HKD","TWD","SGD","AUD","CAD"]}', 1, 1, 40, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     (10017, 'default', 'reserved_usernames', '"admin,administrator,root,system,official,support,staff,moderator,mod,help,info,mail,webmaster,security,billing,sales,owner,superuser,operator"', 'text', 'general', 'Reserved usernames', 'Comma-separated usernames that cannot be registered', '{"max_length":10000}', 0, 1, 5, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
-    (10018, 'default', 'llm_group_ratios', '"{\"default\":1.0}"', 'text', 'llm', 'LLM billing group ratios', 'JSON map of group name to sell-price multiplier (pricing.md §2)', NULL, 0, 1, 10, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'));
+    (10018, 'default', 'llm_group_ratios', '"{\"default\":1.0}"', 'text', 'llm', 'LLM billing group ratios', 'JSON map of group name to sell-price multiplier (pricing.md §2)', NULL, 0, 1, 10, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    (10019, 'default', 'llm.log_retention_days', '90', 'integer', 'llm', 'LLM log retention (days)', 'Detail rows older than this are rolled up into llm_logs_summary then deleted (design §9)', '{"min":1,"max":3650}', 0, 1, 11, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    (10020, 'default', 'llm.log_retention_days_test', '7', 'integer', 'llm', 'LLM test-log retention (days)', 'Shorter retention applied to source=test probe logs', '{"min":1,"max":3650}', 0, 1, 12, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'));
 
 -- ============================================================
 -- Flow orchestration engine v2 (dev-docs/workflow) — P0-P1 5 tables
@@ -1858,6 +1860,27 @@ CREATE INDEX IF NOT EXISTS idx_llm_logs_tenant ON llm_logs(tenant_id, created_at
 CREATE INDEX IF NOT EXISTS idx_llm_logs_day ON llm_logs(tenant_id, day);
 CREATE INDEX IF NOT EXISTS idx_llm_logs_channel ON llm_logs(channel_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_llm_logs_token ON llm_logs(token_id, created_at);
+
+-- Archived daily rollup of llm_logs (design §9 retention / §16 汇总表).
+CREATE TABLE IF NOT EXISTS llm_logs_summary (
+    id INTEGER PRIMARY KEY,
+    tenant_id TEXT NOT NULL DEFAULT 'default',
+    day TEXT NOT NULL,
+    source TEXT NOT NULL DEFAULT 'relay',
+    model_name TEXT NOT NULL DEFAULT '',
+    channel_id INTEGER NOT NULL DEFAULT 0,
+    user_id INTEGER NOT NULL DEFAULT 0,
+    request_count INTEGER NOT NULL DEFAULT 0,
+    prompt_tokens INTEGER NOT NULL DEFAULT 0,
+    completion_tokens INTEGER NOT NULL DEFAULT 0,
+    cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+    cache_write_tokens INTEGER NOT NULL DEFAULT 0,
+    quota INTEGER NOT NULL DEFAULT 0,
+    cost_quota INTEGER NOT NULL DEFAULT 0,
+    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+    UNIQUE(tenant_id, day, source, model_name, channel_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_llm_logs_summary_day ON llm_logs_summary(tenant_id, day);
 
 -- Generic LLM async tasks (video now; batch/image-async later). Lifecycle
 -- columns are strongly typed; kind-specific request/response live in

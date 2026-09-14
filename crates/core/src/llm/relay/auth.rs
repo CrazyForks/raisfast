@@ -79,10 +79,18 @@ pub async fn authenticate(pool: &Pool, bearer: &str, client_ip: &str) -> AppResu
     } else {
         format!("sk-{plain}")
     };
-    let token = token::find_by_hash(pool, &hash_sk(&full))
-        .await?
-        .ok_or(AppError::Unauthorized)?;
-
+    let hash = hash_sk(&full);
+    // Short-TTL cache-aside (design §9.1): skip the token lookup on a hot key.
+    let token = match crate::llm::token_cache::get(&hash) {
+        Some(cached) => cached,
+        None => {
+            let row = token::find_by_hash(pool, &hash)
+                .await?
+                .ok_or(AppError::Unauthorized)?;
+            crate::llm::token_cache::put(&hash, &row);
+            row
+        }
+    };
     // Owner user status: a banned user's tokens die with the account.
     if let Some(user) =
         crate::models::user::find_by_id(pool, token.user_id, token.tenant_id.as_deref()).await?

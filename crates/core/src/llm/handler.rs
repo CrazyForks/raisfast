@@ -250,6 +250,39 @@ pub fn routes(
         r,
         registry,
         restful,
+        "/admin/llm/defaults",
+        get,
+        get_defaults,
+        "system",
+        "admin/llm/defaults",
+        "admin"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        restful,
+        "/admin/llm/defaults",
+        put,
+        put_defaults,
+        "system",
+        "admin/llm/defaults",
+        "admin"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        restful,
+        "/admin/llm/stats",
+        get,
+        get_ops_stats,
+        "system",
+        "admin/llm/stats",
+        "admin"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        restful,
         "/llm/tokens",
         get,
         list_own_tokens,
@@ -277,6 +310,17 @@ pub fn routes(
         selectable_models,
         "system",
         "llm/models",
+        "authed"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        restful,
+        "/llm/usage",
+        get,
+        get_own_usage,
+        "system",
+        "llm/usage",
         "authed"
     );
     let r = reg_route!(
@@ -1245,6 +1289,110 @@ pub async fn selectable_models(
     })))
 }
 
+/// Self-service usage query (design §12): the caller's own `llm_logs` (plus
+/// archived summary) aggregated by `model` (default) or `day`. Cost/profit is
+/// deliberately omitted — users only see their charge and token counts.
+#[derive(Debug, Deserialize, utoipa::IntoParams)]
+pub struct UsageQuery {
+    /// Group dimension: `model` (default) | `day`.
+    pub group_by: Option<String>,
+    /// Lookback window when `start`/`end` are omitted (default 30, 1..=365).
+    pub days: Option<i64>,
+    /// Inclusive window bounds (`YYYY-MM-DD`); override `days`.
+    pub start: Option<String>,
+    pub end: Option<String>,
+}
+
+#[utoipa::path(get, path = "/api/v1/llm/usage", tag = "llm",
+    security(("bearer_auth" = [])),
+    params(
+        ("group_by" = Option<String>, Query, description = "model|day"),
+        ("days" = Option<i64>, Query, description = "Lookback days (default 30)"),
+        ("start" = Option<String>, Query, description = "YYYY-MM-DD"),
+        ("end" = Option<String>, Query, description = "YYYY-MM-DD"),
+    ),
+    responses((status = 200, description = "Own usage by model/day")))]
+pub async fn get_own_usage(
+    auth: AuthUser,
+    State(state): State<AppState>,
+    Query(q): Query<UsageQuery>,
+) -> AppResult<ApiResponse<serde_json::Value>> {
+    let user = auth.ensure_snowflake_user_id()?;
+    let group_by = q.group_by.unwrap_or_else(|| "model".to_owned());
+    if !matches!(group_by.as_str(), "model" | "day") {
+        return Err(AppError::BadRequest(format!(
+            "invalid group_by: {group_by} (model|day)"
+        )));
+    }
+    let parse_date = |s: &str| {
+        chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d")
+            .map_err(|_| AppError::BadRequest(format!("invalid date (want YYYY-MM-DD): {s}")))
+    };
+    let today = crate::utils::tz::now_utc().date_naive();
+    let end = match q.end.as_deref() {
+        Some(s) => parse_date(s)?,
+        None => today,
+    };
+    let start = match q.start.as_deref() {
+        Some(s) => parse_date(s)?,
+        None => end - chrono::Duration::days(q.days.unwrap_or(30).clamp(1, 365) - 1),
+    };
+    let span_days = (end - start).num_days();
+    if span_days < 0 {
+        return Err(AppError::BadRequest("start is after end".to_owned()));
+    }
+    if span_days > 366 {
+        return Err(AppError::BadRequest(
+            "date range too large (max 366 days)".to_owned(),
+        ));
+    }
+    let start_s = start.format("%Y-%m-%d").to_string();
+    let end_s = end.format("%Y-%m-%d").to_string();
+
+    let buckets = crate::llm::models::log::usage_by_user(
+        &state.pool,
+        None,
+        user,
+        &group_by,
+        &start_s,
+        &end_s,
+    )
+    .await?;
+
+    let to_usd = |q: i64| q as f64 / crate::types::quota::QUOTA_PER_USD;
+    let (mut requests, mut prompt, mut completion, mut quota) = (0i64, 0i64, 0i64, 0i64);
+    let data: Vec<serde_json::Value> = buckets
+        .iter()
+        .map(|b| {
+            requests += b.requests;
+            prompt += b.prompt_tokens;
+            completion += b.completion_tokens;
+            quota += b.quota;
+            serde_json::json!({
+                "key": b.key,
+                "label": b.label,
+                "requests": b.requests,
+                "prompt_tokens": b.prompt_tokens,
+                "completion_tokens": b.completion_tokens,
+                "charge_usd": to_usd(b.quota),
+            })
+        })
+        .collect();
+
+    Ok(ApiResponse::success(serde_json::json!({
+        "group_by": group_by,
+        "start": start_s,
+        "end": end_s,
+        "data": data,
+        "totals": {
+            "requests": requests,
+            "prompt_tokens": prompt,
+            "completion_tokens": completion,
+            "charge_usd": to_usd(quota),
+        },
+    })))
+}
+
 /// Token view (decrypted key for reveal/copy — api_token pattern; masked
 /// client-side in the UI).
 #[derive(Debug, Serialize)]
@@ -1553,6 +1701,7 @@ pub async fn update_own_token(
         .execute(&state.pool)
         .await?;
     AppError::expect_affected(&result, "llm_token")?;
+    crate::llm::token_cache::invalidate_hash(&existing.key_hash);
     Ok(ApiResponse::success(()))
 }
 
@@ -1922,6 +2071,97 @@ pub(crate) async fn read_group_ratios(
         out.insert("default".to_owned(), 1.0);
     }
     out
+}
+
+// ---------- default models (§10.2) ----------
+
+/// Payload for the default-model settings. A missing field is left unchanged;
+/// an empty string clears that default (falls back to the global option, if
+/// any). `null` is treated as "unchanged" by serde, so clients must send `""`
+/// to clear.
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub struct DefaultsReq {
+    #[serde(default)]
+    pub chat_model: Option<String>,
+    #[serde(default)]
+    pub embedding_model: Option<String>,
+}
+
+/// Read the resolved default chat/embedding models (tenant option, global
+/// fallback). Unset → `null`.
+#[utoipa::path(get, path = "/api/v1/admin/llm/defaults", tag = "llm",
+    security(("bearer_auth" = [])),
+    responses((status = 200, description = "Default models")))]
+pub async fn get_defaults(
+    auth: AuthUser,
+    State(state): State<AppState>,
+) -> AppResult<ApiResponse<crate::llm::defaults::LlmDefaults>> {
+    auth.ensure_admin()?;
+    let defaults = crate::llm::defaults::read(&state.pool, auth.tenant_id()).await?;
+    Ok(ApiResponse::success(defaults))
+}
+
+/// Set / clear the default chat/embedding models. Values are validated against
+/// the model directory (type + embedding `params.dimension`) and rejected with
+/// a 400 before any write, so a bad default never reaches the runtime.
+#[utoipa::path(put, path = "/api/v1/admin/llm/defaults", tag = "llm",
+    security(("bearer_auth" = [])),
+    responses((status = 200, description = "Defaults updated")))]
+pub async fn put_defaults(
+    auth: AuthUser,
+    State(state): State<AppState>,
+    Json(body): Json<DefaultsReq>,
+) -> AppResult<ApiResponse<crate::llm::defaults::LlmDefaults>> {
+    auth.ensure_admin()?;
+    let tenant = auth.tenant_id();
+    if let Some(value) = body.chat_model {
+        write_default(&state, tenant, crate::llm::defaults::CHAT_MODEL_KEY, value).await?;
+    }
+    if let Some(value) = body.embedding_model {
+        write_default(
+            &state,
+            tenant,
+            crate::llm::defaults::EMBEDDING_MODEL_KEY,
+            value,
+        )
+        .await?;
+    }
+    let defaults = crate::llm::defaults::read(&state.pool, tenant).await?;
+    Ok(ApiResponse::success(defaults))
+}
+
+async fn write_default(
+    state: &AppState,
+    tenant: Option<&str>,
+    key: &str,
+    value: String,
+) -> AppResult<()> {
+    let name = value.trim();
+    if name.is_empty() {
+        state.options.delete(tenant, key).await
+    } else {
+        state
+            .options
+            .set(tenant, key, serde_json::Value::String(name.to_owned()))
+            .await
+    }
+}
+
+// ---------- ops gauges (§7.5) ----------
+
+/// Realtime router gauges (design §7.5/§12): queue depth/bytes, in-flight
+/// per key/token/user, cooling-key split, enabled/disabled key counts and the
+/// per-(tenant, model) latency histogram. Live memory state — overload triage
+/// reads this instead of paging through logs.
+#[utoipa::path(get, path = "/api/v1/admin/llm/stats", tag = "llm",
+    security(("bearer_auth" = [])),
+    responses((status = 200, description = "Realtime router gauges")))]
+pub async fn get_ops_stats(
+    auth: AuthUser,
+    State(state): State<AppState>,
+) -> AppResult<ApiResponse<serde_json::Value>> {
+    auth.ensure_admin()?;
+    Ok(ApiResponse::success(state.llm_router.stats()))
 }
 
 // ---------- channel connectivity test (§7.5 manual) ----------

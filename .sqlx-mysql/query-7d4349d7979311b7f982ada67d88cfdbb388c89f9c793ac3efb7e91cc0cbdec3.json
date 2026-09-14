@@ -1,0 +1,12 @@
+{
+  "db_name": "MySQL",
+  "query": "INSERT INTO `llm_logs` (`id`, `request_id`, `user_id`, `token_id`, `source`, `channel_id`, `key_index`, `model_name`, `is_stream`, `prompt_tokens`, `completion_tokens`, `cache_read_tokens`, `cache_write_tokens`, `quota`, `cost_quota`, `detail`, `elapsed_ms`, `status_code`, `error_message`, `day`, `created_at`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 21
+    },
+    "nullable": []
+  },
+  "hash": "7d4349d7979311b7f982ada67d88cfdbb388c89f9c793ac3efb7e91cc0cbdec3"
+}

@@ -159,7 +159,9 @@ pub async fn update_status(
         where: ("id", id),
         tenant: tenant_id
     )?;
-    AppError::expect_affected(&result, "llm_token")
+    AppError::expect_affected(&result, "llm_token")?;
+    crate::llm::token_cache::invalidate_id(id);
+    Ok(())
 }
 
 /// Delete a token by id (tenant-scoped).
@@ -174,5 +176,7 @@ pub async fn delete_token(
         where: ("id", id),
         tenant: tenant_id
     )?;
-    AppError::expect_affected(&result, "llm_token")
+    AppError::expect_affected(&result, "llm_token")?;
+    crate::llm::token_cache::invalidate_id(id);
+    Ok(())
 }

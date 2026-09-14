@@ -12,6 +12,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use axum::Json;
 use raisfast::agent::service as ai_service;
 use raisfast::config::app::AiConfig;
+use raisfast::llm::models::channel::{LlmCostMode, LlmKeyMode, NewChannel};
+use raisfast::llm::service::LlmRouter;
 use serde_json::json;
 use sqlx::postgres::{PgPool, PgPoolOptions};
 
@@ -65,17 +67,45 @@ fn write_skill(root: &std::path::Path, tenant: &str, name: &str, body: &str) {
 }
 
 fn ai() -> AiConfig {
-    // base_url is patched below after starting the mock; this is only a placeholder
-    // holder pattern to avoid constructing in each branch.
     AiConfig {
         enabled: true,
-        base_url: None,
-        api_key: Some("k".into()),
-        model: None,
         timeout_secs: 10,
         broadcast_events: false,
         ..AiConfig::default()
     }
+}
+
+/// Register the mock upstream as an OpenAI-compatible channel of `tenant`
+/// (the llm gateway is the only model entry point, design §10.2) and build a
+/// router backed by it.
+async fn mock_router(pool: &PgPool, tenant: &str, base_url: &str) -> std::sync::Arc<LlmRouter> {
+    raisfast::llm::models::channel::create_channel(
+        pool,
+        Some(tenant),
+        NewChannel {
+            name: "mock".into(),
+            provider: "generic".into(),
+            base_url: base_url.to_owned(),
+            api_keys: json!([{ "key": "test-key", "status": "active" }]),
+            key_mode: LlmKeyMode::Polling,
+            models: "gpt-4o-mini".into(),
+            model_mapping: None,
+            priority: 0,
+            weight: 0,
+            channel_groups: "default".into(),
+            auto_ban: false,
+            param_override: None,
+            header_override: None,
+            config: None,
+            cost_mode: LlmCostMode::Usage,
+            cost_discount: 1.0,
+            monthly_cost: None,
+            test_model: None,
+        },
+    )
+    .await
+    .expect("create channel");
+    LlmRouter::new(pool.clone()).await
 }
 
 #[tokio::test]
@@ -97,10 +127,10 @@ async fn agent_with_skill_full_and_compact() {
     );
     let requests: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
     let base = mock_llm(requests.clone()).await;
+    let router = mock_router(&pool, &t, &base).await;
 
     // Full mode (default)
-    let mut a = ai();
-    a.base_url = Some(base.clone());
+    let a = ai();
     let agent_full = ai_service::create_agent(
         &pool,
         Some(t.clone()),
@@ -108,7 +138,7 @@ async fn agent_with_skill_full_and_compact() {
         "skillful".into(),
         "you help ops".into(),
         "openai_compat".into(),
-        "mock".into(),
+        "gpt-4o-mini".into(),
         None,
         vec![],
         true,
@@ -120,9 +150,16 @@ async fn agent_with_skill_full_and_compact() {
         ai_service::create_session(&pool, Some(t.clone()), agent_full.id, agent_full.id, "x")
             .await
             .unwrap();
-    ai_service::run_turn(&pool, &a, &agent_full, sess_full.id, "please ship today")
-        .await
-        .unwrap();
+    ai_service::run_turn(
+        &pool,
+        &a,
+        &router,
+        &agent_full,
+        sess_full.id,
+        "please ship today",
+    )
+    .await
+    .unwrap();
     let first = requests.lock().unwrap().last().cloned().unwrap();
     assert!(
         first.contains("## Available Skills"),
@@ -146,7 +183,7 @@ async fn agent_with_skill_full_and_compact() {
         "skillful-compact".into(),
         "you help ops".into(),
         "openai_compat".into(),
-        "mock".into(),
+        "gpt-4o-mini".into(),
         None,
         vec![],
         true,
@@ -163,9 +200,16 @@ async fn agent_with_skill_full_and_compact() {
     )
     .await
     .unwrap();
-    ai_service::run_turn(&pool, &a, &agent_compact, sess_compact.id, "ship it")
-        .await
-        .unwrap();
+    ai_service::run_turn(
+        &pool,
+        &a,
+        &router,
+        &agent_compact,
+        sess_compact.id,
+        "ship it",
+    )
+    .await
+    .unwrap();
     let second = requests.lock().unwrap().last().cloned().unwrap();
     assert!(
         second.contains("read_skill"),

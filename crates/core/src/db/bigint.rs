@@ -75,6 +75,20 @@ impl DbBigint for &crate::types::price::Price {
     }
 }
 
+impl DbBigint for crate::types::quota::Quota {
+    type Output = i64;
+    fn to_bigint(self) -> Self::Output {
+        i64::from(self)
+    }
+}
+
+impl DbBigint for &crate::types::quota::Quota {
+    type Output = i64;
+    fn to_bigint(self) -> Self::Output {
+        i64::from(*self)
+    }
+}
+
 impl DbBigint for Option<i64> {
     type Output = Option<i64>;
     fn to_bigint(self) -> Self::Output {
@@ -107,5 +121,19 @@ impl DbBigint for Option<crate::types::price::Price> {
     type Output = Option<i64>;
     fn to_bigint(self) -> Self::Output {
         self.map(i64::from)
+    }
+}
+
+impl DbBigint for Option<crate::types::quota::Quota> {
+    type Output = Option<i64>;
+    fn to_bigint(self) -> Self::Output {
+        self.map(i64::from)
+    }
+}
+
+impl DbBigint for Option<&crate::types::quota::Quota> {
+    type Output = Option<i64>;
+    fn to_bigint(self) -> Self::Output {
+        self.map(|q| i64::from(*q))
     }
 }

@@ -204,13 +204,15 @@ pub struct StatBucket {
     pub cost_quota: i64,
 }
 
-/// Group `llm_logs` by `group_by` ∈ {`day`, `model`, `user`, `channel`} within
-/// the inclusive `[start, end]` business-day window (both `YYYY-MM-DD`).
+/// Group `llm_logs` (plus the archived `llm_logs_summary`) by `group_by` ∈
+/// {`day`, `model`, `user`, `channel`} within the inclusive `[start, end]`
+/// business-day window (both `YYYY-MM-DD`).
 ///
 /// `day`/`model` need no join; `user`/`channel` LEFT JOIN their dimension
 /// tables for a display label (falling back to the raw id). Ids are read as
 /// integers and stringified in Rust to stay dialect-agnostic (no int→text
-/// CAST). Rows come back ordered: `day` ascending, others by charge DESC.
+/// CAST). Detail rows and archived summary rows never overlap (the archive job
+/// deletes details after rolling them up), so the two result sets are summed.
 pub async fn stats_by(
     pool: &crate::db::Pool,
     tenant_id: Option<&str>,
@@ -218,10 +220,88 @@ pub async fn stats_by(
     start: &str,
     end: &str,
 ) -> AppResult<Vec<StatBucket>> {
+    stats_by_filtered(pool, tenant_id, None, group_by, start, end).await
+}
+
+/// Self-service variant (`GET /llm/usage`, design §12): the same aggregation
+/// restricted to one owner user's logs (detail + archived summary).
+pub async fn usage_by_user(
+    pool: &crate::db::Pool,
+    tenant_id: Option<&str>,
+    user_id: SnowflakeId,
+    group_by: &str,
+    start: &str,
+    end: &str,
+) -> AppResult<Vec<StatBucket>> {
+    stats_by_filtered(pool, tenant_id, Some(user_id), group_by, start, end).await
+}
+
+async fn stats_by_filtered(
+    pool: &crate::db::Pool,
+    tenant_id: Option<&str>,
+    user_id: Option<SnowflakeId>,
+    group_by: &str,
+    start: &str,
+    end: &str,
+) -> AppResult<Vec<StatBucket>> {
+    let mut buckets =
+        stats_query(pool, tenant_id, user_id, group_by, start, end, "llm_logs").await?;
+    let archived = stats_query(
+        pool,
+        tenant_id,
+        user_id,
+        group_by,
+        start,
+        end,
+        "llm_logs_summary",
+    )
+    .await?;
+    if !archived.is_empty() {
+        let mut index: std::collections::HashMap<String, usize> = buckets
+            .iter()
+            .enumerate()
+            .map(|(i, b)| (b.key.clone(), i))
+            .collect();
+        for b in archived {
+            if let Some(&i) = index.get(&b.key) {
+                buckets[i].requests += b.requests;
+                buckets[i].prompt_tokens += b.prompt_tokens;
+                buckets[i].completion_tokens += b.completion_tokens;
+                buckets[i].quota += b.quota;
+                buckets[i].cost_quota += b.cost_quota;
+            } else {
+                index.insert(b.key.clone(), buckets.len());
+                buckets.push(b);
+            }
+        }
+        if group_by == "day" {
+            buckets.sort_by(|a, b| a.key.cmp(&b.key));
+        } else {
+            buckets.sort_by_key(|b| std::cmp::Reverse(b.quota));
+        }
+    }
+    Ok(buckets)
+}
+
+/// One grouped aggregate over a single table (`llm_logs` detail rows, or the
+/// `llm_logs_summary` rollup where `request_count` replaces `COUNT(*)`).
+async fn stats_query(
+    pool: &crate::db::Pool,
+    tenant_id: Option<&str>,
+    user_id: Option<SnowflakeId>,
+    group_by: &str,
+    start: &str,
+    end: &str,
+    table: &str,
+) -> AppResult<Vec<StatBucket>> {
     use crate::db::driver::DbDriver;
     use sqlx::Row;
 
-    let requests_expr = crate::db::Driver::cast_int("COUNT(*)");
+    let requests_expr = if table == "llm_logs_summary" {
+        crate::db::Driver::cast_int("COALESCE(SUM(l.request_count), 0)")
+    } else {
+        crate::db::Driver::cast_int("COUNT(*)")
+    };
     let prompt_expr = crate::db::Driver::cast_int("COALESCE(SUM(l.prompt_tokens), 0)");
     let completion_expr = crate::db::Driver::cast_int("COALESCE(SUM(l.completion_tokens), 0)");
     let quota_expr = crate::db::Driver::cast_int("COALESCE(SUM(l.quota), 0)");
@@ -255,24 +335,36 @@ pub async fn stats_by(
         _ => ("l.day", "l.day", "", "l.day", "l.day ASC", false),
     };
 
-    let tenant = if tenant_id.is_some() {
-        format!(" AND l.tenant_id = {}", crate::db::Driver::ph(3))
-    } else {
-        String::new()
-    };
+    let mut extra = String::new();
+    let mut idx = 3usize;
+    let tenant_bound = tenant_id.is_some();
+    if tenant_bound {
+        extra.push_str(&format!(
+            " AND l.tenant_id = {}",
+            crate::db::Driver::ph(idx)
+        ));
+        idx += 1;
+    }
+    let user_bound = user_id.is_some();
+    if user_bound {
+        extra.push_str(&format!(" AND l.user_id = {}", crate::db::Driver::ph(idx)));
+    }
     let sql = format!(
         "SELECT {key_expr} AS k, {label_expr} AS label, {requests_expr} AS requests, \
          {prompt_expr} AS prompt_tokens, {completion_expr} AS completion_tokens, \
          {quota_expr} AS quota, {cost_expr} AS cost_quota \
-         FROM llm_logs l {join} \
-         WHERE l.day BETWEEN {} AND {}{tenant} \
+         FROM {table} l {join} \
+         WHERE l.day BETWEEN {} AND {}{extra} \
          GROUP BY {group_expr} ORDER BY {order_expr}",
         crate::db::Driver::ph(1),
         crate::db::Driver::ph(2)
     );
     let mut q = sqlx::query(crate::db::safe_sql(&sql)).bind(start).bind(end);
-    if tenant_id.is_some() {
+    if tenant_bound {
         q = q.bind(crate::db::tenant::resolve_tenant(tenant_id));
+    }
+    if let Some(uid) = user_id {
+        q = q.bind(uid);
     }
     let rows = q.fetch_all(pool).await?;
     let mut out = Vec::with_capacity(rows.len());
@@ -301,6 +393,154 @@ pub async fn stats_by(
         });
     }
     Ok(out)
+}
+
+/// One archive sweep report (design §9 retention).
+#[derive(Debug, Default, Serialize)]
+pub struct ArchiveReport {
+    /// Summary rows touched (upserted).
+    pub summary_rows: usize,
+    /// Detail rows deleted from `llm_logs`.
+    pub deleted_rows: i64,
+}
+
+/// Roll up then delete `llm_logs` detail rows past the per-source retention
+/// window: `test_days` applies to `source=test`, `default_days` to the rest.
+/// Each source is a single transaction (rollup + delete are atomic), so a
+/// crash can never double-count or lose aggregates.
+pub async fn archive_old_logs(
+    pool: &crate::db::Pool,
+    default_days: i64,
+    test_days: i64,
+) -> AppResult<ArchiveReport> {
+    let today = crate::utils::tz::now_utc().date_naive();
+    let mut report = ArchiveReport::default();
+    for src in LogSource::all_values() {
+        let days = if *src == LogSource::Test.as_str() {
+            test_days
+        } else {
+            default_days
+        };
+        let cutoff = (today - chrono::Duration::days(days.max(0)))
+            .format("%Y-%m-%d")
+            .to_string();
+        let (summary_rows, deleted_rows) = archive_source(pool, src, &cutoff).await?;
+        report.summary_rows += summary_rows;
+        report.deleted_rows += deleted_rows;
+    }
+    Ok(report)
+}
+
+/// Roll up + delete one source older than `cutoff` (exclusive), atomically.
+async fn archive_source(
+    pool: &crate::db::Pool,
+    source: &str,
+    cutoff: &str,
+) -> AppResult<(usize, i64)> {
+    use crate::db::driver::DbDriver;
+    use sqlx::Row;
+
+    crate::in_transaction!(pool, tx, {
+        let ph = crate::db::Driver::ph;
+        let cast = crate::db::Driver::cast_int;
+        let sql = format!(
+            "SELECT tenant_id, day, model_name, \
+             COALESCE(channel_id, 0) AS channel_id, COALESCE(user_id, 0) AS user_id, \
+             {cnt} AS request_count, {p} AS prompt_tokens, {c} AS completion_tokens, \
+             {cr} AS cache_read_tokens, {cw} AS cache_write_tokens, \
+             {q} AS quota, {cost} AS cost_quota \
+             FROM llm_logs WHERE source = {s} AND day < {d} \
+             GROUP BY tenant_id, day, model_name, COALESCE(channel_id, 0), COALESCE(user_id, 0)",
+            cnt = cast("COUNT(*)"),
+            p = cast("COALESCE(SUM(prompt_tokens), 0)"),
+            c = cast("COALESCE(SUM(completion_tokens), 0)"),
+            cr = cast("COALESCE(SUM(cache_read_tokens), 0)"),
+            cw = cast("COALESCE(SUM(cache_write_tokens), 0)"),
+            q = cast("COALESCE(SUM(quota), 0)"),
+            cost = cast("COALESCE(SUM(cost_quota), 0)"),
+            s = ph(1),
+            d = ph(2),
+        );
+        let rows = sqlx::query(crate::db::safe_sql(&sql))
+            .bind(source)
+            .bind(cutoff)
+            .fetch_all(&mut *tx)
+            .await?;
+
+        // Additive upsert: `col = col + <new value>` is portable (PG/SQLite
+        // `excluded.col`, MySQL `VALUES(col)` via `Driver::excluded_col`).
+        // PostgreSQL resolves an unqualified target column as ambiguous inside
+        // `ON CONFLICT DO UPDATE`, so qualify it there; SQLite/MySQL require it
+        // unqualified.
+        let assignments = [
+            "request_count",
+            "prompt_tokens",
+            "completion_tokens",
+            "cache_read_tokens",
+            "cache_write_tokens",
+            "quota",
+            "cost_quota",
+        ]
+        .iter()
+        .map(|c| {
+            let target = if cfg!(feature = "db-postgres") {
+                format!("llm_logs_summary.{c}")
+            } else {
+                (*c).to_owned()
+            };
+            format!("{c} = {target} + {}", crate::db::Driver::excluded_col(c))
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+        let upsert = crate::db::Driver::upsert_clause(
+            "tenant_id, day, source, model_name, channel_id, user_id",
+            &assignments,
+        );
+        let placeholders = (1..=15).map(ph).collect::<Vec<_>>().join(", ");
+        let insert_sql = format!(
+            "INSERT INTO llm_logs_summary (id, tenant_id, day, source, model_name, \
+             channel_id, user_id, request_count, prompt_tokens, completion_tokens, \
+             cache_read_tokens, cache_write_tokens, quota, cost_quota, updated_at) \
+             VALUES ({placeholders}) {upsert}"
+        );
+
+        let now = crate::utils::tz::now_utc();
+        let mut touched = 0usize;
+        for row in &rows {
+            sqlx::query(crate::db::safe_sql(&insert_sql))
+                .bind(crate::utils::id::new_snowflake_id())
+                .bind(row.try_get::<String, _>("tenant_id")?)
+                .bind(row.try_get::<String, _>("day")?)
+                .bind(source)
+                .bind(row.try_get::<String, _>("model_name")?)
+                .bind(row.try_get::<i64, _>("channel_id")?)
+                .bind(row.try_get::<i64, _>("user_id")?)
+                .bind(row.try_get::<i64, _>("request_count")?)
+                .bind(row.try_get::<i64, _>("prompt_tokens")?)
+                .bind(row.try_get::<i64, _>("completion_tokens")?)
+                .bind(row.try_get::<i64, _>("cache_read_tokens")?)
+                .bind(row.try_get::<i64, _>("cache_write_tokens")?)
+                .bind(row.try_get::<i64, _>("quota")?)
+                .bind(row.try_get::<i64, _>("cost_quota")?)
+                .bind(now)
+                .execute(&mut *tx)
+                .await?;
+            touched += 1;
+        }
+
+        let del_sql = format!(
+            "DELETE FROM llm_logs WHERE source = {} AND day < {}",
+            ph(1),
+            ph(2)
+        );
+        let deleted = sqlx::query(crate::db::safe_sql(&del_sql))
+            .bind(source)
+            .bind(cutoff)
+            .execute(&mut *tx)
+            .await?
+            .rows_affected() as i64;
+        Ok((touched, deleted))
+    })
 }
 
 /// Paged admin log query. Hand-written dynamic SQL (stats_by precedent):

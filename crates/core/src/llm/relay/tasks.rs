@@ -327,6 +327,7 @@ pub(crate) async fn submit_video(
 }
 
 /// Load a task scoped to the calling token (404-shaped mismatches).
+#[allow(clippy::result_large_err)]
 async fn own_task(
     state: &AppState,
     token: &crate::llm::models::token::LlmToken,

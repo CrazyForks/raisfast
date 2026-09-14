@@ -181,6 +181,7 @@ impl OptionsService {
         key: &str,
         value: Value,
     ) -> Result<(), AppError> {
+        crate::llm::defaults::validate_option(&self.pool, tenant_id, key, &value).await?;
         crate::models::options::upsert_value(&self.pool, key, &value, tenant_id).await?;
         let ck = cache_key(tenant_id, key);
         self.cache.invalidate(&ck);
@@ -192,6 +193,11 @@ impl OptionsService {
         tenant_id: Option<&str>,
         pairs: HashMap<String, Value>,
     ) -> Result<(), AppError> {
+        // Validate the whole batch first so a rejected llm default cannot leave
+        // a half-written set of options behind.
+        for (key, value) in &pairs {
+            crate::llm::defaults::validate_option(&self.pool, tenant_id, key, value).await?;
+        }
         for (key, value) in &pairs {
             crate::models::options::upsert_value(&self.pool, key, value, tenant_id).await?;
         }

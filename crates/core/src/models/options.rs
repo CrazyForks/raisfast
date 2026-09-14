@@ -66,7 +66,12 @@ pub async fn find_all(
     )
 }
 
-/// Insert or update an option value (UPSERT by key)
+/// Insert or update an option value (UPSERT by key).
+///
+/// Updates the existing row and, when none exists yet (a brand-new option that
+/// was never seeded), inserts a minimal row so the write is not silently lost.
+/// The fallback INSERT is a runtime query (not `crud_insert!`) so adding an
+/// option needs no `sqlx prepare` cache churn on every backend.
 pub async fn upsert_value(
     pool: &crate::db::Pool,
     key: &str,
@@ -74,11 +79,36 @@ pub async fn upsert_value(
     tenant_id: Option<&str>,
 ) -> AppResult<()> {
     let now = crate::utils::tz::now_utc();
-    raisfast_derive::crud_update!(pool, "options",
-        bind: ["value" => value, "updated_at" => now],
+    let result = raisfast_derive::crud_update!(pool, "options",
+        bind: ["value" => value, "updated_at" => &now],
         where: ("option_key", key),
         tenant: tenant_id
     )?;
+    if result.rows_affected() == 0 {
+        let sql = crate::db::tenant::insert_sql(
+            "options",
+            &[
+                "id",
+                "option_key",
+                "value",
+                "group_name",
+                "label",
+                "updated_at",
+            ],
+            tenant_id,
+        );
+        let mut q = sqlx::query(crate::db::safe_sql(&sql))
+            .bind(crate::utils::id::new_id())
+            .bind(key)
+            .bind(value.clone())
+            .bind("llm")
+            .bind(key)
+            .bind(now);
+        if let Some(tid) = tenant_id {
+            q = q.bind(tid);
+        }
+        q.execute(pool).await?;
+    }
     Ok(())
 }
 

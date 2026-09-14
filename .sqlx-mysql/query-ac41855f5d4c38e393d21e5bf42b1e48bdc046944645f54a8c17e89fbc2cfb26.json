@@ -1,0 +1,12 @@
+{
+  "db_name": "MySQL",
+  "query": "INSERT INTO `llm_tasks` (`id`, `kind`, `user_id`, `token_id`, `channel_id`, `key_index`, `upstream_task_id`, `status`, `model_name`, `pre_consumed`, `unlimited_quota`, `payload`, `expires_at`, `created_at`, `updated_at`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 15
+    },
+    "nullable": []
+  },
+  "hash": "ac41855f5d4c38e393d21e5bf42b1e48bdc046944645f54a8c17e89fbc2cfb26"
+}

@@ -65,8 +65,8 @@ fn to_chat_messages(cfg: &LlmConfig, pool: &Pool) -> AppResult<Vec<ChatMessage>>
 
 fn usage_json(u: Option<raisfast_agent::TokenUsage>) -> Value {
     let u = u.unwrap_or_default();
-    let input = u.input_tokens.map_or(0_u64, |v| v);
-    let output = u.output_tokens.map_or(0_u64, |v| v);
+    let input = u.input_tokens.unwrap_or(0_u64);
+    let output = u.output_tokens.unwrap_or(0_u64);
     json!({
         "prompt_tokens": input,
         "completion_tokens": output,

@@ -1,0 +1,29 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO \"llm_tasks\" (\"id\", \"kind\", \"user_id\", \"token_id\", \"channel_id\", \"key_index\", \"upstream_task_id\", \"status\", \"model_name\", \"pre_consumed\", \"unlimited_quota\", \"payload\", \"expires_at\", \"created_at\", \"updated_at\", \"tenant_id\") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Varchar",
+        "Int8",
+        "Int8",
+        "Int8",
+        "Int4",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Int8",
+        "Bool",
+        "Jsonb",
+        "Timestamptz",
+        "Timestamptz",
+        "Timestamptz",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "d6b508413f471b6f54c548db0b4b2b20f88d1df976c628730b15bb4a8df395a8"
+}

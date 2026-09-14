@@ -1,0 +1,12 @@
+{
+  "db_name": "MySQL",
+  "query": "INSERT INTO `llm_channels` (`id`, `name`, `provider`, `base_url`, `api_keys`, `key_mode`, `status`, `models`, `model_mapping`, `priority`, `weight`, `channel_groups`, `auto_ban`, `param_override`, `header_override`, `config`, `cost_mode`, `cost_discount`, `monthly_cost`, `test_model`, `created_at`, `updated_at`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 22
+    },
+    "nullable": []
+  },
+  "hash": "1dc6baf57a627daf75d090437aad473044501d5b5b98c471de7a570f96b5c7de"
+}

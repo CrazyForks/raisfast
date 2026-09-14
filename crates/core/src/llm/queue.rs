@@ -89,6 +89,11 @@ impl WaitQueue {
         self.state.lock().expect("waitqueue lock").waiters.len()
     }
 
+    /// Current queued bytes (dual-bound accounting, design §7.6).
+    pub fn bytes(&self) -> usize {
+        self.state.lock().expect("waitqueue lock").bytes
+    }
+
     /// Enqueue a waiter under the dual bounds. On success the caller owns an
     /// `OwnedWaitTicket`; dropping it before the turn arrives cancels the
     /// waiter and (head only) advances `serving`.
@@ -269,6 +274,14 @@ impl QueueRegistry {
     /// Total waiting count across routes (metrics).
     pub fn total_waiting(&self) -> usize {
         self.queues.iter().map(|q| q.value().depth()).sum()
+    }
+
+    /// Per-route queue snapshot for the ops stats endpoint (§7.5).
+    pub fn snapshot(&self) -> Vec<(RouteKey, usize, usize)> {
+        self.queues
+            .iter()
+            .map(|e| (e.key().clone(), e.value().depth(), e.value().bytes()))
+            .collect()
     }
 }
 
