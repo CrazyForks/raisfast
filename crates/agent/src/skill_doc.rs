@@ -38,15 +38,7 @@ pub struct SkillDocument {
     pub body: String,
 }
 
-#[derive(Debug, thiserror::Error)]
-pub enum SkillDocError {
-    #[error("SKILL.md is missing the leading `---` frontmatter delimiter")]
-    MissingFrontmatter,
-    #[error("SKILL.md frontmatter is missing required field `{0}`")]
-    MissingRequiredField(&'static str),
-    #[error("io error reading skill file: {0}")]
-    Io(String),
-}
+pub use crate::errors::SkillDocError;
 
 impl SkillDocument {
     /// Parse a SKILL.md. Mirrors zeroclaw `document.rs::SkillDocument::parse`.

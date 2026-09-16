@@ -14,6 +14,8 @@ use std::path::{Path, PathBuf};
 
 use raisfast_agent::{SkillDocError, SkillDocument};
 
+use crate::utils::prompt_file::prompt_file;
+
 /// One enabled, parsed skill.
 #[derive(Debug, Clone)]
 pub struct LoadedSkill {
@@ -116,24 +118,19 @@ fn load_one(dir: &Path) -> Result<LoadedSkill, SkillDocError> {
 }
 
 /// Render the `## Available Skills` section. Full inlines instructions;
-/// Compact lists metadata + a read_skill hint. Text copied from zeroclaw
-/// `skills_to_prompt_with_mode_and_availability` (verbatim preambles).
+/// Compact lists metadata + a read_skill hint. Preambles copied verbatim
+/// from zeroclaw `skills_to_prompt_with_mode_and_availability`
+/// (`prompts/skills_full.md` / `prompts/skills_compact.md`).
 pub fn render_skills(skills: &[LoadedSkill], full: bool) -> Option<String> {
     if skills.is_empty() {
         return None;
     }
     let mut out = if full {
-        String::from(
-            "## Available Skills\n\n\
-             Skill instructions and tool metadata are preloaded below.\n\
-             Follow these instructions directly; do not read skill files at runtime unless the user asks.\n\n",
-        )
+        format!("{}\n\n", prompt_file!("src/agent/prompts/skills_full.md"))
     } else {
-        String::from(
-            "## Available Skills\n\n\
-             Skill summaries are preloaded below to keep context compact.\n\
-             Skill instructions are loaded on demand: call `read_skill(name)` with the skill's `<name>` when you need the full skill file.\n\
-             Skills marked `always` include full instructions below even in compact mode.\n\n",
+        format!(
+            "{}\n\n",
+            prompt_file!("src/agent/prompts/skills_compact.md")
         )
     };
     for skill in skills {

@@ -9,6 +9,7 @@ use raisfast_agent::ChatRequest;
 use raisfast_agent::messages::{ChatMessage, ChatRole};
 
 use crate::kb::service::KbDeps;
+use crate::utils::prompt_file::prompt_file;
 
 /// Understood query: the (possibly rewritten) search text plus keywords.
 /// `degraded=true` means no rewrite happened (no provider / empty model /
@@ -31,17 +32,14 @@ impl UnderstoodQuery {
     }
 }
 
-/// LLM prompt: strict JSON reply `{ "query": "...", "keywords": [...] }`.
-const PROMPT: &str = "你是搜索查询优化器。将用户问题改写为更适合知识库检索的查询，\
-并抽取 2-5 个关键词。只输出 JSON：{\"query\": \"...\", \"keywords\": [\"...\"]}。\
-若问题已经足够清晰，query 原样返回。";
-
+/// LLM prompt: strict JSON reply `{ "query": "...", "keywords": [...] }`
+/// (`src/kb/prompts/understand.md`).
 pub async fn run(deps: &KbDeps, tenant: &str, question: &str) -> UnderstoodQuery {
     let request = ChatRequest {
         messages: &[
             ChatMessage {
                 role: ChatRole::System,
-                content: Some(PROMPT.to_string()),
+                content: Some(prompt_file!("src/kb/prompts/understand.md")),
                 tool_calls: None,
                 tool_call_id: None,
             },

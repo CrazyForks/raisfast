@@ -11,10 +11,13 @@ use std::sync::Arc;
 use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 
+use crate::errors::{MAX_ITERATIONS_TEXT, TOOL_ERROR_PREFIX, TOOL_NOT_FOUND_PREFIX};
 use crate::memory::{Memory, render_memory_context};
 use crate::messages::{ChatMessage, ChatRole, TokenUsage};
-use crate::provider::{ChatRequest, ModelProvider, ProviderError, StreamEvent};
+use crate::provider::{ChatRequest, ModelProvider, StreamEvent};
 use crate::tool::ToolRegistry;
+
+pub use crate::errors::TurnError;
 
 #[derive(Debug, Clone, Copy)]
 pub struct TurnConfig {
@@ -45,12 +48,6 @@ pub enum TurnEvent {
     ToolCall { name: String, arguments: Value },
     /// A tool finished; `output` is what was fed back to the model.
     ToolResult { name: String, output: String },
-}
-
-#[derive(Debug, thiserror::Error)]
-pub enum TurnError {
-    #[error("provider error: {0}")]
-    Provider(#[from] ProviderError),
 }
 
 #[derive(Debug, Default)]
@@ -184,7 +181,7 @@ impl TurnEngine {
                 if outcome.text.is_empty() {
                     outcome.text = narration
                         .take()
-                        .unwrap_or_else(|| "已到最大迭代次数，尚未收敛".to_string());
+                        .unwrap_or_else(|| MAX_ITERATIONS_TEXT.to_string());
                 }
                 break;
             }
@@ -287,9 +284,9 @@ impl TurnEngine {
                 let output = match self.tools.get(&call.name) {
                     Some(tool) => match tool.execute(arguments).await {
                         Ok(o) => o,
-                        Err(e) => format!("工具执行失败: {e}"),
+                        Err(e) => format!("{TOOL_ERROR_PREFIX}{e}"),
                     },
-                    None => format!("工具不存在: {}", call.name),
+                    None => format!("{TOOL_NOT_FOUND_PREFIX}{}", call.name),
                 };
                 let ev = TurnEvent::ToolResult {
                     name: call.name.clone(),
@@ -523,7 +520,7 @@ mod tests {
         assert_eq!(outcome.text, "继续");
         assert!(outcome.events.iter().any(|e| matches!(
             e,
-            TurnEvent::ToolResult { name, output } if name == "nope" && output.contains("工具不存在")
+            TurnEvent::ToolResult { name, output } if name == "nope" && output.contains("Tool not found")
         )));
     }
 

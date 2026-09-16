@@ -1123,9 +1123,16 @@ fn agent_event(ev: raisfast_agent::TurnEvent) -> SseEvent {
         raisfast_agent::TurnEvent::ToolCall { name, arguments } => SseEvent::default()
             .event("tool_call")
             .data(json!({ "name": name, "args": arguments }).to_string()),
-        raisfast_agent::TurnEvent::ToolResult { name, output } => SseEvent::default()
-            .event("tool_result")
-            .data(json!({ "name": name, "output": output, "success": true }).to_string()),
+        raisfast_agent::TurnEvent::ToolResult { name, output } => {
+            SseEvent::default().event("tool_result").data(
+                json!({
+                    "name": name,
+                    "output": output,
+                    "success": !raisfast_agent::tool_output_failed(&output),
+                })
+                .to_string(),
+            )
+        }
     }
 }
 

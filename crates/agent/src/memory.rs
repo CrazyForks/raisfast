@@ -14,15 +14,7 @@ pub struct MemoryEntry {
     pub content: String,
 }
 
-#[derive(Debug, thiserror::Error)]
-pub enum MemoryError {
-    #[error("store: {0}")]
-    Store(String),
-    #[error("recall: {0}")]
-    Recall(String),
-    #[error("forget: {0}")]
-    Forget(String),
-}
+pub use crate::errors::MemoryError;
 
 #[async_trait]
 pub trait Memory: Send + Sync {
@@ -199,7 +191,7 @@ pub mod tools {
                 .and_then(Value::as_str)
                 .ok_or("content required")?;
             self.memory.store(key, content).await.map_err(mem_err)?;
-            Ok(format!("已记住 {key}"))
+            Ok(format!("Stored {key}"))
         }
     }
 
@@ -236,7 +228,7 @@ pub mod tools {
             let limit = args.get("limit").and_then(Value::as_u64).unwrap_or(5) as usize;
             let entries = self.memory.recall(query, limit).await.map_err(mem_err)?;
             if entries.is_empty() {
-                return Ok("(无相关记忆)".to_string());
+                return Ok("No relevant memories.".to_string());
             }
             let mut out = String::new();
             for e in &entries {
@@ -278,9 +270,9 @@ pub mod tools {
                 .ok_or("key required")?;
             let removed = self.memory.forget(key).await.map_err(mem_err)?;
             Ok(if removed {
-                format!("已忘记 {key}")
+                format!("Forgot {key}")
             } else {
-                format!("没有找到 {key}")
+                format!("No memory found for {key}")
             })
         }
     }

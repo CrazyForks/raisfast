@@ -155,7 +155,7 @@ async fn ai_models_roundtrip() {
             seq,
             role: "tool".into(),
             kind: "tool_result".into(),
-            content: "已记住 nickname".into(),
+            content: "Stored nickname".into(),
             tool_calls: None,
             tool_call_id: Some("call_1".into()),
             tool_name: Some("memory_store".into()),

@@ -151,17 +151,7 @@ pub struct VideoTask {
     pub error: Option<String>,
 }
 
-#[derive(Debug, thiserror::Error)]
-pub enum ProviderError {
-    #[error("provider config error: {0}")]
-    Config(String),
-    #[error("http {status}: {body}")]
-    Http { status: u16, body: String },
-    #[error("transport error: {0}")]
-    Transport(String),
-    #[error("cannot parse provider response: {0}")]
-    Parse(String),
-}
+pub use crate::errors::ProviderError;
 
 /// Abstraction over an LLM chat provider (non-streaming for MVP).
 #[async_trait]

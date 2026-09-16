@@ -25,6 +25,7 @@ use crate::agent::models::{ai_message, ai_session};
 use crate::config::app::AiConfig;
 use crate::errors::app_error::{AppError, AppResult};
 use crate::types::snowflake_id::SnowflakeId;
+use crate::utils::prompt_file::prompt_file;
 
 /// In-process registry of sessions with a running turn. A session found
 /// `running` in the DB but NOT here was left behind by a previous crash/panic
@@ -168,7 +169,20 @@ fn estimate_message_tokens(m: &ChatMessage) -> usize {
 /// Emergency overflow recovery (zeroclaw loop semantics): drop oldest messages
 /// until the estimate fits `target` tokens, then prepend a breadcrumb. Never
 /// empties the history and never leaves a dangling tool/assistant prefix.
-fn trim_history_to_budget(history: &mut Vec<ChatMessage>, target: usize) -> bool {
+///
+/// `ctx_notice` is the exact text of the synthetic summary notice prepended
+/// by `run` this turn (if any). "Front message is our own notice" is decided
+/// structurally — fixed position + role/content exact equality, never by
+/// matching wording (translatable prompt text must not leak into detection).
+/// [照抄 zeroclaw `agent/history_trim.rs::insert_breadcrumb_deduped`
+/// (role+content equality at one fixed position); delta: our notice embeds
+/// dynamic summary text, so we compare against the text constructed this
+/// turn instead of a static const.]
+fn trim_history_to_budget(
+    history: &mut Vec<ChatMessage>,
+    target: usize,
+    ctx_notice: Option<&str>,
+) -> bool {
     if history.len() <= 1 {
         return false;
     }
@@ -189,11 +203,13 @@ fn trim_history_to_budget(history: &mut Vec<ChatMessage>, target: usize) -> bool
     if history.len() >= original {
         return false;
     }
-    if let Some(first) = history.first()
-        && first
-            .content
-            .as_deref()
-            .is_some_and(|c| c.contains("自动摘要") || c.contains("自动裁剪"))
+    // The summary notice sits at index 0 and is dropped first by the loop
+    // above; if it is still the front message it is the sole survivor and
+    // already tells the model older content was summarized — no breadcrumb.
+    if let Some(notice) = ctx_notice
+        && let Some(first) = history.first()
+        && first.role == ChatRole::User
+        && first.content.as_deref() == Some(notice)
     {
         return true;
     }
@@ -201,10 +217,7 @@ fn trim_history_to_budget(history: &mut Vec<ChatMessage>, target: usize) -> bool
         0,
         ChatMessage {
             role: ChatRole::User,
-            content: Some(
-                "（为适应上下文上限，较早对话已被自动裁剪；需要时可先用 memory_recall 检索已记忆内容）"
-                    .to_string(),
-            ),
+            content: Some(prompt_file!("src/agent/prompts/trim_breadcrumb.md")),
             tool_calls: None,
             tool_call_id: None,
         },
@@ -321,8 +334,7 @@ async fn persist_delta(
                 })
                 .map(|c| c.name.clone());
             let output = message.content.as_deref().unwrap_or("");
-            row.tool_success =
-                Some(!output.starts_with("工具执行失败") && !output.starts_with("工具不存在"));
+            row.tool_success = Some(!raisfast_agent::tool_output_failed(output));
         }
 
         ai_message::append_message(pool, tenant_id, &row).await?;
@@ -626,6 +638,12 @@ async fn run_turn_inner(
             "turn folded but memory consolidation disabled; set RAISFAST_AI_MEMORY_CONSOLIDATE=true"
         );
     }
+    // Exact text of the synthetic summary notice (if any) we prepended to
+    // history this turn — passed to `trim_history_to_budget` so "front
+    // message is our own notice" is decided structurally (fixed position +
+    // exact match [照抄 zeroclaw insert_breadcrumb_deduped]), never by
+    // matching wording that prompt-file edits or translation would break.
+    let mut ctx_notice: Option<String> = None;
     if cover_seq > 0 {
         history = existing
             .iter()
@@ -633,17 +651,20 @@ async fn run_turn_inner(
             .filter_map(row_to_chat_message)
             .collect();
         if let Some(text) = ctx_summary {
+            let notice = format!(
+                "{}\n{text}",
+                prompt_file!("src/agent/prompts/summary_wrapper.md")
+            );
             history.insert(
                 0,
                 ChatMessage {
                     role: ChatRole::User,
-                    content: Some(format!(
-                        "（以下是较早对话的自动摘要；需要找回摘要前的细节时用 memory_recall 或明确提问）\n{text}"
-                    )),
+                    content: Some(notice.clone()),
                     tool_calls: None,
                     tool_call_id: None,
                 },
             );
+            ctx_notice = Some(notice);
         }
     }
     let old_len = history.len();
@@ -702,6 +723,7 @@ async fn run_turn_inner(
     let history_opt = Some(history);
     let tools_opt = Some(tools);
     let memory_opt = Some(memory);
+    let ctx_notice_opt = ctx_notice;
     let mut emitter_opt = Some(emitter.take());
     let user_ref = user;
     let (outcome, history) = router
@@ -714,6 +736,7 @@ async fn run_turn_inner(
                 let history = history_opt.clone();
                 let tools = tools_opt.clone();
                 let memory = memory_opt.clone();
+                let ctx_notice = ctx_notice_opt.clone();
                 let emitter = emitter_opt.take().flatten();
                 let cancel = cancel.clone();
                 let agent_ref = &*agent;
@@ -735,6 +758,7 @@ async fn run_turn_inner(
                         ctx_window,
                         user_ref,
                         history,
+                        ctx_notice,
                         assembled_ref,
                         tools,
                         memory,
@@ -1236,6 +1260,7 @@ async fn drive_turn(
     ctx_window: Option<i64>,
     user: &str,
     history: Vec<ChatMessage>,
+    ctx_notice: Option<String>,
     assembled: &crate::agent::prompt::AssembledPrompt,
     tools: ToolRegistry,
     memory: std::sync::Arc<ScopedMemory>,
@@ -1283,7 +1308,7 @@ async fn drive_turn(
                     return Err(e);
                 }
                 let target = (window as usize) * 8 / 10;
-                if !trim_history_to_budget(&mut history, target) {
+                if !trim_history_to_budget(&mut history, target, ctx_notice.as_deref()) {
                     return Err(e);
                 }
                 overflow_trimmed = true;
@@ -1307,13 +1332,8 @@ async fn consolidate_folded_memory(
     let messages = [ChatMessage {
         role: ChatRole::User,
         content: Some(format!(
-            "从下面的对话中抽取值得长期记住的用户偏好/决策/规则/政策/事实（含关键数字）。\
-             如果没有任何值得长期记住的内容，直接返回 []，不要编造，不要保存寒暄、一次性计算或临时任务（宁缺毋滥）。\
-             不要抽取助手关于自身机制/工具使用的自述（如「我不使用主动存储」「系统自动归纳」）、对话过程性描述（谁说了什么、编号递进）。\
-             多轮重复陈述的同一件事必须合并为一条（key 取同一标识），不要按轮次生成多条。\
-             content 只写事实本身（一句可直接使用的规则/偏好），不要把\"规则 ALPHA\"、\"ALPHA-1至N为同一内容\"等编号/重复性说明或括号注释写进 content。\
-             只输出 JSON 数组，每项为 {{\"key\": 简短英文驼峰标识, \"content\": 一句话事实, \"importance\": 0到1数字}}，\
-             最多 8 项，importance 低于 0.6 的不要包含，不要输出其它文字。\n\n{slice_text}"
+            "{}\n\n{slice_text}",
+            prompt_file!("src/agent/prompts/memory_consolidate.md")
         )),
         tool_calls: None,
         tool_call_id: None,
@@ -1525,7 +1545,8 @@ async fn summarize_transcript(
     let messages = [ChatMessage {
         role: ChatRole::User,
         content: Some(format!(
-            "把下面较早的对话（可能已含摘要）压缩为中文要点，保留：用户偏好与承诺、明确的决策/规则/策略、关键数字、值得长期记住的工具结果。若原文含编号/代号（如 ALPHA-1、事项N），必须逐条保留每个编号及其内容、不要合并或概括成同一句。不要遗漏可能影响后续回答的事实。输出 ≤12 行紧凑要点，不要开头客套。\n\n{combined}"
+            "{}\n\n{combined}",
+            prompt_file!("src/agent/prompts/summarize_transcript.md")
         )),
         tool_calls: None,
         tool_call_id: None,
@@ -1784,6 +1805,67 @@ pub async fn usage_report(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn msg(role: ChatRole, content: &str) -> ChatMessage {
+        ChatMessage {
+            role,
+            content: Some(content.to_string()),
+            tool_calls: None,
+            tool_call_id: None,
+        }
+    }
+
+    #[test]
+    fn trim_drops_notice_and_replaces_with_single_breadcrumb() {
+        let notice = "（以下是较早对话的自动摘要…）\n摘要正文";
+        let mut history = vec![
+            msg(ChatRole::User, notice),
+            msg(ChatRole::User, "旧的真实消息，长度足够被裁掉"),
+            msg(ChatRole::User, "新"),
+        ];
+        let trimmed = trim_history_to_budget(&mut history, 1, Some(notice));
+        assert!(trimmed);
+        assert_eq!(history.len(), 2, "notice dropped, one breadcrumb, survivor");
+        assert_eq!(history[1].content.as_deref(), Some("新"));
+        assert_ne!(
+            history[0].content.as_deref(),
+            Some(notice),
+            "front is the breadcrumb, not the notice"
+        );
+    }
+
+    #[test]
+    fn trim_sole_survivor_is_our_notice_no_breadcrumb() {
+        // Defensive net (zeroclaw `insert_breadcrumb_deduped` semantics): if
+        // the front message IS the notice we constructed this turn, never
+        // stack a second notice on top of it.
+        let notice = "（以下是较早对话的自动摘要…）\n摘要正文";
+        let mut history = vec![
+            msg(ChatRole::User, "被裁掉的旧消息"),
+            msg(ChatRole::User, notice),
+        ];
+        let trimmed = trim_history_to_budget(&mut history, 1, Some(notice));
+        assert!(trimmed);
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0].content.as_deref(), Some(notice));
+    }
+
+    #[test]
+    fn trim_never_infers_notice_from_user_text_content() {
+        // zeroclaw provenance rule: user text is never inferred to be
+        // synthetic by content — a lookalike containing the old keyword
+        // must NOT suppress the breadcrumb (the retired `contains` check
+        // wrongly suppressed it).
+        let lookalike = "用户自己在聊 自动摘要 这个功能";
+        let mut history = vec![
+            msg(ChatRole::User, "被裁掉的旧消息"),
+            msg(ChatRole::User, lookalike),
+        ];
+        let trimmed = trim_history_to_budget(&mut history, 1, None);
+        assert!(trimmed);
+        assert_eq!(history.len(), 2, "breadcrumb still inserted");
+        assert_eq!(history[1].content.as_deref(), Some(lookalike));
+    }
 
     #[test]
     fn agent_patch_channel_id_distinguishes_absent_null_and_set() {

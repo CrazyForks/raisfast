@@ -19,6 +19,7 @@ use crate::kb::models::{chunk, document, kb_run, knowledge_base};
 use crate::kb::service::{self, KbDeps};
 use crate::middleware::auth::AuthUser;
 use crate::types::snowflake_id::SnowflakeId;
+use crate::utils::prompt_file::prompt_file;
 use crate::worker::JobQueue as _;
 
 /// Register routes. Paths are prefixed `/api/v1` by `reg_route!`.
@@ -1996,11 +1997,7 @@ async fn admin_faq_from_log(
     let messages = vec![
         raisfast_agent::ChatMessage {
             role: raisfast_agent::ChatRole::System,
-            content: Some(
-                "你是 FAQ 编辑。根据用户问题与历史回答草拟一条 FAQ。只输出 JSON：\
-             {\"question\":\"标准问\",\"answer\":\"标准答\"}。"
-                    .to_string(),
-            ),
+            content: Some(prompt_file!("src/kb/prompts/faq_draft.md")),
             tool_calls: None,
             tool_call_id: None,
         },

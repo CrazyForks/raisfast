@@ -23,20 +23,7 @@ use crate::kb::models;
 use crate::kb::models::chunk::KbChunk;
 use crate::kb::service::KbDeps;
 use crate::types::snowflake_id::SnowflakeId;
-
-const EXTRACT_PROMPT: &str = "你是知识抽取系统。分析文档内容，抽取重要实体与关键概念。\
-输出 JSON：{\"topics\":[{\"name\":\"名称\",\"slug\":\"topic/小写连字符标识\",\
-\"description\":\"一句话说明（15-40字）\"}]}。\
-规则：slug 稳定——若之前列表中存在相同主题，必须复用其原 slug；文档中已不存在的主题不要输出；\
-不要发明文档中没有的主题；全部用中文书写。只输出 JSON。";
-
-const DRAFT_PROMPT: &str = "你是维基百科编辑。根据给定的资料分块，为主题撰写一篇结构化 Markdown 知识页。\
-规则：\
-1. 使用正确的标题层级（## 二级、### 三级）；\
-2. 可用页面清单列出了本库其他页面，凡提到清单中的主题必须写成 [[slug|显示名]] 形式的互链，\
-不得使用粗体或裸文本；只能使用清单中给出的 slug，不得杜撰；\
-3. 只依据给定资料撰写，不得编造；资料不足以成文时输出空字符串；\
-4. 末尾加 \"## 要点\" 小节；全文 300-800 字。只输出 Markdown 正文。";
+use crate::utils::prompt_file::prompt_file;
 
 /// One extracted topic.
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -120,7 +107,13 @@ pub async fn distill_documents(
             "<previous_slugs>\n{}\n</previous_slugs>\n\n<document>\n{corpus}\n</document>",
             previous_slugs.join("\n")
         );
-        let reply = chat_json(deps, tenant_id, EXTRACT_PROMPT, &user).await?;
+        let reply = chat_json(
+            deps,
+            tenant_id,
+            &prompt_file!("src/kb/prompts/distill_extract.md"),
+            &user,
+        )
+        .await?;
         let parsed: Option<serde_json::Value> = parse_json_object(&reply);
         if let Some(v) = parsed
             && let Some(arr) = v.get("topics").and_then(|t| t.as_array())
@@ -186,10 +179,15 @@ pub async fn distill_documents(
             "<available_wiki_pages>\n{available}\n</available_wiki_pages>\n\n<material>\n{material}\n</material>\n\n主题：{}（{}）",
             topic.name, topic.description
         );
-        let content = chat_json(deps, tenant_id, DRAFT_PROMPT, &user)
-            .await?
-            .trim()
-            .to_string();
+        let content = chat_json(
+            deps,
+            tenant_id,
+            &prompt_file!("src/kb/prompts/distill_draft.md"),
+            &user,
+        )
+        .await?
+        .trim()
+        .to_string();
         if content.is_empty() {
             continue;
         }

@@ -8,12 +8,7 @@ use raisfast_agent::{ChatRequest, StreamEvent};
 use crate::errors::app_error::{AppError, AppResult};
 use crate::kb::pipeline::ContextUnit;
 use crate::kb::service::KbDeps;
-
-/// System prompt: answer strictly from the given knowledge, cite with [n]
-/// (P2 anti-fabrication; citation markers map to the S10 list).
-const SYSTEM_PROMPT: &str = "你是知识库问答助手。仅依据下面提供的知识内容回答问题；\
-每条知识以 [n] 编号，答案中引用对应知识时使用 [n] 标注。\
-如果给定知识不足以回答，明确说明知识库未覆盖，不要编造。";
+use crate::utils::prompt_file::prompt_file;
 
 fn build_messages(prompt_units: &[ContextUnit], question: &str) -> Vec<ChatMessage> {
     let mut knowledge = String::new();
@@ -29,7 +24,9 @@ fn build_messages(prompt_units: &[ContextUnit], question: &str) -> Vec<ChatMessa
     vec![
         ChatMessage {
             role: ChatRole::System,
-            content: Some(SYSTEM_PROMPT.to_string()),
+            // Answer strictly from the given knowledge, cite with [n]
+            // (P2 anti-fabrication; markers map to the S10 list).
+            content: Some(prompt_file!("src/kb/prompts/generate_system.md")),
             tool_calls: None,
             tool_call_id: None,
         },

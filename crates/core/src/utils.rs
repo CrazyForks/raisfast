@@ -10,6 +10,7 @@ pub mod excerpt;
 pub mod id;
 pub mod markdown;
 pub mod pagination;
+pub mod prompt_file;
 pub mod slug;
 pub mod tz;
 pub mod widget_token;
