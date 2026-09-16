@@ -187,9 +187,8 @@ impl KbEmbedder for ProviderEmbedder {
     }
 }
 
-/// KB 单次 chat（S1 理解 / S9 生成 / 蒸馏）：底座 facade 优先（路由/
-/// failover/计费/日志），模型未注册或 router 未装配时回退 `[ai]` env
-/// provider（§10.2 迁移过渡）。无可用 provider → ServiceUnavailable。
+/// KB 单次 chat（S1 理解 / S9 生成 / 蒸馏）：唯一入口是 llm 底座
+/// facade（模型解析/路由/failover/计费/日志全在内核，§10.2）。
 pub async fn kb_chat(
     deps: &KbDeps,
     tenant: &str,

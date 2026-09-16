@@ -1494,6 +1494,145 @@ async fn user_self_service_usage_is_scoped_and_cost_free() {
     assert_eq!(status, StatusCode::BAD_REQUEST);
 }
 
+// ── 模型目录树（model_type → provider → model，§5.4）────────────
+
+#[tokio::test]
+async fn admin_models_catalog_groups_by_type_and_provider() {
+    let (_, state) = crate::test_app().await;
+    let (_admin_id, admin_jwt) = user_jwt(&state.pool, true).await;
+    let mut app = llm_admin_app(&state);
+
+    // A directory row exists but is disabled: its type is known, so it must
+    // land under `chat` (greyed), not in the unknown bucket.
+    let (status, _) = crate::send(
+        &mut app,
+        admin_req(
+            "POST",
+            "/api/v1/admin/llm/models",
+            &admin_jwt,
+            Some(json!({ "name": "disabled-chat", "model_type": "chat", "status": "disabled" })),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "seed disabled directory row");
+
+    // Case-insensitive directory match: channel declares `GLM-X`, directory has
+    // `glm-x` → still resolves (priced, under chat).
+    let (status, _) = crate::send(
+        &mut app,
+        admin_req(
+            "POST",
+            "/api/v1/admin/llm/models",
+            &admin_jwt,
+            Some(json!({ "name": "glm-x", "model_type": "chat" })),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "seed case-mismatch directory row");
+
+    // openai channel serves a builtin (priced) + an unknown (unpriced) model.
+    for body in [
+        json!({
+            "name": "cat-openai", "provider": "openai", "base_url": "https://x.test/v1",
+            "models": "gpt-4o, not-priced-x, disabled-chat, GLM-X", "initial_keys": [{ "key": "sk-x" }]
+        }),
+        json!({
+            "name": "cat-anthropic", "provider": "anthropic", "base_url": "https://y.test",
+            "models": "claude-sonnet-4-5", "initial_keys": [{ "key": "sk-y" }]
+        }),
+    ] {
+        let (status, resp) = crate::send(
+            &mut app,
+            admin_req("POST", "/api/v1/admin/llm/channels", &admin_jwt, Some(body)),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "seed channel: {resp:?}");
+    }
+
+    let (status, resp) = crate::send(
+        &mut app,
+        admin_req("GET", "/api/v1/admin/llm/models/catalog", &admin_jwt, None),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "body: {resp:?}");
+    let types = resp["data"]["types"].as_array().unwrap();
+
+    let chat = types
+        .iter()
+        .find(|t| t["model_type"] == "chat")
+        .expect("chat type");
+    let channels = chat["channels"].as_array().unwrap();
+    let openai = channels
+        .iter()
+        .find(|c| c["channel_name"] == "cat-openai")
+        .expect("openai channel");
+    assert_eq!(openai["provider"], "openai");
+    // Model order preserves the channel's declared order (newest-first
+    // convention); `not-priced-x` is absent here because it sits in the
+    // `unknown` type bucket.
+    let names: Vec<&str> = openai["models"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|m| m["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        names,
+        vec!["gpt-4o", "disabled-chat", "GLM-X"],
+        "declared order preserved"
+    );
+    let gpt = openai["models"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|m| m["name"] == "gpt-4o")
+        .expect("gpt-4o under openai channel");
+    assert_eq!(gpt["priced"], true, "builtin counts as priced");
+    let disabled = openai["models"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|m| m["name"] == "disabled-chat")
+        .expect("disabled directory model under chat");
+    assert_eq!(
+        disabled["priced"], false,
+        "disabled directory row is unpriced but typed"
+    );
+    let glm = openai["models"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|m| m["name"] == "GLM-X")
+        .expect("case-insensitive directory match present");
+    assert_eq!(glm["priced"], true, "GLM-X resolves glm-x directory row");
+    let anthropic = channels
+        .iter()
+        .find(|c| c["channel_name"] == "cat-anthropic")
+        .expect("anthropic channel");
+    assert!(
+        anthropic["models"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|m| m["name"] == "claude-sonnet-4-5"),
+        "chat model under anthropic channel"
+    );
+
+    // Unpriced model is present but flagged for greying.
+    let unknown = types
+        .iter()
+        .find(|t| t["model_type"] == "unknown")
+        .expect("unknown type bucket");
+    let un = unknown["channels"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|p| p["models"].as_array().unwrap())
+        .find(|m| m["name"] == "not-priced-x")
+        .expect("unpriced model listed");
+    assert_eq!(un["priced"], false);
+}
+
 // ── 计费分组倍率端点（pricing.md §2）────────────────────────────
 
 #[tokio::test]

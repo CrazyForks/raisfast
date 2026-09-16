@@ -404,6 +404,17 @@ pub fn routes(
         r,
         registry,
         restful,
+        "/admin/llm/models/catalog",
+        get,
+        models_catalog,
+        "system",
+        "admin/llm/models",
+        "admin"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        restful,
         "/admin/llm/models/{id}/enable",
         post,
         enable_model,
@@ -1098,6 +1109,136 @@ impl ModelReq {
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct ListModelsQuery {
     pub model_type: Option<String>,
+}
+
+/// Model catalog tree for pickers (design §5.4): enabled channels × their
+/// declared models, grouped `model_type → channel → model`. A model served by
+/// several channels appears under each. `priced` = the model resolves in the
+/// directory (or the built-in seed); unpriced models are shown but not
+/// selectable (the relay/guard would reject them).
+#[utoipa::path(get, path = "/api/v1/admin/llm/models/catalog", tag = "llm",
+    security(("bearer_auth" = [])),
+    responses((status = 200, description = "Grouped model catalog")))]
+pub async fn models_catalog(
+    auth: AuthUser,
+    State(state): State<AppState>,
+) -> AppResult<ApiResponse<serde_json::Value>> {
+    auth.ensure_admin()?;
+    let tenant = auth.tenant_id();
+    let tenant_key = tenant.unwrap_or("default");
+
+    // Full directory (any status): a disabled row still carries the model's
+    // type, so an unpriced/disabled model lands under its real type instead
+    // of an "unknown" bucket.
+    let dir_rows = model::list_models(&state.pool, tenant, None).await?;
+    let dir: std::collections::HashMap<String, (String, bool, Option<serde_json::Value>)> =
+        dir_rows
+            .into_iter()
+            .map(|m| {
+                (
+                    m.name,
+                    (
+                        m.model_type.as_str().to_owned(),
+                        m.status == crate::llm::models::model::LlmModelStatus::Active,
+                        m.params,
+                    ),
+                )
+            })
+            .collect();
+
+    // rank → (type_name, channel_id → (channel_name, provider, [model, priced, params]))
+    // The model list preserves the channel's declared order (not sorted), so
+    // the operator's newest-first ordering in `channel.models` is kept.
+    type ModelsByName = Vec<(String, bool, Option<serde_json::Value>)>;
+    type ChannelsOfType = std::collections::BTreeMap<i64, (String, String, ModelsByName)>;
+    let mut types: std::collections::BTreeMap<u8, (String, ChannelsOfType)> =
+        std::collections::BTreeMap::new();
+
+    let rows = channel::list_channels(&state.pool, tenant).await?;
+    for ch in rows {
+        if ch.status != channel::LlmChannelStatus::Enabled {
+            continue;
+        }
+        for raw in ch.models.split(',') {
+            let name = raw.trim();
+            if name.is_empty() {
+                continue;
+            }
+            // Usable (active directory row or built-in seed) → priced. Computed
+            // from the DB directory + built-in seed, matching relay resolution
+            // without depending on the router cache being warm.
+            let info = state.llm_router.model_info(tenant_key, name);
+            let dirent = dir.get(name).or_else(|| {
+                dir.iter()
+                    .find(|(k, _)| k.eq_ignore_ascii_case(name))
+                    .map(|(_, v)| v)
+            });
+            let priced = dirent.map(|(_, active, _)| *active).unwrap_or(false)
+                || crate::llm::cache::is_builtin_model(name);
+            // Type: directory row (even disabled) → built-in → unknown.
+            // Directory lookup is case-insensitive (model names are not).
+            let type_name = dirent
+                .map(|(t, _, _)| t.clone())
+                .or_else(|| info.as_ref().map(|i| i.model_type.as_str().to_owned()))
+                .unwrap_or_else(|| "unknown".to_owned());
+            let params = dirent.and_then(|(_, _, p)| p.clone());
+            let rank = crate::llm::models::model::LlmModelType::all_values()
+                .iter()
+                .position(|v| *v == type_name)
+                .map(|i| i as u8)
+                .unwrap_or(u8::MAX);
+            let entry = types
+                .entry(rank)
+                .or_insert_with(|| (type_name.clone(), std::collections::BTreeMap::new()));
+            let slot = entry
+                .1
+                .entry(ch.id.0)
+                .or_insert_with(|| (ch.name.clone(), ch.provider.clone(), ModelsByName::new()));
+            match slot
+                .2
+                .iter_mut()
+                .find(|(n, _, _)| n.eq_ignore_ascii_case(name))
+            {
+                Some(existing) => {
+                    existing.1 = existing.1 || priced;
+                    if existing.2.is_none() {
+                        existing.2 = params;
+                    }
+                }
+                None => slot.2.push((name.to_owned(), priced, params)),
+            }
+        }
+    }
+    let out: Vec<serde_json::Value> = types
+        .into_values()
+        .map(|(type_name, channels)| {
+            let mut channels: Vec<(i64, String, String, ModelsByName)> = channels
+                .into_iter()
+                .map(|(id, (name, provider, models))| (id, name, provider, models))
+                .collect();
+            channels.sort_by(|a, b| a.1.cmp(&b.1));
+            let channels: Vec<serde_json::Value> = channels
+                .into_iter()
+                .map(|(id, name, provider, models)| {
+                    let models: Vec<serde_json::Value> = models
+                        .into_iter()
+                        .map(|(model, priced, params)| {
+                            json!({ "name": model, "priced": priced, "params": params })
+                        })
+                        .collect();
+                    json!({
+                        "channel_id": id.to_string(),
+                        "channel_name": name,
+                        "provider": provider,
+                        "models": models,
+                    })
+                })
+                .collect();
+            json!({ "model_type": type_name, "channels": channels })
+        })
+        .collect();
+
+    Ok(ApiResponse::success(json!({ "types": out })))
 }
 
 /// List model-directory rows (optional `?model_type=` filter).

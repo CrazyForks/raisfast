@@ -4,10 +4,10 @@
 //!   turn 1: remember the user's nickname (via `memory_store`) and answer today's date.
 //!   turn 2: a later question where the stored fact is auto-injected (`[Memory context]`).
 //!
-//! Env:
-//!   RAISFAST_AI_BASE_URL   (default https://api.openai.com/v1; Ollama: http://localhost:11434/v1)
-//!   RAISFAST_AI_API_KEY    (optional for local Ollama)
-//!   RAISFAST_AI_MODEL      (default gpt-4o-mini)
+//! Env (example-only; the app's model access goes through the llm 底座):
+//!   AGENT_DEMO_BASE_URL   (default https://api.openai.com/v1; Ollama: http://localhost:11434/v1)
+//!   AGENT_DEMO_API_KEY    (optional for local Ollama)
+//!   AGENT_DEMO_MODEL      (default gpt-4o-mini)
 //!
 //! Run:
 //!   cargo run -p raisfast-agent --example chat
@@ -75,16 +75,16 @@ impl Tool for CalcTool {
 }
 
 fn main() {
-    let base = std::env::var("RAISFAST_AI_BASE_URL")
+    let base = std::env::var("AGENT_DEMO_BASE_URL")
         .unwrap_or_else(|_| "https://api.openai.com/v1".to_string());
-    let key = std::env::var("RAISFAST_AI_API_KEY")
+    let key = std::env::var("AGENT_DEMO_API_KEY")
         .ok()
         .filter(|k| !k.is_empty());
-    let model = std::env::var("RAISFAST_AI_MODEL").unwrap_or_else(|_| "gpt-4o-mini".to_string());
+    let model = std::env::var("AGENT_DEMO_MODEL").unwrap_or_else(|_| "gpt-4o-mini".to_string());
 
     if key.is_none() && base.contains("api.openai.com") {
         eprintln!(
-            "RAISFAST_AI_API_KEY is not set; set it (or point RAISFAST_AI_BASE_URL at Ollama etc.)."
+            "AGENT_DEMO_API_KEY is not set; set it (or point AGENT_DEMO_BASE_URL at Ollama etc.)."
         );
     }
 

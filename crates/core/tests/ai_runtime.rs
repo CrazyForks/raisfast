@@ -65,6 +65,23 @@ async fn ai_models_roundtrip() {
         "pinned channel round-trips"
     );
 
+    // Clearing the pin: AgentPatch `Some(None)` (explicit null) clears it.
+    raisfast::agent::service::update_agent(
+        &pool,
+        Some(&tenant_id),
+        agent.id,
+        &raisfast::agent::service::AgentPatch {
+            channel_id: Some(None),
+            ..Default::default()
+        },
+    )
+    .await
+    .expect("clear pin");
+    let cleared = ai_agent::find_agent_by_id(&pool, agent.id, Some(&tenant_id))
+        .await
+        .expect("find after clear");
+    assert_eq!(cleared.channel_id, None, "pin cleared");
+
     // session + status
     let session = ai_session::create_session(&pool, Some(&tenant_id), agent.id, agent.id, "smoke")
         .await

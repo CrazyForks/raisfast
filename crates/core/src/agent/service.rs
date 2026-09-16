@@ -91,17 +91,37 @@ async fn agent_chat(
     call.chat(model, request).await
 }
 
-/// Model context window (tokens), zeroclaw config semantics: per-model map
-/// (`RAISFAST_AI_MODEL_CONTEXT_JSON`) wins; otherwise the operator fallback
-/// (`RAISFAST_AI_CONTEXT_WINDOW_FALLBACK`). `None` = windowing disabled.
-fn model_context_window(agent: &AiAgent, ai: &AiConfig) -> Option<i64> {
-    let window = ai
-        .context_window_map
-        .as_ref()
-        .and_then(|m| m.get(&agent.model))
-        .and_then(serde_json::Value::as_i64)
-        .or(Some(ai.context_window_fallback))
-        .unwrap_or(0);
+/// Model context window (tokens): the resolved model's directory
+/// `params.context_window` (§10.1) wins; absent → the global operator fallback
+/// `RAISFAST_AI_CONTEXT_WINDOW_FALLBACK`; `0` = windowing disabled.
+async fn model_context_window(
+    router: &Arc<crate::llm::service::LlmRouter>,
+    tenant: Option<&str>,
+    agent: &AiAgent,
+    ai: &AiConfig,
+) -> Option<i64> {
+    let tenant_str = tenant.unwrap_or("default");
+    let effective = router
+        .resolve_default(
+            tenant_str,
+            (!agent.model.trim().is_empty()).then_some(agent.model.as_str()),
+            "llm.default_chat_model",
+            "chat",
+        )
+        .await
+        .ok();
+    let from_dir = effective
+        .as_deref()
+        .and_then(|m| router.model_info(tenant_str, m))
+        .and_then(|info| {
+            info.params
+                .as_ref()
+                .and_then(|p| p.get("context_window"))
+                .and_then(serde_json::Value::as_i64)
+        });
+    let window = from_dir
+        .filter(|w| *w > 0)
+        .unwrap_or(ai.context_window_fallback);
     (window > 0).then_some(window)
 }
 
@@ -492,8 +512,11 @@ async fn run_turn_inner(
     // Mini Epoch (opencode context-epoch): when context windowing is on,
     // fingerprint the inputs behind the system text and persist a stable
     // baseline; rebuild (and record why) only when a fingerprint changes.
+    // Resolved once per turn: directory `params.context_window` → global
+    // fallback (`None` = windowing disabled).
+    let ctx_window = model_context_window(router, tenant_id, agent, ai).await;
     let mut epoch_event: Option<(bool, &'static str)> = None;
-    if model_context_window(agent, ai).is_some() {
+    if ctx_window.is_some() {
         let cur = epoch_snapshot_for(agent, &tool_names, &loaded_skills);
         let session =
             crate::agent::models::ai_session::find_session_by_id(pool, session_id, tenant_id)
@@ -537,7 +560,7 @@ async fn run_turn_inner(
     // window − reserve; folding triggers when estimated history exceeds
     // `usable − (system+tools+user)`; the retained tail budget is opencode's
     // `preserve_recent = clamp(2k, 15k, usable*0.25)`.
-    let ctx_params = model_context_window(agent, ai).map(|window| {
+    let ctx_params = ctx_window.map(|window| {
         let reserve = if ai.context_output_reserve > 0 {
             ai.context_output_reserve.min(window * 9 / 10)
         } else {
@@ -694,7 +717,6 @@ async fn run_turn_inner(
                 let emitter = emitter_opt.take().flatten();
                 let cancel = cancel.clone();
                 let agent_ref = &*agent;
-                let ai_ref = &*ai;
                 let assembled_ref = &assembled_c;
                 async move {
                     let history = history.ok_or_else(|| {
@@ -710,7 +732,7 @@ async fn run_turn_inner(
                         p,
                         ep.upstream_model.clone(),
                         agent_ref,
-                        ai_ref,
+                        ctx_window,
                         user_ref,
                         history,
                         assembled_ref,
@@ -836,13 +858,27 @@ pub async fn list_agents(pool: &crate::db::Pool, tenant: Option<&str>) -> AppRes
     crate::agent::models::ai_agent::list_agents(pool, tenant).await
 }
 
+/// Deserialize `Option<Option<T>>` preserving the difference between an absent
+/// field (`None`) and an explicit JSON `null` (`Some(None)`). Serde's built-in
+/// `Option` folds both into `None`, which would make "clear the pin"
+/// indistinguishable from "leave unchanged".
+fn double_option<'de, T, D>(deserializer: D) -> Result<Option<T>, D::Error>
+where
+    T: serde::Deserialize<'de>,
+    D: serde::Deserializer<'de>,
+{
+    T::deserialize(deserializer).map(Some)
+}
+
 /// Partial update payload for an agent (admin). Fields present are applied.
 #[derive(Debug, Clone, Default, serde::Deserialize)]
 pub struct AgentPatch {
     pub system_prompt: Option<String>,
     pub provider: Option<String>,
     pub model: Option<String>,
-    pub channel_id: Option<SnowflakeId>,
+    /// Absent = unchanged; `null` = clear the pin; id = set the pin.
+    #[serde(default, deserialize_with = "double_option")]
+    pub channel_id: Option<Option<SnowflakeId>>,
     pub temperature: Option<f64>,
     pub max_iterations: Option<i32>,
     pub tools: Option<Vec<String>>,
@@ -872,7 +908,7 @@ pub async fn update_agent(
             .unwrap_or(&current.system_prompt),
         patch.provider.as_deref().unwrap_or(&current.provider),
         patch.model.as_deref().unwrap_or(&current.model),
-        patch.channel_id.or(current.channel_id),
+        patch.channel_id.unwrap_or(current.channel_id),
         patch.temperature.or(current.temperature),
         patch.max_iterations.unwrap_or(current.max_iterations),
         tools,
@@ -1197,7 +1233,7 @@ async fn drive_turn(
     provider: Arc<dyn ModelProvider>,
     model: String,
     agent: &AiAgent,
-    ai: &AiConfig,
+    ctx_window: Option<i64>,
     user: &str,
     history: Vec<ChatMessage>,
     assembled: &crate::agent::prompt::AssembledPrompt,
@@ -1240,7 +1276,7 @@ async fn drive_turn(
         match result {
             Ok(outcome) => break outcome,
             Err(e) => {
-                let Some(window) = model_context_window(agent, ai) else {
+                let Some(window) = ctx_window else {
                     return Err(e);
                 };
                 if overflow_trimmed || !is_context_overflow(&e) {
@@ -1419,7 +1455,8 @@ pub async fn compact_session(
     tenant: Option<&str>,
 ) -> AppResult<Option<(i64, String)>> {
     let existing = ai_message::list_messages_after(pool, session_id, tenant, None, 10_000).await?;
-    let tail = model_context_window(agent, ai)
+    let tail = model_context_window(router, tenant, agent, ai)
+        .await
         .map(|window| {
             let reserve = if ai.context_output_reserve > 0 {
                 ai.context_output_reserve.min(window * 9 / 10)
@@ -1742,4 +1779,22 @@ pub async fn usage_report(
         report.total_cache_read_tokens += day.cache_read_tokens;
     }
     Ok(report)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn agent_patch_channel_id_distinguishes_absent_null_and_set() {
+        let absent: AgentPatch = serde_json::from_str("{}").expect("parse absent");
+        assert!(absent.channel_id.is_none(), "absent = unchanged");
+
+        let clear: AgentPatch =
+            serde_json::from_str(r#"{"channel_id": null}"#).expect("parse null");
+        assert_eq!(clear.channel_id, Some(None), "null = clear");
+
+        let set: AgentPatch = serde_json::from_str(r#"{"channel_id": "123"}"#).expect("parse id");
+        assert_eq!(set.channel_id, Some(Some(SnowflakeId(123))), "id = set");
+    }
 }

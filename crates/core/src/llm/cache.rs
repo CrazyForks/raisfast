@@ -115,18 +115,34 @@ const BUILTIN_MODELS: &[(&str, &str, f64, f64)] = &[
     ("text-embedding-3-large", "embedding", 0.13, 0.13),
 ];
 
+/// Whether `name` matches a built-in seed model (case-insensitive).
+pub fn is_builtin_model(name: &str) -> bool {
+    BUILTIN_MODELS
+        .iter()
+        .any(|(n, ..)| n.eq_ignore_ascii_case(name))
+}
+
 fn builtin_model(name: &str) -> Option<Arc<ModelInfo>> {
-    let (_, _, input, output) = BUILTIN_MODELS.iter().find(|(n, ..)| *n == name)?;
+    let (matched, _, input, output) = BUILTIN_MODELS
+        .iter()
+        .find(|(n, ..)| *n == name)
+        // Model names are matched case-insensitively (clients/operators rarely
+        // agree on casing); the matched seed name is kept for the info.
+        .or_else(|| {
+            BUILTIN_MODELS
+                .iter()
+                .find(|(n, ..)| n.eq_ignore_ascii_case(name))
+        })?;
     let model_type = LlmModelType::from_str(
         BUILTIN_MODELS
             .iter()
-            .find(|(n, ..)| *n == name)
+            .find(|(n, ..)| *n == *matched)
             .map(|(_, t, ..)| *t)
             .unwrap_or("chat"),
     )
     .ok()?;
     Some(Arc::new(ModelInfo {
-        name: name.to_owned(),
+        name: (*matched).to_owned(),
         model_type,
         pricing: Pricing {
             price_mode: LlmPriceMode::Token,
@@ -186,10 +202,18 @@ impl ChannelCache {
     }
 
     /// Directory lookup: DB row → built-in seed → `None` (design §5.4).
+    /// Name matching is case-insensitive (exact hit first, then a scan), so
+    /// `GLM-5.3` resolves the `glm-5.3` directory row.
     pub fn model_info(&self, tenant: &str, name: &str) -> Option<Arc<ModelInfo>> {
         self.models
             .get(&(tenant.to_owned(), name.to_owned()))
             .cloned()
+            .or_else(|| {
+                self.models
+                    .iter()
+                    .find(|((t, n), _)| t == tenant && n.eq_ignore_ascii_case(name))
+                    .map(|(_, v)| v.clone())
+            })
             .or_else(|| builtin_model(name))
     }
 
@@ -451,6 +475,26 @@ mod tests {
         );
         // Tenant isolation on directory rows.
         assert!(cache.model_info("other-tenant", "db-registered").is_none());
+    }
+
+    #[test]
+    fn directory_lookup_is_case_insensitive() {
+        let cache = ChannelCache::build(
+            vec![],
+            vec![model_row(
+                "glm-5.3",
+                LlmModelType::Chat,
+                LlmModelStatus::Active,
+            )],
+        );
+        assert!(
+            cache.model_info("default", "GLM-5.3").is_some(),
+            "directory row resolves regardless of case"
+        );
+        assert!(
+            cache.model_info("default", "GPT-4O").is_some(),
+            "builtin seed resolves regardless of case"
+        );
     }
 
     #[test]
