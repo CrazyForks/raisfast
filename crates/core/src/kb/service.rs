@@ -210,6 +210,8 @@ pub struct KbDeps {
     pub vector: Arc<dyn VectorIndex>,
     pub kbsearch: Arc<KbSearchEngine>,
     pub embedder: Arc<dyn KbEmbedder>,
+    /// S5 reranker; `None` = rerank off (§6.1).
+    pub reranker: Option<Arc<dyn crate::kb::rerank::KbReranker>>,
     /// LLM 底座（chat + embedding 唯一入口，§10.2）。
     pub router: Arc<crate::llm::service::LlmRouter>,
     pub emitter: EventEmitter,
@@ -833,6 +835,7 @@ mod tests {
             vector: Arc::new(BruteForceIndex::new()),
             kbsearch: Arc::new(KbSearchEngine::open_in_memory().unwrap()),
             embedder: Arc::new(MockEmbedder { dim: 4 }),
+            reranker: None,
             router,
             emitter: EventEmitter::eventbus_only(bus),
         }
@@ -849,6 +852,9 @@ mod tests {
                 indexing_strategy: None,
                 embedding_model: Some("test-model".into()),
                 embedding_dim: Some(4),
+                rerank_model: None,
+                rerank_window: None,
+                rerank_threshold: None,
             },
             "default",
         )
@@ -1304,6 +1310,7 @@ mod faq_tests {
             vector: Arc::new(BruteForceIndex::new()),
             kbsearch: Arc::new(crate::kb::kbsearch::KbSearchEngine::open_in_memory().unwrap()),
             embedder: Arc::new(OneHotEmbedder),
+            reranker: None,
             router,
             emitter: crate::event::EventEmitter::eventbus_only(crate::eventbus::EventBus::new(16)),
         }
@@ -1320,6 +1327,9 @@ mod faq_tests {
                 indexing_strategy: None,
                 embedding_model: Some("m".into()),
                 embedding_dim: Some(4),
+                rerank_model: None,
+                rerank_window: None,
+                rerank_threshold: None,
             },
             "default",
         )

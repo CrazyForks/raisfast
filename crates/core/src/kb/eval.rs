@@ -263,6 +263,7 @@ mod tests {
             vector: Arc::new(BruteForceIndex::new()),
             kbsearch: Arc::new(crate::kb::kbsearch::KbSearchEngine::open_in_memory().unwrap()),
             embedder: Arc::new(SumEmbedder),
+            reranker: None,
             router,
             emitter: crate::event::EventEmitter::eventbus_only(crate::eventbus::EventBus::new(16)),
         };
@@ -276,6 +277,9 @@ mod tests {
                 indexing_strategy: None,
                 embedding_model: Some("m".into()),
                 embedding_dim: Some(4),
+                rerank_model: None,
+                rerank_window: None,
+                rerank_threshold: None,
             },
             "default",
         )

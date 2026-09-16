@@ -1625,6 +1625,9 @@ CREATE TABLE IF NOT EXISTS kb_knowledge_bases (
     chunking_config TEXT,
     embedding_model TEXT,
     embedding_dim BIGINT,
+    rerank_model TEXT,
+    rerank_window BIGINT,
+    rerank_threshold REAL,
     status TEXT NOT NULL DEFAULT 'active',
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
     updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))

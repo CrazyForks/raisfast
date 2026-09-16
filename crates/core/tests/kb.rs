@@ -109,6 +109,7 @@ async fn deps_with_provider(provider: Arc<dyn ModelProvider>) -> KbDeps {
         vector: Arc::new(BruteForceIndex::new()),
         kbsearch: Arc::new(raisfast::kb::kbsearch::KbSearchEngine::open_in_memory().unwrap()),
         embedder: Arc::new(SumEmbedder(4)),
+        reranker: None,
         router,
         emitter: raisfast::event::EventEmitter::eventbus_only(raisfast::eventbus::EventBus::new(
             16,
@@ -127,6 +128,9 @@ async fn seed_kb(deps: &KbDeps, name: &str) -> SnowflakeId {
             indexing_strategy: None,
             embedding_model: Some("test-model".into()),
             embedding_dim: Some(4),
+            rerank_model: None,
+            rerank_window: None,
+            rerank_threshold: None,
         },
         "default",
     )
@@ -918,6 +922,9 @@ async fn s18_update_kb_metadata_and_tenant_guard() {
             description: Some("新描述".into()),
             slug: format!("slug-{}", raisfast::utils::id::new_id()),
             status: "archived".into(),
+            rerank_model: None,
+            rerank_window: None,
+            rerank_threshold: None,
         },
         "default",
     )
@@ -942,6 +949,9 @@ async fn s18_update_kb_metadata_and_tenant_guard() {
             description: None,
             slug: "hijack".into(),
             status: "active".into(),
+            rerank_model: None,
+            rerank_window: None,
+            rerank_threshold: None,
         },
         "other-tenant",
     )
@@ -1131,6 +1141,7 @@ async fn s21_chunk_edit_failure_records_failed_run() {
         vector: good.vector.clone(),
         kbsearch: good.kbsearch.clone(),
         embedder: Arc::new(FailingEmbedder),
+        reranker: None,
         router: good.router.clone(),
         emitter: good.emitter.clone(),
     };
@@ -1184,6 +1195,7 @@ async fn s22_cold_bruteforce_rebuilds_on_first_search() {
         vector: Arc::new(BruteForceIndex::new()),
         kbsearch: deps.kbsearch.clone(),
         embedder: deps.embedder.clone(),
+        reranker: None,
         router: deps.router.clone(),
         emitter: deps.emitter.clone(),
     };

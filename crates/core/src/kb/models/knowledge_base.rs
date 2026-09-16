@@ -24,6 +24,14 @@ pub struct KbKnowledgeBase {
     pub chunking_config: Option<Value>,
     pub embedding_model: Option<String>,
     pub embedding_dim: Option<i64>,
+    /// S5 rerank model for this KB (query-time behavior — mutable, unlike
+    /// the pinned embedding config). Empty = fall back to the global
+    /// `RAISFAST_KB_RERANK_MODEL` default; neither set = S5 passthrough.
+    pub rerank_model: Option<String>,
+    /// Per-KB rerank window override (§6.1.4); `None` = global default.
+    pub rerank_window: Option<i64>,
+    /// Per-KB rerank score floor override; `None` = global default.
+    pub rerank_threshold: Option<f64>,
     pub status: String,
     pub created_at: Timestamp,
     pub updated_at: Timestamp,
@@ -40,6 +48,9 @@ pub struct CreateKbCmd {
     pub indexing_strategy: Option<Value>,
     pub embedding_model: Option<String>,
     pub embedding_dim: Option<i64>,
+    pub rerank_model: Option<String>,
+    pub rerank_window: Option<i64>,
+    pub rerank_threshold: Option<f64>,
 }
 
 pub async fn create_kb(
@@ -63,6 +74,9 @@ pub async fn create_kb(
             "indexing_strategy" => cmd.indexing_strategy.clone(),
             "embedding_model" => cmd.embedding_model.as_deref(),
             "embedding_dim" => cmd.embedding_dim,
+            "rerank_model" => cmd.rerank_model.as_deref(),
+            "rerank_window" => cmd.rerank_window,
+            "rerank_threshold" => cmd.rerank_threshold,
             "created_at" => now
         ],
         tenant: Some(tenant_id)
@@ -72,8 +86,9 @@ pub async fn create_kb(
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("kb insert returned no row")))
 }
 
-/// Update-KB command — only mutable metadata (name/slug/description/status);
-/// kind and embedding config are immutable after creation (WeKnora
+/// Update-KB command — mutable metadata (name/slug/description/status) and
+/// the rerank trio (query-time behavior, freely editable). kind and
+/// embedding config stay immutable after creation (WeKnora
 /// `vector_store_id` precedent: vectors are pinned to model+dim).
 #[derive(Debug, Clone)]
 pub struct UpdateKbCmd {
@@ -81,6 +96,9 @@ pub struct UpdateKbCmd {
     pub description: Option<String>,
     pub slug: String,
     pub status: String,
+    pub rerank_model: Option<String>,
+    pub rerank_window: Option<i64>,
+    pub rerank_threshold: Option<f64>,
 }
 
 pub async fn update_kb(
@@ -98,6 +116,9 @@ pub async fn update_kb(
             "description" => cmd.description.as_deref(),
             "slug" => cmd.slug.as_str(),
             "status" => cmd.status.as_str(),
+            "rerank_model" => cmd.rerank_model.as_deref(),
+            "rerank_window" => cmd.rerank_window,
+            "rerank_threshold" => cmd.rerank_threshold,
             "updated_at" => now
         ],
         where: ("id", id),

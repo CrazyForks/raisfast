@@ -16,6 +16,7 @@ pub mod chunker;
 pub mod diagnostics;
 pub mod distill;
 pub mod eval;
+pub mod rerank;
 
 /// Runtime singletons shared by handlers and workers (built once at boot,
 /// `None` when the KB is disabled).
@@ -23,6 +24,8 @@ pub struct KbRuntime {
     pub vector: std::sync::Arc<dyn vectors::VectorIndex>,
     pub kbsearch: std::sync::Arc<kbsearch::KbSearchEngine>,
     pub embedder: std::sync::Arc<dyn service::KbEmbedder>,
+    /// S5 reranker; `None` when no rerank model is configured (§6.1).
+    pub reranker: Option<std::sync::Arc<dyn rerank::KbReranker>>,
 }
 
 /// Build the KB runtime from config; `Ok(None)` when the KB is disabled,
@@ -39,12 +42,22 @@ pub fn build_kb_runtime(
     let kbsearch_dir = std::path::Path::new(&config.storage_root_dir).join("kb_search_index");
     let kbsearch = kbsearch::KbSearchEngine::open(&kbsearch_dir)?;
     let embedder: std::sync::Arc<dyn service::KbEmbedder> = std::sync::Arc::new(
-        service::ProviderEmbedder::new(router, config.kb.embed_batch_size),
+        service::ProviderEmbedder::new(router.clone(), config.kb.embed_batch_size),
     );
+    // Rerank support is always wired; enablement is resolved per query from
+    // the KB rows (per-KB override → global RAISFAST_KB_RERANK_MODEL
+    // default → passthrough, §6.1.2).
+    let reranker: std::sync::Arc<dyn rerank::KbReranker> = std::sync::Arc::new(
+        rerank::ProviderReranker::new(router.clone(), config.kb.rerank_batch_size),
+    );
+    if let Some(model) = config.kb.rerank_model.as_deref() {
+        tracing::info!("kb rerank default model: '{model}' (per-KB rows may override)");
+    }
     Ok(Some(std::sync::Arc::new(KbRuntime {
         vector,
         kbsearch: std::sync::Arc::new(kbsearch),
         embedder,
+        reranker: Some(reranker),
     })))
 }
 pub mod handler;

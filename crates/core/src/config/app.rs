@@ -737,6 +737,10 @@ impl AiConfig {
 /// | `RAISFAST_KB_FALLBACK_THRESHOLD` | f32 | `0.3` | Below this top score → "not covered" (no generation) |
 /// | `RAISFAST_KB_CONTEXT_TOKEN_BUDGET` | u32 | `4000` | S8 context assembly budget (chars/4 estimate) |
 /// | `RAISFAST_KB_EMBED_BATCH_SIZE` | usize | `32` | Texts per `/embeddings` request (WK `BATCH_EMBED_SIZE` analog; WK default 5 + goroutine pool, ours serializes so 32) |
+/// | `RAISFAST_KB_RERANK_MODEL` | string | — | Global **default** rerank model via the llm 底座 (S5, kb-technical-design §6.1 revised 2026-09-17); each KB row's `rerank_model` overrides it; neither set = passthrough |
+/// | `RAISFAST_KB_RERANK_WINDOW` | u32 | `30` | Global default rerank window (per-KB `rerank_window` overrides); S4 cuts to this window, S5 reranks then cuts back to `top_k` (§6.1.4 窗口重排) |
+/// | `RAISFAST_KB_RERANK_THRESHOLD` | f32 | `0` | Global default rerank score floor (per-KB `rerank_threshold` overrides); below is dropped after S5 (0 = keep all) [抄WK:RerankThreshold 语义] |
+/// | `RAISFAST_KB_RERANK_BATCH_SIZE` | usize | `64` | Docs per `/rerank` request (transport concern, mirrors `RAISFAST_KB_EMBED_BATCH_SIZE`) |
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct KbConfig {
     #[serde(default)]
@@ -781,6 +785,29 @@ pub struct KbConfig {
     /// T3 cleanup sweeper. Env `RAISFAST_KB_TRACE_RETENTION_DAYS`.
     #[serde(default = "default_kb_trace_retention_days")]
     pub trace_retention_days: i64,
+    /// Global **default** rerank model routed via the llm 底座 (S5). Each
+    /// KB row's `rerank_model` overrides it; neither set = S5 passthrough
+    /// (kb-technical-design §6.1 revised 2026-09-17). Env
+    /// `RAISFAST_KB_RERANK_MODEL`.
+    #[serde(default)]
+    pub rerank_model: Option<String>,
+    /// Global default rerank window; per-KB `rerank_window` overrides.
+    /// S4 cuts to this window (≥ `top_k`) so the reranker sees more than
+    /// the final keep set, S5 reranks then cuts back to `top_k` (§6.1.4
+    /// 窗口重排). Env `RAISFAST_KB_RERANK_WINDOW` (default 30).
+    #[serde(default = "default_kb_rerank_window")]
+    pub rerank_window: u32,
+    /// Global default rerank score floor; per-KB `rerank_threshold`
+    /// overrides. Candidates scoring below are dropped after S5
+    /// (0 = keep all) [抄WK:RerankThreshold 语义]. Not refilled when the
+    /// filter leaves fewer than `top_k` (§6.1.4). Env
+    /// `RAISFAST_KB_RERANK_THRESHOLD` (default 0).
+    #[serde(default)]
+    pub rerank_threshold: f32,
+    /// Docs per `/rerank` request (global transport concern, mirrors
+    /// `embed_batch_size`). Env `RAISFAST_KB_RERANK_BATCH_SIZE` (default 64).
+    #[serde(default = "default_kb_rerank_batch_size")]
+    pub rerank_batch_size: usize,
 }
 
 fn default_kb_top_k() -> u32 {
@@ -819,6 +846,14 @@ fn default_kb_trace_retention_days() -> i64 {
     14
 }
 
+fn default_kb_rerank_window() -> u32 {
+    30
+}
+
+fn default_kb_rerank_batch_size() -> usize {
+    64
+}
+
 impl Default for KbConfig {
     fn default() -> Self {
         Self {
@@ -834,6 +869,10 @@ impl Default for KbConfig {
             embed_batch_size: default_kb_embed_batch_size(),
             trace_mode: default_kb_trace_mode(),
             trace_retention_days: default_kb_trace_retention_days(),
+            rerank_model: None,
+            rerank_window: default_kb_rerank_window(),
+            rerank_threshold: 0.0,
+            rerank_batch_size: default_kb_rerank_batch_size(),
         }
     }
 }
@@ -890,6 +929,24 @@ impl KbConfig {
                 .and_then(|v| v.parse().ok())
                 .filter(|d| *d >= 0)
                 .unwrap_or(defaults.trace_retention_days),
+            rerank_model: env::var("RAISFAST_KB_RERANK_MODEL")
+                .ok()
+                .filter(|v| !v.is_empty()),
+            rerank_window: env::var("RAISFAST_KB_RERANK_WINDOW")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .filter(|w| *w > 0)
+                .unwrap_or(defaults.rerank_window),
+            rerank_threshold: env::var("RAISFAST_KB_RERANK_THRESHOLD")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .filter(|t| (0.0..=1.0).contains(t))
+                .unwrap_or(defaults.rerank_threshold),
+            rerank_batch_size: env::var("RAISFAST_KB_RERANK_BATCH_SIZE")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .filter(|n| *n > 0)
+                .unwrap_or(defaults.rerank_batch_size),
         }
     }
 }

@@ -486,6 +486,7 @@ impl AppState {
             vector: kb.vector.clone(),
             kbsearch: kb.kbsearch.clone(),
             embedder: kb.embedder.clone(),
+            reranker: kb.reranker.clone(),
             router: self.llm_router.clone(),
             emitter: self.emitter.clone(),
         })
@@ -509,6 +510,17 @@ struct CreateKbRequest {
     /// Dimension pinned with the model (or directory params.dimension).
     #[serde(default)]
     embedding_dim: Option<u32>,
+    /// S5 rerank model for this KB (mutable afterwards — rerank is
+    /// query-time behavior with nothing baked). Empty = global
+    /// `RAISFAST_KB_RERANK_MODEL` default; neither = passthrough.
+    #[serde(default)]
+    rerank_model: Option<String>,
+    /// Per-KB rerank window override (§6.1.4); null = global default.
+    #[serde(default)]
+    rerank_window: Option<u32>,
+    /// Per-KB rerank score floor override (0..=1); null = global default.
+    #[serde(default)]
+    rerank_threshold: Option<f64>,
 }
 
 fn default_kb_kind() -> String {
@@ -528,6 +540,7 @@ async fn admin_create_kb(
                 .into(),
         ));
     }
+    validate_rerank_params(req.rerank_window, req.rerank_threshold)?;
     let tenant = auth.tenant_id();
     let model = resolve_kb_model(&state, tenant, &req).await?;
     let dim = resolve_kb_dim(&state, tenant, &model, &req).await?;
@@ -541,6 +554,9 @@ async fn admin_create_kb(
             indexing_strategy: None,
             embedding_model: Some(model),
             embedding_dim: Some(i64::from(dim)),
+            rerank_model: req.rerank_model.filter(|m| !m.is_empty()),
+            rerank_window: req.rerank_window.map(i64::from),
+            rerank_threshold: req.rerank_threshold,
         },
         &tenant_of(&auth),
     )
@@ -557,10 +573,18 @@ struct UpdateKbRequest {
     description: Option<String>,
     slug: String,
     status: String,
+    /// Rerank trio (freely editable — query-time behavior, §6.1).
+    #[serde(default)]
+    rerank_model: Option<String>,
+    #[serde(default)]
+    rerank_window: Option<u32>,
+    #[serde(default)]
+    rerank_threshold: Option<f64>,
 }
 
-/// Update mutable KB metadata only (name/slug/description/status).
-/// kind / embedding_model / embedding_dim are immutable after creation.
+/// Update mutable KB metadata (name/slug/description/status) plus the
+/// rerank trio. kind / embedding_model / embedding_dim are immutable after
+/// creation.
 async fn admin_update_kb(
     auth: AuthUser,
     State(state): State<AppState>,
@@ -579,6 +603,7 @@ async fn admin_update_kb(
             "status must be 'active' or 'archived'".into(),
         ));
     }
+    validate_rerank_params(req.rerank_window, req.rerank_threshold)?;
     let id = parse_snowflake(&id)?;
     let tenant = tenant_of(&auth);
     if knowledge_base::find_kb_by_id(&state.pool, id, &tenant)
@@ -600,11 +625,29 @@ async fn admin_update_kb(
                 .map(str::to_owned),
             slug: req.slug.trim().to_owned(),
             status: req.status,
+            rerank_model: req.rerank_model.filter(|m| !m.is_empty()),
+            rerank_window: req.rerank_window.map(i64::from),
+            rerank_threshold: req.rerank_threshold,
         },
         &tenant,
     )
     .await?;
     Ok(ApiResponse::success(json!({ "id": id })))
+}
+
+/// Shared validation for the rerank trio on create/update.
+fn validate_rerank_params(window: Option<u32>, threshold: Option<f64>) -> AppResult<()> {
+    if window.is_some_and(|w| w == 0) {
+        return Err(AppError::BadRequest(
+            "rerank_window must be a positive integer".into(),
+        ));
+    }
+    if threshold.is_some_and(|t| !(0.0..=1.0).contains(&t)) {
+        return Err(AppError::BadRequest(
+            "rerank_threshold must be within 0..=1".into(),
+        ));
+    }
+    Ok(())
 }
 
 /// Delete a KB and everything in it (documents, chunks, FAQs, wiki pages,

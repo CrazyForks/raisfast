@@ -1632,6 +1632,9 @@ CREATE TABLE IF NOT EXISTS kb_knowledge_bases (
     chunking_config JSONB,
     embedding_model TEXT,
     embedding_dim BIGINT,
+    rerank_model TEXT,
+    rerank_window BIGINT,
+    rerank_threshold DOUBLE PRECISION,
     status TEXT NOT NULL DEFAULT 'active',
     created_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW()

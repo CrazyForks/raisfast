@@ -320,6 +320,9 @@ pub fn config_snapshot(config: &AppConfig) -> Value {
         "context_budget_tokens": config.kb.context_budget_tokens,
         "vector_backend": config.kb.vector_backend,
         "trace_mode": config.kb.trace_mode,
+        "rerank_model": config.kb.rerank_model,
+        "rerank_window": config.kb.rerank_window,
+        "rerank_threshold": config.kb.rerank_threshold,
     })
 }
 

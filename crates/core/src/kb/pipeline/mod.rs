@@ -10,6 +10,7 @@ mod assemble;
 mod fusion;
 mod generate;
 mod merge;
+mod rerank;
 mod search;
 mod understand;
 
@@ -101,6 +102,8 @@ pub async fn prepare_answer(deps: &KbDeps, req: &AskRequest) -> AppResult<AskOut
         return Err(AppError::BadRequest("question must not be empty".into()));
     }
     let kbs = resolve_kbs(deps, &req.kb_ids, &req.tenant_id).await?;
+    // S5 config from the KB scope (per-KB override → global default, §6.1.2).
+    let rerank = rerank::resolve(deps, &kbs).await?;
 
     // Observability run (short task — terminal INSERT at finish, DR2).
     let mut trace = crate::kb::trace::RunRecorder::create(
@@ -150,6 +153,7 @@ pub async fn prepare_answer(deps: &KbDeps, req: &AskRequest) -> AppResult<AskOut
         &kbs,
         &req.doc_ids,
         &understood,
+        rerank.as_ref(),
         &mut trace,
     )
     .await;
@@ -196,8 +200,19 @@ pub async fn search_units(
         return Err(AppError::BadRequest("query must not be empty".into()));
     }
     let kbs = resolve_kbs(deps, kb_ids, tenant_id).await?;
+    let rerank = rerank::resolve(deps, &kbs).await?;
     let understood = understand::UnderstoodQuery::raw(query);
-    match recall_and_merge(deps, tenant_id, &kbs, &[], &understood, trace).await {
+    match recall_and_merge(
+        deps,
+        tenant_id,
+        &kbs,
+        &[],
+        &understood,
+        rerank.as_ref(),
+        trace,
+    )
+    .await
+    {
         Ok(v) => Ok(v),
         Err(e) => {
             trace.fail_stage(&e.to_string());
@@ -228,20 +243,28 @@ fn chunk_title(chunk: &KbChunk) -> String {
 }
 
 /// S2–S7 over a validated KB scope: recall → fuse → top-k → hydrate →
-/// wiki boost → merge. Returns `(top_score, context_units)`. Stage
-/// summaries are side-recorded into `trace` (DR6 orchestration-level).
+/// (rerank) → wiki boost → merge. Returns `(top_score, context_units)`.
+/// Stage summaries are side-recorded into `trace` (DR6 orchestration-level).
 async fn recall_and_merge(
     deps: &KbDeps,
     tenant: &str,
     kbs: &[i64],
     doc_ids: &[i64],
     understood: &understand::UnderstoodQuery,
+    rerank: Option<&rerank::ResolvedRerank>,
     trace: &mut crate::kb::trace::RunRecorder,
 ) -> AppResult<(f32, Vec<ContextUnit>)> {
     use crate::kb::trace::STAGE_LIST_TOP;
 
     // S2+S3+S4 recall → fuse → top-k, per KB scope.
     let mut candidates = Vec::new();
+    // S4 cut size: with rerank, S4 keeps the wider rerank window so S5 sees
+    // more candidates than the final keep set (§6.1.4 窗口重排; window ≥
+    // top_k so a small window never shrinks recall).
+    let s4_cut = match rerank {
+        Some(cfg) if deps.reranker.is_some() => cfg.window.max(deps.config.kb.top_k),
+        _ => deps.config.kb.top_k,
+    };
     // Per-KB raw recall lists for the s2 summary (top-10 each, DR3).
     type RawRecall = (i64, Vec<(i64, f32)>, Vec<(i64, f32)>);
     let mut raw_per_kb: Vec<RawRecall> = Vec::new();
@@ -285,7 +308,7 @@ async fn recall_and_merge(
                 .dense
                 .retain(|(unit_id, _)| allowed.contains(unit_id));
         }
-        candidates.extend(fusion::fuse_and_cut(recalled, deps.config.kb.top_k));
+        candidates.extend(fusion::fuse_and_cut(recalled, s4_cut));
     }
     // Bounded title backfill for the s2 top-10 lists — ids cut by fusion
     // are exactly the diagnostically interesting ones, so resolve them
@@ -372,13 +395,18 @@ async fn recall_and_merge(
     trace.stage("s4_topk");
     trace.end_stage(
         crate::kb::trace::STAGE_OK,
-        serde_json::json!({ "kept": hydrated.len() }),
+        serde_json::json!({ "kept": hydrated.len(), "cut_per_kb": s4_cut }),
         None,
     );
 
-    // S5 rerank: v1 passthrough (external rerank provider unimplemented;
-    // the stage boundary is kept — see kb-technical-design §6 note).
-    // S6 wiki boost.
+    // S5 rerank (kb-technical-design §6.1, revised 2026-09-17): per-KB
+    // resolved config; the rerank score REPLACES the fused RRF score;
+    // skipped/degraded inside — never fails the query.
+    trace.stage("s5_rerank");
+    rerank::rerank_stage(deps, tenant, rerank, &understood.text, &mut hydrated, trace).await;
+
+    // S6 wiki boost — multiplies `Candidate.score`, i.e. the rerank score
+    // once S5 ran (乘法提权语义不变, §6.1.4).
     let boosted: Vec<i64> = hydrated
         .iter()
         .filter(|c| c.chunk.kind == "wiki_page")
@@ -693,10 +721,23 @@ mod tests {
     }
 
     async fn deps() -> KbDeps {
+        deps_with(|_| {}, None).await
+    }
+
+    async fn deps_with(
+        tune: impl FnOnce(&mut crate::config::app::AppConfig),
+        reranker: Option<Arc<dyn crate::kb::rerank::KbReranker>>,
+    ) -> KbDeps {
         let pool = crate::test_pool!();
         let mut config = crate::config::app::AppConfig::test_defaults();
         config.kb.enabled = true;
         config.kb.fallback_threshold = 0.05; // deterministic for mocks
+        if reranker.is_some() {
+            // Global env default so S5 resolves without a per-KB override;
+            // tests may override via `tune` or the KB row (§6.1.2).
+            config.kb.rerank_model = Some("env-default-model".into());
+        }
+        tune(&mut config);
         let bus = crate::eventbus::EventBus::new(16);
         let router = crate::llm::service::LlmRouter::with_provider_for_test(
             Some(pool.clone()),
@@ -715,9 +756,116 @@ mod tests {
             vector: Arc::new(BruteForceIndex::new()),
             kbsearch: Arc::new(crate::kb::kbsearch::KbSearchEngine::open_in_memory().unwrap()),
             embedder: Arc::new(MockEmbedder { dim: 4 }),
+            reranker,
             router,
             emitter: crate::event::EventEmitter::eventbus_only(bus),
         }
+    }
+
+    /// Deterministic reranker stub (§6.1.5): scores by keyword membership.
+    struct KeywordReranker {
+        keyword: &'static str,
+        hit: f32,
+        miss: f32,
+    }
+
+    #[async_trait::async_trait]
+    impl crate::kb::rerank::KbReranker for KeywordReranker {
+        async fn rerank(
+            &self,
+            _tenant: &str,
+            _model: &str,
+            _query: &str,
+            docs: &[crate::kb::rerank::RerankDoc],
+        ) -> AppResult<Vec<f32>> {
+            Ok(docs
+                .iter()
+                .map(|d| {
+                    if d.text.contains(self.keyword) {
+                        self.hit
+                    } else {
+                        self.miss
+                    }
+                })
+                .collect())
+        }
+    }
+
+    /// Always-failing reranker: exercises the S5 degrade path.
+    struct FailingReranker;
+
+    #[async_trait::async_trait]
+    impl crate::kb::rerank::KbReranker for FailingReranker {
+        async fn rerank(
+            &self,
+            _tenant: &str,
+            _model: &str,
+            _query: &str,
+            _docs: &[crate::kb::rerank::RerankDoc],
+        ) -> AppResult<Vec<f32>> {
+            Err(AppError::ServiceUnavailable("rerank down".into()))
+        }
+    }
+
+    /// Constant-score reranker that records the resolved model per call
+    /// (per-KB override assertions, §6.1.2).
+    struct RecordingReranker {
+        constant: f32,
+        models: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+    }
+
+    #[async_trait::async_trait]
+    impl crate::kb::rerank::KbReranker for RecordingReranker {
+        async fn rerank(
+            &self,
+            _tenant: &str,
+            model: &str,
+            _query: &str,
+            docs: &[crate::kb::rerank::RerankDoc],
+        ) -> AppResult<Vec<f32>> {
+            self.models.lock().unwrap().push(model.to_string());
+            Ok(vec![self.constant; docs.len()])
+        }
+    }
+
+    /// KB + one processed document under a distinct slug (rerank tests).
+    #[allow(clippy::too_many_arguments)]
+    async fn seeded_rr_kb(
+        deps: &KbDeps,
+        slug: &str,
+        rerank_model: Option<&str>,
+        rerank_window: Option<i64>,
+        rerank_threshold: Option<f64>,
+    ) -> i64 {
+        let kb = crate::kb::models::knowledge_base::create_kb(
+            &deps.pool,
+            &crate::kb::models::knowledge_base::CreateKbCmd {
+                name: slug.into(),
+                description: None,
+                slug: slug.into(),
+                kind: "document".into(),
+                indexing_strategy: None,
+                embedding_model: Some("m".into()),
+                embedding_dim: Some(4),
+                rerank_model: rerank_model.map(str::to_owned),
+                rerank_window,
+                rerank_threshold,
+            },
+            "default",
+        )
+        .await
+        .unwrap();
+        let mut markdown = "# 重排\n\n".to_string();
+        markdown.push_str(&"raisfast 知识库重排序阶段说明文本。".repeat(60));
+        let doc = crate::kb::service::create_online_document(
+            deps, kb.id, "重排", &markdown, None, "default",
+        )
+        .await
+        .unwrap();
+        crate::kb::service::process_document(deps, doc.id, "default")
+            .await
+            .unwrap();
+        i64::from(kb.id)
     }
 
     #[tokio::test]
@@ -733,6 +881,9 @@ mod tests {
                 indexing_strategy: None,
                 embedding_model: Some("m".into()),
                 embedding_dim: Some(4),
+                rerank_model: None,
+                rerank_window: None,
+                rerank_threshold: None,
             },
             "default",
         )
@@ -787,6 +938,9 @@ mod tests {
                 indexing_strategy: None,
                 embedding_model: Some("m".into()),
                 embedding_dim: Some(4),
+                rerank_model: None,
+                rerank_window: None,
+                rerank_threshold: None,
             },
             "default",
         )
@@ -819,6 +973,9 @@ mod tests {
                 indexing_strategy: None,
                 embedding_model: Some("m".into()),
                 embedding_dim: Some(4),
+                rerank_model: None,
+                rerank_window: None,
+                rerank_threshold: None,
             },
             "default",
         )
@@ -868,6 +1025,9 @@ mod tests {
                 indexing_strategy: None,
                 embedding_model: Some("m".into()),
                 embedding_dim: Some(4),
+                rerank_model: None,
+                rerank_window: None,
+                rerank_threshold: None,
             },
             tenant,
         )
@@ -939,6 +1099,9 @@ mod tests {
                 description: None,
                 slug: "iso-default".into(),
                 status: "disabled".into(),
+                rerank_model: None,
+                rerank_window: None,
+                rerank_threshold: None,
             },
             "default",
         )
@@ -954,6 +1117,146 @@ mod tests {
         assert!(
             matches!(err, crate::errors::app_error::AppError::NotFound(_)),
             "inactive kb must fail closed"
+        );
+    }
+
+    #[tokio::test]
+    async fn rerank_replaces_scores_and_cuts_to_top_k() {
+        let deps = deps_with(
+            |c| {
+                c.kb.top_k = 2;
+                c.kb.rerank_model = Some("mock-reranker".into());
+            },
+            Some(Arc::new(KeywordReranker {
+                keyword: "PostgreSQL",
+                hit: 0.9,
+                miss: 0.1,
+            })),
+        )
+        .await;
+        let kb_id = seeded_rr_kb(&deps, "rr-mix", None, None, None).await;
+        let mut markdown = "# PostgreSQL 部署\n\n".to_string();
+        markdown.push_str(&"PostgreSQL 生产部署要点与连接池调优参数。".repeat(60));
+        markdown.push_str("\n\n# MySQL 备份\n\n");
+        markdown.push_str(&"MySQL 备份策略与权限分配说明。".repeat(60));
+        let doc = crate::kb::service::create_online_document(
+            &deps,
+            crate::types::snowflake_id::SnowflakeId(kb_id),
+            "混合",
+            &markdown,
+            None,
+            "default",
+        )
+        .await
+        .unwrap();
+        crate::kb::service::process_document(&deps, doc.id, "default")
+            .await
+            .unwrap();
+
+        let ask = AskRequest {
+            tenant_id: "default".into(),
+            kb_ids: vec![kb_id],
+            doc_ids: Vec::new(),
+            question: "PostgreSQL 部署要点是什么".into(),
+        };
+        let outcome = prepare_answer(&deps, &ask).await.unwrap();
+        assert!(
+            (outcome.top_score - 0.9).abs() < 1e-6,
+            "rerank score must replace the fused score, got {}",
+            outcome.top_score
+        );
+        assert!(
+            outcome.context_units[0].content.contains("PostgreSQL"),
+            "top unit after rerank must be the keyword hit"
+        );
+        assert!(
+            outcome.context_units.len() <= 2,
+            "S5 must cut back to top_k after rerank"
+        );
+    }
+
+    #[tokio::test]
+    async fn rerank_threshold_drops_all_and_reports_uncovered() {
+        let deps = deps_with(
+            |c| {
+                c.kb.rerank_threshold = 0.5;
+            },
+            Some(Arc::new(KeywordReranker {
+                keyword: "\u{0}never-matches",
+                hit: 0.2,
+                miss: 0.2,
+            })),
+        )
+        .await;
+        let kb_id = seeded_rr_kb(&deps, "rr-floor", None, None, None).await;
+        let ask = AskRequest {
+            tenant_id: "default".into(),
+            kb_ids: vec![kb_id],
+            doc_ids: Vec::new(),
+            question: "重排序阶段做什么".into(),
+        };
+        let mut outcome = prepare_answer(&deps, &ask).await.unwrap();
+        assert!(
+            outcome.context_units.is_empty(),
+            "below-floor candidates must be dropped (no refill)"
+        );
+        assert_eq!(outcome.top_score, 0.0);
+        finish_answer(&deps, &mut outcome).await.unwrap();
+        assert_eq!(outcome.status, "uncovered");
+    }
+
+    #[tokio::test]
+    async fn rerank_failure_degrades_to_rrf_order() {
+        let deps = deps_with(|_| {}, Some(Arc::new(FailingReranker))).await;
+        let kb_id = seeded_rr_kb(&deps, "rr-fail", None, None, None).await;
+        let ask = AskRequest {
+            tenant_id: "default".into(),
+            kb_ids: vec![kb_id],
+            doc_ids: Vec::new(),
+            question: "重排序阶段做什么".into(),
+        };
+        let mut outcome = prepare_answer(&deps, &ask).await.unwrap();
+        assert!(
+            !outcome.context_units.is_empty(),
+            "degraded rerank must keep the RRF results"
+        );
+        assert!(
+            outcome.top_score > 0.0,
+            "RRF score must survive the fallback"
+        );
+        finish_answer(&deps, &mut outcome).await.unwrap();
+        assert_eq!(outcome.status, "answered");
+    }
+
+    #[tokio::test]
+    async fn per_kb_rerank_config_overrides_env_default() {
+        let models = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let deps = deps_with(
+            |_| {},
+            Some(Arc::new(RecordingReranker {
+                constant: 0.2,
+                models: models.clone(),
+            })),
+        )
+        .await;
+        // deps_with seeds the env default model "env-default-model" and
+        // threshold 0; the KB row overrides both (model + threshold).
+        let kb_id = seeded_rr_kb(&deps, "rr-override", Some("kb-model"), None, Some(0.5)).await;
+        let ask = AskRequest {
+            tenant_id: "default".into(),
+            kb_ids: vec![kb_id],
+            doc_ids: Vec::new(),
+            question: "重排序阶段做什么".into(),
+        };
+        let outcome = prepare_answer(&deps, &ask).await.unwrap();
+        assert_eq!(
+            *models.lock().unwrap(),
+            vec!["kb-model".to_string()],
+            "per-KB rerank_model must win over the env default"
+        );
+        assert!(
+            outcome.context_units.is_empty(),
+            "per-KB rerank_threshold (0.5) must drop constant-0.2 scores"
         );
     }
 }

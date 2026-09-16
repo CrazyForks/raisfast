@@ -93,6 +93,7 @@ impl KbProcessDocumentHandler {
             vector: self.runtime.vector.clone(),
             kbsearch: self.runtime.kbsearch.clone(),
             embedder: self.runtime.embedder.clone(),
+            reranker: self.runtime.reranker.clone(),
             router: self.llm_router.clone(),
             emitter: self.emitter.clone(),
         };
@@ -226,6 +227,7 @@ impl JobHandler for KbDistillWikiHandler {
             vector: self.runtime.vector.clone(),
             kbsearch: self.runtime.kbsearch.clone(),
             embedder: self.runtime.embedder.clone(),
+            reranker: self.runtime.reranker.clone(),
             router: self.llm_router.clone(),
             emitter: self.emitter.clone(),
         };
