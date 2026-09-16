@@ -29,6 +29,7 @@ pub mod product_category;
 pub mod product_comment;
 pub mod product_variant;
 pub mod rbac;
+pub mod redemption;
 pub mod reusable_block;
 pub mod shipping_template;
 pub mod sms;

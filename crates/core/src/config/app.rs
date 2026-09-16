@@ -1162,6 +1162,13 @@ pub fn default_cron_schedules() -> Vec<CronScheduleConfig> {
             enabled: true,
         },
         CronScheduleConfig {
+            label: "Reconcile LLM Hold Leaks".into(),
+            job_type: "llm_hold_reconcile".into(),
+            payload: None,
+            cron_expr: "0 */30 * * * *".into(),
+            enabled: true,
+        },
+        CronScheduleConfig {
             label: "Daily Database Backup".into(),
             job_type: "db_backup".into(),
             payload: None,

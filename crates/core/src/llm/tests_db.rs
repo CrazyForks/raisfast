@@ -3,9 +3,11 @@
 //! via `crate::test_pool!()`.
 
 use crate::commands::CreateUserCmd;
+use crate::llm::billing::QUOTA_PER_CENT;
 use crate::llm::models::token::{self, LlmTokenStatus};
 use crate::llm::relay::auth;
 use crate::models::user::{self, UserStatus};
+use crate::types::price::Price;
 use crate::types::quota::Quota;
 use crate::types::snowflake_id::SnowflakeId;
 
@@ -169,7 +171,7 @@ async fn billing_preconsume_settle_refund_cycle() {
     let (_plain, t) = make_token(&p, uid, 1000, false).await;
 
     // Pre-consume 300 → remain 700.
-    let charge = crate::llm::relay::billing::pre_consume(&p, t.id, false, Quota(300))
+    let charge = crate::llm::relay::billing::pre_consume(&p, &t, "default", Quota(300))
         .await
         .expect("hold");
     assert_eq!(charge.pre_consumed, Quota(300));
@@ -183,7 +185,7 @@ async fn billing_preconsume_settle_refund_cycle() {
     assert_eq!(after.used_quota, Quota(100));
 
     // Full refund restores to the original hold.
-    let charge2 = crate::llm::relay::billing::pre_consume(&p, t.id, false, Quota(250))
+    let charge2 = crate::llm::relay::billing::pre_consume(&p, &t, "default", Quota(250))
         .await
         .expect("hold2");
     crate::llm::relay::billing::refund_all(&p, &charge2).await;
@@ -196,7 +198,7 @@ async fn billing_preconsume_rejects_insufficient() {
     let p = pool().await;
     let uid = make_user(&p, UserStatus::Active).await;
     let (_plain, t) = make_token(&p, uid, 50, false).await;
-    let err = crate::llm::relay::billing::pre_consume(&p, t.id, false, Quota(300))
+    let err = crate::llm::relay::billing::pre_consume(&p, &t, "default", Quota(300))
         .await
         .expect_err("must reject");
     assert!(matches!(
@@ -213,7 +215,7 @@ async fn billing_under_hold_top_up_collects_or_logs() {
     let p = pool().await;
     let uid = make_user(&p, UserStatus::Active).await;
     let (_plain, t) = make_token(&p, uid, 500, false).await;
-    let charge = crate::llm::relay::billing::pre_consume(&p, t.id, false, Quota(100))
+    let charge = crate::llm::relay::billing::pre_consume(&p, &t, "default", Quota(100))
         .await
         .expect("hold");
     // Actual 150 > hold 100 → collects the 50 diff.
@@ -227,7 +229,7 @@ async fn billing_unlimited_token_skips_holds() {
     let p = pool().await;
     let uid = make_user(&p, UserStatus::Active).await;
     let (_plain, t) = make_token(&p, uid, 0, true).await;
-    let charge = crate::llm::relay::billing::pre_consume(&p, t.id, true, Quota(12345))
+    let charge = crate::llm::relay::billing::pre_consume(&p, &t, "default", Quota(12345))
         .await
         .expect("no hold for unlimited");
     crate::llm::relay::billing::settle(&p, &charge, Quota(999)).await;
@@ -238,6 +240,236 @@ async fn billing_unlimited_token_skips_holds() {
         Quota(0),
         "unlimited never touches remain_quota"
     );
+}
+
+/// Seed a metered billing policy for an isolated tenant (options fall back
+/// tenant → global, so a unique tenant keeps shared-DB runs leak-free) plus
+/// its active CNY currency row.
+async fn seed_metered(p: &crate::db::Pool, tenant: &str) {
+    crate::models::options::upsert_value(
+        p,
+        "llm.billing.mode",
+        &serde_json::json!("metered"),
+        Some(tenant),
+    )
+    .await
+    .expect("option");
+    let ph = crate::db::Driver::ph;
+    use crate::db::driver::DbDriver;
+    let sql = format!(
+        "INSERT INTO currencies (id, tenant_id, code, name) VALUES ({}, {}, {}, {})",
+        ph(1),
+        ph(2),
+        ph(3),
+        ph(4)
+    );
+    sqlx::query(crate::db::safe_sql(&sql))
+        .bind(crate::utils::id::new_id())
+        .bind(tenant)
+        .bind("CNY")
+        .bind("Chinese Yuan")
+        .execute(p)
+        .await
+        .expect("currency");
+}
+
+#[tokio::test]
+async fn billing_metered_wallet_holds_and_settles() {
+    let p = pool().await;
+    let uid = make_user(&p, UserStatus::Active).await;
+    let (_plain, t) = make_token(&p, uid, 1_000_000, false).await;
+    let tenant = format!("metered-{}", crate::utils::id::new_id());
+    seed_metered(&p, &tenant).await;
+    // Fund $10 → 1000¢ via the settle primitive's credit path.
+    crate::services::wallet::llm_settle(
+        &p,
+        Some(&tenant),
+        uid,
+        "CNY",
+        Price(1_000),
+        0,
+        QUOTA_PER_CENT,
+        "seed-metered-holds",
+        None,
+    )
+    .await
+    .expect("seed credit");
+
+    // 500K quota = $0.5 = 50¢ hold; token 1M → 500K remain.
+    let charge = crate::llm::relay::billing::pre_consume(&p, &t, &tenant, Quota(500_000))
+        .await
+        .expect("hold");
+    let w = crate::models::wallet::find_by_user_and_currency(&p, uid, "CNY")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(w.balance, Price(950));
+    let row = token::find_by_id(&p, t.id, None).await.unwrap().unwrap();
+    assert_eq!(row.remain_quota, Quota(500_000));
+
+    // Actual 200K quota = 20¢ → wallet refund 30¢, token refund 300K.
+    crate::llm::relay::billing::settle(&p, &charge, Quota(200_000)).await;
+    let w = crate::models::wallet::find_by_user_and_currency(&p, uid, "CNY")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(w.balance, Price(980));
+    let row = token::find_by_id(&p, t.id, None).await.unwrap().unwrap();
+    assert_eq!(row.remain_quota, Quota(800_000));
+    assert_eq!(row.used_quota, Quota(200_000));
+
+    // Full refund restores both ledgers.
+    let charge2 = crate::llm::relay::billing::pre_consume(&p, &t, &tenant, Quota(100_000))
+        .await
+        .expect("hold2");
+    crate::llm::relay::billing::refund_all(&p, &charge2).await;
+    let w = crate::models::wallet::find_by_user_and_currency(&p, uid, "CNY")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(w.balance, Price(980));
+    let row = token::find_by_id(&p, t.id, None).await.unwrap().unwrap();
+    assert_eq!(row.remain_quota, Quota(800_000));
+}
+
+#[tokio::test]
+async fn billing_metered_empty_wallet_rejects_both_ledgers_untouched() {
+    let p = pool().await;
+    let uid = make_user(&p, UserStatus::Active).await;
+    let (_plain, t) = make_token(&p, uid, 1_000_000, false).await;
+    let tenant = format!("metered-{}", crate::utils::id::new_id());
+    seed_metered(&p, &tenant).await;
+
+    let err = crate::llm::relay::billing::pre_consume(&p, &t, &tenant, Quota(500_000))
+        .await
+        .expect_err("empty wallet must reject");
+    assert!(matches!(
+        err,
+        crate::errors::app_error::AppError::TooManyRequests(_)
+    ));
+    // Token debit unwound; the wallet tx rolled back (no row persisted).
+    let row = token::find_by_id(&p, t.id, None).await.unwrap().unwrap();
+    assert_eq!(row.remain_quota, Quota(1_000_000));
+    assert!(
+        crate::models::wallet::find_by_user_and_currency(&p, uid, "CNY")
+            .await
+            .unwrap()
+            .is_none()
+    );
+}
+
+#[tokio::test]
+async fn billing_free_mode_never_touches_wallet() {
+    let p = pool().await;
+    let uid = make_user(&p, UserStatus::Active).await;
+    let (_plain, t) = make_token(&p, uid, 1_000_000, false).await;
+    let charge = crate::llm::relay::billing::pre_consume(&p, &t, "default", Quota(500_000))
+        .await
+        .expect("hold");
+    assert!(charge.wallet.is_none(), "free mode carries no wallet hold");
+    assert!(
+        crate::models::wallet::find_by_user_and_currency(&p, uid, "CNY")
+            .await
+            .unwrap()
+            .is_none()
+    );
+}
+
+#[tokio::test]
+async fn billing_metered_unlimited_token_charges_wallet_only() {
+    let p = pool().await;
+    let uid = make_user(&p, UserStatus::Active).await;
+    let (_plain, t) = make_token(&p, uid, 0, true).await;
+    let tenant = format!("metered-{}", crate::utils::id::new_id());
+    seed_metered(&p, &tenant).await;
+    crate::services::wallet::llm_settle(
+        &p,
+        Some(&tenant),
+        uid,
+        "CNY",
+        Price(1_000),
+        0,
+        QUOTA_PER_CENT,
+        "seed-metered-unlimited",
+        None,
+    )
+    .await
+    .expect("seed credit");
+
+    let charge = crate::llm::relay::billing::pre_consume(&p, &t, &tenant, Quota(500_000))
+        .await
+        .expect("wallet holds even for unlimited tokens");
+    assert!(charge.unlimited);
+    let w = crate::models::wallet::find_by_user_and_currency(&p, uid, "CNY")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(w.balance, Price(950), "wallet is the real gate");
+    crate::llm::relay::billing::settle(&p, &charge, Quota(200_000)).await;
+    let w = crate::models::wallet::find_by_user_and_currency(&p, uid, "CNY")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(w.balance, Price(980));
+    let row = token::find_by_id(&p, t.id, None).await.unwrap().unwrap();
+    assert_eq!(row.remain_quota, Quota(0), "token ledger untouched");
+}
+
+/// Sub-cent usage accumulates in the wallet carry; the wallet is debited a
+/// whole cent only when the carry crosses QUOTA_PER_CENT — net wallet spend
+/// converges to the exact llm meter total within one cent.
+#[tokio::test]
+async fn billing_metered_carry_accumulates_sub_cent_usage() {
+    let p = pool().await;
+    let uid = make_user(&p, UserStatus::Active).await;
+    let (_plain, t) = make_token(&p, uid, 1_000_000, false).await;
+    let tenant = format!("metered-{}", crate::utils::id::new_id());
+    seed_metered(&p, &tenant).await;
+    crate::services::wallet::llm_settle(
+        &p,
+        Some(&tenant),
+        uid,
+        "CNY",
+        Price(1_000),
+        0,
+        QUOTA_PER_CENT,
+        "seed-metered-carry",
+        None,
+    )
+    .await
+    .expect("seed credit");
+
+    // Two calls, each holding 1¢ and consuming 6_000 quota ($0.006) —
+    // sub-cent on its own.
+    let charge1 = crate::llm::relay::billing::pre_consume(&p, &t, &tenant, Quota(10_000))
+        .await
+        .expect("hold1");
+    let w = crate::models::wallet::find_by_user_and_currency(&p, uid, "CNY")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(w.balance, Price(999), "1¢ held");
+
+    // Usage 6_000 < 1 cent → charge 0, full hold refunded, carry = 6_000.
+    crate::llm::relay::billing::settle(&p, &charge1, Quota(6_000)).await;
+    let w = crate::models::wallet::find_by_user_and_currency(&p, uid, "CNY")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(w.balance, Price(1_000), "refunded, sub-cent carried");
+    assert_eq!(w.llm_carry_quota, 6_000);
+
+    // Second call: pending 12_000 → charge 1¢, carry 2_000, diff 0 (no rows).
+    let charge2 = crate::llm::relay::billing::pre_consume(&p, &t, &tenant, Quota(10_000))
+        .await
+        .expect("hold2");
+    crate::llm::relay::billing::settle(&p, &charge2, Quota(6_000)).await;
+    let w = crate::models::wallet::find_by_user_and_currency(&p, uid, "CNY")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(w.balance, Price(999), "carry crossed the line: 1¢ charged");
+    assert_eq!(w.llm_carry_quota, 2_000);
 }
 
 #[tokio::test]

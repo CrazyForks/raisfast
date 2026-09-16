@@ -18,6 +18,10 @@ use crate::utils::tz::Timestamp;
 #[derive(Debug, Serialize, ToSchema)]
 pub struct WalletResponse {
     pub id: SnowflakeId,
+    /// Owner user (wallets are 1-per-user-per-currency).
+    pub user_id: SnowflakeId,
+    /// Owner username (admin list views only; None elsewhere).
+    pub username: Option<String>,
     pub currency: String,
     pub balance: Price,
     pub status: WalletStatus,
@@ -32,6 +36,8 @@ impl WalletResponse {
         Ok(Self {
             status: w.status,
             id: w.id,
+            user_id: w.user_id,
+            username: None,
             currency: w.currency,
             balance: w.balance,
             created_at: w.created_at,
@@ -45,6 +51,10 @@ impl WalletResponse {
 #[derive(Debug, Serialize, ToSchema)]
 pub struct WalletTransactionResponse {
     pub id: SnowflakeId,
+    /// Owner user (wallet transactions are 1-per-user).
+    pub user_id: SnowflakeId,
+    /// Owner username (admin list views only; None elsewhere).
+    pub username: Option<String>,
     pub entry_type: WalletEntryType,
     pub amount: Price,
     pub balance_after: Price,
@@ -62,6 +72,8 @@ pub struct WalletTransactionResponse {
 impl WalletTransactionResponse {
     pub fn from_tx(tx: WalletTransaction) -> AppResult<Self> {
         Ok(Self {
+            user_id: tx.user_id,
+            username: None,
             entry_type: tx.entry_type,
             tx_type: tx.tx_type,
             reference_type: tx.reference_type,

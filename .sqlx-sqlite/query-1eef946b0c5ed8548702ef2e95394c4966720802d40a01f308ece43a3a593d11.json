@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO redemption_codes (id, code_hash, code_enc, user_id, currency, amount, status, created_by, expires_at, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 11
+    },
+    "nullable": []
+  },
+  "hash": "1eef946b0c5ed8548702ef2e95394c4966720802d40a01f308ece43a3a593d11"
+}

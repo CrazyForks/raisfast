@@ -6,6 +6,12 @@
 //! - user `quota`      = billable USD × `group_ratio` (sell side)
 //! - channel `cost_quota` = billable USD × `cost_discount` (buy side; 0 for
 //!   subscription/fixed upstreams whose per-token cost is undefined)
+//!
+//! Wallet mirror (design §9.4/§16 接线, new-api "unlimited → 扣 user.quota"
+//! 同构): in metered tenants (`llm.billing.mode`) every relay request also
+//! pre-holds the owner's wallet — the real-money gate — while the token
+//! quota stays the per-key sub-cap; settle/refund mirror both ledgers. Free
+//! tenants keep the token-only behavior.
 
 use crate::db::Driver;
 use crate::db::Pool;
@@ -14,7 +20,9 @@ use crate::errors::app_error::{AppError, AppResult};
 use crate::llm::cache::Pricing;
 use crate::llm::models::channel::LlmCostMode;
 use crate::llm::models::model::{LlmModelType, LlmPriceMode};
+use crate::llm::models::token::LlmToken;
 use crate::llm::relay::adaptor::RelayUsage;
+use crate::types::price::Price;
 use crate::types::quota::Quota;
 use crate::types::snowflake_id::SnowflakeId;
 
@@ -24,6 +32,79 @@ pub struct PreCharge {
     pub token_id: SnowflakeId,
     pub pre_consumed: Quota,
     pub unlimited: bool,
+    /// Wallet-side mirror of the hold (metered tenants only; design §9.4/§16).
+    pub wallet: Option<WalletHold>,
+}
+
+/// Wallet-side mirror of the pre-consume hold. The wallet is the real-money
+/// ledger (§16: 钱包主账 + token 限额子帽，两处同扣); this struct is what the
+/// deferred settle/refund paths (async video tasks) rebuild from the task
+/// payload so both ledgers stay in step across the process gap.
+#[derive(Debug, Clone)]
+pub struct WalletHold {
+    /// Request-normalized tenant (wallets/currencies row scope).
+    pub tenant: Option<String>,
+    pub user_id: SnowflakeId,
+    pub currency: String,
+    /// Idempotency key: hold debit = `{hold_no}`, refund credit =
+    /// `{hold_no}-r`, extra debit = `{hold_no}-x` (wallet transaction_no).
+    pub hold_no: String,
+    pub hold_price: Price,
+}
+
+impl WalletHold {
+    /// Task-payload projection (survives submit → poll).
+    pub fn to_json(&self) -> serde_json::Value {
+        serde_json::json!({
+            "tenant": self.tenant,
+            "user_id": self.user_id.0,
+            "currency": self.currency,
+            "hold_no": self.hold_no,
+            "hold_price": self.hold_price.0,
+        })
+    }
+
+    /// Inverse of [`Self::to_json`]; None on shape drift (pre-wallet rows).
+    pub fn from_json(v: &serde_json::Value) -> Option<Self> {
+        Some(Self {
+            tenant: v.get("tenant").and_then(|t| t.as_str()).map(str::to_owned),
+            user_id: SnowflakeId(v.get("user_id")?.as_i64()?),
+            currency: v.get("currency")?.as_str()?.to_owned(),
+            hold_no: v.get("hold_no")?.as_str()?.to_owned(),
+            hold_price: Price(v.get("hold_price")?.as_i64()?),
+        })
+    }
+}
+
+/// Per-request wallet context resolved from the tenant policy
+/// (`llm.billing.mode`): metered → charge the token owner's wallet;
+/// free → None (relay stays token-quota-only).
+struct WalletBilling {
+    tenant: Option<String>,
+    user_id: SnowflakeId,
+    currency: String,
+}
+
+/// Resolve the wallet billing context for a relay request (design §10.3
+/// 双模式，与内部消费同一选项). Policy-resolution failure is fail-closed
+/// (reject) — billing must never silently degrade to free.
+async fn wallet_billing(
+    pool: &Pool,
+    tenant: &str,
+    token: &LlmToken,
+) -> AppResult<Option<WalletBilling>> {
+    match crate::llm::billing::resolve_policy(pool, tenant).await {
+        Ok(crate::llm::billing::BillingMode::Metered { currency }) => Ok(Some(WalletBilling {
+            tenant: Some(tenant.to_owned()),
+            user_id: token.user_id,
+            currency,
+        })),
+        Ok(crate::llm::billing::BillingMode::Free { .. }) => Ok(None),
+        Err(err) => {
+            tracing::warn!(%err, "llm relay billing policy resolve failed; failing closed");
+            Err(err)
+        }
+    }
 }
 
 /// Per-token quota source (design §9.1). Placeholder order matches the SQL
@@ -95,47 +176,151 @@ async fn apply_refund(pool: &Pool, token_id: SnowflakeId, amount: Quota) -> AppR
     Ok(())
 }
 
-/// Pre-consume an estimate before forwarding (pricing.md §3.2).
+/// Transient SQLite BUSY (esp. WAL `BUSY_SNAPSHOT` when an unlocked hot-path
+/// write — relay token ledger, llm_logs insert — commits inside our deferred
+/// transaction) must not eat a settlement: retry a few times before the §9.3
+/// logged-not-chased fallback becomes final.
+const WALLET_IO_ATTEMPTS: usize = 3;
+const WALLET_IO_BACKOFF_MS: u64 = 100;
+
+/// Wallet settle with retry: the exact usage quota accumulates in the
+/// wallet's sub-cent carry and only whole cents hit the balance.
+/// Idempotent by `transaction_no`, so a retry can never double-apply.
+/// `meta` rides on the wallet transaction row (llm quota detail for audit).
+async fn wallet_settle_retry(pool: &Pool, w: &WalletHold, actual_quota: i64, meta: Option<String>) {
+    for attempt in 0..WALLET_IO_ATTEMPTS {
+        match crate::services::wallet::llm_settle(
+            pool,
+            w.tenant.as_deref(),
+            w.user_id,
+            &w.currency,
+            w.hold_price,
+            actual_quota,
+            crate::llm::billing::QUOTA_PER_CENT,
+            &w.hold_no,
+            meta.clone(),
+        )
+        .await
+        {
+            Ok(()) => return,
+            Err(err) if attempt + 1 < WALLET_IO_ATTEMPTS => {
+                tracing::warn!(%err, attempt, "llm wallet settle retrying");
+                tokio::time::sleep(std::time::Duration::from_millis(WALLET_IO_BACKOFF_MS)).await;
+            }
+            Err(err) => {
+                tracing::warn!(%err, "llm wallet settle failed (logged, not chased)");
+                return;
+            }
+        }
+    }
+}
+
+/// Pre-consume an estimate before forwarding (pricing.md §3.2). Two ledgers
+/// in one step (design §9.4/§16 双层扣费, new-api `BillingSession` 同构):
+/// ① token-quota debit (per-key sub-cap, §9.1) — ② in metered tenants, a
+/// wallet hold on the owner's balance (the real-money gate; zero balance
+/// stops service here). A wallet-hold failure unwinds the token debit, so
+/// rejection still leaves no hold behind (§9.3).
+///
+/// Unit convention matches internal billing (llm/billing.rs): quota-USD →
+/// wallet cents at par (FX conversion is a deferred pricing.md item).
 pub async fn pre_consume(
     pool: &Pool,
-    token_id: SnowflakeId,
-    unlimited: bool,
+    token: &LlmToken,
+    tenant: &str,
     estimate: Quota,
 ) -> AppResult<PreCharge> {
-    if unlimited || estimate.0 <= 0 {
-        return Ok(PreCharge {
-            token_id,
-            pre_consumed: Quota(estimate.0.max(0)),
-            unlimited,
+    let hold = wallet_billing(pool, tenant, token)
+        .await?
+        .map(|w| WalletHold {
+            tenant: w.tenant,
+            user_id: w.user_id,
+            currency: w.currency,
+            hold_no: format!("llm-{}", crate::utils::id::new_snowflake_id()),
+            hold_price: crate::llm::billing::quota_to_price(estimate.0),
         });
+    // Token-side debit first: its failure path needs no compensation.
+    let token_took = !token.unlimited_quota && estimate.0 > 0;
+    if token_took {
+        debit_hold(pool, token.id, estimate).await?;
     }
-    debit_hold(pool, token_id, estimate).await?;
+    // Wallet-side hold; rejection unwinds the token debit (§9.3). Retry
+    // transient BUSY before giving up — a false rejection is a user-visible
+    // outage, not just a lost cent.
+    if let Some(w) = &hold
+        && w.hold_price.0 > 0
+    {
+        let mut hold_res = Err(AppError::TooManyRequests("insufficient quota".to_owned()));
+        let hold_meta = serde_json::json!({
+            "kind": "llm_hold",
+            "quota": estimate.0.max(0),
+        })
+        .to_string();
+        for attempt in 0..WALLET_IO_ATTEMPTS {
+            hold_res = crate::services::wallet::llm_hold(
+                pool,
+                w.tenant.as_deref(),
+                w.user_id,
+                &w.currency,
+                w.hold_price,
+                &w.hold_no,
+                Some(hold_meta.clone()),
+            )
+            .await;
+            if hold_res.is_ok() {
+                break;
+            }
+            if attempt + 1 < WALLET_IO_ATTEMPTS {
+                tracing::warn!(attempt, "llm wallet hold retrying");
+                tokio::time::sleep(std::time::Duration::from_millis(WALLET_IO_BACKOFF_MS)).await;
+            }
+        }
+        if let Err(err) = hold_res {
+            tracing::info!(%err, user = %w.user_id.0, "llm wallet hold rejected");
+            if token_took && let Err(rerr) = apply_refund(pool, token.id, estimate).await {
+                tracing::error!(%rerr, "llm token hold unwind after wallet rejection failed");
+            }
+            return Err(AppError::TooManyRequests("insufficient quota".to_owned()));
+        }
+    }
     Ok(PreCharge {
-        token_id,
-        pre_consumed: estimate,
-        unlimited,
+        token_id: token.id,
+        pre_consumed: Quota(estimate.0.max(0)),
+        unlimited: token.unlimited_quota,
+        wallet: hold,
     })
 }
 
 /// Settle with the actual usage: refund the over-hold, or try to collect the
 /// under-hold (collection failure is logged, not chased — design §9.3).
+/// Mirrors on the wallet when the request carried a hold.
 pub async fn settle(pool: &Pool, charge: &PreCharge, actual: Quota) {
-    if charge.unlimited {
-        return;
+    if !charge.unlimited {
+        let diff = charge.pre_consumed - actual;
+        if let Err(err) = apply_settle(pool, charge.token_id, diff, actual).await {
+            tracing::warn!(%err, "llm settle failed (logged, not chased)");
+        }
     }
-    let diff = charge.pre_consumed - actual;
-    if let Err(err) = apply_settle(pool, charge.token_id, diff, actual).await {
-        tracing::warn!(%err, "llm settle failed (logged, not chased)");
+    if let Some(w) = &charge.wallet {
+        let meta = serde_json::json!({ "kind": "llm_settle", "quota": actual.0 }).to_string();
+        wallet_settle_retry(pool, w, actual.0, Some(meta)).await;
     }
 }
 
-/// Refund the full hold (all attempts failed / admission rejected).
+/// Refund the full hold (all attempts failed / admission rejected), on both
+/// ledgers when the request carried a wallet hold.
 pub async fn refund_all(pool: &Pool, charge: &PreCharge) {
-    if charge.unlimited || charge.pre_consumed.0 <= 0 {
-        return;
-    }
-    if let Err(err) = apply_refund(pool, charge.token_id, charge.pre_consumed).await {
+    if !charge.unlimited
+        && charge.pre_consumed.0 > 0
+        && let Err(err) = apply_refund(pool, charge.token_id, charge.pre_consumed).await
+    {
         tracing::error!(%err, "llm refund_all failed");
+    }
+    if let Some(w) = &charge.wallet
+        && w.hold_price.0 > 0
+    {
+        let meta = serde_json::json!({ "kind": "llm_refund", "quota": 0 }).to_string();
+        wallet_settle_retry(pool, w, 0, Some(meta)).await;
     }
 }
 

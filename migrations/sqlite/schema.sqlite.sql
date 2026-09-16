@@ -107,6 +107,7 @@ CREATE TABLE IF NOT EXISTS wallets (
     user_id INTEGER NOT NULL,
     currency TEXT NOT NULL,
     balance INTEGER NOT NULL DEFAULT 0 CHECK(balance >= 0),
+    llm_carry_quota INTEGER NOT NULL DEFAULT 0,
     version INTEGER NOT NULL DEFAULT 1,
     status TEXT NOT NULL DEFAULT 'active',
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
@@ -304,6 +305,7 @@ CREATE TABLE IF NOT EXISTS content_revisions (
     revision_number INTEGER NOT NULL,
     snapshot TEXT NOT NULL,
     created_by INTEGER,
+    expires_at TEXT,
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     UNIQUE(content_type, record_id, revision_number)
 );
@@ -1380,9 +1382,15 @@ INSERT OR IGNORE INTO options (id, tenant_id, option_key, value, type, group_nam
     (10014, 'default', 'maintenance_mode', 'false', 'boolean', 'appearance', 'Maintenance mode', 'When enabled, a maintenance page is shown to visitors', NULL, 1, 1, 31, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     (10015, 'default', 'default_currency', '"USD"', 'select', 'ecommerce', 'Default currency', 'Currency code for products and orders', '{"values":["USD","CNY","EUR","GBP","JPY","KRW","HKD","TWD","SGD","AUD","CAD"]}', 1, 1, 40, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     (10017, 'default', 'reserved_usernames', '"admin,administrator,root,system,official,support,staff,moderator,mod,help,info,mail,webmaster,security,billing,sales,owner,superuser,operator"', 'text', 'general', 'Reserved usernames', 'Comma-separated usernames that cannot be registered', '{"max_length":10000}', 0, 1, 5, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
-    (10018, 'default', 'llm_group_ratios', '"{\"default\":1.0}"', 'text', 'llm', 'LLM billing group ratios', 'JSON map of group name to sell-price multiplier (pricing.md §2)', NULL, 0, 1, 10, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
-    (10019, 'default', 'llm.log_retention_days', '90', 'integer', 'llm', 'LLM log retention (days)', 'Detail rows older than this are rolled up into llm_logs_summary then deleted (design §9)', '{"min":1,"max":3650}', 0, 1, 11, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
-    (10020, 'default', 'llm.log_retention_days_test', '7', 'integer', 'llm', 'LLM test-log retention (days)', 'Shorter retention applied to source=test probe logs', '{"min":1,"max":3650}', 0, 1, 12, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'));
+    (10021, 'default', 'llm.billing.mode', '"free"', 'select', 'llm', 'LLM billing mode', 'free = metering only (llm_logs.quota); metered = wallet pre-hold + settle on every request (design §10.3)', '{"values":["free","metered"]}', 0, 1, 10, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    (10022, 'default', 'llm.billing.currency', '"CNY"', 'select', 'llm', 'LLM billing currency', 'Wallet currency charged in metered mode (tenant scope, global fallback; default CNY)', '{"values":["CNY","USD","EUR","GBP","JPY"]}', 0, 1, 11, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    (10023, 'default', 'llm.billing.free_daily_user_quota', '0', 'integer', 'llm', 'Free-mode daily cap per user', 'Quota units per user per day in free mode (1000000 = $1); 0 = unlimited', '{"min":0,"max":10000000000}', 0, 1, 12, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    (10024, 'default', 'llm.default_chat_model', 'null', 'text', 'llm', 'Default chat model', 'Chat/VLM model for internal callers without an explicit model (agent/flows/kb); blank clears', NULL, 0, 1, 13, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    (10025, 'default', 'llm.default_embedding_model', 'null', 'text', 'llm', 'Default embedding model', 'Embedding model for internal callers without an explicit model; blank clears', NULL, 0, 1, 14, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    (10018, 'default', 'llm_group_ratios', '"{\"default\":1.0}"', 'text', 'llm', 'LLM billing group ratios', 'JSON map of group name to sell-price multiplier (pricing.md §2)', NULL, 0, 1, 15, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+        (10026, 'default', 'llm.hold_leak_refund_percent', '0', 'integer', 'llm', 'Hold leak refund percent', 'Unknown-usage leaked holds: percent of the hold refunded by the reconcile sweep (0 = keep held for admin review, 100 = full refund)', '{"min":0,"max":100}', 0, 1, 18, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    (10019, 'default', 'llm.log_retention_days', '90', 'integer', 'llm', 'LLM log retention (days)', 'Detail rows older than this are rolled up into llm_logs_summary then deleted (design §9)', '{"min":1,"max":3650}', 0, 1, 16, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    (10020, 'default', 'llm.log_retention_days_test', '7', 'integer', 'llm', 'LLM test-log retention (days)', 'Shorter retention applied to source=test probe logs', '{"min":1,"max":3650}', 0, 1, 17, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'));
 
 -- ============================================================
 -- Flow orchestration engine v2 (dev-docs/workflow) — P0-P1 5 tables
@@ -1912,3 +1920,21 @@ CREATE TABLE IF NOT EXISTS llm_tasks (
 CREATE INDEX IF NOT EXISTS idx_llm_tasks_status ON llm_tasks(status, updated_at);
 CREATE INDEX IF NOT EXISTS idx_llm_tasks_token ON llm_tasks(token_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_llm_tasks_upstream ON llm_tasks(upstream_task_id);
+
+CREATE TABLE IF NOT EXISTS redemption_codes (
+    id INTEGER PRIMARY KEY,
+    tenant_id TEXT NOT NULL DEFAULT 'default',
+    code_hash TEXT NOT NULL UNIQUE,
+    code_enc TEXT,
+    user_id INTEGER,
+    currency TEXT NOT NULL,
+    amount INTEGER NOT NULL CHECK(amount > 0),
+    status TEXT NOT NULL DEFAULT 'pending',
+    redeemed_by INTEGER,
+    redeemed_at TEXT,
+    redemption_tx_no TEXT,
+    created_by INTEGER,
+    expires_at TEXT,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+);

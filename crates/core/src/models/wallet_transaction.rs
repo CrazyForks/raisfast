@@ -22,6 +22,7 @@ define_enum!(
         TransferIn = "transfer_in",
         LlmHold = "llm_hold",
         LlmSettle = "llm_settle",
+        Redemption = "redemption",
     }
 );
 
@@ -93,21 +94,114 @@ pub async fn find_transactions_by_user(
     Ok(result)
 }
 
+/// Admin transaction-list filters (all optional; `None`/empty skips).
+pub struct WalletTransactionFilters {
+    pub user_id: Option<SnowflakeId>,
+    pub currency: Option<String>,
+    pub tx_type: Option<String>,
+    /// Created on/after (UTC).
+    pub created_from: Option<Timestamp>,
+    /// Created on/before (UTC, end of day).
+    pub created_to: Option<Timestamp>,
+}
+
 pub async fn find_all_transactions(
     pool: &crate::db::Pool,
+    filters: &WalletTransactionFilters,
     page: i64,
     page_size: i64,
     tenant_id: Option<&str>,
 ) -> AppResult<(Vec<WalletTransaction>, i64)> {
-    let result = raisfast_derive::crud_query_paged!(
-        pool, WalletTransaction,
-        table: "wallet_transactions",
-        order_by: "created_at DESC",
-        tenant: tenant_id,
-        page: page,
-        page_size: page_size
+    // Hand-written dynamic paged query (models/wallet.rs 先例): optional
+    // equality + GTE/LTE date range; conditions and binds are built in the
+    // same fixed order so placeholder numbering stays consistent.
+    use crate::db::driver::DbDriver;
+    let ph = crate::db::Driver::ph;
+    let mut idx = 1usize;
+    let mut conds = String::new();
+    if filters.user_id.is_some() {
+        conds.push_str(&format!(" AND user_id = {}", ph(idx)));
+        idx += 1;
+    }
+    if filters
+        .currency
+        .as_deref()
+        .is_some_and(|c| !c.trim().is_empty())
+    {
+        conds.push_str(&format!(" AND currency = {}", ph(idx)));
+        idx += 1;
+    }
+    if filters
+        .tx_type
+        .as_deref()
+        .is_some_and(|t| !t.trim().is_empty())
+    {
+        conds.push_str(&format!(" AND tx_type = {}", ph(idx)));
+        idx += 1;
+    }
+    if filters.created_from.is_some() {
+        conds.push_str(&format!(" AND created_at >= {}", ph(idx)));
+        idx += 1;
+    }
+    if filters.created_to.is_some() {
+        conds.push_str(&format!(" AND created_at <= {}", ph(idx)));
+        idx += 1;
+    }
+    let tenant = if tenant_id.is_some() {
+        let frag = format!(" AND tenant_id = {}", ph(idx));
+        idx += 1;
+        frag
+    } else {
+        String::new()
+    };
+
+    let offset = (page - 1).max(0) * page_size;
+    let data_sql = format!(
+        "SELECT * FROM wallet_transactions WHERE 1=1{conds}{tenant} \
+         ORDER BY created_at DESC, id DESC LIMIT {lim} OFFSET {off}",
+        lim = ph(idx),
+        off = ph(idx + 1)
     );
-    Ok(result)
+    let count_expr = crate::db::Driver::cast_int("COUNT(*)");
+    let count_sql =
+        format!("SELECT {count_expr} FROM wallet_transactions WHERE 1=1{conds}{tenant}");
+
+    let mut dq =
+        sqlx::query_as::<crate::db::pool::Db, WalletTransaction>(crate::db::safe_sql(&data_sql));
+    let mut cq = sqlx::query_scalar::<crate::db::pool::Db, i64>(crate::db::safe_sql(&count_sql));
+    if let Some(u) = filters.user_id {
+        dq = dq.bind(u);
+        cq = cq.bind(u);
+    }
+    if let Some(c) = &filters.currency
+        && !c.trim().is_empty()
+    {
+        dq = dq.bind(c.trim());
+        cq = cq.bind(c.trim());
+    }
+    if let Some(t) = &filters.tx_type
+        && !t.trim().is_empty()
+    {
+        dq = dq.bind(t.trim());
+        cq = cq.bind(t.trim());
+    }
+    if let Some(f) = filters.created_from {
+        dq = dq.bind(f);
+        cq = cq.bind(f);
+    }
+    if let Some(t) = filters.created_to {
+        dq = dq.bind(t);
+        cq = cq.bind(t);
+    }
+    if tenant_id.is_some() {
+        let tv = crate::db::tenant::resolve_tenant(tenant_id);
+        dq = dq.bind(tv);
+        cq = cq.bind(tv);
+    }
+    dq = dq.bind(page_size).bind(offset);
+    let data = dq.fetch_all(pool).await?;
+    let total = cq.fetch_one(pool).await?;
+    Ok((data, total))
 }
 
 pub async fn find_tx_by_transaction_no(

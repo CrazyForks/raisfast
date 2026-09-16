@@ -19,6 +19,9 @@ pub struct Wallet {
     pub user_id: SnowflakeId,
     pub currency: String,
     pub balance: Price,
+    /// Sub-cent carry of LLM usage in quota units (always < quota_per_cent);
+    /// the wallet is only debited in whole cents when it crosses the line.
+    pub llm_carry_quota: i64,
     pub version: i64,
     pub status: WalletStatus,
     pub created_at: Timestamp,
@@ -78,21 +81,78 @@ pub async fn find_or_create(
     create(pool, user_id, currency).await
 }
 
+/// Admin wallet-list filters (all optional; `None`/empty skips).
+pub struct WalletFilters {
+    pub user_id: Option<SnowflakeId>,
+    pub currency: Option<String>,
+}
+
 pub async fn find_all_wallets(
     pool: &crate::db::Pool,
+    filters: &WalletFilters,
     page: i64,
     page_size: i64,
     tenant_id: Option<&str>,
 ) -> AppResult<(Vec<Wallet>, i64)> {
-    let result = raisfast_derive::crud_query_paged!(
-        pool, Wallet,
-        table: "wallets",
-        order_by: "created_at DESC",
-        tenant: tenant_id,
-        page: page,
-        page_size: page_size
+    // Hand-written dynamic paged query (llm/models/log.rs::query_paged 先例):
+    // the optional-equality array form can't express the GTE/LTE date range.
+    // Conditions and binds are built in the same fixed order so placeholder
+    // numbering stays consistent across dialects.
+    use crate::db::driver::DbDriver;
+    let ph = crate::db::Driver::ph;
+    let mut idx = 1usize;
+    let mut conds = String::new();
+    if filters.user_id.is_some() {
+        conds.push_str(&format!(" AND user_id = {}", ph(idx)));
+        idx += 1;
+    }
+    if filters
+        .currency
+        .as_deref()
+        .is_some_and(|c| !c.trim().is_empty())
+    {
+        conds.push_str(&format!(" AND currency = {}", ph(idx)));
+        idx += 1;
+    }
+    let tenant = if tenant_id.is_some() {
+        let frag = format!(" AND tenant_id = {}", ph(idx));
+        idx += 1;
+        frag
+    } else {
+        String::new()
+    };
+
+    let offset = (page - 1).max(0) * page_size;
+    let data_sql = format!(
+        "SELECT * FROM wallets WHERE 1=1{conds}{tenant} \
+         ORDER BY created_at DESC, id DESC LIMIT {lim} OFFSET {off}",
+        lim = ph(idx),
+        off = ph(idx + 1)
     );
-    Ok(result)
+    let count_expr = crate::db::Driver::cast_int("COUNT(*)");
+    let count_sql = format!("SELECT {count_expr} FROM wallets WHERE 1=1{conds}{tenant}");
+
+    let mut dq = sqlx::query_as::<crate::db::pool::Db, Wallet>(crate::db::safe_sql(&data_sql));
+    let mut cq = sqlx::query_scalar::<crate::db::pool::Db, i64>(crate::db::safe_sql(&count_sql));
+    if let Some(u) = filters.user_id {
+        dq = dq.bind(u);
+        cq = cq.bind(u);
+    }
+    if let Some(c) = &filters.currency
+        && !c.trim().is_empty()
+    {
+        dq = dq.bind(c.trim());
+        cq = cq.bind(c.trim());
+    }
+    if tenant_id.is_some() {
+        let tv = crate::db::tenant::resolve_tenant(tenant_id);
+        dq = dq.bind(tv);
+        cq = cq.bind(tv);
+    }
+    dq = dq.bind(page_size).bind(offset);
+    let data = dq.fetch_all(pool).await?;
+    let total = cq.fetch_one(pool).await?;
+    Ok((data, total))
 }
 
 pub async fn tx_find_by_id(
@@ -369,9 +429,37 @@ mod tests {
         let user2 = insert_user(&pool).await;
         create_wallet_t(&pool, user1.id, "CNY", &tenant).await;
         create_wallet_t(&pool, user2.id, "CNY", &tenant).await;
-        let (rows, total) = find_all_wallets(&pool, 1, 10, Some(&tenant)).await.unwrap();
+        let no_filters = crate::models::wallet::WalletFilters {
+            user_id: None,
+            currency: None,
+        };
+        let (rows, total) = find_all_wallets(&pool, &no_filters, 1, 10, Some(&tenant))
+            .await
+            .unwrap();
         assert_eq!(total, 2);
         assert_eq!(rows.len(), 2);
+
+        // Currency filter narrows to the matching wallet only.
+        create_wallet_t(&pool, user1.id, "USD", &tenant).await;
+        let cny_only = crate::models::wallet::WalletFilters {
+            user_id: None,
+            currency: Some("CNY".to_owned()),
+        };
+        let (rows, total) = find_all_wallets(&pool, &cny_only, 1, 10, Some(&tenant))
+            .await
+            .unwrap();
+        assert_eq!(total, 2, "two CNY wallets, USD excluded");
+        assert_eq!(rows.len(), 2);
+
+        // Exact owner filter.
+        let mine_only = crate::models::wallet::WalletFilters {
+            user_id: Some(user1.id),
+            currency: None,
+        };
+        let (_, total) = find_all_wallets(&pool, &mine_only, 1, 10, Some(&tenant))
+            .await
+            .unwrap();
+        assert_eq!(total, 2, "user1 has CNY + USD");
     }
 
     #[tokio::test]
@@ -380,7 +468,13 @@ mod tests {
         let tenant = format!("t_{}", crate::utils::id::new_id());
         let user = insert_user(&pool).await;
         create_wallet_t(&pool, user.id, "CNY", &tenant).await;
-        let (rows, total) = find_all_wallets(&pool, 2, 10, Some(&tenant)).await.unwrap();
+        let no_filters = crate::models::wallet::WalletFilters {
+            user_id: None,
+            currency: None,
+        };
+        let (rows, total) = find_all_wallets(&pool, &no_filters, 2, 10, Some(&tenant))
+            .await
+            .unwrap();
         assert_eq!(total, 1);
         assert!(rows.is_empty());
     }

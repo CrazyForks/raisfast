@@ -105,6 +105,7 @@ pub trait WalletService: Send + Sync {
 
     async fn list_all_wallets(
         &self,
+        filters: &crate::models::wallet::WalletFilters,
         page: i64,
         page_size: i64,
         tenant_id: Option<&str>,
@@ -112,6 +113,7 @@ pub trait WalletService: Send + Sync {
 
     async fn list_all_transactions(
         &self,
+        filters: &crate::models::wallet_transaction::WalletTransactionFilters,
         page: i64,
         page_size: i64,
         tenant_id: Option<&str>,
@@ -589,6 +591,7 @@ async fn llm_wallet_tx(
     transaction_no: &str,
     tx_type: crate::models::wallet_transaction::WalletTxType,
     entry_type: crate::models::wallet_transaction::WalletEntryType,
+    metadata: Option<String>,
 ) -> AppResult<()> {
     if amount.0 <= 0 {
         return Ok(());
@@ -626,11 +629,243 @@ async fn llm_wallet_tx(
             Some(crate::models::wallet_transaction::WalletReferenceType::ApiUsage),
             None,
             None,
-            None,
+            metadata,
         )
         .await?;
         Ok(())
     })
+}
+
+/// 断联损失退款比例(情况 B 用量不可知时):option
+/// `llm.hold_leak_refund_percent`(0-100),租户 scope → 全局,默认 0
+/// (断联是用户侧问题,平台不兜底,保留冻结待人工处理)。
+async fn leak_refund_percent(pool: &crate::db::Pool, tenant: Option<&str>) -> i64 {
+    for scope in [tenant, None] {
+        if let Ok(Some(row)) =
+            crate::models::options::find_by_key(pool, "llm.hold_leak_refund_percent", scope).await
+        {
+            let v = match &row.value {
+                serde_json::Value::Number(n) => n.as_i64(),
+                serde_json::Value::String(t) => t.trim().parse::<i64>().ok(),
+                _ => None,
+            };
+            if let Some(v) = v {
+                return v.clamp(0, 100);
+            }
+        }
+    }
+    0
+}
+
+/// 对账 sweep(§9.3 留白收口):扫「超过宽限期仍无结算行」的 llm_hold 预扣。
+/// 情况 A(日志已记录实际用量)→ 精确多退少补,不走政策;情况 B(用量不可知)
+/// → 按 `llm.hold_leak_refund_percent` 比例退款(默认 0 = 保留冻结)。
+/// `-r` 幂等后缀保证重跑永不重复退款。返回退款笔数。
+pub async fn reconcile_orphan_llm_holds(
+    pool: &crate::db::Pool,
+    older_than: chrono::Duration,
+    limit: i64,
+) -> AppResult<usize> {
+    use crate::db::driver::DbDriver;
+    let ph = crate::db::Driver::ph;
+    let cut = crate::utils::tz::now_utc() - older_than;
+    // Candidate holds only; settle-existence is checked per row in Rust —
+    // portable (no SQL string concat across dialects) and bounded by `limit`.
+    let sql = format!(
+        "SELECT * FROM wallet_transactions \
+         WHERE tx_type = {} AND entry_type = {} AND created_at < {} \
+         ORDER BY created_at ASC LIMIT {}",
+        ph(1),
+        ph(2),
+        ph(3),
+        ph(4)
+    );
+    let rows = sqlx::query_as::<_, WalletTransaction>(crate::db::safe_sql(&sql))
+        .bind(WalletTxType::LlmHold.as_str())
+        .bind(WalletEntryType::Debit.as_str())
+        .bind(cut)
+        .bind(limit)
+        .fetch_all(pool)
+        .await?;
+
+    // Case-A precision: a completed settle writes `llm_logs` carrying the
+    // actual quota (detail.wallet_hold_no). Map hold_no -> quota from the
+    // bounded recent window so known-usage refunds are exact, not full.
+    let log_cut = crate::utils::tz::now_utc() - older_than * 2;
+    let log_sql = format!(
+        "SELECT quota, detail FROM llm_logs WHERE created_at >= {} AND detail IS NOT NULL LIMIT 2000",
+        ph(1)
+    );
+    let log_rows: Vec<(i64, Option<serde_json::Value>)> =
+        sqlx::query_as(crate::db::safe_sql(&log_sql))
+            .bind(log_cut)
+            .fetch_all(pool)
+            .await
+            .unwrap_or_default();
+    let quota_by_hold: std::collections::HashMap<String, i64> = log_rows
+        .iter()
+        .filter_map(|(quota, detail)| {
+            let hold = detail.as_ref()?.get("wallet_hold_no")?.as_str()?.to_owned();
+            Some((hold, *quota))
+        })
+        .collect();
+
+    let mut refunded = 0usize;
+    for h in rows {
+        let settled = {
+            let r = format!("{}-r", h.transaction_no);
+            let x = format!("{}-x", h.transaction_no);
+            wallet_transaction::find_tx_by_transaction_no(pool, &r)
+                .await?
+                .is_some()
+                || wallet_transaction::find_tx_by_transaction_no(pool, &x)
+                    .await?
+                    .is_some()
+        };
+        if settled {
+            continue;
+        }
+        match quota_by_hold.get(&h.transaction_no).copied() {
+            // Case A: usage was metered → exact carry-aware settle (no policy).
+            Some(quota) => {
+                let meta = serde_json::json!({ "kind": "llm_reconcile", "quota": quota });
+                match llm_settle(
+                    pool,
+                    h.tenant_id.as_deref(),
+                    h.user_id,
+                    &h.currency,
+                    h.amount,
+                    quota,
+                    crate::llm::billing::QUOTA_PER_CENT,
+                    &h.transaction_no,
+                    Some(meta.to_string()),
+                )
+                .await
+                {
+                    Ok(()) => {
+                        refunded += 1;
+                        tracing::info!(
+                            hold_no = %h.transaction_no,
+                            quota,
+                            "orphan llm hold settled exactly by sweep"
+                        );
+                    }
+                    Err(err) => {
+                        tracing::warn!(
+                            %err,
+                            hold_no = %h.transaction_no,
+                            "orphan llm hold exact settle failed; will retry next sweep"
+                        );
+                    }
+                }
+            }
+            // Case B: usage unknowable (mid-stream disconnect) — refund per
+            // configured percent (default 0: keep held, admin reviews).
+            None => {
+                let pct = leak_refund_percent(pool, h.tenant_id.as_deref()).await;
+                let refund_cents = h.amount.0.saturating_mul(pct) / 100;
+                if refund_cents <= 0 {
+                    tracing::info!(
+                        hold_no = %h.transaction_no,
+                        "orphan llm hold kept (refund percent 0); pending admin review"
+                    );
+                    continue;
+                }
+                let meta = serde_json::json!({
+                    "kind": "llm_reconcile",
+                    "percent": pct,
+                    "quota": 0,
+                });
+                let credited = crate::in_transaction!(pool, tx, {
+                    tx_credit_by_user(
+                        &mut tx,
+                        h.tenant_id.as_deref(),
+                        h.user_id,
+                        &h.currency,
+                        Price(refund_cents),
+                        WalletTxType::LlmSettle,
+                        &format!("{}-r", h.transaction_no),
+                        Some(meta.to_string()),
+                    )
+                    .await?;
+                    Ok(())
+                });
+                match credited {
+                    Ok(()) => {
+                        refunded += 1;
+                        tracing::info!(
+                            hold_no = %h.transaction_no,
+                            refund_cents,
+                            "orphan llm hold partially refunded by sweep"
+                        );
+                    }
+                    Err(err) => {
+                        tracing::warn!(
+                            %err,
+                            hold_no = %h.transaction_no,
+                            "orphan llm hold refund failed; will retry next sweep"
+                        );
+                    }
+                }
+            }
+        }
+        if refunded >= limit as usize {
+            break;
+        }
+    }
+    Ok(refunded)
+}
+
+/// Tx-level credit for caller-owned transactions (redemption code 兑换:
+/// 激活与入账必须同事务)。幂等 by `transaction_no`;负余额由调用方语义保证。
+#[allow(clippy::too_many_arguments)]
+pub async fn tx_credit_by_user(
+    tx: &mut crate::db::pool::DbConnection,
+    tenant_id: Option<&str>,
+    user_id: SnowflakeId,
+    currency: &str,
+    amount: Price,
+    tx_type: WalletTxType,
+    transaction_no: &str,
+    metadata: Option<String>,
+) -> AppResult<()> {
+    if amount.0 <= 0 {
+        return Err(AppError::BadRequest("amount_must_be_positive".into()));
+    }
+    if tx_find_tx_by_transaction_no(tx, transaction_no)
+        .await?
+        .is_some()
+    {
+        return Ok(());
+    }
+    ensure_currency_active(tx, currency, tenant_id).await?;
+    let w = tx_find_or_create(tx, user_id, currency).await?;
+    if w.status != WalletStatus::Active {
+        return Err(AppError::BadRequest("wallet_frozen".into()));
+    }
+    apply_wallet_delta(tx, w.id, w.version, amount.0, w.balance.0).await?;
+    let updated = tx_find_wallet_by_id(tx, w.id)
+        .await?
+        .ok_or_else(|| AppError::not_found("wallet"))?;
+    insert_tx(
+        tx,
+        tenant_id,
+        updated.id,
+        user_id,
+        WalletEntryType::Credit,
+        amount,
+        updated.balance,
+        tx_type,
+        currency,
+        transaction_no,
+        None,
+        Some(WalletReferenceType::ApiUsage),
+        None,
+        None,
+        metadata,
+    )
+    .await?;
+    Ok(())
 }
 
 /// 调用前预扣（hold）。余额不足 → 钱包原子拒绝（负余额不可能出现）。
@@ -641,6 +876,7 @@ pub async fn llm_hold(
     currency: &str,
     amount: Price,
     hold_no: &str,
+    metadata: Option<String>,
 ) -> AppResult<()> {
     llm_wallet_tx(
         pool,
@@ -651,55 +887,111 @@ pub async fn llm_hold(
         hold_no,
         crate::models::wallet_transaction::WalletTxType::LlmHold,
         crate::models::wallet_transaction::WalletEntryType::Debit,
+        metadata,
     )
     .await
 }
 
-/// 调用后结算：actual < hold 退差额（credit）；actual > hold 补扣差额，
-/// 补扣失败只记日志不追（§9.3）。actual == hold 幂等跳过。
+/// 调用后结算（亚分累计）：精确用量 `actual_quota` 先累进钱包的
+/// `llm_carry_quota` 找零位，满 `quota_per_cent` 才折整分入账——钱包消费
+/// 总量与 LLM 计量总量收敛相等（任何时刻误差 < 1 分）。`actual_quota = 0`
+/// 即全额退款（hold 退回，找零位不动）。幂等键 `hold_no`；事务内原子。
+///
+/// 差额 = hold − 折整后的 charge：正数退还（credit `-r`），负数补扣
+/// （debit `-x`，事务原子，配合调用方重试不再"失败不追"）。
+#[allow(clippy::too_many_arguments)]
 pub async fn llm_settle(
     pool: &crate::db::Pool,
     tenant_id: Option<&str>,
     user_id: crate::types::snowflake_id::SnowflakeId,
     currency: &str,
     hold: Price,
-    actual: Price,
+    actual_quota: i64,
+    quota_per_cent: i64,
     hold_no: &str,
+    metadata: Option<String>,
 ) -> AppResult<()> {
-    let diff = hold.0 - actual.0;
-    if diff == 0 {
-        return Ok(());
-    }
-    if diff > 0 {
-        return llm_wallet_tx(
-            pool,
-            tenant_id,
-            user_id,
-            currency,
-            Price(diff),
-            &format!("{hold_no}-r"),
-            crate::models::wallet_transaction::WalletTxType::LlmSettle,
-            crate::models::wallet_transaction::WalletEntryType::Credit,
-        )
-        .await;
-    }
-    // 补扣（少预扣了）：失败不追——用户余额已耗尽，下一次调用的预检会拦截。
-    let extra = Price(-diff);
-    if let Err(err) = llm_wallet_tx(
-        pool,
-        tenant_id,
-        user_id,
-        currency,
-        extra,
-        &format!("{hold_no}-x"),
-        crate::models::wallet_transaction::WalletTxType::LlmSettle,
-        crate::models::wallet_transaction::WalletEntryType::Debit,
-    )
-    .await
-    {
-        tracing::warn!(%err, user = %user_id.0, "llm settle extra debit failed (logged, not chased)");
-    }
-    Ok(())
+    let refund_no = format!("{hold_no}-r");
+    let extra_no = format!("{hold_no}-x");
+    crate::in_transaction!(pool, tx, {
+        // 幂等：本 hold 的任一结算行已存在即跳过（settle/retry 并发安全）。
+        if tx_find_tx_by_transaction_no(&mut tx, &refund_no)
+            .await?
+            .is_some()
+            || tx_find_tx_by_transaction_no(&mut tx, &extra_no)
+                .await?
+                .is_some()
+        {
+            return Ok(());
+        }
+        ensure_currency_active(&mut tx, currency, tenant_id).await?;
+        let w = tx_find_or_create(&mut tx, user_id, currency).await?;
+        if w.status != WalletStatus::Active {
+            return Err(AppError::BadRequest("wallet_frozen".into()));
+        }
+        // 找零位 + 折整：charge 是本次调用真正入账的分数。
+        let pending = w.llm_carry_quota + actual_quota.max(0);
+        let charge = Price(pending / quota_per_cent);
+        let new_carry = pending % quota_per_cent;
+        let diff = hold.0 - charge.0;
+        if diff != 0 {
+            let (entry, no, amount) = if diff > 0 {
+                (WalletEntryType::Credit, refund_no, Price(diff))
+            } else {
+                (WalletEntryType::Debit, extra_no, Price(-diff))
+            };
+            let delta = match entry {
+                WalletEntryType::Credit => amount.0,
+                _ => -amount.0,
+            };
+            apply_wallet_delta(&mut tx, w.id, w.version, delta, w.balance.0).await?;
+            let updated = tx_find_wallet_by_id(&mut tx, w.id)
+                .await?
+                .ok_or_else(|| AppError::not_found("wallet"))?;
+            insert_tx(
+                &mut tx,
+                tenant_id,
+                updated.id,
+                user_id,
+                entry,
+                amount,
+                updated.balance,
+                crate::models::wallet_transaction::WalletTxType::LlmSettle,
+                currency,
+                &no,
+                None,
+                Some(crate::models::wallet_transaction::WalletReferenceType::ApiUsage),
+                None,
+                None,
+                metadata,
+            )
+            .await?;
+        }
+        // 找零位持久化（charge == 0 且无差额时也要落，否则亚分丢失）。
+        if new_carry != w.llm_carry_quota {
+            let ph = crate::db::Driver::ph;
+            use crate::db::driver::DbDriver;
+            let sql = format!(
+                "UPDATE wallets SET llm_carry_quota = {}, updated_at = {} \
+                 WHERE id = {} AND llm_carry_quota = {}",
+                ph(1),
+                ph(2),
+                ph(3),
+                ph(4)
+            );
+            let result: crate::db::pool::DbQueryResult = sqlx::query(crate::db::safe_sql(&sql))
+                .bind(new_carry)
+                .bind(crate::utils::tz::now_utc())
+                .bind(w.id)
+                .bind(w.llm_carry_quota)
+                .execute(&mut *tx)
+                .await?;
+            if result.rows_affected() == 0 {
+                return Err(AppError::Conflict("concurrent_wallet_update".into()));
+            }
+        }
+        Ok(())
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -953,21 +1245,24 @@ impl WalletService for WalletServiceImpl {
 
     async fn list_all_wallets(
         &self,
+        filters: &crate::models::wallet::WalletFilters,
         page: i64,
         page_size: i64,
         tenant_id: Option<&str>,
     ) -> AppResult<(Vec<crate::models::wallet::Wallet>, i64)> {
-        crate::models::wallet::find_all_wallets(&self.pool, page, page_size, tenant_id).await
+        crate::models::wallet::find_all_wallets(&self.pool, filters, page, page_size, tenant_id)
+            .await
     }
 
     async fn list_all_transactions(
         &self,
+        filters: &crate::models::wallet_transaction::WalletTransactionFilters,
         page: i64,
         page_size: i64,
         tenant_id: Option<&str>,
     ) -> AppResult<(Vec<WalletTransaction>, i64)> {
         crate::models::wallet_transaction::find_all_transactions(
-            &self.pool, page, page_size, tenant_id,
+            &self.pool, filters, page, page_size, tenant_id,
         )
         .await
     }

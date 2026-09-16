@@ -45,6 +45,7 @@ pub mod product_comment;
 pub mod product_favorite;
 pub mod product_variant;
 pub mod rbac;
+pub mod redemption_code;
 pub mod refresh_token;
 pub mod reusable_block;
 pub mod shipping_template;

@@ -106,17 +106,16 @@ pub(crate) async fn submit_video(
 
     let estimate =
         billing::estimate_precharge(&info.pricing, info.model_type, &body, group_ratio, None);
-    let charge =
-        match billing::pre_consume(&state.pool, token_id, token.unlimited_quota, estimate).await {
-            Ok(c) => c,
-            Err(_) => {
-                return openai_error(
-                    StatusCode::TOO_MANY_REQUESTS,
-                    "rate_limit_error",
-                    "insufficient quota".into(),
-                );
-            }
-        };
+    let charge = match billing::pre_consume(&state.pool, &token, &tenant, estimate).await {
+        Ok(c) => c,
+        Err(_) => {
+            return openai_error(
+                StatusCode::TOO_MANY_REQUESTS,
+                "rate_limit_error",
+                "insufficient quota".into(),
+            );
+        }
+    };
 
     let router = state.llm_router.clone();
     let ctx = ResolveCtx {
@@ -230,7 +229,8 @@ pub(crate) async fn submit_video(
                             break;
                         };
                         // Task snapshot: everything settle needs later
-                        // (group ratio at submit, seconds for billing).
+                        // (group ratio at submit, seconds for billing,
+                        // wallet hold mirror for the deferred settle/refund).
                         let payload = serde_json::json!({
                             "request": body,
                             "group_ratio": group_ratio,
@@ -238,6 +238,7 @@ pub(crate) async fn submit_video(
                                 .get("seconds")
                                 .cloned()
                                 .unwrap_or_else(|| serde_json::Value::String("12".to_owned())),
+                            "wallet": charge.wallet.as_ref().map(billing::WalletHold::to_json),
                         });
                         let expires_at = now_utc() + chrono::Duration::seconds(TASK_TTL_SECS);
                         let created = match task::create_task(
@@ -589,13 +590,9 @@ async fn poll_task(state: &AppState, row: &LlmTask) -> AppResult<LlmTask> {
     match upstream_status {
         "completed" => {
             let (quota, cost_quota) = settle_amounts(state, row, &channel);
-            // Move the pre-charge hold to used on the token ledger (§9.3).
-            if let Some(tid) = row.token_id {
-                let charge = PreCharge {
-                    token_id: tid,
-                    pre_consumed: row.pre_consumed,
-                    unlimited: row.unlimited_quota,
-                };
+            // Move the pre-charge hold to used on the token ledger (§9.3),
+            // mirrored on the wallet when the submit held one.
+            if let Some(charge) = charge_of(row) {
                 billing::settle(&state.pool, &charge, quota).await;
             }
             task::finish_task(
@@ -702,17 +699,27 @@ fn payload_seconds(row: &LlmTask) -> i64 {
         .unwrap_or(12)
 }
 
-/// Refund a task's pre-charge (failed/expired paths).
-async fn refund_task(pool: &crate::db::Pool, row: &LlmTask) {
-    let Some(token_id) = row.token_id else {
-        return;
-    };
-    let charge = PreCharge {
-        token_id,
+/// Rebuild the pre-charge from a task row: token-ledger fields are columns;
+/// the wallet mirror rides in `payload` (metered tenants only, absent on
+/// pre-wallet rows). None when the row has no token to bill.
+fn charge_of(row: &LlmTask) -> Option<PreCharge> {
+    Some(PreCharge {
+        token_id: row.token_id?,
         pre_consumed: row.pre_consumed,
         unlimited: row.unlimited_quota,
-    };
-    billing::refund_all(pool, &charge).await;
+        wallet: row
+            .payload
+            .as_ref()
+            .and_then(|p| p.get("wallet"))
+            .and_then(billing::WalletHold::from_json),
+    })
+}
+
+/// Refund a task's pre-charge (failed/expired paths), both ledgers.
+async fn refund_task(pool: &crate::db::Pool, row: &LlmTask) {
+    if let Some(charge) = charge_of(row) {
+        billing::refund_all(pool, &charge).await;
+    }
 }
 
 /// Expire an overdue task: refund + terminal state + error log.
@@ -774,6 +781,10 @@ async fn write_task_log(
             "kind": row.kind.as_str(),
             "task_id": row.id.0,
             "pre_consumed": row.pre_consumed,
+            "wallet_hold_no": row.payload.as_ref()
+                .and_then(|p| p.get("wallet"))
+                .and_then(|w| w.get("hold_no"))
+                .and_then(|v| v.as_str()),
             "async": true,
         })),
         elapsed_ms: None,

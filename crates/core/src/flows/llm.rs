@@ -196,23 +196,9 @@ mod tests {
     use std::sync::Mutex;
 
     async fn seed_option(pool: &crate::db::Pool, key: &str, value: serde_json::Value) {
-        use crate::db::Driver;
-        use crate::db::driver::DbDriver;
-        let ph = |i: usize| Driver::ph(i);
-        let sql = format!(
-            "INSERT INTO options (id, option_key, value, type, group_name, label, autoload, sort_order, updated_at) \
-             VALUES ({}, {}, {}, 'text', 'llm', 'llm', 1, 0, {})",
-            ph(1),
-            ph(2),
-            ph(3),
-            ph(4)
-        );
-        sqlx::query(crate::db::safe_sql(&sql))
-            .bind(crate::utils::id::new_id())
-            .bind(key)
-            .bind(value.to_string())
-            .bind(crate::utils::tz::now_utc())
-            .execute(pool)
+        // Upsert: these keys are schema-seeded now, a plain INSERT would
+        // collide on (tenant_id, option_key).
+        crate::models::options::upsert_value(pool, key, &value, None)
             .await
             .unwrap();
     }

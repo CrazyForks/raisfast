@@ -130,15 +130,17 @@ impl InternalBilling {
         let usage = self.take_usage();
         let quota = self.quota_of(&usage);
         if let BillingMode::Metered { .. } = self.mode {
-            let actual = quota_to_price(quota.0);
+            let meta = serde_json::json!({ "kind": "llm_settle", "quota": quota.0 }).to_string();
             if let Err(err) = crate::services::wallet::llm_settle(
                 pool,
                 tenant,
                 self.user,
                 &self.currency,
                 self.hold_price,
-                actual,
+                quota.0,
+                QUOTA_PER_CENT,
                 &self.hold_no,
+                Some(meta),
             )
             .await
             {
@@ -152,18 +154,23 @@ impl InternalBilling {
     pub(crate) async fn refund(self, pool: &Pool, tenant: Option<&str>) {
         if let BillingMode::Metered { .. } = self.mode
             && self.hold_price.0 > 0
-            && let Err(err) = crate::services::wallet::llm_settle(
+        {
+            let meta = serde_json::json!({ "kind": "llm_refund", "quota": 0 }).to_string();
+            if let Err(err) = crate::services::wallet::llm_settle(
                 pool,
                 tenant,
                 self.user,
                 &self.currency,
                 self.hold_price,
-                Price(0),
+                0,
+                QUOTA_PER_CENT,
                 &self.hold_no,
+                Some(meta),
             )
             .await
-        {
-            tracing::error!(%err, "llm internal hold refund failed");
+            {
+                tracing::error!(%err, "llm internal hold refund failed");
+            }
         }
     }
 }
@@ -267,6 +274,11 @@ pub async fn preflight(
             Ok(())
         }
         BillingMode::Metered { currency } => {
+            let meta = serde_json::json!({
+                "kind": "llm_hold",
+                "quota": settle_quota(&billing.pricing, &billing.estimate, billing.group_ratio).0,
+            })
+            .to_string();
             crate::services::wallet::llm_hold(
                 pool,
                 Some(tenant),
@@ -274,6 +286,7 @@ pub async fn preflight(
                 currency,
                 billing.hold_price,
                 &billing.hold_no,
+                Some(meta),
             )
             .await
         }

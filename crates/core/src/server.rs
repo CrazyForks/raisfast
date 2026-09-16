@@ -228,6 +228,7 @@ async fn build_app(
 
     if config.builtins.wallet {
         api_v1 = api_v1.merge(wallet::routes(&mut registry, config));
+        api_v1 = api_v1.merge(crate::handlers::redemption::routes(&mut registry, config));
     }
 
     if config.builtins.pages {

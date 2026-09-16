@@ -250,17 +250,16 @@ async fn chat_completions(
         group_ratio,
         params_max_output,
     );
-    let charge =
-        match billing::pre_consume(&state.pool, token_id, token.unlimited_quota, estimate).await {
-            Ok(c) => c,
-            Err(_) => {
-                return openai_error(
-                    StatusCode::TOO_MANY_REQUESTS,
-                    "rate_limit_error",
-                    "insufficient quota".into(),
-                );
-            }
-        };
+    let charge = match billing::pre_consume(&state.pool, &token, &tenant, estimate).await {
+        Ok(c) => c,
+        Err(_) => {
+            return openai_error(
+                StatusCode::TOO_MANY_REQUESTS,
+                "rate_limit_error",
+                "insufficient quota".into(),
+            );
+        }
+    };
 
     let router = state.llm_router.clone();
     let ctx = ResolveCtx {
@@ -479,6 +478,7 @@ async fn chat_completions(
                             cost_quota: cost,
                             detail: Some(serde_json::json!({
                                 "pre_consumed": charge.pre_consumed,
+                                "wallet_hold_no": charge.wallet.as_ref().map(|w| w.hold_no.clone()),
                                 "group_ratio": group_ratio,
                                 "cost_mode": channel.cost_mode.as_str(),
                                 "cost_discount": channel.cost_discount,
@@ -670,17 +670,16 @@ async fn messages(
         group_ratio,
         params_max_output,
     );
-    let charge =
-        match billing::pre_consume(&state.pool, token_id, token.unlimited_quota, estimate).await {
-            Ok(c) => c,
-            Err(_) => {
-                return anthropic_error(
-                    StatusCode::TOO_MANY_REQUESTS,
-                    "rate_limit_error",
-                    "insufficient quota".into(),
-                );
-            }
-        };
+    let charge = match billing::pre_consume(&state.pool, &token, &tenant, estimate).await {
+        Ok(c) => c,
+        Err(_) => {
+            return anthropic_error(
+                StatusCode::TOO_MANY_REQUESTS,
+                "rate_limit_error",
+                "insufficient quota".into(),
+            );
+        }
+    };
 
     let router = state.llm_router.clone();
     let ctx = ResolveCtx {
@@ -903,6 +902,7 @@ async fn messages(
                             cost_quota: cost,
                             detail: Some(serde_json::json!({
                                 "pre_consumed": charge.pre_consumed,
+                                "wallet_hold_no": charge.wallet.as_ref().map(|w| w.hold_no.clone()),
                                 "group_ratio": group_ratio,
                                 "cost_mode": channel.cost_mode.as_str(),
                                 "cost_discount": channel.cost_discount,
@@ -1218,17 +1218,16 @@ async fn relay_json(
 
     let estimate =
         billing::estimate_precharge(&info.pricing, info.model_type, &body, group_ratio, None);
-    let charge =
-        match billing::pre_consume(&state.pool, token_id, token.unlimited_quota, estimate).await {
-            Ok(c) => c,
-            Err(_) => {
-                return openai_error(
-                    StatusCode::TOO_MANY_REQUESTS,
-                    "rate_limit_error",
-                    "insufficient quota".into(),
-                );
-            }
-        };
+    let charge = match billing::pre_consume(&state.pool, &token, &tenant, estimate).await {
+        Ok(c) => c,
+        Err(_) => {
+            return openai_error(
+                StatusCode::TOO_MANY_REQUESTS,
+                "rate_limit_error",
+                "insufficient quota".into(),
+            );
+        }
+    };
 
     let router = state.llm_router.clone();
     let ctx = ResolveCtx {
@@ -1387,6 +1386,7 @@ async fn relay_json(
                             cost_quota: cost,
                             detail: Some(serde_json::json!({
                                 "pre_consumed": charge.pre_consumed,
+                                "wallet_hold_no": charge.wallet.as_ref().map(|w| w.hold_no.clone()),
                                 "group_ratio": group_ratio,
                                 "cost_mode": channel.cost_mode.as_str(),
                                 "cost_discount": channel.cost_discount,
@@ -1618,17 +1618,16 @@ async fn audio_stt(
         }
         _ => billing::flat_token_quota(info.pricing.input_price, est_secs, group_ratio),
     };
-    let charge =
-        match billing::pre_consume(&state.pool, token_id, token.unlimited_quota, estimate).await {
-            Ok(c) => c,
-            Err(_) => {
-                return openai_error(
-                    StatusCode::TOO_MANY_REQUESTS,
-                    "rate_limit_error",
-                    "insufficient quota".into(),
-                );
-            }
-        };
+    let charge = match billing::pre_consume(&state.pool, &token, &tenant, estimate).await {
+        Ok(c) => c,
+        Err(_) => {
+            return openai_error(
+                StatusCode::TOO_MANY_REQUESTS,
+                "rate_limit_error",
+                "insufficient quota".into(),
+            );
+        }
+    };
 
     let router = state.llm_router.clone();
     let ctx = ResolveCtx {
@@ -1789,6 +1788,7 @@ async fn audio_stt(
                             cost_quota: cost,
                             detail: Some(serde_json::json!({
                                 "pre_consumed": charge.pre_consumed,
+                                "wallet_hold_no": charge.wallet.as_ref().map(|w| w.hold_no.clone()),
                                 "group_ratio": group_ratio,
                                 "cost_mode": channel.cost_mode.as_str(),
                                 "cost_discount": channel.cost_discount,
@@ -1953,17 +1953,16 @@ async fn audio_speech(
         cache_write_tokens: 0,
     };
     let estimate = billing::settle_quota(&info.pricing, &usage, group_ratio);
-    let charge =
-        match billing::pre_consume(&state.pool, token_id, token.unlimited_quota, estimate).await {
-            Ok(c) => c,
-            Err(_) => {
-                return openai_error(
-                    StatusCode::TOO_MANY_REQUESTS,
-                    "rate_limit_error",
-                    "insufficient quota".into(),
-                );
-            }
-        };
+    let charge = match billing::pre_consume(&state.pool, &token, &tenant, estimate).await {
+        Ok(c) => c,
+        Err(_) => {
+            return openai_error(
+                StatusCode::TOO_MANY_REQUESTS,
+                "rate_limit_error",
+                "insufficient quota".into(),
+            );
+        }
+    };
 
     let router = state.llm_router.clone();
     let ctx = ResolveCtx {
@@ -2106,6 +2105,7 @@ async fn audio_speech(
                     cost_quota: cost,
                     detail: Some(serde_json::json!({
                         "pre_consumed": charge.pre_consumed,
+                        "wallet_hold_no": charge.wallet.as_ref().map(|w| w.hold_no.clone()),
                         "group_ratio": group_ratio,
                         "cost_mode": channel.cost_mode.as_str(),
                         "cost_discount": channel.cost_discount,
@@ -2328,6 +2328,7 @@ impl SettleCtx {
             cost_quota: cost,
             detail: Some(serde_json::json!({
                 "pre_consumed": self.charge.pre_consumed,
+                "wallet_hold_no": self.charge.wallet.as_ref().map(|w| w.hold_no.clone()),
                 "group_ratio": self.group_ratio,
                 "cost_mode": self.cost_mode.as_str(),
                 "cost_discount": self.cost_discount,

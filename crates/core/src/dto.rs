@@ -268,7 +268,7 @@ fn is_valid_id_str(s: &str) -> bool {
     !s.is_empty() && s.chars().all(|c| c.is_ascii_alphanumeric())
 }
 
-fn validate_currency_code(code: &str) -> Result<(), validator::ValidationError> {
+pub(crate) fn validate_currency_code(code: &str) -> Result<(), validator::ValidationError> {
     let valid =
         !code.is_empty() && code.len() <= 10 && code.chars().all(|c| c.is_ascii_uppercase());
     if valid {

@@ -1,5 +1,6 @@
 use axum::Json;
 use axum::extract::{Path, Query, State};
+use serde::Deserialize;
 
 use crate::dto;
 use crate::errors::app_error::AppError;
@@ -227,44 +228,160 @@ pub async fn list_all_transactions(
     Ok(params.paginate(items, total))
 }
 
+/// Admin wallet-list query: pagination + optional filters.
+#[derive(Debug, Deserialize, utoipa::IntoParams)]
+pub struct WalletListQuery {
+    pub page: Option<i64>,
+    pub page_size: Option<i64>,
+    /// Exact owner user id.
+    pub user_id: Option<String>,
+    /// Currency code (exact).
+    pub currency: Option<String>,
+}
+
+pub(crate) fn parse_utc_day(
+    s: &str,
+    end_of_day: bool,
+) -> Result<crate::utils::tz::Timestamp, AppError> {
+    let d = chrono::NaiveDate::parse_from_str(s.trim(), "%Y-%m-%d")
+        .map_err(|_| AppError::BadRequest(format!("invalid date (expected YYYY-MM-DD): {s}")))?;
+    let t = d
+        .and_hms_opt(
+            if end_of_day { 23 } else { 0 },
+            if end_of_day { 59 } else { 0 },
+            if end_of_day { 59 } else { 0 },
+        )
+        .ok_or_else(|| AppError::BadRequest(format!("invalid date: {s}")))?;
+    Ok(t.and_utc())
+}
+
 #[utoipa::path(get, path = "/admin/wallets", tag = "wallets",
     security(("bearer_auth" = [])),
-    responses((status = 200, description = "Admin wallets list"))
-)]
+    params(WalletListQuery),
+    responses((status = 200, description = "Admin all wallets")))
+]
 pub async fn list_all_wallets(
     auth: AuthUser,
     State(state): State<crate::AppState>,
-    Query(params): Query<PaginationParams>,
+    Query(params): Query<WalletListQuery>,
 ) -> Result<ApiResponse<crate::errors::response::PaginatedData<dto::WalletResponse>>, AppError> {
+    let user_id = match params
+        .user_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        Some(s) => Some(crate::types::snowflake_id::parse_id(s)?),
+        None => None,
+    };
+    let filters = crate::models::wallet::WalletFilters {
+        user_id,
+        currency: params.currency.clone().filter(|c| !c.trim().is_empty()),
+    };
+    let pagination =
+        crate::utils::pagination::PaginationParams::from_options(params.page, params.page_size);
     let (rows, total) = state
         .wallet_service
-        .list_all_wallets(params.page, params.page_size, auth.tenant_id())
+        .list_all_wallets(
+            &filters,
+            pagination.page,
+            pagination.page_size,
+            auth.tenant_id(),
+        )
         .await?;
+    // Owner usernames for the admin list (batch lookup, admin_list_tokens 同构).
+    let ids: Vec<crate::types::snowflake_id::SnowflakeId> =
+        rows.iter().map(|w| w.user_id).collect();
+    let names = crate::models::user::find_usernames_by_ids(&state.pool, &ids).await?;
     let items: Vec<dto::WalletResponse> = rows
         .into_iter()
-        .map(dto::WalletResponse::from_wallet)
-        .collect::<Result<_, _>>()?;
-    Ok(params.paginate(items, total))
+        .map(|w| {
+            let mut resp = dto::WalletResponse::from_wallet(w)?;
+            resp.username = names.get(&resp.user_id.0).cloned();
+            Ok::<_, AppError>(resp)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(pagination.paginate(items, total))
+}
+
+/// Admin transaction-list query: pagination + optional filters.
+#[derive(Debug, Deserialize, utoipa::IntoParams)]
+pub struct WalletTransactionListQuery {
+    pub page: Option<i64>,
+    pub page_size: Option<i64>,
+    /// Exact owner user id.
+    pub user_id: Option<String>,
+    /// Currency code (exact).
+    pub currency: Option<String>,
+    /// Transaction type (exact, e.g. `llm_hold`, `recharge`).
+    pub tx_type: Option<String>,
+    /// Inclusive `YYYY-MM-DD` (UTC) — created on/after this day.
+    pub date_from: Option<String>,
+    /// Inclusive `YYYY-MM-DD` (UTC) — created on/before this day.
+    pub date_to: Option<String>,
 }
 
 #[utoipa::path(get, path = "/admin/wallets/transactions", tag = "wallets",
     security(("bearer_auth" = [])),
+    params(WalletTransactionListQuery),
     responses((status = 200, description = "Admin all transactions"))
 )]
 pub async fn list_all_transactions_admin(
     auth: AuthUser,
     State(state): State<crate::AppState>,
-    Query(params): Query<PaginationParams>,
+    Query(params): Query<WalletTransactionListQuery>,
 ) -> Result<
     ApiResponse<crate::errors::response::PaginatedData<dto::WalletTransactionResponse>>,
     AppError,
 > {
+    let user_id = match params
+        .user_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        Some(s) => Some(crate::types::snowflake_id::parse_id(s)?),
+        None => None,
+    };
+    let filters = crate::models::wallet_transaction::WalletTransactionFilters {
+        user_id,
+        currency: params.currency.clone().filter(|c| !c.trim().is_empty()),
+        tx_type: params.tx_type.clone().filter(|t| !t.trim().is_empty()),
+        created_from: params
+            .date_from
+            .as_deref()
+            .map(|s| parse_utc_day(s, false))
+            .transpose()?,
+        created_to: params
+            .date_to
+            .as_deref()
+            .map(|s| parse_utc_day(s, true))
+            .transpose()?,
+    };
+    let pagination =
+        crate::utils::pagination::PaginationParams::from_options(params.page, params.page_size);
     let (rows, total) = state
         .wallet_service
-        .list_all_transactions(params.page, params.page_size, auth.tenant_id())
+        .list_all_transactions(
+            &filters,
+            pagination.page,
+            pagination.page_size,
+            auth.tenant_id(),
+        )
         .await?;
-    let items = state.wallet_service.tx_list_to_response(rows).await?;
-    Ok(params.paginate(items, total))
+    // Owner usernames for the admin list (batch lookup, admin_list_tokens 同构).
+    let ids: Vec<crate::types::snowflake_id::SnowflakeId> =
+        rows.iter().map(|tx| tx.user_id).collect();
+    let names = crate::models::user::find_usernames_by_ids(&state.pool, &ids).await?;
+    let items: Vec<dto::WalletTransactionResponse> = rows
+        .into_iter()
+        .map(|tx| {
+            let mut resp = dto::WalletTransactionResponse::from_tx(tx)?;
+            resp.username = names.get(&resp.user_id.0).cloned();
+            Ok::<_, AppError>(resp)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(pagination.paginate(items, total))
 }
 
 #[utoipa::path(post, path = "/admin/wallets/credit", tag = "wallets",

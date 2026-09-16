@@ -311,33 +311,17 @@ impl LlmRouter {
         models: &[&str],
         default_model: Option<&str>,
     ) -> Arc<Self> {
-        use crate::db::Driver;
-        use crate::db::driver::DbDriver;
         use crate::llm::models::channel::{LlmChannel, LlmChannelStatus, LlmCostMode, LlmKeyMode};
-        // 固定租户默认 chat 模型（§10.2 解析链；无则插入）。
-        if let (Some(pool), Some(model)) = (pool.as_ref(), default_model)
-            && crate::models::options::find_by_key(pool, "llm.default_chat_model", None)
-                .await
-                .ok()
-                .flatten()
-                .is_none()
-        {
-            let ph = |i: usize| Driver::ph(i);
-            let sql = format!(
-                "INSERT INTO options (id, option_key, value, type, group_name, label, autoload, sort_order, updated_at) \
-                 VALUES ({}, {}, {}, 'text', 'llm', 'llm', 1, 0, {})",
-                ph(1),
-                ph(2),
-                ph(3),
-                ph(4)
-            );
-            let _ = sqlx::query(crate::db::safe_sql(&sql))
-                .bind(crate::utils::id::new_id())
-                .bind("llm.default_chat_model")
-                .bind(serde_json::Value::String(model.to_owned()).to_string())
-                .bind(crate::utils::tz::now_utc())
-                .execute(pool)
-                .await;
+        // 固定租户默认 chat 模型（§10.2 解析链；schema 可能已播种空值行，
+        // 必须无条件 upsert 覆盖——存在性不再等价于"已设置"）。
+        if let (Some(pool), Some(model)) = (pool.as_ref(), default_model) {
+            let _ = crate::models::options::upsert_value(
+                pool,
+                "llm.default_chat_model",
+                &serde_json::Value::String(model.to_owned()),
+                None,
+            )
+            .await;
         }
         let now = crate::utils::tz::now_utc();
         let row = LlmChannel {

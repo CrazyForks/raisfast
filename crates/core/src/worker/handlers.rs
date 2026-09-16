@@ -79,6 +79,7 @@ pub mod itg_egress_cleanup;
 pub mod kb;
 pub mod llm_archive;
 pub mod llm_health;
+pub mod llm_hold_reconcile;
 pub mod llm_task_sweep;
 pub mod order_expire;
 pub mod payment_expire;
