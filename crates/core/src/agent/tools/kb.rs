@@ -703,6 +703,7 @@ mod tests {
             system_prompt: String::new(),
             provider: "openai".into(),
             model: "m".into(),
+            channel_id: None,
             temperature: None,
             max_iterations: 10,
             tools: serde_json::json!(["*"]),

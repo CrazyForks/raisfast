@@ -115,6 +115,7 @@ async fn agent_service_turn_end_to_end() {
         "openai_compat".into(),
         "gpt-4o-mini".into(),
         None,
+        None,
         vec![],
         true,
         None,

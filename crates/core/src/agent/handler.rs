@@ -317,6 +317,8 @@ pub struct CreateAgentReq {
     pub provider: String,
     pub model: String,
     #[serde(default)]
+    pub channel_id: Option<SnowflakeId>,
+    #[serde(default)]
     pub temperature: Option<f64>,
     #[serde(default)]
     pub tools: Vec<String>,
@@ -409,6 +411,7 @@ pub async fn admin_create_agent(
         body.system_prompt,
         body.provider,
         body.model,
+        body.channel_id,
         body.temperature,
         body.tools,
         body.memory_enabled,

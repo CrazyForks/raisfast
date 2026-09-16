@@ -1535,6 +1535,7 @@ CREATE TABLE IF NOT EXISTS ai_agents (
     system_prompt TEXT NOT NULL DEFAULT '',
     provider TEXT NOT NULL,
     model TEXT NOT NULL,
+    channel_id INTEGER,
     temperature REAL,
     max_iterations INTEGER NOT NULL DEFAULT 10,
     tools TEXT NOT NULL,

@@ -47,6 +47,7 @@ async fn ai_models_roundtrip() {
         "you are a test agent",
         "openai_compat",
         "test-model",
+        Some(raisfast::types::snowflake_id::SnowflakeId(42)),
         None,
         vec!["memory_store".to_string()],
         true,
@@ -58,6 +59,11 @@ async fn ai_models_roundtrip() {
         .await
         .expect("find agent");
     assert_eq!(fetched.name, "helper");
+    assert_eq!(
+        fetched.channel_id,
+        Some(raisfast::types::snowflake_id::SnowflakeId(42)),
+        "pinned channel round-trips"
+    );
 
     // session + status
     let session = ai_session::create_session(&pool, Some(&tenant_id), agent.id, agent.id, "smoke")
@@ -214,6 +220,7 @@ async fn memory_budget_evicts_by_importance_and_spares_conversation() {
         "mem budget test",
         "openai_compat",
         "test-model",
+        None,
         None,
         Vec::new(),
         true,
@@ -386,6 +393,7 @@ async fn memory_is_isolated_per_user() {
         "iso",
         "openai_compat",
         "test-model",
+        None,
         None,
         Vec::new(),
         true,

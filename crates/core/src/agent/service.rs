@@ -77,12 +77,16 @@ async fn agent_chat(
     tenant: Option<&str>,
     model: Option<&str>,
     user: Option<SnowflakeId>,
+    pin: Option<SnowflakeId>,
     request: &raisfast_agent::provider::ChatRequest<'_>,
 ) -> AppResult<ChatResponse> {
     let tenant = tenant.unwrap_or("default");
     let mut call = router.call(tenant, crate::llm::models::log::LogSource::Agent);
     if let Some(u) = user {
         call = call.as_user(u);
+    }
+    if let Some(ch) = pin {
+        call = call.pin_channel(ch);
     }
     call.chat(model, request).await
 }
@@ -667,7 +671,7 @@ async fn run_turn_inner(
     let ctx = crate::llm::service::ResolveCtx {
         tenant,
         group: None,
-        pin_channel: None,
+        pin_channel: agent.channel_id,
         caller,
     };
     // 闭包 FnMut 可变捕获：emitter 用 Option::take 逐次搬入 Future；
@@ -795,6 +799,7 @@ pub async fn create_agent(
     system_prompt: String,
     provider: String,
     model: String,
+    channel_id: Option<SnowflakeId>,
     temperature: Option<f64>,
     tools: Vec<String>,
     memory_enabled: bool,
@@ -808,6 +813,7 @@ pub async fn create_agent(
         &system_prompt,
         &provider,
         &model,
+        channel_id,
         temperature,
         tools,
         memory_enabled,
@@ -836,6 +842,7 @@ pub struct AgentPatch {
     pub system_prompt: Option<String>,
     pub provider: Option<String>,
     pub model: Option<String>,
+    pub channel_id: Option<SnowflakeId>,
     pub temperature: Option<f64>,
     pub max_iterations: Option<i32>,
     pub tools: Option<Vec<String>>,
@@ -865,6 +872,7 @@ pub async fn update_agent(
             .unwrap_or(&current.system_prompt),
         patch.provider.as_deref().unwrap_or(&current.provider),
         patch.model.as_deref().unwrap_or(&current.model),
+        patch.channel_id.or(current.channel_id),
         patch.temperature.or(current.temperature),
         patch.max_iterations.unwrap_or(current.max_iterations),
         tools,
@@ -1282,7 +1290,7 @@ async fn consolidate_folded_memory(
         stop: None,
     };
     let model = (!agent.model.is_empty()).then_some(agent.model.as_str());
-    let response = agent_chat(router, tenant, model, user, &request)
+    let response = agent_chat(router, tenant, model, user, agent.channel_id, &request)
         .await
         .map_err(|e| AppError::Internal(anyhow::anyhow!("memory consolidate failed: {e}")))?;
     let Some(text) = response.text.filter(|t| !t.trim().is_empty()) else {
@@ -1493,7 +1501,7 @@ async fn summarize_transcript(
         stop: None,
     };
     let model = (!agent.model.is_empty()).then_some(agent.model.as_str());
-    let response = agent_chat(router, tenant, model, None, &request)
+    let response = agent_chat(router, tenant, model, None, agent.channel_id, &request)
         .await
         .map_err(|e| AppError::Internal(anyhow::anyhow!("context summarize failed: {e}")))?;
     response

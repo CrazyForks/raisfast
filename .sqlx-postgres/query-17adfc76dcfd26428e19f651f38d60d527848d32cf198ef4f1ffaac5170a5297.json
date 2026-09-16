@@ -1,0 +1,27 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO \"ai_agents\" (\"id\", \"user_id\", \"name\", \"system_prompt\", \"provider\", \"model\", \"channel_id\", \"temperature\", \"max_iterations\", \"tools\", \"memory_enabled\", \"params\", \"created_at\", \"updated_at\") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Int8",
+        "Float8",
+        "Int4",
+        "Jsonb",
+        "Bool",
+        "Jsonb",
+        "Timestamptz",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "17adfc76dcfd26428e19f651f38d60d527848d32cf198ef4f1ffaac5170a5297"
+}

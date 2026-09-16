@@ -466,6 +466,7 @@ impl LlmRouter {
             tenant,
             source,
             caller: None,
+            pin_channel: None,
         }
     }
 
@@ -591,6 +592,7 @@ pub struct LlmCall<'a> {
     tenant: &'a str,
     source: LogSource,
     caller: Option<crate::llm::service::Caller>,
+    pin_channel: Option<SnowflakeId>,
 }
 
 impl LlmCall<'_> {
@@ -601,11 +603,19 @@ impl LlmCall<'_> {
         self
     }
 
+    /// 钉死到指定渠道（design §10.1）：跳过 priority/加权路由，只在该渠道的
+    /// key 池内轮转。渠道必须属于同租户、服务该模型、位于请求分组内，否则
+    /// 直接 400（不做跨渠道 failover）。
+    pub fn pin_channel(mut self, channel_id: SnowflakeId) -> Self {
+        self.pin_channel = Some(channel_id);
+        self
+    }
+
     fn ctx(&self) -> ResolveCtx<'_> {
         ResolveCtx {
             tenant: self.tenant,
             group: None,
-            pin_channel: None,
+            pin_channel: self.pin_channel,
             caller: self.caller,
         }
     }

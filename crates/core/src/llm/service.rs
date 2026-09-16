@@ -515,6 +515,27 @@ impl LlmRouter {
                         "pinned channel {pin} is not enabled"
                     )));
                 }
+                // A pin bypasses the route table, so re-assert the membership
+                // it would have enforced: same tenant, serves the model, in
+                // the requested group. Without this a pin can cross tenants or
+                // target a channel that does not serve the model (design
+                // §10.1; new-api `ChannelSatisfiesFilters`).
+                if ch.tenant != ctx.tenant {
+                    return Err(AppError::BadRequest(format!(
+                        "pinned channel {pin} belongs to another tenant"
+                    )));
+                }
+                if !ch.models.iter().any(|m| m == model) {
+                    return Err(AppError::BadRequest(format!(
+                        "pinned channel {pin} does not serve model {model}"
+                    )));
+                }
+                let group = ctx.group.unwrap_or("default");
+                if !ch.groups.iter().any(|g| g == group) {
+                    return Err(AppError::BadRequest(format!(
+                        "pinned channel {pin} is not in group {group}"
+                    )));
+                }
                 vec![ch]
             }
             None => cache.candidates(&route).cloned().unwrap_or_default(),
@@ -1294,7 +1315,12 @@ impl LlmRouter {
                     }
                 }
                 Err(err) => {
-                    if !self.route_has_active_key(cache, &route)
+                    // A pinned selection failure is a hard config/route error
+                    // (not found / disabled / wrong tenant·model·group), never
+                    // "everything busy" — it must not fall through to the wait
+                    // queue, where a mismatched route would never be woken.
+                    if ctx.pin_channel.is_some()
+                        || !self.route_has_active_key(cache, &route)
                         || self.route_all_tried(cache, &route, retry)
                     {
                         rollback(token, user);
@@ -1428,6 +1454,48 @@ mod tests {
             pin_channel: None,
             caller: None,
         }
+    }
+
+    #[test]
+    fn pin_selects_only_target_and_validates_membership() {
+        let r = router(vec![row(1, 0, &["a"], "m1"), row(2, 0, &["b"], "m2")]);
+        let cache = r.cache.read().unwrap().clone();
+        let mut retry = RetryState::default();
+
+        // Same tenant + serves the model + in the group → selects only it.
+        let mut c = ctx();
+        c.pin_channel = Some(SnowflakeId(2));
+        let (ch, _) = r.select_channel(&cache, &c, "m2", 0, &mut retry).unwrap();
+        assert_eq!(ch.id, SnowflakeId(2));
+
+        // Pinned channel does not serve the requested model → 400.
+        c.pin_channel = Some(SnowflakeId(1));
+        let err = r
+            .select_channel(&cache, &c, "m2", 0, &mut retry)
+            .unwrap_err();
+        assert!(
+            format!("{err}").contains("does not serve model m2"),
+            "{err}"
+        );
+
+        // Pinned channel missing → 400.
+        c.pin_channel = Some(SnowflakeId(999));
+        assert!(r.select_channel(&cache, &c, "m1", 0, &mut retry).is_err());
+    }
+
+    #[test]
+    fn pin_rejects_cross_tenant_channel() {
+        let mut other = row(7, 0, &["k"], "m1");
+        other.tenant_id = Some("other".to_owned());
+        let r = router(vec![other]);
+        let cache = r.cache.read().unwrap().clone();
+
+        let mut c = ctx(); // tenant "default"
+        c.pin_channel = Some(SnowflakeId(7));
+        let err = r
+            .select_channel(&cache, &c, "m1", 0, &mut RetryState::default())
+            .unwrap_err();
+        assert!(format!("{err}").contains("another tenant"), "{err}");
     }
 
     #[test]

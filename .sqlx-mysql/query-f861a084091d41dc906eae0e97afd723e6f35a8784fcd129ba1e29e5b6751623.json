@@ -1,0 +1,12 @@
+{
+  "db_name": "MySQL",
+  "query": "INSERT INTO `ai_agents` (`id`, `user_id`, `name`, `system_prompt`, `provider`, `model`, `channel_id`, `temperature`, `max_iterations`, `tools`, `memory_enabled`, `params`, `created_at`, `updated_at`, `tenant_id`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 15
+    },
+    "nullable": []
+  },
+  "hash": "f861a084091d41dc906eae0e97afd723e6f35a8784fcd129ba1e29e5b6751623"
+}
