@@ -61,6 +61,7 @@ pub fn build_kb_runtime(
     })))
 }
 pub mod handler;
+pub mod images;
 pub mod kbsearch;
 pub mod models;
 pub mod pipeline;

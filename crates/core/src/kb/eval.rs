@@ -280,6 +280,9 @@ mod tests {
                 rerank_model: None,
                 rerank_window: None,
                 rerank_threshold: None,
+                chat_model: None,
+                distill_model: None,
+                image_config: None,
             },
             "default",
         )

@@ -741,6 +741,10 @@ impl AiConfig {
 /// | `RAISFAST_KB_RERANK_WINDOW` | u32 | `30` | Global default rerank window (per-KB `rerank_window` overrides); S4 cuts to this window, S5 reranks then cuts back to `top_k` (§6.1.4 窗口重排) |
 /// | `RAISFAST_KB_RERANK_THRESHOLD` | f32 | `0` | Global default rerank score floor (per-KB `rerank_threshold` overrides); below is dropped after S5 (0 = keep all) [抄WK:RerankThreshold 语义] |
 /// | `RAISFAST_KB_RERANK_BATCH_SIZE` | usize | `64` | Docs per `/rerank` request (transport concern, mirrors `RAISFAST_KB_EMBED_BATCH_SIZE`) |
+/// | `RAISFAST_KB_UNDERSTAND_MODEL` | string | — | Dedicated fast model for S1 query rewrite (non-reasoning recommended; empty = tenant default chat model) |
+/// | `RAISFAST_KB_CHAT_MODEL` | string | — | Global default S9 generation model (per-KB `chat_model` overrides; empty = tenant default) |
+/// | `RAISFAST_KB_DISTILL_MODEL` | string | — | Global default wiki distillation model (per-KB `distill_model` overrides; empty = tenant default) |
+/// | `RAISFAST_KB_IMAGE_MODEL` | string | — | Global default VLM image-recognition model (per-KB `image_config.model` overrides; recognition off when neither resolves) |
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct KbConfig {
     #[serde(default)]
@@ -789,8 +793,33 @@ pub struct KbConfig {
     /// KB row's `rerank_model` overrides it; neither set = S5 passthrough
     /// (kb-technical-design §6.1 revised 2026-09-17). Env
     /// `RAISFAST_KB_RERANK_MODEL`.
+    /// Global **default** rerank model routed via the llm 底座 (S5). Each
+    /// KB row's `rerank_model` overrides it; neither set = S5 passthrough
+    /// (kb-technical-design §6.1 revised 2026-09-17). Env
+    /// `RAISFAST_KB_RERANK_MODEL`.
     #[serde(default)]
     pub rerank_model: Option<String>,
+    /// S1 understand 专用模型（推荐非推理小模型——改写+关键词抽取是小任务，
+    /// 且 S1 在每次 ask 的关键路径上，reasoning 模型徒增延迟还会吃光
+    /// max_tokens 导致空回复降级）。空 = 租户默认 chat 模型。Env
+    /// `RAISFAST_KB_UNDERSTAND_MODEL`.
+    #[serde(default)]
+    pub understand_model: Option<String>,
+    /// Global **default** S9 generation model (each KB row's `chat_model`
+    /// overrides it; empty = tenant default chat model). Env
+    /// `RAISFAST_KB_CHAT_MODEL`.
+    #[serde(default)]
+    pub chat_model: Option<String>,
+    /// Global **default** wiki distillation model (each KB row's
+    /// `distill_model` overrides it; empty = tenant default). Env
+    /// `RAISFAST_KB_DISTILL_MODEL`.
+    #[serde(default)]
+    pub distill_model: Option<String>,
+    /// Global **default** VLM image-recognition model (each KB row's
+    /// `image_config.model` overrides it; recognition off when neither
+    /// resolves). Env `RAISFAST_KB_IMAGE_MODEL`.
+    #[serde(default)]
+    pub image_model: Option<String>,
     /// Global default rerank window; per-KB `rerank_window` overrides.
     /// S4 cuts to this window (≥ `top_k`) so the reranker sees more than
     /// the final keep set, S5 reranks then cuts back to `top_k` (§6.1.4
@@ -870,6 +899,10 @@ impl Default for KbConfig {
             trace_mode: default_kb_trace_mode(),
             trace_retention_days: default_kb_trace_retention_days(),
             rerank_model: None,
+            understand_model: None,
+            chat_model: None,
+            distill_model: None,
+            image_model: None,
             rerank_window: default_kb_rerank_window(),
             rerank_threshold: 0.0,
             rerank_batch_size: default_kb_rerank_batch_size(),
@@ -930,6 +963,18 @@ impl KbConfig {
                 .filter(|d| *d >= 0)
                 .unwrap_or(defaults.trace_retention_days),
             rerank_model: env::var("RAISFAST_KB_RERANK_MODEL")
+                .ok()
+                .filter(|v| !v.is_empty()),
+            understand_model: env::var("RAISFAST_KB_UNDERSTAND_MODEL")
+                .ok()
+                .filter(|v| !v.is_empty()),
+            chat_model: env::var("RAISFAST_KB_CHAT_MODEL")
+                .ok()
+                .filter(|v| !v.is_empty()),
+            distill_model: env::var("RAISFAST_KB_DISTILL_MODEL")
+                .ok()
+                .filter(|v| !v.is_empty()),
+            image_model: env::var("RAISFAST_KB_IMAGE_MODEL")
                 .ok()
                 .filter(|v| !v.is_empty()),
             rerank_window: env::var("RAISFAST_KB_RERANK_WINDOW")

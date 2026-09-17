@@ -397,6 +397,7 @@ mod tests {
             Box::leak(Box::new(vec![raisfast_agent::messages::ChatMessage {
                 role: raisfast_agent::messages::ChatRole::User,
                 content: Some(text.to_owned()),
+                images: Vec::new(),
                 tool_calls: None,
                 tool_call_id: None,
             }]));

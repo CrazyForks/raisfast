@@ -139,6 +139,10 @@ pub enum Job {
     },
     /// Daily kb_runs retention sweep (kb-observability-design §10).
     KbRunsCleanup {},
+    KbImageRecognize {
+        doc_id: SnowflakeId,
+        tenant_id: String,
+    },
     KbDistillWiki {
         kb_id: SnowflakeId,
         doc_ids: Vec<i64>,
@@ -175,6 +179,7 @@ impl Job {
             Job::ReconcilePayments => "reconcile_payments",
             Job::ProcessWalletOutbox => "process_wallet_outbox",
             Job::KbProcessDocument { .. } => "kb_process_document",
+            Job::KbImageRecognize { .. } => "kb_image_recognize",
             Job::KbRebuildVectorIndex { .. } => "kb_rebuild_vector_index",
             Job::KbRunsCleanup {} => "kb_runs_cleanup",
             Job::KbDistillWiki { .. } => "kb_distill_wiki",

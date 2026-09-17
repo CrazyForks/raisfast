@@ -218,6 +218,7 @@ fn trim_history_to_budget(
         ChatMessage {
             role: ChatRole::User,
             content: Some(prompt_file!("src/agent/prompts/trim_breadcrumb.md")),
+            images: Vec::new(),
             tool_calls: None,
             tool_call_id: None,
         },
@@ -242,6 +243,7 @@ fn row_to_chat_message(row: &AiMessage) -> Option<ChatMessage> {
     Some(ChatMessage {
         role,
         content: (!row.content.is_empty()).then_some(row.content.clone()),
+        images: Vec::new(),
         tool_calls,
         tool_call_id: row.tool_call_id.clone(),
     })
@@ -660,6 +662,7 @@ async fn run_turn_inner(
                 ChatMessage {
                     role: ChatRole::User,
                     content: Some(notice.clone()),
+                    images: Vec::new(),
                     tool_calls: None,
                     tool_call_id: None,
                 },
@@ -1335,6 +1338,7 @@ async fn consolidate_folded_memory(
             "{}\n\n{slice_text}",
             prompt_file!("src/agent/prompts/memory_consolidate.md")
         )),
+        images: Vec::new(),
         tool_calls: None,
         tool_call_id: None,
     }];
@@ -1548,6 +1552,7 @@ async fn summarize_transcript(
             "{}\n\n{combined}",
             prompt_file!("src/agent/prompts/summarize_transcript.md")
         )),
+        images: Vec::new(),
         tool_calls: None,
         tool_call_id: None,
     }];
@@ -1810,6 +1815,7 @@ mod tests {
         ChatMessage {
             role,
             content: Some(content.to_string()),
+            images: Vec::new(),
             tool_calls: None,
             tool_call_id: None,
         }

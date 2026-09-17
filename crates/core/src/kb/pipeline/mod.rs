@@ -89,6 +89,11 @@ pub struct AskOutcome {
     /// Hydrated context units — the generation prompt is built from these,
     /// and streaming reuses them after the first token.
     pub context_units: Vec<ContextUnit>,
+    /// S9 generation model resolved from the KB scope (per-KB `chat_model`
+    /// → global `RAISFAST_KB_CHAT_MODEL` → `None` = tenant default;
+    /// first configured KB wins on multi-KB scopes, single-model semantics
+    /// mirroring WK's conversation-level ChatModelID).
+    pub chat_model: Option<String>,
     /// Observability recorder [kb-observability-design T2, DR6] — created
     /// by `prepare_answer`, appended through S2–S10, finished by the HTTP
     /// layer (`disabled()` = tracing off; tests may pass it through).
@@ -104,6 +109,8 @@ pub async fn prepare_answer(deps: &KbDeps, req: &AskRequest) -> AppResult<AskOut
     let kbs = resolve_kbs(deps, &req.kb_ids, &req.tenant_id).await?;
     // S5 config from the KB scope (per-KB override → global default, §6.1.2).
     let rerank = rerank::resolve(deps, &kbs).await?;
+    // S9 generation model from the same scope shape (per-KB → global env).
+    let chat_model = resolve_chat_model(deps, &kbs).await?;
 
     // Observability run (short task — terminal INSERT at finish, DR2).
     let mut trace = crate::kb::trace::RunRecorder::create(
@@ -180,6 +187,7 @@ pub async fn prepare_answer(deps: &KbDeps, req: &AskRequest) -> AppResult<AskOut
         references: Vec::new(),
         top_score,
         context_units: units,
+        chat_model,
         trace,
     })
 }
@@ -515,13 +523,21 @@ pub async fn finish_answer(deps: &KbDeps, outcome: &mut AskOutcome) -> AppResult
     // S9 generate.
     outcome.trace.stage("s9_generate");
 
-    match generate::generate_answer(deps, &outcome.tenant_id, &prompt_units, &outcome.question)
-        .await
+    match generate::generate_answer(
+        deps,
+        &outcome.tenant_id,
+        outcome.chat_model.as_deref(),
+        &prompt_units,
+        &outcome.question,
+    )
+    .await
     {
         Ok(answer) => {
             outcome.trace.end_stage(
                 crate::kb::trace::STAGE_OK,
-                serde_json::json!({ "model": serde_json::Value::Null }),
+                serde_json::json!({
+                    "model": outcome.chat_model.clone().unwrap_or_default(),
+                }),
                 None,
             );
             outcome.answer = answer;
@@ -582,6 +598,7 @@ pub async fn finish_answer_streaming(
     match generate::generate_answer_streaming(
         deps,
         &outcome.tenant_id,
+        outcome.chat_model.as_deref(),
         &prompt_units,
         &outcome.question,
         on_delta,
@@ -591,7 +608,9 @@ pub async fn finish_answer_streaming(
         Ok(answer) => {
             outcome.trace.end_stage(
                 crate::kb::trace::STAGE_OK,
-                serde_json::json!({ "model": serde_json::Value::Null }),
+                serde_json::json!({
+                    "model": outcome.chat_model.clone().unwrap_or_default(),
+                }),
                 None,
             );
             outcome.answer = answer;
@@ -672,6 +691,39 @@ pub(crate) async fn resolve_kbs(
     Ok(rows)
 }
 
+/// Resolve the S9 generation model for a KB scope (§6.1.2 same shape as
+/// the rerank trio): the first KB row (in scope order) with a `chat_model`
+/// wins — single generation model per query, mirroring WK's
+/// conversation-level `ChatModelID` semantics (our ask is stateless and
+/// KB-bound, so the KB row is the mount point). Falls back to the global
+/// `RAISFAST_KB_CHAT_MODEL` default; `None` = tenant default chat model.
+async fn resolve_chat_model(deps: &KbDeps, kbs: &[i64]) -> AppResult<Option<String>> {
+    if !kbs.is_empty() {
+        let placeholders: Vec<String> = (1..=kbs.len()).map(crate::db::Driver::ph).collect();
+        let sql = format!(
+            "SELECT id, chat_model FROM kb_knowledge_bases WHERE id IN ({})",
+            placeholders.join(", ")
+        );
+        let mut query = sqlx::query_as::<_, (i64, Option<String>)>(crate::db::safe_sql(&sql));
+        for id in kbs {
+            query = query.bind(id);
+        }
+        let rows = query
+            .fetch_all(&deps.pool)
+            .await
+            .map_err(|e| AppError::Internal(anyhow::anyhow!(e.to_string())))?;
+        let by_id: std::collections::HashMap<i64, Option<String>> = rows.into_iter().collect();
+        for kb_id in kbs {
+            if let Some(Some(m)) = by_id.get(kb_id)
+                && !m.is_empty()
+            {
+                return Ok(Some(m.clone()));
+            }
+        }
+    }
+    Ok(deps.config.kb.chat_model.clone().filter(|m| !m.is_empty()))
+}
+
 /// Re-exported stage types.
 pub use search::RecallOutcome;
 pub use understand::UnderstoodQuery;
@@ -721,12 +773,13 @@ mod tests {
     }
 
     async fn deps() -> KbDeps {
-        deps_with(|_| {}, None).await
+        deps_with(|_| {}, None, Arc::new(MockChatProvider)).await
     }
 
     async fn deps_with(
         tune: impl FnOnce(&mut crate::config::app::AppConfig),
         reranker: Option<Arc<dyn crate::kb::rerank::KbReranker>>,
+        provider: Arc<dyn ModelProvider>,
     ) -> KbDeps {
         let pool = crate::test_pool!();
         let mut config = crate::config::app::AppConfig::test_defaults();
@@ -741,8 +794,8 @@ mod tests {
         let bus = crate::eventbus::EventBus::new(16);
         let router = crate::llm::service::LlmRouter::with_provider_for_test(
             Some(pool.clone()),
-            Arc::new(MockChatProvider),
-            &["kb-test-model"],
+            provider,
+            &["kb-test-model", "kb-gen-model"],
             Some("kb-test-model"),
         )
         .await;
@@ -836,6 +889,7 @@ mod tests {
         rerank_model: Option<&str>,
         rerank_window: Option<i64>,
         rerank_threshold: Option<f64>,
+        chat_model: Option<&str>,
     ) -> i64 {
         let kb = crate::kb::models::knowledge_base::create_kb(
             &deps.pool,
@@ -850,6 +904,9 @@ mod tests {
                 rerank_model: rerank_model.map(str::to_owned),
                 rerank_window,
                 rerank_threshold,
+                chat_model: chat_model.map(str::to_owned),
+                distill_model: None,
+                image_config: None,
             },
             "default",
         )
@@ -884,6 +941,9 @@ mod tests {
                 rerank_model: None,
                 rerank_window: None,
                 rerank_threshold: None,
+                chat_model: None,
+                distill_model: None,
+                image_config: None,
             },
             "default",
         )
@@ -941,6 +1001,9 @@ mod tests {
                 rerank_model: None,
                 rerank_window: None,
                 rerank_threshold: None,
+                chat_model: None,
+                distill_model: None,
+                image_config: None,
             },
             "default",
         )
@@ -976,6 +1039,9 @@ mod tests {
                 rerank_model: None,
                 rerank_window: None,
                 rerank_threshold: None,
+                chat_model: None,
+                distill_model: None,
+                image_config: None,
             },
             "default",
         )
@@ -1028,6 +1094,9 @@ mod tests {
                 rerank_model: None,
                 rerank_window: None,
                 rerank_threshold: None,
+                chat_model: None,
+                distill_model: None,
+                image_config: None,
             },
             tenant,
         )
@@ -1102,6 +1171,9 @@ mod tests {
                 rerank_model: None,
                 rerank_window: None,
                 rerank_threshold: None,
+                chat_model: None,
+                distill_model: None,
+                image_config: None,
             },
             "default",
         )
@@ -1132,9 +1204,10 @@ mod tests {
                 hit: 0.9,
                 miss: 0.1,
             })),
+            Arc::new(MockChatProvider),
         )
         .await;
-        let kb_id = seeded_rr_kb(&deps, "rr-mix", None, None, None).await;
+        let kb_id = seeded_rr_kb(&deps, "rr-mix", None, None, None, None).await;
         let mut markdown = "# PostgreSQL 部署\n\n".to_string();
         markdown.push_str(&"PostgreSQL 生产部署要点与连接池调优参数。".repeat(60));
         markdown.push_str("\n\n# MySQL 备份\n\n");
@@ -1186,9 +1259,10 @@ mod tests {
                 hit: 0.2,
                 miss: 0.2,
             })),
+            Arc::new(MockChatProvider),
         )
         .await;
-        let kb_id = seeded_rr_kb(&deps, "rr-floor", None, None, None).await;
+        let kb_id = seeded_rr_kb(&deps, "rr-floor", None, None, None, None).await;
         let ask = AskRequest {
             tenant_id: "default".into(),
             kb_ids: vec![kb_id],
@@ -1207,8 +1281,13 @@ mod tests {
 
     #[tokio::test]
     async fn rerank_failure_degrades_to_rrf_order() {
-        let deps = deps_with(|_| {}, Some(Arc::new(FailingReranker))).await;
-        let kb_id = seeded_rr_kb(&deps, "rr-fail", None, None, None).await;
+        let deps = deps_with(
+            |_| {},
+            Some(Arc::new(FailingReranker)),
+            Arc::new(MockChatProvider),
+        )
+        .await;
+        let kb_id = seeded_rr_kb(&deps, "rr-fail", None, None, None, None).await;
         let ask = AskRequest {
             tenant_id: "default".into(),
             kb_ids: vec![kb_id],
@@ -1237,11 +1316,20 @@ mod tests {
                 constant: 0.2,
                 models: models.clone(),
             })),
+            Arc::new(MockChatProvider),
         )
         .await;
         // deps_with seeds the env default model "env-default-model" and
         // threshold 0; the KB row overrides both (model + threshold).
-        let kb_id = seeded_rr_kb(&deps, "rr-override", Some("kb-model"), None, Some(0.5)).await;
+        let kb_id = seeded_rr_kb(
+            &deps,
+            "rr-override",
+            Some("kb-model"),
+            None,
+            Some(0.5),
+            None,
+        )
+        .await;
         let ask = AskRequest {
             tenant_id: "default".into(),
             kb_ids: vec![kb_id],
@@ -1257,6 +1345,63 @@ mod tests {
         assert!(
             outcome.context_units.is_empty(),
             "per-KB rerank_threshold (0.5) must drop constant-0.2 scores"
+        );
+    }
+
+    /// Echo provider that records the model name of every call (per-KB
+    /// chat_model assertions, §6.1.2).
+    struct RecordingChatProvider {
+        models: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+    }
+
+    #[async_trait::async_trait]
+    impl ModelProvider for RecordingChatProvider {
+        fn name(&self) -> &str {
+            "recording-chat"
+        }
+
+        async fn chat(
+            &self,
+            _request: &ChatRequest<'_>,
+            model: &str,
+        ) -> Result<ChatResponse, ProviderError> {
+            self.models.lock().unwrap().push(model.to_string());
+            Ok(ChatResponse::text_only("[1] 模拟答案。"))
+        }
+    }
+
+    #[tokio::test]
+    async fn per_kb_chat_model_drives_s9_generation() {
+        let models = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let deps = deps_with(
+            |_| {},
+            None,
+            Arc::new(RecordingChatProvider {
+                models: models.clone(),
+            }),
+        )
+        .await;
+        // KB pins the generation model; understand stays on the tenant
+        // default (kb-test-model) — understand_model/global chat_model unset.
+        let kb_id = seeded_rr_kb(&deps, "rr-gen", None, None, None, Some("kb-gen-model")).await;
+        let ask = AskRequest {
+            tenant_id: "default".into(),
+            kb_ids: vec![kb_id],
+            doc_ids: Vec::new(),
+            question: "重排序阶段做什么".into(),
+        };
+        let mut outcome = prepare_answer(&deps, &ask).await.unwrap();
+        finish_answer(&deps, &mut outcome).await.unwrap();
+        assert_eq!(outcome.status, "answered");
+        let seen = models.lock().unwrap().clone();
+        assert!(
+            seen.iter().any(|m| m == "kb-test-model"),
+            "S1 understand must stay on the tenant default: {seen:?}"
+        );
+        assert_eq!(
+            seen.last(),
+            Some(&"kb-gen-model".to_string()),
+            "S9 generation must use the per-KB chat_model: {seen:?}"
         );
     }
 }

@@ -13,6 +13,7 @@ use crate::utils::tz::{Timestamp, now_utc};
 
 /// Run kinds (kb-observability-design §3.1).
 pub const KIND_INGEST_DOC: &str = "ingest_doc";
+pub const KIND_INGEST_IMAGE: &str = "ingest_image";
 pub const KIND_ASK: &str = "ask";
 pub const KIND_SEARCH: &str = "search";
 pub const KIND_CHUNK_EDIT: &str = "chunk_edit";

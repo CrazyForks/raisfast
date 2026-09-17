@@ -63,6 +63,7 @@ mod tests {
                 unit(1, &"aaaa".repeat(100), false),
                 unit(2, "FAQ 答案", true),
             ],
+            chat_model: None,
             trace: crate::kb::trace::RunRecorder::disabled(),
         };
         let selected = assemble(&outcome, 10_000);
@@ -79,6 +80,7 @@ mod tests {
             references: Vec::new(),
             top_score: 1.0,
             context_units: (1..=10).map(|i| unit(i, &"x".repeat(400), false)).collect(),
+            chat_model: None,
             trace: crate::kb::trace::RunRecorder::disabled(),
         };
         let selected = assemble(&outcome, 200);

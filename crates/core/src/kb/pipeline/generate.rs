@@ -27,12 +27,14 @@ fn build_messages(prompt_units: &[ContextUnit], question: &str) -> Vec<ChatMessa
             // Answer strictly from the given knowledge, cite with [n]
             // (P2 anti-fabrication; markers map to the S10 list).
             content: Some(prompt_file!("src/kb/prompts/generate_system.md")),
+            images: Vec::new(),
             tool_calls: None,
             tool_call_id: None,
         },
         ChatMessage {
             role: ChatRole::User,
             content: Some(format!("知识内容：\n{knowledge}\n问题：{question}")),
+            images: Vec::new(),
             tool_calls: None,
             tool_call_id: None,
         },
@@ -54,16 +56,18 @@ fn chat_request<'a>(messages: &'a [ChatMessage]) -> ChatRequest<'a> {
     }
 }
 
-/// S9 non-streaming generation（底座 facade 优先，§10.2）。
+/// S9 non-streaming generation（底座 facade 优先，§10.2）。`model` is the
+/// KB-scope-resolved generation model (`None` = tenant default).
 pub async fn generate_answer(
     deps: &KbDeps,
     tenant: &str,
+    model: Option<&str>,
     prompt_units: &[ContextUnit],
     question: &str,
 ) -> AppResult<String> {
     let messages = messages_for(prompt_units, question);
     let request = chat_request(&messages);
-    crate::kb::service::kb_chat(deps, tenant, &request)
+    crate::kb::service::kb_chat_model(deps, tenant, model, &request)
         .await
         .map_err(|e| AppError::ServiceUnavailable(format!("kb generate: {e}")))
 }
@@ -73,6 +77,7 @@ pub async fn generate_answer(
 pub async fn generate_answer_streaming(
     deps: &KbDeps,
     tenant: &str,
+    model: Option<&str>,
     prompt_units: &[ContextUnit],
     question: &str,
     on_delta: &mut (dyn FnMut(&str) + Send),
@@ -80,13 +85,14 @@ pub async fn generate_answer_streaming(
     let messages = messages_for(prompt_units, question);
     let request = chat_request(&messages);
 
-    // 唯一入口 llm 底座（§10.2）：模型解析（租户默认）+ 路由/日志/计费在内核。
+    // 唯一入口 llm 底座（§10.2）：模型解析（KB 级 → 全局默认 → 租户默认）
+    // + 路由/日志/计费在内核。
     let full = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
     let sink = full.clone();
     let deltas = std::sync::Mutex::new(on_delta);
     deps.router
         .call(tenant, crate::llm::models::log::LogSource::Kb)
-        .chat_stream(None, &request, &mut |ev: StreamEvent| {
+        .chat_stream(model, &request, &mut |ev: StreamEvent| {
             if let StreamEvent::TextDelta { delta } = ev {
                 if let Ok(mut f) = sink.lock() {
                     f.push_str(&delta);

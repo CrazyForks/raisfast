@@ -521,6 +521,18 @@ struct CreateKbRequest {
     /// Per-KB rerank score floor override (0..=1); null = global default.
     #[serde(default)]
     rerank_threshold: Option<f64>,
+    /// S9 generation model for this KB (empty = global default → tenant
+    /// default). Freely editable — query-time behavior, nothing baked.
+    #[serde(default)]
+    chat_model: Option<String>,
+    /// Wiki distillation model for this KB (empty = global default →
+    /// tenant default).
+    #[serde(default)]
+    distill_model: Option<String>,
+    /// VLM image recognition config
+    /// `{enabled, model, caption_language, custom_instructions}`.
+    #[serde(default)]
+    image_config: Option<serde_json::Value>,
 }
 
 fn default_kb_kind() -> String {
@@ -557,6 +569,9 @@ async fn admin_create_kb(
             rerank_model: req.rerank_model.filter(|m| !m.is_empty()),
             rerank_window: req.rerank_window.map(i64::from),
             rerank_threshold: req.rerank_threshold,
+            chat_model: req.chat_model.filter(|m| !m.is_empty()),
+            distill_model: req.distill_model.filter(|m| !m.is_empty()),
+            image_config: req.image_config,
         },
         &tenant_of(&auth),
     )
@@ -573,13 +588,20 @@ struct UpdateKbRequest {
     description: Option<String>,
     slug: String,
     status: String,
-    /// Rerank trio (freely editable — query-time behavior, §6.1).
+    /// Rerank trio + generation model (freely editable — query-time
+    /// behavior, §6.1).
     #[serde(default)]
     rerank_model: Option<String>,
     #[serde(default)]
     rerank_window: Option<u32>,
     #[serde(default)]
     rerank_threshold: Option<f64>,
+    #[serde(default)]
+    chat_model: Option<String>,
+    #[serde(default)]
+    distill_model: Option<String>,
+    #[serde(default)]
+    image_config: Option<serde_json::Value>,
 }
 
 /// Update mutable KB metadata (name/slug/description/status) plus the
@@ -628,6 +650,9 @@ async fn admin_update_kb(
             rerank_model: req.rerank_model.filter(|m| !m.is_empty()),
             rerank_window: req.rerank_window.map(i64::from),
             rerank_threshold: req.rerank_threshold,
+            chat_model: req.chat_model.filter(|m| !m.is_empty()),
+            distill_model: req.distill_model.filter(|m| !m.is_empty()),
+            image_config: req.image_config,
         },
         &tenant,
     )
@@ -828,7 +853,7 @@ async fn admin_create_online_document(
 
 #[derive(Deserialize)]
 struct ListDocumentsQuery {
-    kb_id: SnowflakeId,
+    kb_id: Option<SnowflakeId>,
     status: Option<String>,
     page: Option<i64>,
     page_size: Option<i64>,
@@ -1500,7 +1525,7 @@ async fn admin_distill_wiki(
 
 #[derive(Deserialize)]
 struct ListWikiPagesQuery {
-    kb_id: SnowflakeId,
+    kb_id: Option<SnowflakeId>,
     status: Option<String>,
     page: Option<i64>,
     page_size: Option<i64>,
@@ -1530,7 +1555,7 @@ async fn admin_list_wiki_pages(
 
 async fn knowledge_base_list(
     pool: &crate::db::Pool,
-    kb_id: SnowflakeId,
+    kb_id: Option<SnowflakeId>,
     status: Option<&str>,
     page: i64,
     page_size: i64,
@@ -1543,8 +1568,9 @@ async fn knowledge_base_list(
         .into_iter()
         .map(|p| {
             json!({
-                "id": p.id, "title": p.title, "slug": p.slug, "status": p.status,
-                "summary": p.summary, "current_revision": p.current_revision,
+                "id": p.id, "kb_id": p.kb_id, "title": p.title, "slug": p.slug,
+                "status": p.status, "summary": p.summary,
+                "current_revision": p.current_revision,
                 "updated_at": p.updated_at,
             })
         })
@@ -2041,6 +2067,7 @@ async fn admin_faq_from_log(
         raisfast_agent::ChatMessage {
             role: raisfast_agent::ChatRole::System,
             content: Some(prompt_file!("src/kb/prompts/faq_draft.md")),
+            images: Vec::new(),
             tool_calls: None,
             tool_call_id: None,
         },
@@ -2052,6 +2079,7 @@ async fn admin_faq_from_log(
                 log.question,
                 log.answer.unwrap_or_default()
             )),
+            images: Vec::new(),
             tool_calls: None,
             tool_call_id: None,
         },

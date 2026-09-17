@@ -4,7 +4,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::db::{DbDriver, Driver};
-use crate::errors::app_error::AppResult;
+use crate::errors::app_error::{AppError, AppResult};
 use crate::types::snowflake_id::SnowflakeId;
 use crate::utils::tz::Timestamp;
 
@@ -21,12 +21,28 @@ pub struct KbWikiSource {
 }
 
 /// Record a page↔doc provenance link (doc-level granularity in v1).
+/// Idempotent per (page, doc): re-distill refreshes pages without
+/// duplicating provenance rows.
 pub async fn link_source(
     pool: &crate::db::Pool,
     page_id: SnowflakeId,
     page_revision: i64,
     doc_id: SnowflakeId,
 ) -> AppResult<()> {
+    let sql = format!(
+        "SELECT 1 FROM kb_wiki_sources WHERE page_id = {} AND doc_id = {}",
+        crate::db::Driver::ph(1),
+        crate::db::Driver::ph(2)
+    );
+    let exists: Option<i32> = sqlx::query_scalar(crate::db::safe_sql(&sql))
+        .bind(i64::from(page_id))
+        .bind(i64::from(doc_id))
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| AppError::Internal(anyhow::anyhow!(e.to_string())))?;
+    if exists.is_some() {
+        return Ok(());
+    }
     let (id, now) = (
         crate::utils::id::new_snowflake_id(),
         crate::utils::tz::now_utc(),

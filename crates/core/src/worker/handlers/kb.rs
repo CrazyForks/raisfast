@@ -244,6 +244,101 @@ impl JobHandler for KbDistillWikiHandler {
     }
 }
 
+/// `KbImageRecognize` — VLM caption + OCR over a document's registered
+/// images (kb-image-recognition-design §3 D3). Thin bridge: the body lives
+/// in `kb::images` [抄RF:worker/handlers 桥接先例].
+pub struct KbImageRecognizeHandler {
+    pool: crate::db::Pool,
+    runtime: Arc<KbRuntime>,
+    storage: Arc<dyn crate::storage::Storage>,
+    config: Arc<crate::config::app::AppConfig>,
+    llm_router: Arc<crate::llm::service::LlmRouter>,
+    emitter: crate::event::EventEmitter,
+}
+
+impl KbImageRecognizeHandler {
+    pub fn new(
+        pool: crate::db::Pool,
+        runtime: Arc<KbRuntime>,
+        storage: Arc<dyn crate::storage::Storage>,
+        config: Arc<crate::config::app::AppConfig>,
+        llm_router: Arc<crate::llm::service::LlmRouter>,
+        emitter: crate::event::EventEmitter,
+    ) -> Self {
+        Self {
+            pool,
+            runtime,
+            storage,
+            config,
+            llm_router,
+            emitter,
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl JobHandler for KbImageRecognizeHandler {
+    /// Coalesce key is per-doc: duplicate recognition requests for the same
+    /// doc merge into one idempotent run (rows are status-driven).
+    fn coalesce_key(&self, job: &Job) -> Option<String> {
+        match job {
+            Job::KbImageRecognize { doc_id, .. } => Some(format!("kb_image_recognize_{doc_id}")),
+            _ => None,
+        }
+    }
+
+    fn coalesce(&self, jobs: Vec<Job>) -> Option<Job> {
+        jobs.into_iter()
+            .find(|j| matches!(j, Job::KbImageRecognize { .. }))
+    }
+
+    async fn handle(&self, job: &Job) -> AppResult<()> {
+        self.run(job, None, 1).await
+    }
+
+    /// Full-context dispatch (DR6): the run row carries the exact
+    /// `jobs.attempts` and `jobs.id`.
+    async fn handle_queued(&self, queued: &crate::worker::QueuedJob) -> AppResult<()> {
+        let job_id = queued
+            .id
+            .parse::<i64>()
+            .ok()
+            .map(crate::types::snowflake_id::SnowflakeId);
+        self.run(&queued.job, job_id, i64::from(queued.attempts))
+            .await
+    }
+}
+
+impl KbImageRecognizeHandler {
+    async fn run(
+        &self,
+        job: &Job,
+        job_id: Option<crate::types::snowflake_id::SnowflakeId>,
+        attempt: i64,
+    ) -> AppResult<()> {
+        let Job::KbImageRecognize { doc_id, tenant_id } = job else {
+            return Ok(());
+        };
+        let deps = crate::kb::service::KbDeps {
+            pool: self.pool.clone(),
+            config: self.config.clone(),
+            storage: self.storage.clone(),
+            vector: self.runtime.vector.clone(),
+            kbsearch: self.runtime.kbsearch.clone(),
+            embedder: self.runtime.embedder.clone(),
+            reranker: self.runtime.reranker.clone(),
+            router: self.llm_router.clone(),
+            emitter: self.emitter.clone(),
+        };
+        let done = crate::kb::images::recognize_document_traced(
+            &deps, *doc_id, tenant_id, job_id, attempt,
+        )
+        .await?;
+        tracing::info!("[kb] image recognition for doc {doc_id}: {done} image(s) recognized");
+        Ok(())
+    }
+}
+
 pub struct KbRebuildVectorIndexHandler {
     pool: crate::db::Pool,
     runtime: Arc<KbRuntime>,

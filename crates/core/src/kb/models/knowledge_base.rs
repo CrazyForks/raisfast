@@ -32,6 +32,20 @@ pub struct KbKnowledgeBase {
     pub rerank_window: Option<i64>,
     /// Per-KB rerank score floor override; `None` = global default.
     pub rerank_threshold: Option<f64>,
+    /// S9 generation model for this KB (WK conversation-level ChatModelID
+    /// analog — our ask is stateless and KB-bound, so the KB row is the
+    /// mount point). Empty = global `RAISFAST_KB_CHAT_MODEL` default →
+    /// tenant default.
+    pub chat_model: Option<String>,
+    /// Wiki distillation synthesis model for this KB
+    /// [抄WK:wiki_ingest_batch.go SynthesisModelID→SummaryModelID 级联].
+    /// Empty = global `RAISFAST_KB_DISTILL_MODEL` → tenant default.
+    pub distill_model: Option<String>,
+    /// VLM image recognition config
+    /// [抄WK:knowledgebase.go image_processing_config + VLMConfig 形态]:
+    /// `{enabled, model, caption_language, custom_instructions}`.
+    /// enabled=false or no resolvable model → recognition off.
+    pub image_config: Option<serde_json::Value>,
     pub status: String,
     pub created_at: Timestamp,
     pub updated_at: Timestamp,
@@ -51,6 +65,9 @@ pub struct CreateKbCmd {
     pub rerank_model: Option<String>,
     pub rerank_window: Option<i64>,
     pub rerank_threshold: Option<f64>,
+    pub chat_model: Option<String>,
+    pub distill_model: Option<String>,
+    pub image_config: Option<serde_json::Value>,
 }
 
 pub async fn create_kb(
@@ -77,6 +94,9 @@ pub async fn create_kb(
             "rerank_model" => cmd.rerank_model.as_deref(),
             "rerank_window" => cmd.rerank_window,
             "rerank_threshold" => cmd.rerank_threshold,
+            "chat_model" => cmd.chat_model.as_deref(),
+            "distill_model" => cmd.distill_model.as_deref(),
+            "image_config" => cmd.image_config.clone(),
             "created_at" => now
         ],
         tenant: Some(tenant_id)
@@ -99,6 +119,9 @@ pub struct UpdateKbCmd {
     pub rerank_model: Option<String>,
     pub rerank_window: Option<i64>,
     pub rerank_threshold: Option<f64>,
+    pub chat_model: Option<String>,
+    pub distill_model: Option<String>,
+    pub image_config: Option<serde_json::Value>,
 }
 
 pub async fn update_kb(
@@ -119,6 +142,9 @@ pub async fn update_kb(
             "rerank_model" => cmd.rerank_model.as_deref(),
             "rerank_window" => cmd.rerank_window,
             "rerank_threshold" => cmd.rerank_threshold,
+            "chat_model" => cmd.chat_model.as_deref(),
+            "distill_model" => cmd.distill_model.as_deref(),
+            "image_config" => cmd.image_config.clone(),
             "updated_at" => now
         ],
         where: ("id", id),

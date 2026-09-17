@@ -34,17 +34,25 @@ struct Topic {
     description: String,
 }
 
-async fn chat_json(deps: &KbDeps, tenant: &str, system: &str, user: &str) -> AppResult<String> {
+async fn chat_json(
+    deps: &KbDeps,
+    tenant: &str,
+    model: Option<&str>,
+    system: &str,
+    user: &str,
+) -> AppResult<String> {
     let messages = vec![
         ChatMessage {
             role: ChatRole::System,
             content: Some(system.to_string()),
+            images: Vec::new(),
             tool_calls: None,
             tool_call_id: None,
         },
         ChatMessage {
             role: ChatRole::User,
             content: Some(user.to_string()),
+            images: Vec::new(),
             tool_calls: None,
             tool_call_id: None,
         },
@@ -56,7 +64,7 @@ async fn chat_json(deps: &KbDeps, tenant: &str, system: &str, user: &str) -> App
         max_tokens: None,
         stop: None,
     };
-    crate::kb::service::kb_chat(deps, tenant, &request)
+    crate::kb::service::kb_chat_model(deps, tenant, model, &request)
         .await
         .map_err(|e| AppError::ServiceUnavailable(format!("distill chat: {e}")))
 }
@@ -75,6 +83,22 @@ pub async fn distill_documents(
     doc_ids: &[SnowflakeId],
     tenant_id: &str,
 ) -> AppResult<Vec<SnowflakeId>> {
+    // Per-KB synthesis model [抄WK:wiki_ingest_batch.go 的
+    // WikiConfig.SynthesisModelID → SummaryModelID 级联]；我们的兜底更宽：
+    // KB 行 distill_model → 全局 RAISFAST_KB_DISTILL_MODEL → 租户默认。
+    let kb_row = models::knowledge_base::find_kb_by_id(&deps.pool, kb_id, tenant_id).await?;
+    let distill_model = kb_row
+        .as_ref()
+        .and_then(|kb| kb.distill_model.clone())
+        .filter(|m| !m.is_empty())
+        .or_else(|| {
+            deps.config
+                .kb
+                .distill_model
+                .clone()
+                .filter(|m| !m.is_empty())
+        });
+
     // Gather chunks per doc.
     let mut doc_chunks: Vec<(SnowflakeId, Vec<KbChunk>)> = Vec::new();
     for doc_id in doc_ids {
@@ -89,7 +113,7 @@ pub async fn distill_documents(
     }
 
     // Pass ① per-doc extraction with slug continuity against existing pages.
-    let existing = models::wiki_page::list_pages(&deps.pool, kb_id, None, 1, 500, tenant_id)
+    let existing = models::wiki_page::list_pages(&deps.pool, Some(kb_id), None, 1, 500, tenant_id)
         .await?
         .0;
     let previous_slugs: Vec<String> = existing
@@ -110,6 +134,7 @@ pub async fn distill_documents(
         let reply = chat_json(
             deps,
             tenant_id,
+            distill_model.as_deref(),
             &prompt_file!("src/kb/prompts/distill_extract.md"),
             &user,
         )
@@ -135,7 +160,11 @@ pub async fn distill_documents(
     }
 
     // Pass ② per-topic drafting (chunks selected by slug/name matching —
-    // declared reduction of WK's citation pass).
+    // declared reduction of WK's citation pass). Known slugs UPSERT into
+    // their existing page instead of duplicating [抄WK:cite known-slug
+    // union 语义]; slug continuity stops being a prompt-only hint.
+    let existing_by_slug: std::collections::HashMap<String, SnowflakeId> =
+        existing.iter().map(|p| (p.slug.clone(), p.id)).collect();
     let available: String = topics
         .iter()
         .map(|t| format!("[[{}]] = {}", t.slug, t.name))
@@ -182,6 +211,7 @@ pub async fn distill_documents(
         let content = chat_json(
             deps,
             tenant_id,
+            distill_model.as_deref(),
             &prompt_file!("src/kb/prompts/distill_draft.md"),
             &user,
         )
@@ -197,24 +227,43 @@ pub async fn distill_documents(
             .filter(|t| t.slug != topic.slug && content.contains(&format!("[[{}|", t.slug)))
             .map(|t| t.slug.clone())
             .collect();
-        let page = models::wiki_page::create_page(
-            &deps.pool,
-            &models::wiki_page::CreateWikiPageCmd {
-                kb_id,
-                title: topic.name.clone(),
-                slug: topic.slug.clone(),
-                content,
-                summary: Some(topic.description.clone()),
-                linked_page_ids: Some(serde_json::json!(linked)),
-                created_by: None,
-            },
-            tenant_id,
-        )
-        .await?;
+        let linked_json = serde_json::json!(linked);
+        let page_id = match existing_by_slug.get(&topic.slug) {
+            Some(pid) => {
+                models::wiki_page::update_page_draft(
+                    &deps.pool,
+                    *pid,
+                    &topic.name,
+                    &content,
+                    Some(&topic.description),
+                    Some(linked_json),
+                    tenant_id,
+                )
+                .await?;
+                *pid
+            }
+            None => {
+                let page = models::wiki_page::create_page(
+                    &deps.pool,
+                    &models::wiki_page::CreateWikiPageCmd {
+                        kb_id,
+                        title: topic.name.clone(),
+                        slug: topic.slug.clone(),
+                        content,
+                        summary: Some(topic.description.clone()),
+                        linked_page_ids: Some(linked_json),
+                        created_by: None,
+                    },
+                    tenant_id,
+                )
+                .await?;
+                page.id
+            }
+        };
         for doc_id in source_docs {
-            models::wiki_source::link_source(&deps.pool, page.id, 0, doc_id).await?;
+            models::wiki_source::link_source(&deps.pool, page_id, 0, doc_id).await?;
         }
-        created.push(page.id);
+        created.push(page_id);
     }
     Ok(created)
 }
@@ -490,6 +539,9 @@ mod tests {
                 rerank_model: None,
                 rerank_window: None,
                 rerank_threshold: None,
+                chat_model: None,
+                distill_model: None,
+                image_config: None,
             },
             "default",
         )
@@ -533,7 +585,7 @@ mod tests {
             .unwrap();
         assert_eq!(created.len(), 2, "two topics → two draft pages");
         let pages =
-            models::wiki_page::list_pages(&deps.pool, kb_id, Some("draft"), 1, 10, "default")
+            models::wiki_page::list_pages(&deps.pool, Some(kb_id), Some("draft"), 1, 10, "default")
                 .await
                 .unwrap()
                 .0;

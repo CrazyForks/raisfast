@@ -1243,6 +1243,7 @@ mod tests {
         Box::leak(Box::new(vec![ChatMessage {
             role: ChatRole::User,
             content: Some("hi".to_owned()),
+            images: Vec::new(),
             tool_calls: None,
             tool_call_id: None,
         }]))

@@ -641,13 +641,28 @@ fn to_wire_message(msg: &ChatMessage) -> Value {
     let mut m = Map::new();
     m.insert("role".into(), Value::String(to_wire_role(msg.role).into()));
 
-    // content may legitimately be null (assistant with only tool_calls).
-    m.insert(
-        "content".into(),
-        msg.content
-            .as_deref()
-            .map_or(Value::Null, |c| Value::String(c.to_string())),
-    );
+    // Multimodal: images present → OpenAI content-parts array
+    // ([抄EXT:OpenAI vision 规范] {type:"text"} + {type:"image_url"}).
+    // Anthropic upstreams convert these to source blocks downstream
+    // (AnthropicAdaptor::convert_chat → image_source).
+    if !msg.images.is_empty() {
+        let mut parts: Vec<Value> = Vec::with_capacity(msg.images.len() + 1);
+        if let Some(c) = msg.content.as_deref().filter(|c| !c.is_empty()) {
+            parts.push(json!({ "type": "text", "text": c }));
+        }
+        for url in &msg.images {
+            parts.push(json!({ "type": "image_url", "image_url": { "url": url } }));
+        }
+        m.insert("content".into(), Value::Array(parts));
+    } else {
+        // content may legitimately be null (assistant with only tool_calls).
+        m.insert(
+            "content".into(),
+            msg.content
+                .as_deref()
+                .map_or(Value::Null, |c| Value::String(c.to_string())),
+        );
+    }
 
     // Only attach tool_calls when non-empty: some providers reject an explicit
     // empty array on assistant messages.
@@ -854,3 +869,69 @@ struct StreamFunctionDelta {
 }
 
 use serde_json::json;
+
+#[cfg(test)]
+mod vision_tests {
+    use super::*;
+    use crate::messages::ChatRole;
+
+    #[test]
+    fn text_only_message_wire_is_plain_string() {
+        let msg = ChatMessage {
+            role: ChatRole::User,
+            content: Some("你好".into()),
+            images: Vec::new(),
+            tool_calls: None,
+            tool_call_id: None,
+        };
+        let wire = to_wire_message(&msg);
+        assert_eq!(
+            wire["content"],
+            json!("你好"),
+            "no-image path stays a plain string"
+        );
+    }
+
+    #[test]
+    fn images_render_as_openai_content_parts() {
+        let msg = ChatMessage {
+            role: ChatRole::User,
+            content: Some("这张图是什么".into()),
+            images: vec![
+                "https://example.com/a.png".into(),
+                "data:image/png;base64,AAAA".into(),
+            ],
+            tool_calls: None,
+            tool_call_id: None,
+        };
+        let wire = to_wire_message(&msg);
+        let parts = wire["content"]
+            .as_array()
+            .expect("content must be a parts array");
+        assert_eq!(parts.len(), 3, "text part + one part per image");
+        assert_eq!(parts[0], json!({"type": "text", "text": "这张图是什么"}));
+        assert_eq!(
+            parts[1],
+            json!({"type": "image_url", "image_url": {"url": "https://example.com/a.png"}})
+        );
+        assert_eq!(
+            parts[2]["image_url"]["url"],
+            json!("data:image/png;base64,AAAA")
+        );
+    }
+
+    #[test]
+    fn images_without_text_emit_parts_only() {
+        let msg = ChatMessage {
+            role: ChatRole::User,
+            content: None,
+            images: vec!["https://example.com/b.jpg".into()],
+            tool_calls: None,
+            tool_call_id: None,
+        };
+        let wire = to_wire_message(&msg);
+        let parts = wire["content"].as_array().expect("parts array");
+        assert_eq!(parts.len(), 1, "no empty text part when content is none");
+        assert_eq!(parts[0]["type"], json!("image_url"));
+    }
+}

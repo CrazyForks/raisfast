@@ -1628,6 +1628,9 @@ CREATE TABLE IF NOT EXISTS kb_knowledge_bases (
     rerank_model TEXT,
     rerank_window BIGINT,
     rerank_threshold REAL,
+    chat_model TEXT,
+    distill_model TEXT,
+    image_config TEXT,
     status TEXT NOT NULL DEFAULT 'active',
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
     updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
@@ -1671,6 +1674,7 @@ CREATE TABLE IF NOT EXISTS kb_chunks (
     questions TEXT,
     embedding BLOB,
     embedding_model TEXT,
+    image_info TEXT,
     status TEXT NOT NULL DEFAULT 'active',
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
     updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
@@ -1726,6 +1730,27 @@ CREATE TABLE IF NOT EXISTS kb_faqs (
     updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
 );
 CREATE INDEX IF NOT EXISTS idx_kb_faqs_kb ON kb_faqs(kb_id, enabled);
+
+CREATE TABLE IF NOT EXISTS kb_images (
+    id INTEGER PRIMARY KEY,
+    tenant_id TEXT NOT NULL DEFAULT 'default',
+    kb_id BIGINT NOT NULL,
+    doc_id BIGINT NOT NULL,
+    chunk_id BIGINT,
+    storage_key TEXT,
+    mime_type TEXT NOT NULL,
+    bytes BIGINT,
+    source TEXT NOT NULL DEFAULT 'embedded',
+    original_url TEXT,
+    caption TEXT,
+    ocr_text TEXT,
+    status TEXT NOT NULL DEFAULT 'pending',
+    error TEXT,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_kb_images_doc ON kb_images(doc_id);
+CREATE INDEX IF NOT EXISTS idx_kb_images_status ON kb_images(kb_id, status);
 
 CREATE TABLE IF NOT EXISTS kb_query_logs (
     id INTEGER PRIMARY KEY,

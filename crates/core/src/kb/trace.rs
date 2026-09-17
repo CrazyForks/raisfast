@@ -323,6 +323,8 @@ pub fn config_snapshot(config: &AppConfig) -> Value {
         "rerank_model": config.kb.rerank_model,
         "rerank_window": config.kb.rerank_window,
         "rerank_threshold": config.kb.rerank_threshold,
+        "understand_model": config.kb.understand_model,
+        "chat_model": config.kb.chat_model,
     })
 }
 

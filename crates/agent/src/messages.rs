@@ -61,6 +61,13 @@ fn add(a: Option<u64>, b: Option<u64>) -> Option<u64> {
 pub struct ChatMessage {
     pub role: ChatRole,
     pub content: Option<String>,
+    /// Multimodal image inputs, OpenAI `image_url` part form: each entry is
+    /// an http(s) URL or a `data:image/...;base64,` URI. Empty = plain
+    /// text message (wire shape unchanged). Anthropic upstreams get the
+    /// parts converted to `source` blocks by the adaptor
+    /// [抄RF:relay/anthropic.rs image_source 同一转换].
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub images: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_calls: Option<Vec<ToolCall>>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -72,6 +79,7 @@ impl ChatMessage {
         Self {
             role: ChatRole::System,
             content: Some(content.into()),
+            images: Vec::new(),
             tool_calls: None,
             tool_call_id: None,
         }
@@ -81,6 +89,7 @@ impl ChatMessage {
         Self {
             role: ChatRole::User,
             content: Some(content.into()),
+            images: Vec::new(),
             tool_calls: None,
             tool_call_id: None,
         }
@@ -91,6 +100,7 @@ impl ChatMessage {
         Self {
             role: ChatRole::Assistant,
             content,
+            images: Vec::new(),
             tool_calls,
             tool_call_id: None,
         }
@@ -101,6 +111,7 @@ impl ChatMessage {
         Self {
             role: ChatRole::Tool,
             content: Some(content.into()),
+            images: Vec::new(),
             tool_calls: None,
             tool_call_id: Some(tool_call_id.into()),
         }

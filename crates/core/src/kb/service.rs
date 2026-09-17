@@ -194,10 +194,23 @@ pub async fn kb_chat(
     tenant: &str,
     request: &raisfast_agent::provider::ChatRequest<'_>,
 ) -> AppResult<String> {
+    kb_chat_model(deps, tenant, None, request).await
+}
+
+/// Model-pinned variant: S1 understand routes to a dedicated fast model
+/// when `RAISFAST_KB_UNDERSTAND_MODEL` is configured（改写+关键词抽取是小
+/// 任务，推荐非推理小模型——S1 在每次 ask 的关键路径上）；`None` resolves
+/// the tenant default chat model.
+pub async fn kb_chat_model(
+    deps: &KbDeps,
+    tenant: &str,
+    model: Option<&str>,
+    request: &raisfast_agent::provider::ChatRequest<'_>,
+) -> AppResult<String> {
     let resp = deps
         .router
         .call(tenant, crate::llm::models::log::LogSource::Kb)
-        .chat(None, request)
+        .chat(model, request)
         .await?;
     Ok(resp.text.unwrap_or_default())
 }
@@ -401,7 +414,10 @@ async fn process_document_inner(
     // ① parse → markdown [抄EXT:anydoc]
     trace.stage("parse");
     document::set_document_status(&deps.pool, doc_id, "parsing", None, None, tenant_id).await?;
-    let markdown = match &doc.storage_key {
+    // Image recognition gate: resolved before parse so disabled KBs skip the
+    // asset pass entirely (kb-image-recognition-design §3 D2).
+    let image_cfg = crate::kb::images::resolve_image_config(deps, &kb);
+    let (markdown, raw_bytes) = match &doc.storage_key {
         Some(key) => {
             let bytes = deps.storage.get(key).await?;
             if bytes.is_empty() {
@@ -409,7 +425,8 @@ async fn process_document_inner(
                     "document bytes missing in storage".into(),
                 ));
             }
-            parse_to_markdown(&doc, &bytes)?
+            let md = parse_to_markdown(&doc, &bytes)?;
+            (md, bytes)
         }
         None => return Err(AppError::BadRequest("document has no storage key".into())),
     };
@@ -429,6 +446,7 @@ async fn process_document_inner(
     // idempotency: wipe this doc's chunks + vector units + fts units first
     chunk::delete_chunks_by_doc(&deps.pool, doc_id).await?;
     deps.kbsearch.delete_document(i64::from(doc_id)).await?;
+    crate::kb::models::image::delete_images_by_doc(&deps.pool, doc_id).await?;
 
     let cfg = ChunkerConfig::default();
     let raw_chunks = chunker::chunk_markdown(&markdown, &cfg);
@@ -469,6 +487,25 @@ async fn process_document_inner(
     }
     for ins in &inserts {
         chunk::insert_chunk(&deps.pool, ins).await?;
+    }
+    // Image registration (recognition-enabled KBs only): embedded assets +
+    // external markdown references → `kb_images` pending rows
+    // (kb-image-recognition-design §3 D4/D5).
+    let mut image_count = 0usize;
+    if image_cfg.is_some() {
+        let chunk_rows: Vec<(SnowflakeId, i64, i64)> = inserts
+            .iter()
+            .map(|c| (c.id, c.byte_start, c.byte_end))
+            .collect();
+        image_count = crate::kb::images::register_document_images(
+            deps,
+            &doc,
+            Some(&raw_bytes),
+            &markdown,
+            &chunk_rows,
+            tenant_id,
+        )
+        .await?;
     }
     trace.end_stage(
         crate::kb::trace::STAGE_OK,
@@ -593,6 +630,19 @@ async fn process_document_inner(
             .await?
             .ok_or_else(|| AppError::Internal(anyhow::anyhow!("doc vanished")))?,
     ));
+    // Post-ready image recognition job (async gain, never blocks readiness;
+    // kb-image-recognition-design §3 D3).
+    if image_count > 0 {
+        use crate::worker::JobQueue as _;
+        let queue = crate::worker::DefaultJobQueue::new(deps.pool.clone());
+        let mut new_job = crate::worker::NewJob::from(crate::worker::Job::KbImageRecognize {
+            doc_id,
+            tenant_id: tenant_id.to_string(),
+        });
+        new_job.priority = -5; // bulk VLM work must not starve online jobs
+        queue.enqueue(new_job).await?;
+        tracing::info!("[kb] doc {doc_id}: queued recognition for {image_count} image(s)");
+    }
     Ok(())
 }
 
@@ -855,6 +905,9 @@ mod tests {
                 rerank_model: None,
                 rerank_window: None,
                 rerank_threshold: None,
+                chat_model: None,
+                distill_model: None,
+                image_config: None,
             },
             "default",
         )
@@ -1330,6 +1383,9 @@ mod faq_tests {
                 rerank_model: None,
                 rerank_window: None,
                 rerank_threshold: None,
+                chat_model: None,
+                distill_model: None,
+                image_config: None,
             },
             "default",
         )

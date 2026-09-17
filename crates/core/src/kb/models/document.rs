@@ -95,36 +95,77 @@ pub async fn find_document_by_id(
     )?)
 }
 
+/// One dynamic WHERE term: clause fragment + its bind value
+/// (same shape as `kb_run::list_runs`).
+enum Bind<'a> {
+    Str(&'a str),
+    Bigint(i64),
+}
+
+/// Tenant-scoped document listing. `kb_id`/`status` are optional filters —
+/// both absent lists every document of the tenant (admin "全部" view).
 pub async fn list_documents(
     pool: &crate::db::Pool,
-    kb_id: SnowflakeId,
+    kb_id: Option<SnowflakeId>,
     status: Option<&str>,
     page: i64,
     page_size: i64,
     tenant_id: &str,
 ) -> AppResult<(Vec<KbDocument>, i64)> {
-    match status {
-        Some(s) => Ok(raisfast_derive::crud_query_paged!(
-            pool,
-            KbDocument,
-            table: "kb_documents",
-            where: AND(("kb_id", kb_id), ("status", s)),
-            order_by: "created_at DESC",
-            tenant: Some(tenant_id),
-            page: page,
-            page_size: page_size
-        )),
-        None => Ok(raisfast_derive::crud_query_paged!(
-            pool,
-            KbDocument,
-            table: "kb_documents",
-            where: ("kb_id", kb_id),
-            order_by: "created_at DESC",
-            tenant: Some(tenant_id),
-            page: page,
-            page_size: page_size
-        )),
+    let mut clauses: Vec<String> = vec![format!("tenant_id = {}", crate::db::Driver::ph(1))];
+    let mut binds: Vec<Bind> = vec![Bind::Str(tenant_id)];
+    if let Some(v) = kb_id {
+        let n = binds.len() + 1;
+        clauses.push(format!("kb_id = {}", crate::db::Driver::ph(n)));
+        binds.push(Bind::Bigint(i64::from(v)));
     }
+    if let Some(v) = status {
+        let n = binds.len() + 1;
+        clauses.push(format!("status = {}", crate::db::Driver::ph(n)));
+        binds.push(Bind::Str(v));
+    }
+    let where_sql = clauses.join(" AND ");
+
+    let count_stmt = format!(
+        "SELECT {} FROM kb_documents WHERE {where_sql}",
+        crate::db::Driver::cast_int("COUNT(*)")
+    );
+    let count_sql = crate::db::safe_sql(&count_stmt);
+    let mut count_query = sqlx::query_scalar::<_, i64>(count_sql);
+    for b in &binds {
+        count_query = match b {
+            Bind::Str(v) => count_query.bind(*v),
+            Bind::Bigint(v) => count_query.bind(*v),
+        };
+    }
+    let total: i64 = count_query
+        .fetch_one(pool)
+        .await
+        .map_err(|e| AppError::Internal(anyhow::anyhow!(e.to_string())))?;
+
+    let page = page.max(1);
+    let page_size = page_size.clamp(1, 100);
+    let offset = (page - 1) * page_size;
+    let data_stmt = format!(
+        "SELECT * FROM kb_documents WHERE {where_sql} ORDER BY created_at DESC LIMIT {} OFFSET {}",
+        crate::db::Driver::ph(binds.len() + 1),
+        crate::db::Driver::ph(binds.len() + 2)
+    );
+    let data_sql = crate::db::safe_sql(&data_stmt);
+    let mut data_query = sqlx::query_as::<_, KbDocument>(data_sql);
+    for b in &binds {
+        data_query = match b {
+            Bind::Str(v) => data_query.bind(*v),
+            Bind::Bigint(v) => data_query.bind(*v),
+        };
+    }
+    let rows: Vec<KbDocument> = data_query
+        .bind(page_size)
+        .bind(offset)
+        .fetch_all(pool)
+        .await
+        .map_err(|e| AppError::Internal(anyhow::anyhow!(e.to_string())))?;
+    Ok((rows, total))
 }
 
 /// Transition the status machine and maintain the `steps` timing map:

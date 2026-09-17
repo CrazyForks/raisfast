@@ -34,28 +34,43 @@ impl UnderstoodQuery {
 
 /// LLM prompt: strict JSON reply `{ "query": "...", "keywords": [...] }`
 /// (`src/kb/prompts/understand.md`).
+///
+/// `max_tokens` headroom: reasoning models spend the completion budget on
+/// thinking first — a tight cap (the old 200) returns an EMPTY `content`
+/// and S1 needlessly degrades. 1024 keeps JSON output safe for both plain
+/// and reasoning models.
 pub async fn run(deps: &KbDeps, tenant: &str, question: &str) -> UnderstoodQuery {
     let request = ChatRequest {
         messages: &[
             ChatMessage {
                 role: ChatRole::System,
                 content: Some(prompt_file!("src/kb/prompts/understand.md")),
+                images: Vec::new(),
                 tool_calls: None,
                 tool_call_id: None,
             },
             ChatMessage {
                 role: ChatRole::User,
                 content: Some(question.to_string()),
+                images: Vec::new(),
                 tool_calls: None,
                 tool_call_id: None,
             },
         ],
         tools: None,
         temperature: Some(0.0),
-        max_tokens: Some(200),
+        max_tokens: Some(1024),
         stop: None,
     };
-    let Ok(text) = crate::kb::service::kb_chat(deps, tenant, &request).await else {
+    // Dedicated fast model for S1 when configured (recommended non-reasoning:
+    // rewrite+keywords is a small task and S1 sits on the ask critical path).
+    let model = deps
+        .config
+        .kb
+        .understand_model
+        .as_deref()
+        .filter(|m| !m.is_empty());
+    let Ok(text) = crate::kb::service::kb_chat_model(deps, tenant, model, &request).await else {
         return UnderstoodQuery::raw(question);
     };
     if text.trim().is_empty() {

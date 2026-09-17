@@ -96,7 +96,7 @@ async fn deps_with_provider(provider: Arc<dyn ModelProvider>) -> KbDeps {
     let router = raisfast::llm::service::LlmRouter::with_provider_for_test(
         Some(pool.clone()),
         provider,
-        &["kb-test-model"],
+        &["kb-test-model", "kb-distill-model"],
         Some("kb-test-model"),
     )
     .await;
@@ -131,6 +131,9 @@ async fn seed_kb(deps: &KbDeps, name: &str) -> SnowflakeId {
             rerank_model: None,
             rerank_window: None,
             rerank_threshold: None,
+            chat_model: None,
+            distill_model: None,
+            image_config: None,
         },
         "default",
     )
@@ -535,10 +538,11 @@ async fn s09_wiki_distill_publish_boost() {
         .await
         .unwrap();
     assert_eq!(created.len(), 2);
-    let pages = models::wiki_page::list_pages(&deps.pool, kb, Some("draft"), 1, 10, "default")
-        .await
-        .unwrap()
-        .0;
+    let pages =
+        models::wiki_page::list_pages(&deps.pool, Some(kb), Some("draft"), 1, 10, "default")
+            .await
+            .unwrap()
+            .0;
     assert_eq!(pages.len(), 2, "pages stay draft until human approval");
 
     // 发布 → wiki_page 单元入池 + 管线以 wiki 加权路径可命中
@@ -553,6 +557,320 @@ async fn s09_wiki_distill_publish_boost() {
         units
             .iter()
             .all(|u| u.kind == "wiki_page" && u.embedding.is_some())
+    );
+}
+
+#[tokio::test]
+async fn s16_wiki_list_without_kb_spans_tenant_kbs() {
+    let deps = deps().await;
+    let kb_a = seed_kb(&deps, "wiki-all-a").await;
+    let kb_b = seed_kb(&deps, "wiki-all-b").await;
+    // A foreign-tenant KB must never leak into the "all" listing.
+    let foreign = models::knowledge_base::create_kb(
+        &deps.pool,
+        &CreateKbCmd {
+            name: "foreign".into(),
+            description: None,
+            slug: format!("foreign-{}", raisfast::utils::id::new_id()),
+            kind: "document".into(),
+            indexing_strategy: None,
+            embedding_model: Some("m".into()),
+            embedding_dim: Some(4),
+            rerank_model: None,
+            rerank_window: None,
+            rerank_threshold: None,
+            chat_model: None,
+            distill_model: None,
+            image_config: None,
+        },
+        "other-tenant",
+    )
+    .await
+    .unwrap();
+
+    let mk = |kb: SnowflakeId, title: &str| models::wiki_page::CreateWikiPageCmd {
+        kb_id: kb,
+        title: title.into(),
+        slug: format!("{title}-{}", raisfast::utils::id::new_id()),
+        content: format!("# {title}\n\n正文。"),
+        summary: None,
+        linked_page_ids: None,
+        created_by: None,
+    };
+    models::wiki_page::create_page(&deps.pool, &mk(kb_a, "页A"), "default")
+        .await
+        .unwrap();
+    models::wiki_page::create_page(&deps.pool, &mk(kb_b, "页B"), "default")
+        .await
+        .unwrap();
+    models::wiki_page::create_page(&deps.pool, &mk(foreign.id, "外租户"), "other-tenant")
+        .await
+        .unwrap();
+
+    let (all, total) = models::wiki_page::list_pages(&deps.pool, None, None, 1, 50, "default")
+        .await
+        .unwrap();
+    assert_eq!(total, 2, "kb_id-less listing spans the tenant's KBs only");
+    assert!(all.iter().all(|p| p.tenant_id == "default"));
+    let titles: Vec<&str> = all.iter().map(|p| p.title.as_str()).collect();
+    assert!(titles.contains(&"页A") && titles.contains(&"页B"));
+}
+
+#[tokio::test]
+async fn s17_redistill_upserts_known_slugs() {
+    // Two distill runs over the same doc: run ② must refresh the same
+    // pages (slug upsert) instead of duplicating drafts.
+    let mut second = wiki_scripts();
+    let mut first = wiki_scripts();
+    first.append(&mut second); // pop order: run ① replies, then run ②
+    let deps = deps_with_provider(Arc::new(ScriptedProvider(std::sync::Mutex::new(first)))).await;
+    let kb = seed_kb(&deps, "kb").await;
+    let doc = ingest_md(
+        &deps,
+        kb,
+        "数据库文档",
+        &format!(
+            "# 数据库\n\n{}",
+            long_body("支持 SQLite 与 Qdrant 向量检索。", 60)
+        ),
+    )
+    .await;
+
+    let run1 = raisfast::kb::distill::distill_documents(&deps, kb, &[doc], "default")
+        .await
+        .unwrap();
+    assert_eq!(run1.len(), 2);
+    let run2 = raisfast::kb::distill::distill_documents(&deps, kb, &[doc], "default")
+        .await
+        .unwrap();
+
+    let mut sorted1 = run1.clone();
+    sorted1.sort_by_key(|i| i64::from(*i));
+    let mut sorted2 = run2.clone();
+    sorted2.sort_by_key(|i| i64::from(*i));
+    assert_eq!(
+        sorted1, sorted2,
+        "re-distill must upsert the same slug pages, not create new ids"
+    );
+    let (pages, total) =
+        models::wiki_page::list_pages(&deps.pool, Some(kb), None, 1, 50, "default")
+            .await
+            .unwrap();
+    assert_eq!(total, 2, "no duplicate drafts after a second distill run");
+    assert!(pages.iter().all(|p| p.status == "draft"));
+
+    // Provenance rows must not duplicate either.
+    let sql = raisfast::db::safe_sql(
+        "SELECT COUNT(*) FROM kb_wiki_sources WHERE doc_id = ? AND page_id IN (?, ?)",
+    );
+    let linked: i64 = sqlx::query_scalar(sql)
+        .bind(i64::from(doc))
+        .bind(i64::from(sorted1[0]))
+        .bind(i64::from(sorted1[1]))
+        .fetch_one(&deps.pool)
+        .await
+        .unwrap();
+    assert_eq!(linked, 2, "each page keeps exactly one provenance row");
+}
+
+/// Scripted provider that also records the model of every call (per-KB
+/// distill model assertions).
+struct RecordingScripted {
+    replies: std::sync::Mutex<Vec<String>>,
+    models: std::sync::Mutex<Vec<String>>,
+}
+
+#[async_trait::async_trait]
+impl ModelProvider for RecordingScripted {
+    fn name(&self) -> &str {
+        "recording-scripted"
+    }
+    async fn chat(&self, _r: &ChatRequest<'_>, model: &str) -> Result<ChatResponse, ProviderError> {
+        self.models.lock().unwrap().push(model.to_string());
+        let reply = self.replies.lock().unwrap().pop().unwrap_or_default();
+        Ok(ChatResponse::text_only(reply))
+    }
+}
+
+#[tokio::test]
+async fn s20_distill_uses_per_kb_model() {
+    let provider = Arc::new(RecordingScripted {
+        replies: std::sync::Mutex::new(wiki_scripts()),
+        models: std::sync::Mutex::new(Vec::new()),
+    });
+    let deps = deps_with_provider(provider.clone()).await;
+    // KB pins the distill model; the global env default is unset.
+    let kb = models::knowledge_base::create_kb(
+        &deps.pool,
+        &CreateKbCmd {
+            name: "distill-model".into(),
+            description: None,
+            slug: format!("dm-{}", raisfast::utils::id::new_id()),
+            kind: "document".into(),
+            indexing_strategy: None,
+            embedding_model: Some("m".into()),
+            embedding_dim: Some(4),
+            rerank_model: None,
+            rerank_window: None,
+            rerank_threshold: None,
+            chat_model: None,
+            distill_model: Some("kb-distill-model".into()),
+            image_config: None,
+        },
+        "default",
+    )
+    .await
+    .unwrap();
+    let doc = ingest_md(
+        &deps,
+        kb.id,
+        "数据库文档",
+        &format!(
+            "# 数据库\n\n{}",
+            long_body("支持 SQLite 与 Qdrant 向量检索。", 60)
+        ),
+    )
+    .await;
+
+    let created = raisfast::kb::distill::distill_documents(&deps, kb.id, &[doc], "default")
+        .await
+        .unwrap();
+    assert_eq!(created.len(), 2);
+    let seen = provider.models.lock().unwrap().clone();
+    assert!(
+        !seen.is_empty() && seen.iter().all(|m| m == "kb-distill-model"),
+        "every distill call must use the per-KB model: {seen:?}"
+    );
+}
+
+/// VLM provider stub: records (model, images) per call, pops scripted
+/// replies (kb-image-recognition-design §5).
+struct VisionScripted {
+    replies: std::sync::Mutex<Vec<String>>,
+    seen: std::sync::Mutex<Vec<(String, Vec<String>)>>,
+}
+
+#[async_trait::async_trait]
+impl ModelProvider for VisionScripted {
+    fn name(&self) -> &str {
+        "vision-scripted"
+    }
+    async fn chat(&self, r: &ChatRequest<'_>, model: &str) -> Result<ChatResponse, ProviderError> {
+        let imgs: Vec<String> = r
+            .messages
+            .iter()
+            .flat_map(|m| m.images.iter().cloned())
+            .collect();
+        self.seen.lock().unwrap().push((model.to_string(), imgs));
+        let reply = self.replies.lock().unwrap().pop().unwrap_or_default();
+        Ok(ChatResponse::text_only(reply))
+    }
+}
+
+#[tokio::test]
+async fn s21_image_recognition_pipeline() {
+    // Scripted VLM replies in pop order (last popped first): img1 caption,
+    // img1 OCR, img2 caption, img2 OCR.
+    let provider = Arc::new(VisionScripted {
+        replies: std::sync::Mutex::new(vec![
+            "No text content".into(), // img2 OCR
+            "部署拓扑说明图".into(),  // img2 caption
+            "No text content".into(), // img1 OCR
+            "产品架构总览图".into(),  // img1 caption
+        ]),
+        seen: std::sync::Mutex::new(Vec::new()),
+    });
+    let deps = deps_with_provider(provider.clone()).await;
+    let kb = models::knowledge_base::create_kb(
+        &deps.pool,
+        &CreateKbCmd {
+            name: "vlm".into(),
+            description: None,
+            slug: format!("vlm-{}", raisfast::utils::id::new_id()),
+            kind: "document".into(),
+            indexing_strategy: None,
+            embedding_model: Some("m".into()),
+            embedding_dim: Some(4),
+            rerank_model: None,
+            rerank_window: None,
+            rerank_threshold: None,
+            chat_model: None,
+            distill_model: None,
+            image_config: Some(serde_json::json!({
+                "enabled": true,
+                "model": "kb-test-model", // registered in the test router
+                "caption_language": "zh"
+            })),
+        },
+        "default",
+    )
+    .await
+    .unwrap();
+    let md = "# 架构\n\n![产品架构](https://example.com/arch.png)\n\nraisfast 的整体架构说明正文，包含接入层、服务层与存储层的职责划分描述。\n\n![部署](https://example.com/deploy.png)\n\n部署相关正文说明，涵盖单二进制分发与 docker 两种形态。";
+    let doc = ingest_md(&deps, kb.id, "架构文档", md).await;
+
+    // Registration: both external references land as pending rows with a
+    // containing-chunk mapping.
+    let imgs = models::image::list_images_by_doc(&deps.pool, doc, "default")
+        .await
+        .unwrap();
+    assert_eq!(imgs.len(), 2, "both markdown image refs registered");
+    assert!(
+        imgs.iter()
+            .all(|i| i.status == "pending" && i.source == "external" && i.chunk_id.is_some()),
+        "external images are pending and chunk-mapped"
+    );
+
+    // Recognition job body: caption + OCR per image via the per-KB model.
+    let done = raisfast::kb::images::recognize_document(&deps, doc, "default")
+        .await
+        .unwrap();
+    assert_eq!(done, 2);
+    let seen = provider.seen.lock().unwrap().clone();
+    assert_eq!(seen.len(), 4, "two calls per image (caption + OCR)");
+    assert!(
+        seen.iter()
+            .all(|(m, i)| m == "kb-test-model" && i.len() == 1),
+        "every VLM call uses the per-KB model with exactly one image: {seen:?}"
+    );
+    assert!(
+        seen.iter()
+            .all(|(_, i)| i[0].starts_with("https://example.com/")),
+        "external images ride the message as URLs"
+    );
+
+    // Results + standalone retrieval chunks (embedded + FTS).
+    let imgs = models::image::list_images_by_doc(&deps.pool, doc, "default")
+        .await
+        .unwrap();
+    assert!(
+        imgs.iter()
+            .all(|i| i.status == "done" && i.caption.is_some())
+    );
+    let chunks = models::chunk::find_chunks_by_doc(&deps.pool, doc)
+        .await
+        .unwrap();
+    let img_chunks: Vec<_> = chunks.iter().filter(|c| c.kind == "image").collect();
+    assert_eq!(img_chunks.len(), 2, "one standalone chunk per image");
+    assert!(img_chunks.iter().all(|c| c.embedding.is_some()));
+    assert!(
+        img_chunks
+            .iter()
+            .any(|c| c.content.contains("产品架构总览图")),
+        "caption lands in the chunk content"
+    );
+
+    // Retrieval sees the image content (P3 index-side effect).
+    let ask = AskRequest {
+        tenant_id: "default".into(),
+        kb_ids: vec![i64::from(kb.id)],
+        doc_ids: Vec::new(),
+        question: "产品架构总览图讲了什么".into(),
+    };
+    let out = pipeline::prepare_answer(&deps, &ask).await.unwrap();
+    assert!(
+        out.context_units.iter().any(|u| u.kind == "image"),
+        "recognized image must be retrievable"
     );
 }
 
@@ -925,6 +1243,9 @@ async fn s18_update_kb_metadata_and_tenant_guard() {
             rerank_model: None,
             rerank_window: None,
             rerank_threshold: None,
+            chat_model: None,
+            distill_model: None,
+            image_config: None,
         },
         "default",
     )
@@ -952,6 +1273,9 @@ async fn s18_update_kb_metadata_and_tenant_guard() {
             rerank_model: None,
             rerank_window: None,
             rerank_threshold: None,
+            chat_model: None,
+            distill_model: None,
+            image_config: None,
         },
         "other-tenant",
     )

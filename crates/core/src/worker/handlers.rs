@@ -261,6 +261,17 @@ pub fn register_all(deps: HandlerDeps) -> JobHandlerRegistry {
             )),
         );
         registry.register(
+            "kb_image_recognize",
+            Box::new(kb::KbImageRecognizeHandler::new(
+                pool.clone(),
+                kb_runtime.clone(),
+                kb_storage.clone(),
+                config.clone(),
+                llm_router.clone(),
+                emitter.clone(),
+            )),
+        );
+        registry.register(
             "kb_rebuild_vector_index",
             Box::new(kb::KbRebuildVectorIndexHandler::new(
                 pool.clone(),
