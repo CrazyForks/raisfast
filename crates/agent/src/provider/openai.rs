@@ -65,7 +65,11 @@ impl OpenAiCompatProvider {
     /// `http://localhost:11434/v1`. `api_key` is optional (Ollama / no-auth).
     pub fn new(base_url: impl Into<String>, api_key: Option<String>) -> Self {
         let http = reqwest::Client::builder()
-            .timeout(Duration::from_secs(120))
+            // 300s: local model servers (Ollama VLM on CPU) legitimately
+            // exceed the old 120s on large inputs; observed VLM caption
+            // calls run 36-100s+ and transport-timeout at 120s, which the
+            // gateway then misreads as a dead channel (cooldown cascade).
+            .timeout(Duration::from_secs(300))
             .build()
             .expect("reqwest client build is infallible");
         Self {

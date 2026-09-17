@@ -45,6 +45,21 @@ fn main() {
     let schema = parse_schema(&root);
     let code = generate_code(&schema);
     fs::write(&dest, code).unwrap();
+
+    // Compile the vendored docreader proto (services/docreader) into the
+    // docreader parse-engine client (+ server stubs for in-process fakes).
+    let proto = root
+        .join("services")
+        .join("docreader")
+        .join("proto")
+        .join("docreader.proto");
+    println!("cargo:rerun-if-changed={}", proto.display());
+    let include = proto.parent().expect("proto dir").to_path_buf();
+    tonic_prost_build::configure()
+        .build_client(true)
+        .build_server(true)
+        .compile_protos(&[proto], &[include])
+        .expect("docreader proto compile");
 }
 
 fn parse_schema(root: &Path) -> HashMap<String, Vec<String>> {

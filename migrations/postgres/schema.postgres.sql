@@ -1638,6 +1638,7 @@ CREATE TABLE IF NOT EXISTS kb_knowledge_bases (
     chat_model TEXT,
     distill_model TEXT,
     image_config JSONB,
+    parser_config JSONB,
     status TEXT NOT NULL DEFAULT 'active',
     created_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW()
@@ -1657,6 +1658,9 @@ CREATE TABLE IF NOT EXISTS kb_documents (
     parse_format TEXT NOT NULL DEFAULT 'markdown',
     status TEXT NOT NULL DEFAULT 'pending',
     error TEXT,
+    parse_degraded TEXT,
+    pages BIGINT,
+    parser_engine TEXT,
     chunk_count BIGINT NOT NULL DEFAULT 0,
     steps JSONB,
     created_by BIGINT,
@@ -1682,6 +1686,7 @@ CREATE TABLE IF NOT EXISTS kb_chunks (
     embedding BYTEA,
     embedding_model TEXT,
     image_info JSONB,
+    page BIGINT,
     status TEXT NOT NULL DEFAULT 'active',
     created_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW()
@@ -1747,6 +1752,7 @@ CREATE TABLE IF NOT EXISTS kb_images (
     storage_key TEXT,
     mime_type TEXT NOT NULL,
     bytes BIGINT,
+    page BIGINT,
     source TEXT NOT NULL DEFAULT 'embedded',
     original_url TEXT,
     caption TEXT,

@@ -110,6 +110,7 @@ async fn deps_with_provider(provider: Arc<dyn ModelProvider>) -> KbDeps {
         kbsearch: Arc::new(raisfast::kb::kbsearch::KbSearchEngine::open_in_memory().unwrap()),
         embedder: Arc::new(SumEmbedder(4)),
         reranker: None,
+        parsers: std::sync::Arc::new(raisfast::kb::parser::ParserRegistry::new(Vec::new())),
         router,
         emitter: raisfast::event::EventEmitter::eventbus_only(raisfast::eventbus::EventBus::new(
             16,
@@ -134,6 +135,7 @@ async fn seed_kb(deps: &KbDeps, name: &str) -> SnowflakeId {
             chat_model: None,
             distill_model: None,
             image_config: None,
+            parser_config: None,
         },
         "default",
     )
@@ -582,6 +584,7 @@ async fn s16_wiki_list_without_kb_spans_tenant_kbs() {
             chat_model: None,
             distill_model: None,
             image_config: None,
+            parser_config: None,
         },
         "other-tenant",
     )
@@ -716,6 +719,7 @@ async fn s20_distill_uses_per_kb_model() {
             chat_model: None,
             distill_model: Some("kb-distill-model".into()),
             image_config: None,
+            parser_config: None,
         },
         "default",
     )
@@ -801,6 +805,7 @@ async fn s21_image_recognition_pipeline() {
                 "model": "kb-test-model", // registered in the test router
                 "caption_language": "zh"
             })),
+            parser_config: None,
         },
         "default",
     )
@@ -1220,7 +1225,7 @@ async fn s17_tenant_isolation() {
         .await
         .unwrap();
     assert!(got.is_none(), "cross-tenant kb read must be invisible");
-    let doc = ingest_md(&deps, kb, "文档", "# 文\n\n内容").await;
+    let doc = ingest_md(&deps, kb, "文档", "# 文档隔离\n\n租户隔离测试的正文内容。").await;
     let got = models::document::find_document_by_id(&deps.pool, doc, "other-tenant")
         .await
         .unwrap();
@@ -1246,6 +1251,7 @@ async fn s18_update_kb_metadata_and_tenant_guard() {
             chat_model: None,
             distill_model: None,
             image_config: None,
+            parser_config: None,
         },
         "default",
     )
@@ -1276,6 +1282,7 @@ async fn s18_update_kb_metadata_and_tenant_guard() {
             chat_model: None,
             distill_model: None,
             image_config: None,
+            parser_config: None,
         },
         "other-tenant",
     )
@@ -1466,6 +1473,7 @@ async fn s21_chunk_edit_failure_records_failed_run() {
         kbsearch: good.kbsearch.clone(),
         embedder: Arc::new(FailingEmbedder),
         reranker: None,
+        parsers: std::sync::Arc::new(raisfast::kb::parser::ParserRegistry::new(Vec::new())),
         router: good.router.clone(),
         emitter: good.emitter.clone(),
     };
@@ -1520,6 +1528,7 @@ async fn s22_cold_bruteforce_rebuilds_on_first_search() {
         kbsearch: deps.kbsearch.clone(),
         embedder: deps.embedder.clone(),
         reranker: None,
+        parsers: std::sync::Arc::new(raisfast::kb::parser::ParserRegistry::new(Vec::new())),
         router: deps.router.clone(),
         emitter: deps.emitter.clone(),
     };
@@ -1743,4 +1752,292 @@ async fn backdate(pool: &raisfast::db::Pool, table: &str, col: &str, id: i64, se
         .execute(pool)
         .await
         .unwrap();
+}
+
+// ── 场景：解析引擎路由（E1，kb-parser-engines-design §2 D2）──────────
+
+#[tokio::test]
+async fn s22_parser_route_layers_and_fallback() {
+    let deps = deps().await;
+    let kb = models::knowledge_base::create_kb(
+        &deps.pool,
+        &CreateKbCmd {
+            name: "route".into(),
+            description: None,
+            slug: format!("route-{}", raisfast::utils::id::new_id()),
+            kind: "document".into(),
+            indexing_strategy: None,
+            embedding_model: Some("m".into()),
+            embedding_dim: Some(4),
+            rerank_model: None,
+            rerank_window: None,
+            rerank_threshold: None,
+            chat_model: None,
+            distill_model: None,
+            image_config: None,
+            parser_config: Some(serde_json::json!({
+                "rules": [{"file_types": ["pdf"], "engine": "ghost"}]
+            })),
+        },
+        "default",
+    )
+    .await
+    .unwrap();
+    let kb_row = models::knowledge_base::find_kb_by_id(&deps.pool, kb.id, "default")
+        .await
+        .unwrap()
+        .unwrap();
+
+    // ① 规则命中但引擎不存在 → warn + builtin 兜底
+    let (engine, warnings) = deps
+        .parsers
+        .route(&deps, &kb_row, None, "application/pdf", "p.pdf")
+        .await
+        .unwrap();
+    assert_eq!(engine.name(), "builtin");
+    assert!(
+        warnings
+            .iter()
+            .any(|w| w.contains("unknown engine 'ghost'")),
+        "{warnings:?}"
+    );
+
+    // ⓪ 文档级覆盖优先于规则；未知覆盖同样回落
+    let (engine, warnings) = deps
+        .parsers
+        .route(&deps, &kb_row, Some("ghost"), "text/markdown", "n.md")
+        .await
+        .unwrap();
+    assert_eq!(engine.name(), "builtin");
+    assert!(
+        warnings.iter().any(|w| w.contains("doc override")),
+        "{warnings:?}"
+    );
+
+    // 非命中类型 → 无警告直达 builtin
+    let (engine, warnings) = deps
+        .parsers
+        .route(&deps, &kb_row, None, "text/markdown", "n.md")
+        .await
+        .unwrap();
+    assert_eq!(engine.name(), "builtin");
+    assert!(warnings.is_empty());
+
+    // 文档覆盖持久化：设置后重解析仍生效（行为位——列写读）
+    let doc = ingest_md(&deps, kb.id, "路由", "# 路由\n\n解析引擎路由测试正文内容。").await;
+    models::document::set_document_parser_engine(&deps.pool, doc, Some("builtin"), "default")
+        .await
+        .unwrap();
+    let got = models::document::find_document_by_id(&deps.pool, doc, "default")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(got.parser_engine.as_deref(), Some("builtin"));
+}
+
+// ── 场景：docreader 解析引擎（E2，kb-parser-engines-design §4）────────
+
+/// In-process fake docreader server: scripted ReadStream frames (meta +
+/// one image) + ListEngines liveness. Exercises the REAL tonic client and
+/// the engine's stream/frame mapping without any external service.
+struct FakeDocreader {
+    markdown: &'static str,
+    image_ref: &'static str,
+}
+
+#[async_trait::async_trait]
+impl raisfast::kb::parser::docreader_proto::DocReader for FakeDocreader {
+    async fn read(
+        &self,
+        _request: tonic::Request<raisfast::kb::parser::docreader_proto::pb::ReadRequest>,
+    ) -> std::result::Result<
+        tonic::Response<raisfast::kb::parser::docreader_proto::pb::ReadResponse>,
+        tonic::Status,
+    > {
+        Err(tonic::Status::unimplemented("use read_stream"))
+    }
+
+    type ReadStreamStream = std::pin::Pin<
+        Box<
+            dyn futures::Stream<
+                    Item = std::result::Result<
+                        raisfast::kb::parser::docreader_proto::pb::ReadStreamResponse,
+                        tonic::Status,
+                    >,
+                > + Send,
+        >,
+    >;
+
+    async fn read_stream(
+        &self,
+        request: tonic::Request<raisfast::kb::parser::docreader_proto::pb::ReadRequest>,
+    ) -> std::result::Result<tonic::Response<Self::ReadStreamStream>, tonic::Status> {
+        use raisfast::kb::parser::docreader_proto::pb;
+        let req = request.into_inner();
+        assert!(
+            !req.file_content.is_empty(),
+            "file bytes must ride the request"
+        );
+        let meta = pb::ReadStreamMeta {
+            markdown_content: self.markdown.to_string(),
+            image_dir_path: "images/".into(),
+            metadata: [("page_count".to_string(), "3".to_string())]
+                .into_iter()
+                .collect(),
+            error: String::new(),
+            image_count: 1,
+        };
+        let image = pb::ImageRef {
+            filename: self.image_ref.into(),
+            original_ref: self.image_ref.into(),
+            mime_type: "image/png".into(),
+            storage_key: String::new(),
+            image_data: vec![0x89, b'P', b'N', b'G', 1, 2, 3, 4],
+        };
+        let frames = vec![
+            Ok(pb::ReadStreamResponse {
+                payload: Some(pb::read_stream_response::Payload::Meta(meta)),
+            }),
+            Ok(pb::ReadStreamResponse {
+                payload: Some(pb::read_stream_response::Payload::Image(image)),
+            }),
+        ];
+        Ok(tonic::Response::new(Box::pin(futures::stream::iter(
+            frames,
+        ))))
+    }
+
+    async fn list_engines(
+        &self,
+        _request: tonic::Request<raisfast::kb::parser::docreader_proto::pb::ListEnginesRequest>,
+    ) -> std::result::Result<
+        tonic::Response<raisfast::kb::parser::docreader_proto::pb::ListEnginesResponse>,
+        tonic::Status,
+    > {
+        Ok(tonic::Response::new(
+            raisfast::kb::parser::docreader_proto::pb::ListEnginesResponse { engines: vec![] },
+        ))
+    }
+}
+
+async fn spawn_fake_docreader(fake: FakeDocreader) -> String {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        let _ = tonic::transport::Server::builder()
+            .add_service(raisfast::kb::parser::docreader_proto::DocReaderServer::new(
+                fake,
+            ))
+            .serve_with_incoming(tokio_stream::wrappers::TcpListenerStream::new(listener))
+            .await;
+    });
+    format!("http://{}", addr)
+}
+
+#[tokio::test]
+async fn s23_docreader_engine_full_chain() {
+    let mut deps = deps().await;
+    // Fake docreader on a random port, wired into the deps' registry.
+    let fake_url = spawn_fake_docreader(FakeDocreader {
+        markdown: "<!-- page:1 -->\n\n# 引擎解析\n\n<!-- page:2 -->\n\n![架构图](images/fig-1.png)\n\n由 docreader 服务返回的正文内容，包含足够的可检索文本。",
+        image_ref: "images/fig-1.png",
+    })
+    .await;
+    let engine = std::sync::Arc::new(raisfast::kb::parser::docreader::DocreaderEngine::new(
+        fake_url, 10,
+    ));
+    assert!(raisfast::kb::parser::ParseEngine::probe(engine.as_ref()).await);
+    deps.parsers = std::sync::Arc::new(raisfast::kb::parser::ParserRegistry::new(vec![
+        engine.clone(),
+    ]));
+
+    // KB routes pdf → docreader; recognition on so engine images register.
+    let kb = models::knowledge_base::create_kb(
+        &deps.pool,
+        &CreateKbCmd {
+            name: "dr".into(),
+            description: None,
+            slug: format!("dr-{}", raisfast::utils::id::new_id()),
+            kind: "document".into(),
+            indexing_strategy: None,
+            embedding_model: Some("m".into()),
+            embedding_dim: Some(4),
+            rerank_model: None,
+            rerank_window: None,
+            rerank_threshold: None,
+            chat_model: None,
+            distill_model: None,
+            image_config: Some(serde_json::json!({
+                "enabled": true, "model": "kb-test-model"
+            })),
+            parser_config: Some(serde_json::json!({
+                "rules": [{"file_types": ["pdf"], "engine": "docreader"}]
+            })),
+        },
+        "default",
+    )
+    .await
+    .unwrap();
+
+    // Any bytes pass — the fake server ignores content and scripts markdown.
+    let doc = service::upload_document(
+        &deps,
+        kb.id,
+        "paper.pdf",
+        "application/pdf",
+        b"%PDF-1.4 fake-bytes-for-fake-server",
+        None,
+        "default",
+    )
+    .await
+    .unwrap();
+    service::process_document(&deps, doc.id, "default")
+        .await
+        .unwrap();
+
+    // Engine markdown landed (chunk text from the fake, not anydoc).
+    let chunks = models::chunk::find_chunks_by_doc(&deps.pool, doc.id)
+        .await
+        .unwrap();
+    assert!(
+        chunks.iter().any(|c| c.content.contains("引擎解析")),
+        "chunks must come from the engine markdown"
+    );
+    // Engine image registered WITH chunk association (ref match) [E2 验收：
+    // chunk 级关联断言].
+    let imgs = models::image::list_images_by_doc(&deps.pool, doc.id, "default")
+        .await
+        .unwrap();
+    assert_eq!(imgs.len(), 1);
+    assert_eq!(imgs[0].source, "embedded");
+    assert!(
+        imgs[0].chunk_id.is_some(),
+        "engine ref must map to its chunk"
+    );
+    let got = models::document::find_document_by_id(&deps.pool, doc.id, "default")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(got.status, "ready");
+}
+
+#[tokio::test]
+async fn s24_image_upload_requires_engine() {
+    let deps = deps().await; // registry without docreader
+    let kb = seed_kb(&deps, "kb").await;
+    let err = service::upload_document(
+        &deps,
+        kb,
+        "photo.png",
+        "image/png",
+        b"\x89PNG fake",
+        None,
+        "default",
+    )
+    .await
+    .unwrap_err();
+    assert!(
+        err.to_string().contains("解析引擎"),
+        "clear engine-required error, got: {err}"
+    );
 }

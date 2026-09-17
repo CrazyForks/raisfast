@@ -94,6 +94,7 @@ impl KbProcessDocumentHandler {
             kbsearch: self.runtime.kbsearch.clone(),
             embedder: self.runtime.embedder.clone(),
             reranker: self.runtime.reranker.clone(),
+            parsers: self.runtime.parsers.clone(),
             router: self.llm_router.clone(),
             emitter: self.emitter.clone(),
         };
@@ -228,6 +229,7 @@ impl JobHandler for KbDistillWikiHandler {
             kbsearch: self.runtime.kbsearch.clone(),
             embedder: self.runtime.embedder.clone(),
             reranker: self.runtime.reranker.clone(),
+            parsers: self.runtime.parsers.clone(),
             router: self.llm_router.clone(),
             emitter: self.emitter.clone(),
         };
@@ -327,6 +329,7 @@ impl KbImageRecognizeHandler {
             kbsearch: self.runtime.kbsearch.clone(),
             embedder: self.runtime.embedder.clone(),
             reranker: self.runtime.reranker.clone(),
+            parsers: self.runtime.parsers.clone(),
             router: self.llm_router.clone(),
             emitter: self.emitter.clone(),
         };

@@ -26,6 +26,8 @@ pub struct KbRuntime {
     pub embedder: std::sync::Arc<dyn service::KbEmbedder>,
     /// S5 reranker; `None` when no rerank model is configured (§6.1).
     pub reranker: Option<std::sync::Arc<dyn rerank::KbReranker>>,
+    /// Parser engine registry.
+    pub parsers: std::sync::Arc<parser::ParserRegistry>,
 }
 
 /// Build the KB runtime from config; `Ok(None)` when the KB is disabled,
@@ -53,17 +55,31 @@ pub fn build_kb_runtime(
     if let Some(model) = config.kb.rerank_model.as_deref() {
         tracing::info!("kb rerank default model: '{model}' (per-KB rows may override)");
     }
+    // Parser registry: builtin always; docreader when its endpoint is
+    // configured (kb-parser-engines-design §2 D3).
+    let mut engines: Vec<std::sync::Arc<dyn parser::ParseEngine>> = Vec::new();
+    if let Some(docreader) = parser::docreader::DocreaderEngine::from_config(&config.kb) {
+        tracing::info!(
+            "kb parse engine 'docreader' configured ({})",
+            config.kb.docreader_url.as_deref().unwrap_or_default()
+        );
+        engines.push(std::sync::Arc::new(docreader));
+    }
+    let parsers = std::sync::Arc::new(parser::ParserRegistry::new(engines));
     Ok(Some(std::sync::Arc::new(KbRuntime {
         vector,
         kbsearch: std::sync::Arc::new(kbsearch),
         embedder,
         reranker: Some(reranker),
+        parsers,
     })))
 }
 pub mod handler;
 pub mod images;
 pub mod kbsearch;
 pub mod models;
+pub mod parse_quality;
+pub mod parser;
 pub mod pipeline;
 pub mod service;
 pub mod trace;

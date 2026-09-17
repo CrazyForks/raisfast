@@ -336,6 +336,8 @@ async fn index_page_units(
             questions: None,
             embedding: None,
             embedding_model: None,
+            image_info: None,
+            page: None,
             created_at: now,
         });
     }
@@ -520,6 +522,7 @@ mod tests {
             kbsearch: Arc::new(crate::kb::kbsearch::KbSearchEngine::open_in_memory().unwrap()),
             embedder: Arc::new(MockEmbedder),
             reranker: None,
+            parsers: std::sync::Arc::new(crate::kb::parser::ParserRegistry::new(Vec::new())),
             router,
             emitter: crate::event::EventEmitter::eventbus_only(bus),
         }
@@ -542,6 +545,7 @@ mod tests {
                 chat_model: None,
                 distill_model: None,
                 image_config: None,
+                parser_config: None,
             },
             "default",
         )

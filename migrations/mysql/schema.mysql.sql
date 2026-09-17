@@ -1570,6 +1570,7 @@ CREATE TABLE IF NOT EXISTS kb_knowledge_bases (
     chat_model VARCHAR(100),
     distill_model VARCHAR(100),
     image_config JSON,
+    parser_config JSON,
     status VARCHAR(20) NOT NULL DEFAULT 'active',
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -1589,6 +1590,9 @@ CREATE TABLE IF NOT EXISTS kb_documents (
     parse_format VARCHAR(20) NOT NULL DEFAULT 'markdown',
     status VARCHAR(20) NOT NULL DEFAULT 'pending',
     error TEXT,
+    parse_degraded TEXT,
+    pages BIGINT,
+    parser_engine VARCHAR(50),
     chunk_count BIGINT NOT NULL DEFAULT 0,
     steps JSON,
     created_by BIGINT,
@@ -1613,6 +1617,8 @@ CREATE TABLE IF NOT EXISTS kb_chunks (
     questions JSON,
     embedding BLOB,
     embedding_model VARCHAR(100),
+    image_info JSON,
+    page BIGINT,
     status VARCHAR(20) NOT NULL DEFAULT 'active',
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -1667,6 +1673,28 @@ CREATE TABLE IF NOT EXISTS kb_faqs (
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     INDEX idx_kb_faqs_kb (kb_id, enabled)
+);
+
+CREATE TABLE IF NOT EXISTS kb_images (
+    id BIGINT PRIMARY KEY,
+    tenant_id VARCHAR(36) NOT NULL DEFAULT 'default',
+    kb_id BIGINT NOT NULL,
+    doc_id BIGINT NOT NULL,
+    chunk_id BIGINT,
+    page BIGINT,
+    storage_key VARCHAR(255),
+    mime_type VARCHAR(100) NOT NULL,
+    bytes BIGINT,
+    source VARCHAR(20) NOT NULL DEFAULT 'embedded',
+    original_url TEXT,
+    caption TEXT,
+    ocr_text TEXT,
+    status VARCHAR(20) NOT NULL DEFAULT 'pending',
+    error TEXT,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_kb_images_doc (doc_id),
+    INDEX idx_kb_images_status (kb_id, status)
 );
 
 CREATE TABLE IF NOT EXISTS kb_query_logs (

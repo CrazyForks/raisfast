@@ -30,6 +30,16 @@ pub struct KbDocument {
     /// | `ready` | `failed` [抄WK:types/knowledge_process.go].
     pub status: String,
     pub error: Option<String>,
+    /// Parse-quality degraded marker (JSON `{engine, scanned_pages[]}`);
+    /// `None` = fully parsed. Set by the QA gate, surfaced as a
+    /// "部分解析" badge (kb-parser-engines-design §3.3).
+    pub parse_degraded: Option<String>,
+    /// Total pages reported by the parser (PDF; NULL for other formats /
+    /// pre-upgrade rows).
+    pub pages: Option<i64>,
+    /// Per-document parser engine override (request-level; persists for
+    /// reparse) [抄WK:ReadRequest.ParserEngine].
+    pub parser_engine: Option<String>,
     pub chunk_count: i64,
     /// Per-step timing: `{"parsing": {"start": ts, "end": ts}, ...}`.
     #[sqlx(default)]
@@ -223,6 +233,63 @@ pub async fn set_document_status(
             tenant: Some(tenant_id)
         )?;
     }
+    Ok(())
+}
+
+/// Set or clear the parse-degraded marker (E0 §3.3): status stays `ready`;
+/// the marker carries the skipped-page list for the admin badge.
+/// Set the per-document parser engine override (request-level; persists
+/// for reparse) [抄WK:ReadRequest.ParserEngine].
+pub async fn set_document_parser_engine(
+    pool: &crate::db::Pool,
+    id: SnowflakeId,
+    parser_engine: Option<&str>,
+    tenant_id: &str,
+) -> AppResult<()> {
+    let now = crate::utils::tz::now_utc();
+    raisfast_derive::crud_update!(
+        pool,
+        "kb_documents",
+        bind: ["parser_engine" => parser_engine, "updated_at" => now],
+        where: ("id", id),
+        tenant: Some(tenant_id)
+    )?;
+    Ok(())
+}
+
+/// Persist the parser-reported page count (list display).
+pub async fn set_document_pages(
+    pool: &crate::db::Pool,
+    id: SnowflakeId,
+    pages: Option<u32>,
+    tenant_id: &str,
+) -> AppResult<()> {
+    let now = crate::utils::tz::now_utc();
+    let pages = pages.map(|p| p as i64);
+    raisfast_derive::crud_update!(
+        pool,
+        "kb_documents",
+        bind: ["pages" => pages, "updated_at" => now],
+        where: ("id", id),
+        tenant: Some(tenant_id)
+    )?;
+    Ok(())
+}
+
+pub async fn set_document_degraded(
+    pool: &crate::db::Pool,
+    id: SnowflakeId,
+    parse_degraded: Option<&str>,
+    tenant_id: &str,
+) -> AppResult<()> {
+    let now = crate::utils::tz::now_utc();
+    raisfast_derive::crud_update!(
+        pool,
+        "kb_documents",
+        bind: ["parse_degraded" => parse_degraded, "updated_at" => now],
+        where: ("id", id),
+        tenant: Some(tenant_id)
+    )?;
     Ok(())
 }
 

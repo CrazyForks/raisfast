@@ -225,6 +225,9 @@ pub struct KbDeps {
     pub embedder: Arc<dyn KbEmbedder>,
     /// S5 reranker; `None` = rerank off (§6.1).
     pub reranker: Option<Arc<dyn crate::kb::rerank::KbReranker>>,
+    /// Parser engine registry (builtin always; service engines as
+    /// configured) — kb-parser-engines-design §2.
+    pub parsers: Arc<crate::kb::parser::ParserRegistry>,
     /// LLM 底座（chat + embedding 唯一入口，§10.2）。
     pub router: Arc<crate::llm::service::LlmRouter>,
     pub emitter: EventEmitter,
@@ -248,6 +251,12 @@ pub const KB_ALLOWED_MIME: &[&str] = &[
     "application/json",
     "application/rtf",
     "application/vnd.oasis.opendocument.text",
+    // Image-as-document (kb-parser-engines-design §0): builtin cannot
+    // parse these — a configured service engine (docreader) takes them;
+    // upload pre-check rejects with a clear error when none is available.
+    "image/png",
+    "image/jpeg",
+    "image/webp",
 ];
 
 const MAX_DOC_BYTES: usize = 50 * 1024 * 1024;
@@ -268,6 +277,27 @@ pub async fn upload_document(
         return Err(AppError::BadRequest(format!(
             "unsupported kb document type: {mime}"
         )));
+    }
+    // Type the builtin cannot parse (image-as-document): reject at upload
+    // with a clear error unless a service engine is routable — never
+    // accept-and-fail-silently (kb-parser-engines-design §0).
+    let builtin = crate::kb::parser::builtin::BuiltinEngine;
+    if !crate::kb::parser::ParseEngine::supports(&builtin, &mime, filename) {
+        let kb = knowledge_base::find_kb_by_id(&deps.pool, kb_id, tenant_id).await?;
+        let routable = match kb {
+            Some(kb) => deps
+                .parsers
+                .route(deps, &kb, None, &mime, filename)
+                .await
+                .map(|(e, _)| e.supports(&mime, filename))
+                .unwrap_or(false),
+            None => false,
+        };
+        if !routable {
+            return Err(AppError::BadRequest(format!(
+                "文件类型 {mime} 需要解析引擎（如 docreader）：请在服务端配置                  RAISFAST_KB_DOCREADER_URL 并将 KB 的 parser_config 规则指向它"
+            )));
+        }
     }
     if data.is_empty() {
         return Err(AppError::BadRequest("empty file".into()));
@@ -411,13 +441,19 @@ async fn process_document_inner(
     trace.set_kb(kb.id);
     trace.begin(&deps.pool, &deps.config).await;
 
-    // ① parse → markdown [抄EXT:anydoc]
+    // ① parse → markdown via the engine registry (kb-parser-engines §2).
     trace.stage("parse");
     document::set_document_status(&deps.pool, doc_id, "parsing", None, None, tenant_id).await?;
     // Image recognition gate: resolved before parse so disabled KBs skip the
     // asset pass entirely (kb-image-recognition-design §3 D2).
     let image_cfg = crate::kb::images::resolve_image_config(deps, &kb);
-    let (markdown, raw_bytes) = match &doc.storage_key {
+    let mime = doc.mime_type.as_deref().unwrap_or_default();
+    let filename = doc.storage_key.as_deref().unwrap_or_default();
+    let (engine, route_warnings) = deps
+        .parsers
+        .route(deps, &kb, doc.parser_engine.as_deref(), mime, filename)
+        .await?;
+    let (markdown, parsed) = match &doc.storage_key {
         Some(key) => {
             let bytes = deps.storage.get(key).await?;
             if bytes.is_empty() {
@@ -425,17 +461,71 @@ async fn process_document_inner(
                     "document bytes missing in storage".into(),
                 ));
             }
-            let md = parse_to_markdown(&doc, &bytes)?;
-            (md, bytes)
+            let mut parsed = engine
+                .parse(
+                    &bytes,
+                    mime,
+                    filename,
+                    &crate::kb::parser::ParseOpts {
+                        extract_images: image_cfg.is_some(),
+                    },
+                )
+                .await
+                .map_err(|e| {
+                    // Engine runtime error fails the document loudly — never
+                    // silently degrade to builtin (§2 D2 failure semantics).
+                    AppError::BadRequest(format!("parse engine '{}': {e}", engine.name()))
+                })?;
+            parsed.engine = engine.name().to_string();
+            let markdown = parsed.markdown.clone();
+            (markdown, parsed)
         }
         None => return Err(AppError::BadRequest("document has no storage key".into())),
     };
+    // QA gate (kb-parser-engines-design §3.2): empty/corrupted content never
+    // enters the index; partial degradation becomes a first-class marker.
+    let gate_warnings = match crate::kb::parse_quality::gate(&parsed) {
+        Ok(mut warnings) => {
+            warnings.extend(route_warnings.iter().cloned());
+            warnings
+        }
+        Err(e) => {
+            document::set_document_status(
+                &deps.pool,
+                doc_id,
+                "failed",
+                Some(&e.to_string()),
+                None,
+                tenant_id,
+            )
+            .await?;
+            trace.end_stage(
+                crate::kb::trace::STAGE_FAILED,
+                serde_json::json!({
+                    "engine": parsed.engine,
+                    "effective_chars": crate::kb::parse_quality::effective_chars(&markdown),
+                    "gate": "rejected",
+                }),
+                Some(&e.to_string()),
+            );
+            return Err(e);
+        }
+    };
+    let degraded = crate::kb::parse_quality::degraded_marker(&parsed);
+    document::set_document_degraded(&deps.pool, doc_id, degraded.as_deref(), tenant_id).await?;
+    document::set_document_pages(&deps.pool, doc_id, parsed.pages, tenant_id).await?;
     trace.end_stage(
         crate::kb::trace::STAGE_OK,
         serde_json::json!({
+            "engine": parsed.engine,
             "bytes": doc.size,
             "mime": doc.mime_type,
             "chars": markdown.chars().count(),
+            "effective_chars": crate::kb::parse_quality::effective_chars(&markdown),
+            "pages": parsed.pages,
+            "scanned_pages": parsed.scanned_pages.len(),
+            "gate": if gate_warnings.is_empty() { "passed" } else { "degraded" },
+            "warnings": gate_warnings,
         }),
         None,
     );
@@ -450,6 +540,9 @@ async fn process_document_inner(
 
     let cfg = ChunkerConfig::default();
     let raw_chunks = chunker::chunk_markdown(&markdown, &cfg);
+    // Page anchors (engine markdown): chunk→page mapping + anchor lines
+    // stripped from retrieval text (kb-parser-engines 页级定位).
+    let marks = crate::kb::parse_quality::page_marks(&markdown);
     let now = crate::utils::tz::now_utc();
     let mut inserts = Vec::with_capacity(raw_chunks.len());
     for (i, c) in raw_chunks.iter().enumerate() {
@@ -463,7 +556,7 @@ async fn process_document_inner(
             kind: "document".into(),
             parent_id: None, // patched below for children
             seq: i as i64,
-            content: c.content.clone(),
+            content: crate::kb::parse_quality::strip_page_marks(&c.content),
             breadcrumb: if c.breadcrumb.is_empty() {
                 None
             } else {
@@ -474,6 +567,8 @@ async fn process_document_inner(
             questions: None,
             embedding: None,
             embedding_model: None,
+            image_info: None,
+            page: crate::kb::parse_quality::page_of(&marks, c.byte_start).map(i64::from),
             created_at: now,
         });
     }
@@ -500,7 +595,7 @@ async fn process_document_inner(
         image_count = crate::kb::images::register_document_images(
             deps,
             &doc,
-            Some(&raw_bytes),
+            &parsed.images,
             &markdown,
             &chunk_rows,
             tenant_id,
@@ -646,36 +741,13 @@ async fn process_document_inner(
     Ok(())
 }
 
-/// Parse raw bytes to markdown. Markdown files pass through unchanged;
-/// everything else goes through anydoc [抄EXT:anydoc to_markdown_bytes].
-/// PDFs with scanned/image-only pages degrade to per-page extraction with
-/// placeholders instead of failing the whole document (pdf-inspector
-/// per-page API 混合 OCR 语义；真实 OCR 是后续工作).
-fn parse_to_markdown(doc: &document::KbDocument, bytes: &[u8]) -> AppResult<String> {
-    let is_markdown = doc
-        .mime_type
-        .as_deref()
-        .is_some_and(|m| m == "text/markdown" || m == "text/plain")
-        || doc
-            .storage_key
-            .as_deref()
-            .is_some_and(|k| k.ends_with(".md"));
-    if is_markdown {
-        return String::from_utf8(bytes.to_vec())
-            .map_err(|e| AppError::BadRequest(format!("invalid utf-8 markdown: {e}")));
-    }
-    match anydoc::to_markdown_bytes(bytes, None) {
-        Ok(md) => Ok(md),
-        Err(anydoc::ConvertError::NeedsOcr { pages, page_count }) => {
-            extract_pdf_skip_ocr(bytes, &pages, page_count)
-        }
-        Err(e) => Err(AppError::BadRequest(format!("document parse failed: {e}"))),
-    }
-}
-
 /// Degraded PDF parse: keep text pages, insert placeholders for scanned
 /// pages. Fails only when nothing extractable remains.
-fn extract_pdf_skip_ocr(bytes: &[u8], ocr_pages: &[u32], page_count: u32) -> AppResult<String> {
+pub(crate) fn extract_pdf_skip_ocr(
+    bytes: &[u8],
+    ocr_pages: &[u32],
+    page_count: u32,
+) -> AppResult<String> {
     let extracted = pdf_inspector::extract_pages_markdown_mem(bytes, None)
         .map_err(|e| AppError::BadRequest(format!("document parse failed: {e}")))?;
     let mut md = String::new();
@@ -886,6 +958,7 @@ mod tests {
             kbsearch: Arc::new(KbSearchEngine::open_in_memory().unwrap()),
             embedder: Arc::new(MockEmbedder { dim: 4 }),
             reranker: None,
+            parsers: std::sync::Arc::new(crate::kb::parser::ParserRegistry::new(Vec::new())),
             router,
             emitter: EventEmitter::eventbus_only(bus),
         }
@@ -908,6 +981,7 @@ mod tests {
                 chat_model: None,
                 distill_model: None,
                 image_config: None,
+                parser_config: None,
             },
             "default",
         )
@@ -1028,7 +1102,7 @@ mod tests {
             kb_id,
             "notes.md",
             "text/markdown",
-            b"# T\n\nhello kb",
+            b"# T\n\nhello kb knowledge base markdown upload pipeline",
             None,
             "default",
         )
@@ -1040,6 +1114,87 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(doc.status, "ready");
+    }
+
+    /// E0 QA gate (kb-parser-engines-design §3.2): near-empty content never
+    /// enters the index — the doc fails loudly.
+    #[tokio::test]
+    async fn empty_content_rejected_by_gate() {
+        let deps = test_deps().await;
+        let kb_id = seed_kb(&deps).await;
+        let doc = upload_document(
+            &deps,
+            kb_id,
+            "empty.md",
+            "text/markdown",
+            b"# E\n\n   \n\n  ",
+            None,
+            "default",
+        )
+        .await
+        .unwrap();
+        let err = process_document(&deps, doc.id, "default")
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("解析产物为空"));
+        let doc = document::find_document_by_id(&deps.pool, doc.id, "default")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(doc.status, "failed", "gate rejection must fail the doc");
+        assert!(
+            doc.error
+                .as_deref()
+                .is_some_and(|e| e.contains("解析产物为空"))
+        );
+    }
+
+    /// E0 degraded marker (§3.3): set on partial parse, cleared on a clean
+    /// re-parse; status stays `ready` either way.
+    #[tokio::test]
+    async fn degraded_marker_set_and_cleared() {
+        let deps = test_deps().await;
+        let kb_id = seed_kb(&deps).await;
+        let doc = upload_document(
+            &deps,
+            kb_id,
+            "d.md",
+            "text/markdown",
+            b"# D\n\ncontent long enough to pass the parse gate comfortably",
+            None,
+            "default",
+        )
+        .await
+        .unwrap();
+        process_document(&deps, doc.id, "default").await.unwrap();
+        document::set_document_degraded(
+            &deps.pool,
+            doc.id,
+            Some(r#"{"engine":"builtin","scanned_pages":[2,3]}"#),
+            "default",
+        )
+        .await
+        .unwrap();
+        let doc = document::find_document_by_id(&deps.pool, doc.id, "default")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(doc.status, "ready", "degraded keeps ready status");
+        assert!(
+            doc.parse_degraded
+                .as_deref()
+                .is_some_and(|v| v.contains("scanned_pages"))
+        );
+        // Clean re-parse wipes the marker.
+        process_document(&deps, doc.id, "default").await.unwrap();
+        let doc = document::find_document_by_id(&deps.pool, doc.id, "default")
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(
+            doc.parse_degraded.is_none(),
+            "clean reparse must clear the marker"
+        );
     }
 }
 
@@ -1266,6 +1421,8 @@ pub async fn index_faq(deps: &KbDeps, faq: &crate::kb::models::faq::KbFaq) -> Ap
                 questions: None,
                 embedding: Some(crate::kb::models::chunk::pack_embedding(&vectors[idx])),
                 embedding_model: None,
+                image_info: None,
+                page: None,
                 created_at: now,
             },
         )
@@ -1364,6 +1521,7 @@ mod faq_tests {
             kbsearch: Arc::new(crate::kb::kbsearch::KbSearchEngine::open_in_memory().unwrap()),
             embedder: Arc::new(OneHotEmbedder),
             reranker: None,
+            parsers: std::sync::Arc::new(crate::kb::parser::ParserRegistry::new(Vec::new())),
             router,
             emitter: crate::event::EventEmitter::eventbus_only(crate::eventbus::EventBus::new(16)),
         }
@@ -1386,6 +1544,7 @@ mod faq_tests {
                 chat_model: None,
                 distill_model: None,
                 image_config: None,
+                parser_config: None,
             },
             "default",
         )

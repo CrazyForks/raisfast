@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO kb_knowledge_bases (id, name, description, slug, kind, indexing_strategy, embedding_model, embedding_dim, rerank_model, rerank_window, rerank_threshold, chat_model, distill_model, image_config, parser_config, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 16
+    },
+    "nullable": []
+  },
+  "hash": "fa5d8c33f857903a359eec71fdf62dab720fbed66f0bef2bbc1111e8a8742259"
+}

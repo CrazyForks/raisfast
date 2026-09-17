@@ -1631,6 +1631,7 @@ CREATE TABLE IF NOT EXISTS kb_knowledge_bases (
     chat_model TEXT,
     distill_model TEXT,
     image_config TEXT,
+    parser_config TEXT,
     status TEXT NOT NULL DEFAULT 'active',
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
     updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
@@ -1650,6 +1651,9 @@ CREATE TABLE IF NOT EXISTS kb_documents (
     parse_format TEXT NOT NULL DEFAULT 'markdown',
     status TEXT NOT NULL DEFAULT 'pending',
     error TEXT,
+    parse_degraded TEXT,
+    pages BIGINT,
+    parser_engine TEXT,
     chunk_count BIGINT NOT NULL DEFAULT 0,
     steps TEXT,
     created_by BIGINT,
@@ -1675,6 +1679,7 @@ CREATE TABLE IF NOT EXISTS kb_chunks (
     embedding BLOB,
     embedding_model TEXT,
     image_info TEXT,
+    page BIGINT,
     status TEXT NOT NULL DEFAULT 'active',
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
     updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
@@ -1740,6 +1745,7 @@ CREATE TABLE IF NOT EXISTS kb_images (
     storage_key TEXT,
     mime_type TEXT NOT NULL,
     bytes BIGINT,
+    page BIGINT,
     source TEXT NOT NULL DEFAULT 'embedded',
     original_url TEXT,
     caption TEXT,

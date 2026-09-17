@@ -30,6 +30,11 @@ pub struct KbChunk {
     /// parent chunks (children carry the embedding, parent-child retrieval).
     pub embedding: Option<Vec<u8>>,
     pub embedding_model: Option<String>,
+    /// Bounded display info of the images attached to this chunk
+    /// (caption/ocr preview/url).
+    pub image_info: Option<serde_json::Value>,
+    /// 1-based source page (PDF via page anchors; NULL unknown).
+    pub page: Option<i64>,
     pub status: String,
     pub created_at: Timestamp,
     pub updated_at: Timestamp,
@@ -58,6 +63,8 @@ pub async fn insert_chunk(pool: &crate::db::Pool, chunk: &KbChunkInsert) -> AppR
             "questions" => chunk.questions.clone(),
             "embedding" => chunk.embedding.clone(),
             "embedding_model" => chunk.embedding_model.as_deref(),
+            "image_info" => chunk.image_info.clone(),
+            "page" => chunk.page,
             "created_at" => chunk.created_at
         ]
     )?;
@@ -82,6 +89,8 @@ pub struct KbChunkInsert {
     pub questions: Option<Value>,
     pub embedding: Option<Vec<u8>>,
     pub embedding_model: Option<String>,
+    pub image_info: Option<Value>,
+    pub page: Option<i64>,
     pub created_at: crate::utils::tz::Timestamp,
 }
 

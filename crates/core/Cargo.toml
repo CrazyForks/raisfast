@@ -155,6 +155,9 @@ urlencoding = "2"
 
 # Content
 comrak = { version = "0.54", default-features = false, features = ["shortcodes"] }
+# docreader 解析引擎 gRPC 客户端（kb-parser-engines-design E2）
+tonic = { version = "0.14", default-features = false, features = ["transport", "codegen"] }
+tonic-prost = "0.14"
 slug = "0.1"
 
 # Media（仅启用博客常用格式：jpeg/png/gif/webp/ico）
@@ -213,7 +216,7 @@ cbc = { version = "0.1", features = ["block-padding", "alloc"] }
 cipher = { version = "0.4", features = ["block-padding"] }
 async-stripe = { version = "0.41", default-features = false, features = ["runtime-tokio-hyper-rustls-webpki", "webhook-events", "full"], optional = true }
 dashmap = "6"
-prost = { version = "0.13", features = ["derive"] }
+prost = { version = "0.14", features = ["derive"] }
 moka = { version = "0.12", features = ["sync"] }
 arc-swap = "1"
 
@@ -257,3 +260,6 @@ required-features = ["tauri"]
 [[test]]
 name = "proxy_tests"
 required-features = ["proxy"]
+
+[build-dependencies]
+tonic-prost-build = "0.14"

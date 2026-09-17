@@ -820,6 +820,20 @@ pub struct KbConfig {
     /// resolves). Env `RAISFAST_KB_IMAGE_MODEL`.
     #[serde(default)]
     pub image_model: Option<String>,
+    /// Global default parser engine name (doc override → KB rules → this →
+    /// builtin; kb-parser-engines-design §2 D2). Env
+    /// `RAISFAST_KB_PARSER_ENGINE`.
+    #[serde(default)]
+    pub parser_engine: Option<String>,
+    /// docreader service gRPC endpoint (e.g. `http://127.0.0.1:50051`);
+    /// unset → the docreader engine never registers. Env
+    /// `RAISFAST_KB_DOCREADER_URL`.
+    #[serde(default)]
+    pub docreader_url: Option<String>,
+    /// docreader parse budget (gRPC deadline), also the probe bound. Env
+    /// `RAISFAST_KB_DOCREADER_TIMEOUT_SECS` (default 300).
+    #[serde(default = "default_kb_docreader_timeout")]
+    pub docreader_timeout_secs: u64,
     /// Global default rerank window; per-KB `rerank_window` overrides.
     /// S4 cuts to this window (≥ `top_k`) so the reranker sees more than
     /// the final keep set, S5 reranks then cuts back to `top_k` (§6.1.4
@@ -883,6 +897,10 @@ fn default_kb_rerank_batch_size() -> usize {
     64
 }
 
+fn default_kb_docreader_timeout() -> u64 {
+    300
+}
+
 impl Default for KbConfig {
     fn default() -> Self {
         Self {
@@ -903,6 +921,9 @@ impl Default for KbConfig {
             chat_model: None,
             distill_model: None,
             image_model: None,
+            parser_engine: None,
+            docreader_url: None,
+            docreader_timeout_secs: default_kb_docreader_timeout(),
             rerank_window: default_kb_rerank_window(),
             rerank_threshold: 0.0,
             rerank_batch_size: default_kb_rerank_batch_size(),
@@ -977,6 +998,17 @@ impl KbConfig {
             image_model: env::var("RAISFAST_KB_IMAGE_MODEL")
                 .ok()
                 .filter(|v| !v.is_empty()),
+            parser_engine: env::var("RAISFAST_KB_PARSER_ENGINE")
+                .ok()
+                .filter(|v| !v.is_empty()),
+            docreader_url: env::var("RAISFAST_KB_DOCREADER_URL")
+                .ok()
+                .filter(|v| !v.is_empty()),
+            docreader_timeout_secs: env::var("RAISFAST_KB_DOCREADER_TIMEOUT_SECS")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .filter(|s| *s > 0)
+                .unwrap_or(defaults.docreader_timeout_secs),
             rerank_window: env::var("RAISFAST_KB_RERANK_WINDOW")
                 .ok()
                 .and_then(|v| v.parse().ok())

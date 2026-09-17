@@ -419,6 +419,28 @@ pub fn routes(
         r,
         registry,
         config.api_restful,
+        "/admin/kb/images",
+        get,
+        admin_list_images,
+        "system",
+        "kb/images",
+        "authed"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        config.api_restful,
+        "/admin/kb/images/{id}/preview",
+        get,
+        admin_image_preview,
+        "system",
+        "kb/images",
+        "authed"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        config.api_restful,
         "/admin/kb/chunks",
         get,
         admin_list_chunks,
@@ -487,6 +509,7 @@ impl AppState {
             kbsearch: kb.kbsearch.clone(),
             embedder: kb.embedder.clone(),
             reranker: kb.reranker.clone(),
+            parsers: kb.parsers.clone(),
             router: self.llm_router.clone(),
             emitter: self.emitter.clone(),
         })
@@ -533,6 +556,10 @@ struct CreateKbRequest {
     /// `{enabled, model, caption_language, custom_instructions}`.
     #[serde(default)]
     image_config: Option<serde_json::Value>,
+    /// Parser engine routing rules `{"rules": [...]}` (validated against
+    /// the registry; kb-parser-engines-design §2 D2).
+    #[serde(default)]
+    parser_config: Option<serde_json::Value>,
 }
 
 fn default_kb_kind() -> String {
@@ -553,6 +580,10 @@ async fn admin_create_kb(
         ));
     }
     validate_rerank_params(req.rerank_window, req.rerank_threshold)?;
+    if let Some(pc) = &req.parser_config {
+        let deps = state.kb_deps()?;
+        crate::kb::parser::validate_parser_config(&deps.parsers, pc)?;
+    }
     let tenant = auth.tenant_id();
     let model = resolve_kb_model(&state, tenant, &req).await?;
     let dim = resolve_kb_dim(&state, tenant, &model, &req).await?;
@@ -572,6 +603,7 @@ async fn admin_create_kb(
             chat_model: req.chat_model.filter(|m| !m.is_empty()),
             distill_model: req.distill_model.filter(|m| !m.is_empty()),
             image_config: req.image_config,
+            parser_config: req.parser_config,
         },
         &tenant_of(&auth),
     )
@@ -602,6 +634,8 @@ struct UpdateKbRequest {
     distill_model: Option<String>,
     #[serde(default)]
     image_config: Option<serde_json::Value>,
+    #[serde(default)]
+    parser_config: Option<serde_json::Value>,
 }
 
 /// Update mutable KB metadata (name/slug/description/status) plus the
@@ -653,6 +687,7 @@ async fn admin_update_kb(
             chat_model: req.chat_model.filter(|m| !m.is_empty()),
             distill_model: req.distill_model.filter(|m| !m.is_empty()),
             image_config: req.image_config,
+            parser_config: req.parser_config,
         },
         &tenant,
     )
@@ -807,6 +842,15 @@ async fn admin_upload_document(
         .bytes()
         .await
         .map_err(|e| AppError::BadRequest(format!("file read failed: {e}")))?;
+    // field 3 (optional): parser_engine override.
+    let parser_engine: Option<String> = match multipart.next_field().await {
+        Ok(Some(f)) => Some(
+            f.text()
+                .await
+                .map_err(|e| AppError::BadRequest(format!("parser_engine read failed: {e}")))?,
+        ),
+        _ => None,
+    };
 
     let doc = service::upload_document(
         &deps,
@@ -818,6 +862,15 @@ async fn admin_upload_document(
         &tenant_of(&auth),
     )
     .await?;
+    if let Some(engine) = parser_engine.as_deref().filter(|e| !e.is_empty()) {
+        crate::kb::models::document::set_document_parser_engine(
+            &deps.pool,
+            doc.id,
+            Some(engine),
+            &tenant_of(&auth),
+        )
+        .await?;
+    }
     Ok(ApiResponse::success(
         json!({ "id": doc.id, "status": doc.status, "title": doc.title }),
     ))
@@ -825,6 +878,11 @@ async fn admin_upload_document(
 
 #[derive(Deserialize)]
 struct OnlineDocRequest {
+    /// Optional per-document parser engine override (unknown names warn +
+    /// fall back at route time; kb-parser-engines-design §2 D2 ⓪).
+    #[serde(default)]
+    parser_engine: Option<String>,
+
     kb_id: SnowflakeId,
     title: String,
     markdown: String,
@@ -846,9 +904,82 @@ async fn admin_create_online_document(
         &tenant_of(&auth),
     )
     .await?;
+    if let Some(engine) = req.parser_engine.as_deref().filter(|e| !e.is_empty()) {
+        crate::kb::models::document::set_document_parser_engine(
+            &deps.pool,
+            doc.id,
+            Some(engine),
+            &tenant_of(&auth),
+        )
+        .await?;
+    }
     Ok(ApiResponse::success(
         json!({ "id": doc.id, "status": doc.status, "title": doc.title }),
     ))
+}
+
+#[derive(Deserialize)]
+struct ListImagesQuery {
+    kb_id: Option<SnowflakeId>,
+    doc_id: Option<SnowflakeId>,
+    status: Option<String>,
+    page: Option<i64>,
+    page_size: Option<i64>,
+}
+
+/// Admin image listing (kb/doc/status filters + pagination, names joined).
+async fn admin_list_images(
+    auth: AuthUser,
+    State(state): State<AppState>,
+    Query(q): Query<ListImagesQuery>,
+) -> AppResult<ApiResponse<Value>> {
+    auth.ensure_admin()?;
+    let page = q.page.unwrap_or(1);
+    let page_size = q.page_size.unwrap_or(20);
+    let (items, total) = crate::kb::models::image::list_images(
+        &state.pool,
+        &tenant_of(&auth),
+        q.kb_id,
+        q.doc_id,
+        q.status.as_deref(),
+        page,
+        page_size,
+    )
+    .await?;
+    Ok(ApiResponse::success(
+        json!({ "items": items, "total": total, "page": page, "page_size": page_size }),
+    ))
+}
+
+/// Inline image preview: embedded bytes from storage; external URLs
+/// redirect (same shape as media `serve_file`).
+async fn admin_image_preview(
+    auth: AuthUser,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> AppResult<axum::response::Response> {
+    auth.ensure_admin()?;
+    let id = parse_snowflake(&id)?;
+    let img = crate::kb::models::image::find_image_by_id(&state.pool, id, &tenant_of(&auth))
+        .await?
+        .ok_or_else(|| AppError::NotFound("kb_image".into()))?;
+    if let Some(url) = img
+        .original_url
+        .as_deref()
+        .filter(|u| u.starts_with("http"))
+    {
+        return Ok(axum::response::Redirect::temporary(url).into_response());
+    }
+    let key = img
+        .storage_key
+        .as_deref()
+        .ok_or_else(|| AppError::NotFound("kb_image bytes".into()))?;
+    let bytes = state.storage.get(key).await?;
+    axum::http::Response::builder()
+        .header("Content-Type", img.mime_type)
+        .header("Content-Length", bytes.len().to_string())
+        .body(axum::body::Body::from(bytes))
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("image preview: {e}")))
 }
 
 #[derive(Deserialize)]
@@ -876,8 +1007,42 @@ async fn admin_list_documents(
         &tenant_of(&auth),
     )
     .await?;
+    // Per-doc image counts in one grouped query (list display: recognition
+    // progress visibility).
+    let doc_ids: Vec<i64> = docs.iter().map(|d| i64::from(d.id)).collect();
+    let mut image_counts: std::collections::HashMap<i64, i64> = std::collections::HashMap::new();
+    if !doc_ids.is_empty() {
+        let placeholders: Vec<String> = (1..=doc_ids.len()).map(crate::db::Driver::ph).collect();
+        let sql = format!(
+            "SELECT doc_id, {} FROM kb_images WHERE doc_id IN ({}) GROUP BY doc_id",
+            crate::db::Driver::cast_int("COUNT(*)"),
+            placeholders.join(", ")
+        );
+        let mut query = sqlx::query_as::<_, (i64, i64)>(crate::db::safe_sql(&sql));
+        for id in &doc_ids {
+            query = query.bind(id);
+        }
+        for (doc_id, n) in query
+            .fetch_all(&state.pool)
+            .await
+            .map_err(|e| AppError::Internal(anyhow::anyhow!(e.to_string())))?
+        {
+            image_counts.insert(doc_id, n);
+        }
+    }
+    let items: Vec<Value> = docs
+        .into_iter()
+        .map(|d| {
+            let images = image_counts.get(&i64::from(d.id)).copied().unwrap_or(0);
+            let mut v = serde_json::to_value(&d).unwrap_or_default();
+            if let Some(obj) = v.as_object_mut() {
+                obj.insert("images".into(), json!(images));
+            }
+            v
+        })
+        .collect();
     Ok(ApiResponse::success(
-        json!({ "items": docs, "total": total, "page": page, "page_size": page_size }),
+        json!({ "items": items, "total": total, "page": page, "page_size": page_size }),
     ))
 }
 

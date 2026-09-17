@@ -46,6 +46,10 @@ pub struct KbKnowledgeBase {
     /// `{enabled, model, caption_language, custom_instructions}`.
     /// enabled=false or no resolvable model → recognition off.
     pub image_config: Option<serde_json::Value>,
+    /// Parser engine routing rules
+    /// [抄WK:types/knowledgebase.go ChunkingConfig.ParserEngineRules]:
+    /// `{"rules": [{"file_types": ["pdf"], "engine": "docreader"}]}`.
+    pub parser_config: Option<serde_json::Value>,
     pub status: String,
     pub created_at: Timestamp,
     pub updated_at: Timestamp,
@@ -68,6 +72,7 @@ pub struct CreateKbCmd {
     pub chat_model: Option<String>,
     pub distill_model: Option<String>,
     pub image_config: Option<serde_json::Value>,
+    pub parser_config: Option<serde_json::Value>,
 }
 
 pub async fn create_kb(
@@ -97,6 +102,7 @@ pub async fn create_kb(
             "chat_model" => cmd.chat_model.as_deref(),
             "distill_model" => cmd.distill_model.as_deref(),
             "image_config" => cmd.image_config.clone(),
+            "parser_config" => cmd.parser_config.clone(),
             "created_at" => now
         ],
         tenant: Some(tenant_id)
@@ -122,6 +128,7 @@ pub struct UpdateKbCmd {
     pub chat_model: Option<String>,
     pub distill_model: Option<String>,
     pub image_config: Option<serde_json::Value>,
+    pub parser_config: Option<serde_json::Value>,
 }
 
 pub async fn update_kb(
@@ -145,6 +152,7 @@ pub async fn update_kb(
             "chat_model" => cmd.chat_model.as_deref(),
             "distill_model" => cmd.distill_model.as_deref(),
             "image_config" => cmd.image_config.clone(),
+            "parser_config" => cmd.parser_config.clone(),
             "updated_at" => now
         ],
         where: ("id", id),

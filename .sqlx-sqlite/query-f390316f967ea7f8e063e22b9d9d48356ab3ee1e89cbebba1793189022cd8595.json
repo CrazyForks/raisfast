@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO kb_images (id, kb_id, doc_id, chunk_id, page, storage_key, mime_type, bytes, source, original_url, created_at, tenant_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 12
+    },
+    "nullable": []
+  },
+  "hash": "f390316f967ea7f8e063e22b9d9d48356ab3ee1e89cbebba1793189022cd8595"
+}

@@ -63,25 +63,11 @@ pub fn resolve_image_config(
 
 // ── parse-time extraction ────────────────────────────────────────────────
 
-/// Embedded image assets of a non-PDF document (best-effort second parse
-/// via anydoc's Document API — markdown itself comes from
-/// `to_markdown_bytes`; PDFs have no document-model form and yield none).
-pub fn extract_embedded_images(bytes: &[u8]) -> Vec<(String, Vec<u8>)> {
-    match anydoc::to_document(bytes, None) {
-        Ok(doc) => doc
-            .assets
-            .into_iter()
-            .filter(|a| a.media_type.starts_with("image/"))
-            .map(|a| (a.media_type, a.bytes))
-            .collect(),
-        Err(_) => Vec::new(),
-    }
-}
-
-/// External image references in the parsed markdown: `(url, byte_offset)`.
-/// Walked via the comrak AST [与 chunker 同一解析栈]; the offset maps to the
-/// containing chunk (`kb_chunks.byte_start/end` are byte offsets into this
-/// same markdown).
+/// Image references in the parsed markdown: `(ref, byte_offset)` — http
+/// URLs AND engine ref names (e.g. `images/fig-1.jpg`). Walked via the
+/// comrak AST [与 chunker 同一解析栈]; the offset maps to the containing
+/// chunk (`kb_chunks.byte_start/end` are byte offsets into this same
+/// markdown) [抄WK:markdown_image_scanner 形态].
 pub fn extract_external_images(markdown: &str) -> Vec<(String, usize)> {
     // Byte offset of each line start, for (line, column) → byte offset.
     let mut line_starts = Vec::with_capacity(markdown.matches('\n').count() + 1);
@@ -106,67 +92,105 @@ pub fn extract_external_images(markdown: &str) -> Vec<(String, usize)> {
     let root = parse_document(&arena, markdown, &options);
     let mut out = Vec::new();
     for node in root.descendants() {
-        if let NodeValue::Image(link) = &node.data.borrow().value {
-            let url = link.url.clone();
-            if url.starts_with("http://") || url.starts_with("https://") {
-                out.push((url, to_offset(&node.data.borrow().sourcepos.start)));
+        let data = node.data.borrow();
+        let hit = match &data.value {
+            NodeValue::Image(link) if !link.url.is_empty() => {
+                Some((link.url.clone(), to_offset(&data.sourcepos.start)))
             }
+            _ => None,
+        };
+        drop(data);
+        if let Some(hit) = hit {
+            out.push(hit);
         }
     }
     out
 }
 
-/// Register a document's images at parse time. Called from
-/// `process_document` after chunking (external images need the chunk id
-/// mapping). Idempotency: callers wipe `kb_images` for the doc first.
+/// Register a document's images at parse time. Engine-produced images
+/// (`ParseOutcome.images`, bytes + ref names) are persisted to storage;
+/// the markdown's image references resolve each to its containing chunk
+/// (http URLs are external rows; ref-name matches are engine images).
+/// Synthetic refs absent from the markdown (builtin assets) stay
+/// doc-level. Idempotency: callers wipe `kb_images` for the doc first.
 pub async fn register_document_images(
     deps: &KbDeps,
     doc: &crate::kb::models::document::KbDocument,
-    raw_bytes: Option<&[u8]>,
+    engine_images: &[crate::kb::parser::ParsedImage],
     markdown: &str,
     chunk_rows: &[(SnowflakeId, i64, i64)], // (chunk_id, byte_start, byte_end)
     tenant_id: &str,
 ) -> AppResult<usize> {
-    let mut count = 0usize;
-    // Embedded assets → storage + doc-level rows.
-    if let Some(bytes) = raw_bytes {
-        for (mime, data) in extract_embedded_images(bytes) {
-            if data.is_empty() {
-                continue;
-            }
-            let ext = mime.rsplit('/').next().unwrap_or("bin");
-            let key = crate::services::media::storage_key("kb-image", ext);
-            deps.storage.put(&key, &data, &mime).await?;
-            crate::kb::models::image::insert_image(
-                &deps.pool,
-                &crate::kb::models::image::CreateKbImageCmd {
-                    kb_id: doc.kb_id,
-                    doc_id: doc.id,
-                    chunk_id: None,
-                    storage_key: Some(key),
-                    mime_type: mime,
-                    bytes: Some(data.len() as i64),
-                    source: "embedded",
-                    original_url: None,
-                },
-                tenant_id,
-            )
-            .await?;
-            count += 1;
-        }
-    }
-    // External references → rows with containing-chunk mapping.
-    for (url, offset) in extract_external_images(markdown) {
-        let chunk_id = chunk_rows
+    // ref → byte offset of its markdown occurrence (chunk association).
+    let ref_offsets: std::collections::HashMap<String, usize> =
+        extract_external_images(markdown).into_iter().collect();
+    // Page anchors: engine markdown carries `<!-- page:N -->` lines.
+    let marks = crate::kb::parse_quality::page_marks(markdown);
+    let page_of_ref = |off: usize| -> Option<i64> {
+        crate::kb::parse_quality::page_of(&marks, off).map(i64::from)
+    };
+    let chunk_of = |offset: usize| -> Option<SnowflakeId> {
+        chunk_rows
             .iter()
             .find(|(_, start, end)| offset >= *start as usize && offset < *end as usize)
-            .map(|(id, _, _)| *id);
+            .map(|(id, _, _)| *id)
+    };
+
+    let mut count = 0usize;
+    // Engine images: bytes → storage; association via markdown ref match.
+    for img in engine_images {
+        if img.bytes.is_empty() {
+            continue;
+        }
+        let ext = img.mime_type.rsplit('/').next().unwrap_or("bin");
+        let key = crate::services::media::storage_key("kb-image", ext);
+        deps.storage.put(&key, &img.bytes, &img.mime_type).await?;
+        let (chunk_id, ref_page) = ref_offsets
+            .get(&img.ref_name)
+            .or_else(|| {
+                // Engine filenames may carry a different path prefix than
+                // the markdown refs (docreader: `images/kb/2026/09/x.jpg`
+                // vs bare `x.jpg`) — fall back to basename matching.
+                let base = img.ref_name.rsplit('/').next().unwrap_or_default();
+                ref_offsets
+                    .iter()
+                    .find(|(r, _)| r.rsplit('/').next() == Some(base))
+                    .map(|(_, off)| off)
+            })
+            .map(|&off| (chunk_of(off), page_of_ref(off)))
+            .unwrap_or((None, None));
+        // docreader filenames embed the page (`_p3_`); anchor fallback.
+        let page = crate::kb::parse_quality::page_from_filename(&img.ref_name).or(ref_page);
         crate::kb::models::image::insert_image(
             &deps.pool,
             &crate::kb::models::image::CreateKbImageCmd {
                 kb_id: doc.kb_id,
                 doc_id: doc.id,
                 chunk_id,
+                page,
+                storage_key: Some(key),
+                mime_type: img.mime_type.clone(),
+                bytes: Some(img.bytes.len() as i64),
+                source: "embedded",
+                original_url: None,
+            },
+            tenant_id,
+        )
+        .await?;
+        count += 1;
+    }
+    // Http references without engine bytes → external rows.
+    for (url, offset) in extract_external_images(markdown) {
+        if !(url.starts_with("http://") || url.starts_with("https://")) {
+            continue; // engine ref (handled above) or synthetic ref
+        }
+        crate::kb::models::image::insert_image(
+            &deps.pool,
+            &crate::kb::models::image::CreateKbImageCmd {
+                kb_id: doc.kb_id,
+                doc_id: doc.id,
+                chunk_id: chunk_of(offset),
+                page: page_of_ref(offset),
                 storage_key: None,
                 mime_type: "image/external".into(),
                 bytes: None,
@@ -554,6 +578,8 @@ async fn publish_recognized(
             questions: None,
             embedding: None,
             embedding_model: None,
+            image_info: None,
+            page: img.page,
             created_at: now,
         });
         texts.push(content);
