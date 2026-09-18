@@ -13,6 +13,7 @@ use crate::errors::app_error::{AppError, AppResult};
 
 struct StoredVector {
     unit_id: i64,
+    doc_id: Option<i64>,
     kind: String,
     embedding: Vec<f32>,
 }
@@ -75,19 +76,17 @@ impl VectorIndex for BruteForceIndex {
         let mut map = self.by_kb.write().await;
         let bucket = map.entry(kb_id).or_default();
         for item in items {
+            let updated = StoredVector {
+                unit_id: item.unit_id,
+                doc_id: item.doc_id,
+                kind: item.kind.clone(),
+                embedding: item.embedding.clone(),
+            };
             match bucket.iter_mut().find(|v| v.unit_id == item.unit_id) {
                 Some(existing) => {
-                    *existing = Arc::new(StoredVector {
-                        unit_id: item.unit_id,
-                        kind: item.kind.clone(),
-                        embedding: item.embedding.clone(),
-                    });
+                    *existing = Arc::new(updated);
                 }
-                None => bucket.push(Arc::new(StoredVector {
-                    unit_id: item.unit_id,
-                    kind: item.kind.clone(),
-                    embedding: item.embedding.clone(),
-                })),
+                None => bucket.push(Arc::new(updated)),
             }
         }
         Ok(())
@@ -97,6 +96,14 @@ impl VectorIndex for BruteForceIndex {
         let mut map = self.by_kb.write().await;
         if let Some(bucket) = map.get_mut(&kb_id) {
             bucket.retain(|v| !unit_ids.contains(&v.unit_id));
+        }
+        Ok(())
+    }
+
+    async fn delete_document(&self, kb_id: i64, doc_id: i64) -> AppResult<()> {
+        let mut map = self.by_kb.write().await;
+        if let Some(bucket) = map.get_mut(&kb_id) {
+            bucket.retain(|v| v.doc_id != Some(doc_id));
         }
         Ok(())
     }
@@ -141,6 +148,7 @@ impl VectorIndex for BruteForceIndex {
             .map(|i| {
                 Arc::new(StoredVector {
                     unit_id: i.unit_id,
+                    doc_id: i.doc_id,
                     kind: i.kind.clone(),
                     embedding: i.embedding.clone(),
                 })
@@ -158,6 +166,26 @@ impl VectorIndex for BruteForceIndex {
         let guard = self.by_kb.read().await;
         Ok(u64::try_from(guard.get(&kb_id).map_or(0, std::vec::Vec::len)).unwrap_or(0))
     }
+
+    async fn doc_counts(
+        &self,
+        kb_id: i64,
+        doc_ids: &[i64],
+    ) -> AppResult<std::collections::HashMap<i64, u64>> {
+        let wanted: std::collections::HashSet<i64> = doc_ids.iter().copied().collect();
+        let map = self.by_kb.read().await;
+        let mut out: std::collections::HashMap<i64, u64> = std::collections::HashMap::new();
+        if let Some(bucket) = map.get(&kb_id) {
+            for v in bucket {
+                if let Some(d) = v.doc_id
+                    && wanted.contains(&d)
+                {
+                    *out.entry(d).or_insert(0) += 1;
+                }
+            }
+        }
+        Ok(out)
+    }
 }
 
 #[cfg(test)]
@@ -168,6 +196,7 @@ mod tests {
         VectorItem {
             unit_id,
             kb_id,
+            doc_id: None,
             kind: kind.to_string(),
             embedding,
         }

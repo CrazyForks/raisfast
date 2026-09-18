@@ -533,20 +533,39 @@ async fn process_document_inner(
     // ② chunk (§3) + ③ persist chunks
     trace.stage("chunk");
     document::set_document_status(&deps.pool, doc_id, "chunking", None, None, tenant_id).await?;
-    // idempotency: wipe this doc's chunks + vector units + fts units first
+    // idempotency: wipe this doc's chunks + vector units + fts units first.
+    // Vector purge is doc-scoped (payload/filter delete): the old generation's
+    // unit ids die with their rows, so an id-list delete here would leak the
+    // previous parse's vectors into the index (orphan-ghost recall).
     chunk::delete_chunks_by_doc(&deps.pool, doc_id).await?;
-    deps.kbsearch.delete_document(i64::from(doc_id)).await?;
+    deps.vector
+        .delete_document(i64::from(doc.kb_id), i64::from(doc_id))
+        .await?;
+    // fts cleanup is best-effort: the index is a rebuildable acceleration
+    // layer, and a missing/broken index dir (e.g. wiped while the server
+    // runs) must not fail the delete — the units are gone with the doc.
+    if let Err(e) = deps.kbsearch.delete_document(i64::from(doc_id)).await {
+        tracing::warn!(error = %e, doc = %doc_id, "fts cleanup failed — index is rebuildable, ignoring");
+    }
     crate::kb::models::image::delete_images_by_doc(&deps.pool, doc_id).await?;
 
     let cfg = ChunkerConfig::default();
-    let raw_chunks = chunker::chunk_markdown(&markdown, &cfg);
-    // Page anchors (engine markdown): chunk→page mapping + anchor lines
-    // stripped from retrieval text (kb-parser-engines 页级定位).
+    // 页锚点行替换为等长空白（字节偏移不变 → 页映射/图片引用映射对齐），
+    // 锚点不进入检索文本；纯锚点段产出空块 → 跳过不入库。
+    // 页锚点偏移必须在空白化【之前】取（等长替换，偏移对齐原文）。
     let marks = crate::kb::parse_quality::page_marks(&markdown);
+    let markdown = crate::kb::parse_quality::blank_page_marks(&markdown);
+    let raw_chunks = chunker::chunk_markdown(&markdown, &cfg);
     let now = crate::utils::tz::now_utc();
     let mut inserts = Vec::with_capacity(raw_chunks.len());
+    let mut chunk_ids: Vec<Option<SnowflakeId>> = vec![None; raw_chunks.len()];
     for (i, c) in raw_chunks.iter().enumerate() {
+        let content = crate::kb::parse_quality::strip_page_marks(&c.content);
+        if content.trim().is_empty() {
+            continue; // anchor-only artifact chunk — never enters the index
+        }
         let id = crate::utils::id::new_snowflake_id();
+        chunk_ids[i] = Some(id);
         inserts.push(chunk::KbChunkInsert {
             id,
             kb_id: doc.kb_id,
@@ -556,7 +575,7 @@ async fn process_document_inner(
             kind: "document".into(),
             parent_id: None, // patched below for children
             seq: i as i64,
-            content: crate::kb::parse_quality::strip_page_marks(&c.content),
+            content,
             breadcrumb: if c.breadcrumb.is_empty() {
                 None
             } else {
@@ -572,12 +591,17 @@ async fn process_document_inner(
             created_at: now,
         });
     }
-    // link children to parents
+    // link children to parents (raw index → kept insert position)
+    // 子块（chunk_ids[i].is_some() 且有 parent）的 parent_id 指向父块 id。
     for (i, c) in raw_chunks.iter().enumerate() {
+        let Some(child_id) = chunk_ids[i] else {
+            continue;
+        };
         if let Some(p) = c.parent
-            && let Some(parent_insert) = inserts.get_mut(p)
+            && let Some(pid) = chunk_ids[p]
+            && let Some(ins) = inserts.iter_mut().find(|ins| ins.id == child_id)
         {
-            inserts[i].parent_id = Some(parent_insert.id);
+            ins.parent_id = Some(pid);
         }
     }
     for ins in &inserts {
@@ -653,6 +677,7 @@ async fn process_document_inner(
         items.push(VectorItem {
             unit_id: chunk_id,
             kb_id: i64::from(doc.kb_id),
+            doc_id: Some(i64::from(doc_id)),
             kind: "document".into(),
             embedding: vectors[idx].clone(),
         });
@@ -785,12 +810,14 @@ pub async fn delete_document_everywhere(
     let Some(doc) = document::find_document_by_id(&deps.pool, doc_id, tenant_id).await? else {
         return Ok(());
     };
-    let chunks = chunk::find_chunks_by_doc(&deps.pool, doc_id).await?;
-    let ids: Vec<i64> = chunks.iter().map(|c| i64::from(c.id)).collect();
-    if !ids.is_empty() {
-        deps.vector.delete(i64::from(doc.kb_id), &ids).await?;
+    // Doc-scoped index purges (self-describing deletes — no SQL pre-read).
+    deps.vector
+        .delete_document(i64::from(doc.kb_id), i64::from(doc_id))
+        .await?;
+    // Best-effort, same rationale as the re-parse cleanup above.
+    if let Err(e) = deps.kbsearch.delete_document(i64::from(doc_id)).await {
+        tracing::warn!(error = %e, doc = %doc_id, "fts cleanup failed — index is rebuildable, ignoring");
     }
-    deps.kbsearch.delete_document(i64::from(doc_id)).await?;
     chunk::delete_chunks_by_doc(&deps.pool, doc_id).await?;
     crate::kb::models::wiki_source::delete_sources_by_doc(&deps.pool, doc_id).await?;
     document::delete_document(&deps.pool, doc_id, tenant_id).await?;
@@ -824,9 +851,11 @@ pub async fn delete_kb_everywhere(
         return Ok(());
     };
     let docs = document::find_documents_by_kb(&deps.pool, kb_id, tenant_id).await?;
-    // Vector + FTS: whole-KB wipe (both are keyed by kb_id).
+    // Vector + FTS: whole-KB wipe (both are keyed by kb_id; fts best-effort).
     deps.vector.delete_all(i64::from(kb_id)).await?;
-    deps.kbsearch.delete_kb(i64::from(kb_id)).await?;
+    if let Err(e) = deps.kbsearch.delete_kb(i64::from(kb_id)).await {
+        tracing::warn!(error = %e, kb = %kb_id, "fts wipe failed — index is rebuildable, ignoring");
+    }
     // SQL rows, children first (no FK cascade: order matters).
     chunk::delete_chunks_by_kb(&deps.pool, kb_id).await?;
     wiki_source::delete_sources_by_kb(&deps.pool, kb_id).await?;
@@ -1016,6 +1045,13 @@ mod tests {
         assert_eq!(chunks.len() as i64, doc.chunk_count);
         let children = chunks.iter().filter(|c| c.parent_id.is_some()).count();
         let embedded = chunks.iter().filter(|c| c.embedding.is_some()).count();
+        eprintln!(
+            "[DBG] chunks={} children={} embedded={}",
+            chunks.len(),
+            children,
+            embedded
+        );
+
         assert!(children > 0, "parent-child must produce children");
         assert_eq!(
             embedded, children,
@@ -1299,6 +1335,7 @@ async fn edit_chunk_inner(
             &[VectorItem {
                 unit_id: i64::from(chunk.id),
                 kb_id: i64::from(chunk.kb_id),
+                doc_id: chunk.doc_id.map(i64::from),
                 kind: chunk.kind.clone(),
                 embedding: vector,
             }],
@@ -1362,6 +1399,7 @@ pub async fn rebuild_vector_index_from_sql(
         items.push(crate::kb::vectors::VectorItem {
             unit_id: i64::from(c.id),
             kb_id: i64::from(c.kb_id),
+            doc_id: c.doc_id.map(i64::from),
             kind: c.kind.clone(),
             embedding: crate::kb::models::chunk::unpack_embedding(
                 c.embedding.as_deref().unwrap_or_default(),
@@ -1430,6 +1468,7 @@ pub async fn index_faq(deps: &KbDeps, faq: &crate::kb::models::faq::KbFaq) -> Ap
         items.push(crate::kb::vectors::VectorItem {
             unit_id: i64::from(chunk_id),
             kb_id: i64::from(faq.kb_id),
+            doc_id: None,
             kind: "faq".into(),
             embedding: vectors[idx].clone(),
         });

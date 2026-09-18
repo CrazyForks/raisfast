@@ -602,6 +602,7 @@ async fn publish_recognized(
         items.push(crate::kb::vectors::VectorItem {
             unit_id: i64::from(ins.id),
             kb_id: i64::from(kb.id),
+            doc_id: Some(i64::from(doc_id)),
             kind: "image".into(),
             embedding: vectors[idx].clone(),
         });
@@ -618,7 +619,10 @@ async fn publish_recognized(
         });
     }
     deps.vector.upsert(i64::from(kb.id), dim, &items).await?;
-    deps.kbsearch.reindex_document(&fts).await?;
+    // Append-only: these units share the parent doc's doc_id with its text
+    // chunks — `reindex_document` here would replace the doc's whole index
+    // (2026-09-18: it erased 179 text chunks, bm25 degraded to captions).
+    deps.kbsearch.append_units(&fts).await?;
 
     // Containing-chunk display refresh (bounded caption preview).
     for img in done.iter().filter(|i| i.chunk_id.is_some()) {

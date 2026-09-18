@@ -1,0 +1,19 @@
+# MinerU PDF 解析服务（方案 A：独立容器，与 docreader 平级互不依赖）。
+# 用途：高质量 PDF→Markdown（版面分析/公式/表格），KB 解析规则按
+# `pdf → mineru` 路由；服务常驻后在 parser_config 里选择即可。
+services:
+  mineru:
+    image: opendatalab/mineru:latest
+    container_name: raisfast-mineru
+    ports:
+      - "${MINERU_PORT:-50053}:8000"
+    environment:
+      # 国内网络走 ModelScope 拉模型；可改 huggingface
+      - MINERU_MODEL_SOURCE=modelscope
+    volumes:
+      - mineru-models:/root/.cache/mineru
+    command: mineru-api --host 0.0.0.0 --port 8000
+    restart: unless-stopped
+
+volumes:
+  mineru-models:

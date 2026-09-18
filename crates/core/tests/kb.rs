@@ -957,6 +957,7 @@ async fn s11_chunk_edit_reembeds_and_reindexes() {
             &[raisfast::kb::vectors::VectorItem {
                 unit_id: i64::from(chunk.id),
                 kb_id: i64::from(kb),
+                doc_id: None,
                 kind: chunk.kind.clone(),
                 embedding: vectors[0].clone(),
             }],
@@ -1039,6 +1040,7 @@ async fn s13_bruteforce_backend_semantics() {
     let mk = |id: i64, kind: &str| raisfast::kb::vectors::VectorItem {
         unit_id: id,
         kb_id: 1,
+        doc_id: None,
         kind: kind.into(),
         embedding: vec![1.0, 0.0],
     };
@@ -2039,5 +2041,395 @@ async fn s24_image_upload_requires_engine() {
     assert!(
         err.to_string().contains("解析引擎"),
         "clear engine-required error, got: {err}"
+    );
+}
+
+#[tokio::test]
+async fn s25_reader_pages_differ() {
+    let deps = deps().await;
+    let kb = seed_kb(&deps, "kb").await;
+    let doc = ingest_md(
+        &deps,
+        kb,
+        "页码",
+        &format!(
+            "<!-- page:1 -->\n\n第一页的内容，讲的是安装步骤。{}\n\n<!-- page:2 -->\n\n第二页的内容，讲的是部署策略。{}",
+            "安装细节说明。".repeat(600),
+            "部署细节说明。".repeat(600)
+        ),
+    )
+    .await;
+    // builtin 无锚点渲染 → 两块 page 均为 NULL。手工指定页码模拟锚点文档。
+    sqlx::query("UPDATE kb_chunks SET page = 1 WHERE content LIKE '%第一页%';")
+        .execute(&deps.pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE kb_chunks SET page = 2 WHERE content LIKE '%第二页%';")
+        .execute(&deps.pool)
+        .await
+        .unwrap();
+
+    let p1 = models::chunk::reader_page(&deps.pool, doc, Some(1))
+        .await
+        .unwrap();
+    let p2 = models::chunk::reader_page(&deps.pool, doc, Some(2))
+        .await
+        .unwrap();
+    assert_eq!(p1.page, Some(1));
+    assert_eq!(p2.page, Some(2));
+    assert!(
+        !p1.blocks.is_empty() && !p2.blocks.is_empty(),
+        "both pages must return blocks (left={} right={})",
+        p1.blocks.len(),
+        p2.blocks.len()
+    );
+    assert!(
+        p1.blocks[0].content.as_deref().unwrap().contains("第一页"),
+        "page 1 blocks differ from page 2"
+    );
+    assert!(
+        p2.blocks[0].content.as_deref().unwrap().contains("第二页"),
+        "page 2 blocks differ from page 1"
+    );
+    let c1: Vec<&str> = p1
+        .blocks
+        .iter()
+        .filter_map(|b| b.content.as_deref())
+        .collect();
+    let c2: Vec<&str> = p2
+        .blocks
+        .iter()
+        .filter_map(|b| b.content.as_deref())
+        .collect();
+    assert_ne!(c1, c2, "pages must differ");
+}
+
+/// 跨页/跨父块描述的缝合（S7 stitch）：两个父块各有一个子块被召回时，
+/// 上下文必须缝成 1 个连续单元（含两段原文），而不是两个乱序碎片。
+#[tokio::test]
+async fn s26_multi_parent_hits_stitch_into_one_unit() {
+    let deps = deps().await;
+    let kb = seed_kb(&deps, "kb").await;
+    // 几何受控：每段 ~2.5K 字符（各自恰好一个父块），两段合计 >4096 →
+    // 父块边界落在 "# MySQL" 标题处；哨兵词只在边界两侧各出现一次，
+    // BM25 必然各召回一个子块（独占词 idf 最高）。
+    let sec1 = format!(
+        "{}{}",
+        "部署参数说明文本内容。".repeat(220),
+        "P1_SENTINEL_甲段收尾标记。"
+    );
+    let sec2 = format!(
+        "{}{}",
+        "P2_SENTINEL_乙段起始标记。",
+        "备份操作说明文本内容。".repeat(220)
+    );
+    let md = format!("# PostgreSQL 部署\n\n{}\n\n# MySQL 备份\n\n{}", sec1, sec2);
+    ingest_md(&deps, kb, "跨页手册", &md).await;
+    let ask = AskRequest {
+        tenant_id: "default".into(),
+        kb_ids: vec![i64::from(kb)],
+        doc_ids: Vec::new(),
+        question: "P1_SENTINEL_甲段收尾标记 P2_SENTINEL_乙段起始标记".into(),
+    };
+    let out = pipeline::prepare_answer(&deps, &ask).await.unwrap();
+    let doc_units: Vec<&pipeline::ContextUnit> = out
+        .context_units
+        .iter()
+        .filter(|u| u.kind == "document")
+        .collect();
+    assert_eq!(
+        doc_units.len(),
+        1,
+        "adjacent parents recalled together must stitch into ONE unit"
+    );
+    assert!(
+        doc_units[0].content.contains("P1_SENTINEL")
+            && doc_units[0].content.contains("P2_SENTINEL"),
+        "stitched unit must carry both sections' text"
+    );
+    // 缝合后的顺序必须是页序（前段在前），不管哪段分数更高。
+    let p1 = doc_units[0].content.find("P1_SENTINEL").unwrap();
+    let p2 = doc_units[0].content.find("P2_SENTINEL").unwrap();
+    assert!(p1 < p2, "stitched content must follow document order");
+}
+
+/// chunks 页按父块组分页：total 计组数、页边界永不切开父子家庭。
+#[tokio::test]
+async fn s27_chunks_paged_by_parent_group() {
+    let deps = deps().await;
+    let kb = seed_kb(&deps, "kb").await;
+    // 与 s26 相同的几何控制：每段一个父块，各自带子块。
+    let sec1 = format!(
+        "{}{}",
+        "部署参数说明文本内容。".repeat(220),
+        "P1_SENTINEL_甲。"
+    );
+    let sec2 = format!(
+        "{}{}",
+        "P2_SENTINEL_乙。",
+        "备份操作说明文本内容。".repeat(220)
+    );
+    let md = format!("# 甲\n\n{}\n\n# 乙\n\n{}", sec1, sec2);
+    let doc = ingest_md(&deps, kb, "分组", &md).await;
+
+    // total 必须计父块组（2 段 → 2 组），不是原始行数；page_size=1 每页 1 组。
+    let (page1, total) = models::chunk::list_chunks_paged(&deps.pool, Some(kb), 1, 1)
+        .await
+        .unwrap();
+    assert_eq!(total, 2, "total counts parent groups, not raw rows");
+    assert_eq!(page1.len(), 1, "page_size=1 → one parent per page");
+    let kids1 = models::chunk::find_children_by_parents(&deps.pool, &[i64::from(page1[0].id)])
+        .await
+        .unwrap();
+    assert!(
+        !kids1.is_empty(),
+        "a 2.4K-char section parent must have children"
+    );
+    assert!(
+        kids1
+            .iter()
+            .all(|c| c.parent_id.map(i64::from) == Some(i64::from(page1[0].id)))
+    );
+
+    let (page2, _) = models::chunk::list_chunks_paged(&deps.pool, Some(kb), 2, 1)
+        .await
+        .unwrap();
+    assert_eq!(page2.len(), 1);
+    assert_ne!(page2[0].id, page1[0].id, "page 2 must hold the other group");
+    let kids2 = models::chunk::find_children_by_parents(&deps.pool, &[i64::from(page2[0].id)])
+        .await
+        .unwrap();
+
+    // 两页（父+子）合起来 = 该文档全部行 → 页边界没丢任何块。
+    let all = models::chunk::find_chunks_by_doc(&deps.pool, doc)
+        .await
+        .unwrap();
+    assert_eq!(
+        all.len(),
+        2 + kids1.len() + kids2.len(),
+        "no chunk may vanish across page cuts"
+    );
+}
+
+/// 短上下文邻居扩展（S7 expand）：命中块内容过短（<350 字符）时，
+/// 按 seq 拉取相邻父块补上下文，直到窗口达标；邻居已在上下文时跳过。
+#[tokio::test]
+async fn s28_short_unit_pulls_seq_neighbors() {
+    let deps = deps().await;
+    let kb = seed_kb(&deps, "kb").await;
+    let doc = service::create_online_document(
+        &deps,
+        kb,
+        "邻居",
+        "# 中\n\nM_SENTINEL_中段唯一标记。",
+        None,
+        "default",
+    )
+    .await
+    .unwrap();
+    // 直插三个小父块（绕过切块器的合并语义，几何完全受控）：
+    // seq 0/1/2 相邻，中段 13 字符远低于 350 阈值。
+    let mk = |seq: i64, content: &str, start: i64, end: i64| models::chunk::KbChunkInsert {
+        id: raisfast::utils::id::new_snowflake_id(),
+        kb_id: kb,
+        doc_id: Some(doc.id),
+        faq_id: None,
+        wiki_page_id: None,
+        kind: "document".into(),
+        parent_id: None,
+        seq,
+        content: content.into(),
+        breadcrumb: None,
+        byte_start: start,
+        byte_end: end,
+        questions: None,
+        embedding: None,
+        embedding_model: None,
+        image_info: None,
+        page: None,
+        created_at: raisfast::utils::tz::now_utc(),
+    };
+    let sec_a = "甲段铺垫文本。".repeat(23); // 161 chars
+    let sec_b = "M_SENTINEL_中段唯一标记。"; // 13 chars
+    let sec_c = "乙段收尾文本。".repeat(23); // 161 chars
+    let p1 = mk(0, &sec_a, 0, 500);
+    let p2 = mk(1, sec_b, 500, 545);
+    let p3 = mk(2, &sec_c, 545, 1050);
+    for p in [&p1, &p2, &p3] {
+        models::chunk::insert_chunk(&deps.pool, p).await.unwrap();
+    }
+    // BM25 只登记中段 → 召回唯一命中 P2（无嵌入也可走 fts 路）。
+    deps.kbsearch
+        .reindex_document(&[raisfast::kb::kbsearch::KbIndexUnit {
+            unit_id: i64::from(p2.id),
+            kb_id: i64::from(kb),
+            doc_id: i64::from(doc.id),
+            kind: "document".into(),
+            text: sec_b.to_string(),
+        }])
+        .await
+        .unwrap();
+
+    let ask = AskRequest {
+        tenant_id: "default".into(),
+        kb_ids: vec![i64::from(kb)],
+        doc_ids: Vec::new(),
+        question: "M_SENTINEL_中段唯一标记".into(),
+    };
+    let out = pipeline::prepare_answer(&deps, &ask).await.unwrap();
+    let units: Vec<&pipeline::ContextUnit> = out
+        .context_units
+        .iter()
+        .filter(|u| u.kind == "document")
+        .collect();
+    assert_eq!(units.len(), 1, "exactly the middle parent is recalled");
+    let c = &units[0].content;
+    assert!(c.contains("M_SENTINEL"), "base content must survive");
+    assert!(
+        c.contains("甲段铺垫") && c.contains("乙段收尾"),
+        "both seq neighbors must be pulled into the short unit: {c}"
+    );
+    let a = c.find("甲段铺垫").unwrap();
+    let m = c.find("M_SENTINEL").unwrap();
+    let b = c.find("乙段收尾").unwrap();
+    assert!(a < m && m < b, "window must read in document order: {c}");
+}
+
+/// 向量索引自描述删除（doc_id payload）：重解析不得残留上一代的幽灵向量，
+/// dense 召回只允许命中 SQL 中真实存在的 active chunk。
+#[tokio::test]
+async fn s29_reparse_does_not_leak_ghost_vectors() {
+    let deps = deps().await;
+    let kb = seed_kb(&deps, "kb").await;
+    let doc = ingest_md(
+        &deps,
+        kb,
+        "重解析",
+        &format!("# A\n\n{}", long_body("REPARSE_SENTINEL_正文。", 300)),
+    )
+    .await;
+    let before = deps.vector.count(i64::from(kb)).await.unwrap();
+    assert!(before > 0, "first parse must embed vectors");
+
+    // 重解析：SQL 行全删重建（新 id），向量必须同步 purge 旧代。
+    service::process_document(&deps, doc, "default")
+        .await
+        .unwrap();
+    let after = deps.vector.count(i64::from(kb)).await.unwrap();
+    assert_eq!(
+        after, before,
+        "re-parse must not grow the index (old generation must be purged)"
+    );
+
+    // dense 召回不得返回 SQL 里不存在的幽灵 id。
+    let (qvec, _) = {
+        let mut v = deps
+            .embedder
+            .embed("default", &["REPARSE_SENTINEL_正文"])
+            .await
+            .unwrap();
+        (v.remove(0), ())
+    };
+    let hits = deps
+        .vector
+        .search(i64::from(kb), &qvec, 50, None)
+        .await
+        .unwrap();
+    assert!(!hits.is_empty());
+    let ids: Vec<i64> = hits.iter().map(|h| h.unit_id).collect();
+    let live = models::chunk::find_chunks_by_ids(&deps.pool, &ids)
+        .await
+        .unwrap();
+    assert_eq!(
+        live.len(),
+        ids.len(),
+        "every dense hit must resolve to a live chunk (no ghosts)"
+    );
+}
+
+/// 索引查看页数据源：SQL 真相 vs 向量/FTS doc 级计数必须一致。
+#[tokio::test]
+async fn s30_index_stats_reconciliation() {
+    let deps = deps().await;
+    let kb = seed_kb(&deps, "kb").await;
+    let doc = ingest_md(
+        &deps,
+        kb,
+        "对账",
+        &format!("# A\n\n{}", long_body("IDXVIEW_SENTINEL_正文。", 300)),
+    )
+    .await;
+
+    let stats = models::chunk::doc_kind_stats(&deps.pool, kb).await.unwrap();
+    let doc_total: i64 = stats.iter().map(|s| s.total).sum();
+    let doc_active: i64 = stats.iter().map(|s| s.active).sum();
+    let doc_embedded: i64 = stats.iter().map(|s| s.embedded).sum();
+    assert!(doc_total > 0 && doc_active > 0 && doc_embedded > 0);
+
+    let doc_ids = vec![i64::from(doc)];
+    let vc = deps
+        .vector
+        .doc_counts(i64::from(kb), &doc_ids)
+        .await
+        .unwrap();
+    assert_eq!(vc.get(&i64::from(doc)), Some(&(doc_embedded as u64)));
+    let fc = deps
+        .kbsearch
+        .doc_counts(i64::from(kb), &doc_ids)
+        .await
+        .unwrap();
+    assert_eq!(fc.get(&i64::from(doc)), Some(&(doc_active as u64)));
+
+    let kb_fts = deps.kbsearch.count_kb(i64::from(kb)).await.unwrap();
+    assert_eq!(kb_fts, doc_active as u64);
+    let kb_vec = deps.vector.count(i64::from(kb)).await.unwrap();
+    assert_eq!(kb_vec, doc_embedded as u64);
+}
+
+/// 检索测试数据源：向量路与关键字路都能召回已索引文档的块；analyze 切词。
+#[tokio::test]
+async fn s31_search_test_paths() {
+    let deps = deps().await;
+    let kb = seed_kb(&deps, "kb").await;
+    ingest_md(
+        &deps,
+        kb,
+        "测试",
+        &format!("# T\n\n{}", long_body("SEARCHTEST_SENTINEL_正文。", 200)),
+    )
+    .await;
+
+    // 向量路
+    let vectors = deps
+        .embedder
+        .embed("default", &["SEARCHTEST_SENTINEL_正文"])
+        .await
+        .unwrap();
+    let hits = deps
+        .vector
+        .search(i64::from(kb), &vectors[0], 10, None)
+        .await
+        .unwrap();
+    assert!(!hits.is_empty(), "vector path must recall indexed chunks");
+
+    // 关键字路
+    let hits = deps
+        .kbsearch
+        .search(i64::from(kb), "SEARCHTEST_SENTINEL_正文", 10)
+        .await
+        .unwrap();
+    assert!(!hits.is_empty(), "bm25 path must recall indexed chunks");
+
+    // 查询词元：拉丁 + 中文 gram 都要切出来
+    let grams = deps.kbsearch.analyze("solana是什么").await.unwrap();
+    assert!(
+        grams.contains(&"solan".to_string()),
+        "latin grams: {grams:?}"
+    );
+    assert!(
+        grams
+            .iter()
+            .any(|g| g == "是什么" || g == "什么" || g == "是什"),
+        "cjk grams: {grams:?}"
     );
 }

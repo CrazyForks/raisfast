@@ -13,7 +13,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use tantivy::collector::TopDocs;
-use tantivy::query::QueryParser;
+use tantivy::query::{BooleanQuery, Occur, Query, TermQuery};
 use tantivy::schema::document::Value as _;
 use tantivy::schema::{Field, IndexRecordOption, Schema, TextFieldIndexing, TextOptions};
 use tantivy::{Index, IndexReader, IndexWriter, TantivyDocument, Term};
@@ -172,6 +172,41 @@ impl KbSearchEngine {
         Ok(())
     }
 
+    /// Append units WITHOUT touching the rest of their document. Unlike
+    /// `reindex_document` (doc-scoped replace), this only replaces each
+    /// passed unit by its own `unit_id` — callers adding a subset of a
+    /// document's units (e.g. image captions from the recognize job,
+    /// 2026-09-18: it erased the doc's 179 text chunks from the index)
+    /// must use this, or bm25 recall for the doc degrades to the subset.
+    pub async fn append_units(&self, units: &[KbIndexUnit]) -> AppResult<()> {
+        if units.is_empty() {
+            return Ok(());
+        }
+        let docs: Vec<(Term, TantivyDocument)> = units
+            .iter()
+            .map(|u| {
+                (
+                    Term::from_field_text(self.fields.unit_id, &u.unit_id.to_string()),
+                    self.doc(u),
+                )
+            })
+            .collect();
+        let writer = self.writer.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut w = writer.blocking_lock();
+            for (unit_term, d) in &docs {
+                w.delete_term(unit_term.clone());
+                w.add_document(d.clone()).map_err(map_tantivy)?;
+            }
+            w.commit().map_err(map_tantivy)?;
+            Ok::<(), AppError>(())
+        })
+        .await
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("join: {e}")))??;
+        self.reader.reload().map_err(map_tantivy)?;
+        Ok(())
+    }
+
     /// Remove all units of one document from the index.
     pub async fn delete_document(&self, doc_id: i64) -> AppResult<()> {
         let term = Term::from_field_text(self.fields.doc_id, &doc_id.to_string());
@@ -186,6 +221,92 @@ impl KbSearchEngine {
         .map_err(|e| AppError::Internal(anyhow::anyhow!("join: {e}")))??;
         self.reader.reload().map_err(map_tantivy)?;
         Ok(())
+    }
+
+    /// Count indexed units per document within one KB (index viewer).
+    /// Committed-state exact counts via the Count collector, one term pair
+    /// per doc — doc counts are small, and facets are not stored so a
+    /// group-by is not available.
+    pub async fn doc_counts(
+        &self,
+        kb_id: i64,
+        doc_ids: &[i64],
+    ) -> AppResult<std::collections::HashMap<i64, u64>> {
+        let kb_field = self.fields.kb_id;
+        let doc_field = self.fields.doc_id;
+        let reader = self.reader.clone();
+        let doc_ids = doc_ids.to_vec();
+        tokio::task::spawn_blocking(move || -> AppResult<std::collections::HashMap<i64, u64>> {
+            let searcher = reader.searcher();
+            let mut out = std::collections::HashMap::new();
+            for doc_id in doc_ids {
+                let q = BooleanQuery::new(vec![
+                    (
+                        Occur::Must,
+                        Box::new(TermQuery::new(
+                            Term::from_field_text(kb_field, &kb_id.to_string()),
+                            IndexRecordOption::Basic,
+                        )) as Box<dyn Query>,
+                    ),
+                    (
+                        Occur::Must,
+                        Box::new(TermQuery::new(
+                            Term::from_field_text(doc_field, &doc_id.to_string()),
+                            IndexRecordOption::Basic,
+                        )) as Box<dyn Query>,
+                    ),
+                ]);
+                let n = searcher
+                    .search(&q, &tantivy::collector::Count)
+                    .map_err(map_tantivy)?;
+                out.insert(doc_id, u64::try_from(n).unwrap_or(0));
+            }
+            Ok(out)
+        })
+        .await
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("join: {e}")))?
+    }
+
+    /// Total indexed unit count for one KB (index viewer drift totals).
+    pub async fn count_kb(&self, kb_id: i64) -> AppResult<u64> {
+        let kb_field = self.fields.kb_id;
+        let reader = self.reader.clone();
+        tokio::task::spawn_blocking(move || -> AppResult<u64> {
+            let searcher = reader.searcher();
+            let q = TermQuery::new(
+                Term::from_field_text(kb_field, &kb_id.to_string()),
+                IndexRecordOption::Basic,
+            );
+            let n = searcher
+                .search(&q, &tantivy::collector::Count)
+                .map_err(map_tantivy)?;
+            Ok(u64::try_from(n).unwrap_or(0))
+        })
+        .await
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("join: {e}")))?
+    }
+
+    /// Analyze text with the text field's tokenizer — the indexed keyword
+    /// space of that text (all n-grams, deduped, in token order).
+    pub async fn analyze(&self, text: &str) -> AppResult<Vec<String>> {
+        let index = self.index.clone();
+        let text_field = self.fields.text;
+        let text = text.to_string();
+        tokio::task::spawn_blocking(move || -> AppResult<Vec<String>> {
+            let mut tokenizer = index.tokenizer_for_field(text_field).map_err(map_tantivy)?;
+            let mut out: Vec<String> = Vec::new();
+            let mut seen = std::collections::HashSet::new();
+            let mut stream = tokenizer.token_stream(&text);
+            while let Some(token) = stream.next() {
+                let gram = token.text.to_string();
+                if seen.insert(gram.clone()) {
+                    out.push(gram);
+                }
+            }
+            Ok(out)
+        })
+        .await
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("join: {e}")))?
     }
 
     /// Remove every unit of one knowledge base from the index (KB delete).
@@ -205,6 +326,14 @@ impl KbSearchEngine {
     }
 
     /// BM25 search within one KB. Chinese-friendly via the ngram tokenizer.
+    ///
+    /// The query is analyzed with the field's own tokenizer and the produced
+    /// grams are OR-ed (minimum one). `QueryParser` is deliberately not used:
+    /// it conjoins the n-grams of a single space-free term, so a mixed
+    /// latin+CJK question like "solana是什么" required every gram to hit —
+    /// no document can — and BM25 recall silently returned nothing for such
+    /// questions (2026-09-18). An OR of grams keeps recall; BM25 idf ranks
+    /// longer (rarer) grams higher.
     pub async fn search(
         &self,
         kb_id: i64,
@@ -220,19 +349,38 @@ impl KbSearchEngine {
 
         tokio::task::spawn_blocking(move || -> AppResult<Vec<KbSearchHit>> {
             let searcher = reader.searcher();
-            let kb_term = tantivy::query::TermQuery::new(
+            let kb_term = TermQuery::new(
                 Term::from_field_text(kb_field, &kb_id.to_string()),
-                // facet fields are Basic-indexed
-                tantivy::schema::IndexRecordOption::Basic,
+                IndexRecordOption::Basic,
             );
-            let text_qp = QueryParser::for_index(&index, vec![text_field]);
-            let parsed = text_qp
-                .parse_query(&query)
-                .map_err(|e| AppError::BadRequest(format!("invalid kb query: {e}")))?;
-            let filtered = tantivy::query::BooleanQuery::new(vec![
-                (tantivy::query::Occur::Must, Box::new(kb_term)),
-                (tantivy::query::Occur::Must, Box::new(parsed)),
-            ]);
+            let mut tokenizer = index.tokenizer_for_field(text_field).map_err(map_tantivy)?;
+            let mut grams: Vec<String> = Vec::new();
+            let mut seen = std::collections::HashSet::new();
+            let mut stream = tokenizer.token_stream(&query);
+            while let Some(token) = stream.next() {
+                let gram = token.text.to_string();
+                if seen.insert(gram.clone()) {
+                    grams.push(gram);
+                }
+            }
+            if grams.is_empty() {
+                return Ok(Vec::new());
+            }
+            let mut subqueries: Vec<(Occur, Box<dyn Query>)> =
+                vec![(Occur::Must, Box::new(kb_term))];
+            // Inner OR (pure-Should boolean requires ≥1 match) over all grams.
+            let gram_shoulds: Vec<(Occur, Box<dyn Query>)> = grams
+                .into_iter()
+                .map(|gram| {
+                    let term_query = TermQuery::new(
+                        Term::from_field_text(text_field, &gram),
+                        IndexRecordOption::WithFreqsAndPositions,
+                    );
+                    (Occur::Should, Box::new(term_query) as Box<dyn Query>)
+                })
+                .collect();
+            subqueries.push((Occur::Must, Box::new(BooleanQuery::new(gram_shoulds))));
+            let filtered = BooleanQuery::new(subqueries);
             let top: Vec<(tantivy::Score, tantivy::DocAddress)> = searcher
                 .search(&filtered, &TopDocs::with_limit(top_n).order_by_score())
                 .map_err(map_tantivy)?;
@@ -308,5 +456,92 @@ mod tests {
             kind: kind.to_string(),
             text: text.to_string(),
         }
+    }
+
+    /// Append-only indexing (image-caption path): adding a doc's image units
+    /// must NOT erase the doc's text units — `reindex_document` did exactly
+    /// that (2026-09-18: 179 text chunks wiped, bm25 degraded to captions).
+    #[tokio::test]
+    async fn append_units_keeps_doc_text_units() {
+        let e = KbSearchEngine::open_in_memory().unwrap();
+        e.reindex_document(&[
+            unit(
+                1,
+                1,
+                100,
+                "document",
+                "Solana is a high performance blockchain",
+            ),
+            unit(
+                2,
+                1,
+                100,
+                "document",
+                "second text chunk about proof of history",
+            ),
+        ])
+        .await
+        .unwrap();
+
+        // The image-recognition job appends caption units of the SAME doc.
+        e.append_units(&[
+            unit(3, 1, 100, "image", "该图展示了事务处理流程"),
+            unit(4, 1, 100, "image", "该图展示了验证器网络"),
+        ])
+        .await
+        .unwrap();
+
+        // Text units survived the append…
+        let hits = e.search(1, "blockchain", 10).await.unwrap();
+        assert!(
+            hits.iter().any(|h| h.unit_id == 1),
+            "text unit must survive"
+        );
+        // …and the caption units are searchable too.
+        let hits = e.search(1, "该图展示了", 10).await.unwrap();
+        assert_eq!(hits.len(), 2, "both caption units must be indexed");
+        // Re-appending the same units stays idempotent (no duplicates).
+        e.append_units(&[unit(3, 1, 100, "image", "该图展示了事务处理流程")])
+            .await
+            .unwrap();
+        let hits = e.search(1, "该图展示了", 10).await.unwrap();
+        assert_eq!(hits.len(), 2, "append must stay idempotent per unit_id");
+    }
+
+    /// Mixed latin+CJK query without spaces must still recall (ngram grams
+    /// are OR-ed, not conjoined) — the 2026-09-18 bm25-empty regression.
+    #[tokio::test]
+    async fn mixed_script_query_recalls() {
+        let e = KbSearchEngine::open_in_memory().unwrap();
+        e.reindex_document(&[
+            unit(
+                1,
+                1,
+                100,
+                "document",
+                "Solana is a high performance blockchain platform",
+            ),
+            unit(2, 1, 100, "document", "今天天气很好适合散步"),
+        ])
+        .await
+        .unwrap();
+
+        let hits = e.search(1, "solana是什么", 10).await.unwrap();
+        assert_eq!(
+            hits[0].unit_id, 1,
+            "latin grams must recall the english doc"
+        );
+
+        let hits = e.search(1, "solana", 10).await.unwrap();
+        assert_eq!(hits[0].unit_id, 1);
+
+        // Pure CJK keeps working, and kb isolation is intact.
+        let hits = e.search(1, "天气很好", 10).await.unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].unit_id, 2);
+
+        // Grams matching nothing stay empty rather than erroring.
+        let hits = e.search(1, "zzzzzz", 10).await.unwrap();
+        assert!(hits.is_empty());
     }
 }

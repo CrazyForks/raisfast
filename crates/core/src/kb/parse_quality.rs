@@ -208,6 +208,21 @@ pub fn page_of(marks: &[(u32, usize)], offset: usize) -> Option<u32> {
     )
 }
 
+/// Blank out page-anchor lines while PRESERVING total byte length —
+/// downstream byte offsets (chunk.byte_start, image refs) stay aligned
+/// with the original markdown.
+pub fn blank_page_marks(markdown: &str) -> String {
+    let mut out = String::with_capacity(markdown.len());
+    for line in markdown.split_inclusive('\n') {
+        if line.trim().starts_with(PAGE_MARK) {
+            out.push_str(&" ".repeat(line.len()));
+        } else {
+            out.push_str(line);
+        }
+    }
+    out
+}
+
 /// Remove page-anchor lines from chunk content (anchors ride the markdown
 /// for offset mapping; they must not leak into retrieval text).
 pub fn strip_page_marks(content: &str) -> String {

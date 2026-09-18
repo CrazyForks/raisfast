@@ -465,6 +465,242 @@ pub async fn admin_rebuild_vector(
     Ok(ApiResponse::success(json!({ "queued": true })))
 }
 
+/// Index viewer (§7): reconcile SQL truth against the vector and FTS
+/// indexes — per KB totals plus a per-document census, with drift flags.
+/// `kb_id` omitted → every KB of the tenant (bounded by the KB list page).
+#[derive(Deserialize)]
+pub struct IndexStatsQuery {
+    kb_id: Option<SnowflakeId>,
+}
+
+pub async fn admin_kb_index_stats(
+    auth: AuthUser,
+    State(state): State<AppState>,
+    Query(q): Query<IndexStatsQuery>,
+) -> AppResult<ApiResponse<Value>> {
+    auth.ensure_admin()?;
+    let deps = state.kb_deps()?;
+    let tenant = tenant_of(&auth);
+    let kbs = match q.kb_id {
+        Some(id) => vec![
+            crate::kb::models::knowledge_base::find_kb_by_id(&deps.pool, id, &tenant)
+                .await?
+                .ok_or_else(|| AppError::NotFound("kb_knowledge_base".into()))?,
+        ],
+        None => {
+            crate::kb::models::knowledge_base::list_kbs(&deps.pool, 1, 200, &tenant)
+                .await?
+                .0
+        }
+    };
+
+    let mut items = Vec::with_capacity(kbs.len());
+    for kb in kbs {
+        let kb_id = i64::from(kb.id);
+        let stats = crate::kb::models::chunk::doc_kind_stats(&deps.pool, kb.id).await?;
+        let docs =
+            crate::kb::models::document::find_documents_by_kb(&deps.pool, kb.id, &tenant).await?;
+
+        // Census doc ids (SQL chunks) ∪ document rows (zero-filled).
+        let mut doc_ids: Vec<i64> = stats.iter().filter_map(|s| s.doc_id).collect();
+        for d in &docs {
+            doc_ids.push(i64::from(d.id));
+        }
+        doc_ids.sort_unstable();
+        doc_ids.dedup();
+
+        let vec_counts = deps.vector.doc_counts(kb_id, &doc_ids).await?;
+        let fts_counts = deps.kbsearch.doc_counts(kb_id, &doc_ids).await?;
+        let vector_total = deps.vector.count(kb_id).await?;
+        let fts_total = deps.kbsearch.count_kb(kb_id).await?;
+
+        // KB-level kind totals: doc-attached rows + doc-less rows (faq/wiki).
+        let mut by_kind: std::collections::BTreeMap<String, Value> = Default::default();
+        let mut kb_total = 0_i64;
+        let mut kb_active = 0_i64;
+        let mut kb_embedded = 0_i64;
+        for s in &stats {
+            let e = by_kind
+                .entry(s.kind.clone())
+                .or_insert_with(|| json!({ "total": 0, "active": 0, "embedded": 0 }));
+            e["total"] = json!(e["total"].as_i64().unwrap_or(0) + s.total);
+            e["active"] = json!(e["active"].as_i64().unwrap_or(0) + s.active);
+            e["embedded"] = json!(e["embedded"].as_i64().unwrap_or(0) + s.embedded);
+            kb_total += s.total;
+            kb_active += s.active;
+            kb_embedded += s.embedded;
+        }
+
+        let title_of = |did: i64| -> Option<String> {
+            docs.iter()
+                .find(|d| i64::from(d.id) == did)
+                .map(|d| d.title.clone())
+        };
+        let doc_rows: Vec<Value> = doc_ids
+            .iter()
+            .map(|&did| {
+                let rows: Vec<&crate::kb::models::chunk::ChunkKindStat> =
+                    stats.iter().filter(|s| s.doc_id == Some(did)).collect();
+                let total: i64 = rows.iter().map(|s| s.total).sum();
+                let active: i64 = rows.iter().map(|s| s.active).sum();
+                let embedded: i64 = rows.iter().map(|s| s.embedded).sum();
+                let v = vec_counts.get(&did).copied().unwrap_or(0);
+                let f = fts_counts.get(&did).copied().unwrap_or(0);
+                let drift = v != u64::try_from(embedded).unwrap_or(u64::MAX)
+                    || f != u64::try_from(active).unwrap_or(u64::MAX);
+                json!({
+                    "doc_id": did,
+                    "title": title_of(did),
+                    "chunks_total": total,
+                    "chunks_active": active,
+                    "chunks_embedded": embedded,
+                    "vector_count": v,
+                    "fts_count": f,
+                    "drift": drift,
+                })
+            })
+            .collect();
+
+        items.push(json!({
+            "kb_id": kb_id,
+            "kb_name": kb.name,
+            "slug": kb.slug,
+            "sql": {
+                "total": kb_total,
+                "active": kb_active,
+                "embedded": kb_embedded,
+                "by_kind": by_kind,
+            },
+            "vector": { "backend": deps.vector.backend_name(), "total": vector_total },
+            "fts": { "total": fts_total },
+            "drift": vector_total != u64::try_from(kb_embedded).unwrap_or(u64::MAX)
+                || fts_total != u64::try_from(kb_active).unwrap_or(u64::MAX),
+            "docs": doc_rows,
+        }));
+    }
+    Ok(ApiResponse::success(json!({ "items": items })))
+}
+
+/// One recalled chunk in search-test results: score + SQL-joined identity.
+async fn hit_rows(deps: &KbDeps, hits: Vec<(i64, Option<f32>)>) -> AppResult<Vec<Value>> {
+    let ids: Vec<i64> = hits.iter().map(|(id, _)| *id).collect();
+    let chunks = crate::kb::models::chunk::find_chunks_by_ids(&deps.pool, &ids).await?;
+    let by_id: std::collections::HashMap<i64, crate::kb::models::chunk::KbChunk> =
+        chunks.into_iter().map(|c| (i64::from(c.id), c)).collect();
+    let doc_ids: Vec<i64> = by_id
+        .values()
+        .filter_map(|c| c.doc_id.map(i64::from))
+        .collect();
+    let titles = crate::kb::models::document::find_doc_titles_by_ids(&deps.pool, &doc_ids).await?;
+    Ok(hits
+        .into_iter()
+        .map(|(unit_id, score)| {
+            let chunk = by_id.get(&unit_id);
+            let doc_id = chunk.and_then(|c| c.doc_id.map(i64::from));
+            json!({
+                "unit_id": unit_id,
+                "score": score,
+                "kind": chunk.map(|c| c.kind.clone()),
+                "doc_id": doc_id,
+                "doc_title": doc_id.as_ref().and_then(|d| titles.get(d)),
+                "live": chunk.is_some(),
+                "preview": chunk
+                    .map(|c| c.content.chars().take(150).collect::<String>())
+                    .unwrap_or_default(),
+            })
+        })
+        .collect())
+}
+
+/// 检索测试·向量路：embed 查询 → top-k 命中片段（一次真实 embed 调用）。
+#[derive(Deserialize)]
+pub struct SearchTestQuery {
+    kb_id: SnowflakeId,
+    q: String,
+    limit: Option<u64>,
+}
+
+pub async fn admin_kb_vector_search_test(
+    auth: AuthUser,
+    State(state): State<AppState>,
+    Query(q): Query<SearchTestQuery>,
+) -> AppResult<ApiResponse<Value>> {
+    auth.ensure_admin()?;
+    let deps = state.kb_deps()?;
+    let tenant = tenant_of(&auth);
+    let limit = q.limit.unwrap_or(10).clamp(1, 50);
+    let vectors = deps.embedder.embed(&tenant, &[q.q.as_str()]).await?;
+    let Some(embedding) = vectors.first() else {
+        return Ok(ApiResponse::success(
+            json!({ "items": Vec::<Value>::new() }),
+        ));
+    };
+    let hits = deps
+        .vector
+        .search(i64::from(q.kb_id), embedding, limit as usize, None)
+        .await?;
+    let rows = hit_rows(
+        &deps,
+        hits.into_iter()
+            .map(|h| (h.unit_id, Some(h.score)))
+            .collect(),
+    )
+    .await?;
+    Ok(ApiResponse::success(json!({ "items": rows })))
+}
+
+/// 检索测试·关键字路：BM25 gram-OR 命中 + 查询被切成哪些词元。
+pub async fn admin_kb_bm25_search_test(
+    auth: AuthUser,
+    State(state): State<AppState>,
+    Query(q): Query<SearchTestQuery>,
+) -> AppResult<ApiResponse<Value>> {
+    auth.ensure_admin()?;
+    let deps = state.kb_deps()?;
+    let limit = q.limit.unwrap_or(10).clamp(1, 50);
+    let grams = deps.kbsearch.analyze(&q.q).await?;
+    let hits = deps
+        .kbsearch
+        .search(i64::from(q.kb_id), &q.q, limit as usize)
+        .await?;
+    let rows = hit_rows(
+        &deps,
+        hits.into_iter()
+            .map(|h| (h.unit_id, Some(h.score)))
+            .collect(),
+    )
+    .await?;
+    Ok(ApiResponse::success(
+        json!({ "grams": grams, "items": rows }),
+    ))
+}
+
+/// 某一块被索引进了哪些关键字：其文本经分词后的全部词元。
+#[derive(Deserialize)]
+pub struct ChunkKeywordsQuery {
+    chunk_id: SnowflakeId,
+}
+
+pub async fn admin_kb_chunk_keywords(
+    auth: AuthUser,
+    State(state): State<AppState>,
+    Query(q): Query<ChunkKeywordsQuery>,
+) -> AppResult<ApiResponse<Value>> {
+    auth.ensure_admin()?;
+    let deps = state.kb_deps()?;
+    let chunks =
+        crate::kb::models::chunk::find_chunks_by_ids(&deps.pool, &[i64::from(q.chunk_id)]).await?;
+    let Some(chunk) = chunks.first() else {
+        return Err(AppError::NotFound("kb_chunk".into()));
+    };
+    let keywords = deps.kbsearch.analyze(&chunk.content).await?;
+    Ok(ApiResponse::success(json!({
+        "chunk_id": q.chunk_id,
+        "kind": chunk.kind,
+        "keywords": keywords,
+    })))
+}
+
 /// Retention sweep used by the `KbRunsCleanup` job (§10) — exported here so
 /// the worker handler stays a thin bridge.
 pub async fn sweep_runs(pool: &crate::db::Pool, retention_days: i64) -> AppResult<u64> {

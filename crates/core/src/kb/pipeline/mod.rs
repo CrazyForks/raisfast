@@ -427,11 +427,11 @@ async fn recall_and_merge(
         serde_json::json!({ "boosted": boosted, "multiplier": deps.config.kb.wiki_boost }),
         None,
     );
-    // S7 merge: FAQ inject + parent expand + dedup.
+    // S7 merge: FAQ inject + parent expand + dedup + adjacent stitching.
     trace.stage("s7_merge");
     let candidate_ids: std::collections::HashSet<i64> =
         hydrated.iter().map(|c| c.unit_id).collect();
-    let units = merge::merge_units(deps, &hydrated).await?;
+    let (units, merge_stats) = merge::merge_units(deps, &hydrated).await?;
     let faq_injected: Vec<i64> = units
         .iter()
         .filter(|u| u.is_faq)
@@ -442,17 +442,15 @@ async fn recall_and_merge(
         .filter(|u| !candidate_ids.contains(&u.unit_id))
         .map(|u| u.unit_id)
         .collect();
-    let dedup_dropped = hydrated.len().saturating_sub(
-        units
-            .len()
-            .saturating_sub(faq_injected.len() + parent_expanded.len()),
-    );
     trace.end_stage(
         crate::kb::trace::STAGE_OK,
         serde_json::json!({
             "faq_injected": faq_injected,
             "parent_expanded": parent_expanded,
-            "dedup_dropped": dedup_dropped,
+            "dedup_dropped": merge_stats.dedup_dropped,
+            "stitched_groups": merge_stats.stitched_groups,
+            "stitched_units": merge_stats.stitched_units,
+            "neighbors_expanded": merge_stats.neighbors_added,
             "units": units.len(),
         }),
         None,

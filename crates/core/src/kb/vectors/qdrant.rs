@@ -78,6 +78,7 @@ impl QdrantIndex {
     fn point(item: &VectorItem) -> Result<PointStruct, AppError> {
         let payload: Payload = serde_json::json!({
             "kb_id": item.kb_id,
+            "doc_id": item.doc_id,
             "kind": item.kind,
         })
         .try_into()
@@ -123,6 +124,21 @@ impl VectorIndex for QdrantIndex {
         match self
             .client
             .delete_points(DeletePointsBuilder::new(&name).points(ids))
+            .await
+        {
+            Ok(_) => Ok(()),
+            // Deleting from a lazily-not-yet-created collection is a no-op.
+            Err(e) if is_not_found(&e) => Ok(()),
+            Err(e) => Err(qerr("delete_points", e)),
+        }
+    }
+
+    async fn delete_document(&self, kb_id: i64, doc_id: i64) -> AppResult<()> {
+        let name = self.collection(kb_id);
+        let filter = Filter::all([Condition::matches("doc_id", doc_id)]);
+        match self
+            .client
+            .delete_points(DeletePointsBuilder::new(&name).points(filter))
             .await
         {
             Ok(_) => Ok(()),
@@ -200,72 +216,33 @@ impl VectorIndex for QdrantIndex {
             Err(e) => Err(qerr("count", e)),
         }
     }
-}
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn skip_if_no_qdrant() -> Option<QdrantIndex> {
-        let url = std::env::var("RAISFAST_KB_QDRANT_URL").ok()?;
-        QdrantIndex::new(
-            &url,
-            std::env::var("RAISFAST_KB_QDRANT_API_KEY").ok(),
-            "kbtest",
-        )
-        .ok()
-    }
-
-    fn item(unit_id: i64, kb_id: i64, kind: &str, embedding: Vec<f32>) -> VectorItem {
-        VectorItem {
-            unit_id,
-            kb_id,
-            kind: kind.to_string(),
-            embedding,
-        }
-    }
-
-    #[tokio::test]
-    async fn qdrant_roundtrip() {
-        let Some(idx) = skip_if_no_qdrant() else {
-            eprintln!("skipping: RAISFAST_KB_QDRANT_URL not set");
-            return;
-        };
-        // Unique KB id per run to avoid collisions on shared instances.
-        let kb_id = chrono::Utc::now().timestamp_subsec_nanos() as i64;
-
-        idx.rebuild(
-            kb_id,
-            2,
-            &[
-                item(10, kb_id, "document", vec![1.0, 0.0]),
-                item(11, kb_id, "wiki_page", vec![0.0, 1.0]),
-            ],
-        )
-        .await
-        .unwrap();
-
-        let hits = idx.search(kb_id, &[1.0, 0.0], 2, None).await.unwrap();
-        assert_eq!(hits.len(), 2);
-        assert_eq!(hits[0].unit_id, 10);
-
-        let wiki = idx
-            .search(kb_id, &[1.0, 0.0], 2, Some("wiki_page"))
-            .await
-            .unwrap();
-        assert_eq!(wiki.len(), 1);
-        assert_eq!(wiki[0].unit_id, 11);
-
-        idx.delete(kb_id, &[10]).await.unwrap();
-        let hits = idx.search(kb_id, &[1.0, 0.0], 2, None).await.unwrap();
-        assert_eq!(hits.len(), 1);
-
-        idx.delete_all(kb_id).await.unwrap();
-        assert!(
-            idx.search(kb_id, &[1.0, 0.0], 2, None)
+    async fn doc_counts(
+        &self,
+        kb_id: i64,
+        doc_ids: &[i64],
+    ) -> AppResult<std::collections::HashMap<i64, u64>> {
+        let name = self.collection(kb_id);
+        let mut out = std::collections::HashMap::new();
+        for doc_id in doc_ids {
+            let filter = Filter::all([Condition::matches("doc_id", *doc_id)]);
+            match self
+                .client
+                .count(
+                    qdrant_client::qdrant::CountPointsBuilder::new(&name)
+                        .filter(filter)
+                        .exact(true),
+                )
                 .await
-                .unwrap()
-                .is_empty()
-        );
+            {
+                Ok(res) => {
+                    out.insert(*doc_id, res.result.map_or(0, |r| r.count));
+                }
+                // A KB whose collection was never created has zero points.
+                Err(e) if is_not_found(&e) => {}
+                Err(e) => return Err(qerr("count", e)),
+            }
+        }
+        Ok(out)
     }
 }

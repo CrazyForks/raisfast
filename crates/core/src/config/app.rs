@@ -834,6 +834,31 @@ pub struct KbConfig {
     /// `RAISFAST_KB_DOCREADER_TIMEOUT_SECS` (default 300).
     #[serde(default = "default_kb_docreader_timeout")]
     pub docreader_timeout_secs: u64,
+    /// MinerU parse service HTTP endpoint (`services/mineru`, Docker :50053).
+    /// `None`/empty = the `mineru` engine is not registered. Env
+    /// `RAISFAST_KB_MINERU_URL`.
+    #[serde(default)]
+    pub mineru_url: Option<String>,
+    /// MinerU parse budget (job poll deadline — the first parse downloads
+    /// models and can take many minutes). Env
+    /// `RAISFAST_KB_MINERU_TIMEOUT_SECS` (default 1800).
+    #[serde(default = "default_kb_mineru_timeout")]
+    pub mineru_timeout_secs: u64,
+    /// MinerU Cloud API key (mineru.net). `None`/empty = the
+    /// `mineru_cloud` engine is not registered. Env
+    /// `RAISFAST_KB_MINERU_CLOUD_API_KEY`.
+    #[serde(default)]
+    pub mineru_cloud_api_key: Option<String>,
+    /// Self-hosted PaddleOCR-VL pipeline endpoint (PaddleX serving).
+    /// `None`/empty = the `paddleocr_vl` engine is not registered. Env
+    /// `RAISFAST_KB_PADDLEOCR_VL_ENDPOINT`.
+    #[serde(default)]
+    pub paddleocr_vl_endpoint: Option<String>,
+    /// PaddleOCR-VL Cloud (AI Studio) token. `None`/empty = the
+    /// `paddleocr_vl_cloud` engine is not registered. Env
+    /// `RAISFAST_KB_PADDLEOCR_VL_CLOUD_TOKEN`.
+    #[serde(default)]
+    pub paddleocr_vl_cloud_token: Option<String>,
     /// Global default rerank window; per-KB `rerank_window` overrides.
     /// S4 cuts to this window (≥ `top_k`) so the reranker sees more than
     /// the final keep set, S5 reranks then cuts back to `top_k` (§6.1.4
@@ -901,6 +926,10 @@ fn default_kb_docreader_timeout() -> u64 {
     300
 }
 
+fn default_kb_mineru_timeout() -> u64 {
+    1800
+}
+
 impl Default for KbConfig {
     fn default() -> Self {
         Self {
@@ -924,6 +953,11 @@ impl Default for KbConfig {
             parser_engine: None,
             docreader_url: None,
             docreader_timeout_secs: default_kb_docreader_timeout(),
+            mineru_url: None,
+            mineru_timeout_secs: default_kb_mineru_timeout(),
+            mineru_cloud_api_key: None,
+            paddleocr_vl_endpoint: None,
+            paddleocr_vl_cloud_token: None,
             rerank_window: default_kb_rerank_window(),
             rerank_threshold: 0.0,
             rerank_batch_size: default_kb_rerank_batch_size(),
@@ -999,6 +1033,22 @@ impl KbConfig {
                 .ok()
                 .filter(|v| !v.is_empty()),
             parser_engine: env::var("RAISFAST_KB_PARSER_ENGINE")
+                .ok()
+                .filter(|v| !v.is_empty()),
+            mineru_url: env::var("RAISFAST_KB_MINERU_URL")
+                .ok()
+                .filter(|v| !v.is_empty()),
+            mineru_timeout_secs: env::var("RAISFAST_KB_MINERU_TIMEOUT_SECS")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(default_kb_mineru_timeout()),
+            mineru_cloud_api_key: env::var("RAISFAST_KB_MINERU_CLOUD_API_KEY")
+                .ok()
+                .filter(|v| !v.is_empty()),
+            paddleocr_vl_endpoint: env::var("RAISFAST_KB_PADDLEOCR_VL_ENDPOINT")
+                .ok()
+                .filter(|v| !v.is_empty()),
+            paddleocr_vl_cloud_token: env::var("RAISFAST_KB_PADDLEOCR_VL_CLOUD_TOKEN")
                 .ok()
                 .filter(|v| !v.is_empty()),
             docreader_url: env::var("RAISFAST_KB_DOCREADER_URL")

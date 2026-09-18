@@ -65,6 +65,34 @@ pub fn build_kb_runtime(
         );
         engines.push(std::sync::Arc::new(docreader));
     }
+    if let Some(mineru) = parser::mineru::MineruEngine::from_config(&config.kb) {
+        tracing::info!(
+            "kb parse engine 'mineru' configured ({})",
+            config.kb.mineru_url.as_deref().unwrap_or_default()
+        );
+        engines.push(std::sync::Arc::new(mineru));
+    }
+    if let Some(engine) = parser::mineru_cloud::MineruCloudEngine::from_config(&config.kb) {
+        tracing::info!("kb parse engine 'mineru_cloud' configured (api key set)");
+        engines.push(std::sync::Arc::new(engine));
+    }
+    if let Some(engine) = parser::paddleocr_vl::PaddleOcrVlEngine::from_config(&config.kb) {
+        tracing::info!(
+            "kb parse engine 'paddleocr_vl' configured ({})",
+            config
+                .kb
+                .paddleocr_vl_endpoint
+                .as_deref()
+                .unwrap_or_default()
+        );
+        engines.push(std::sync::Arc::new(engine));
+    }
+    if let Some(engine) =
+        parser::paddleocr_vl_cloud::PaddleOcrVlCloudEngine::from_config(&config.kb)
+    {
+        tracing::info!("kb parse engine 'paddleocr_vl_cloud' configured (token set)");
+        engines.push(std::sync::Arc::new(engine));
+    }
     let parsers = std::sync::Arc::new(parser::ParserRegistry::new(engines));
     Ok(Some(std::sync::Arc::new(KbRuntime {
         vector,

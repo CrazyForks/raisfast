@@ -133,6 +133,21 @@ mod tests {
             ) -> crate::errors::app_error::AppResult<()> {
                 Ok(())
             }
+            async fn delete_document(
+                &self,
+                _kb_id: i64,
+                _doc_id: i64,
+            ) -> crate::errors::app_error::AppResult<()> {
+                Ok(())
+            }
+            async fn doc_counts(
+                &self,
+                _kb_id: i64,
+                _doc_ids: &[i64],
+            ) -> crate::errors::app_error::AppResult<std::collections::HashMap<i64, u64>>
+            {
+                Ok(std::collections::HashMap::new())
+            }
             async fn delete_all(&self, _kb_id: i64) -> crate::errors::app_error::AppResult<()> {
                 Ok(())
             }

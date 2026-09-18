@@ -358,6 +358,7 @@ async fn index_page_units(
         items.push(crate::kb::vectors::VectorItem {
             unit_id: i64::from(ins.id),
             kb_id: i64::from(page.kb_id),
+            doc_id: None,
             kind: "wiki_page".into(),
             embedding: vectors[idx].clone(),
         });

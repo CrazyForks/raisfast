@@ -54,6 +54,17 @@ pub fn routes(
         r,
         registry,
         config.api_restful,
+        "/admin/kb/parser-engines",
+        get,
+        admin_parser_engines,
+        "system",
+        "admin/kb/knowledge-bases",
+        "admin"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        config.api_restful,
         "/admin/kb/knowledge-bases/{id}",
         put,
         admin_update_kb,
@@ -191,6 +202,50 @@ pub fn routes(
         "/admin/kb/diagnostics",
         get,
         crate::kb::diagnostics::admin_kb_diagnostics,
+        "system",
+        "admin/kb/diagnostics",
+        "admin"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        config.api_restful,
+        "/admin/kb/index-stats",
+        get,
+        crate::kb::diagnostics::admin_kb_index_stats,
+        "system",
+        "admin/kb/diagnostics",
+        "admin"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        config.api_restful,
+        "/admin/kb/vector-search-test",
+        get,
+        crate::kb::diagnostics::admin_kb_vector_search_test,
+        "system",
+        "admin/kb/diagnostics",
+        "admin"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        config.api_restful,
+        "/admin/kb/bm25-search-test",
+        get,
+        crate::kb::diagnostics::admin_kb_bm25_search_test,
+        "system",
+        "admin/kb/diagnostics",
+        "admin"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        config.api_restful,
+        "/admin/kb/chunk-keywords",
+        get,
+        crate::kb::diagnostics::admin_kb_chunk_keywords,
         "system",
         "admin/kb/diagnostics",
         "admin"
@@ -414,6 +469,17 @@ pub fn routes(
         "system",
         "admin/kb/faqs",
         "admin"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        config.api_restful,
+        "/admin/kb/documents/{id}/reader",
+        get,
+        admin_document_reader,
+        "system",
+        "kb/documents",
+        "authed"
     );
     let r = reg_route!(
         r,
@@ -786,6 +852,18 @@ async fn resolve_kb_dim(
     ))
 }
 
+/// Registered parse engines (KB form dropdown source — engine names are
+/// a server-side registry concern, never a frontend hardcoded list).
+async fn admin_parser_engines(
+    auth: AuthUser,
+    State(state): State<AppState>,
+) -> AppResult<ApiResponse<Value>> {
+    auth.ensure_admin()?;
+    let deps = state.kb_deps()?;
+    let items: Vec<&str> = deps.parsers.names();
+    Ok(ApiResponse::success(json!({ "items": items })))
+}
+
 async fn admin_list_kbs(
     auth: AuthUser,
     State(state): State<AppState>,
@@ -916,6 +994,43 @@ async fn admin_create_online_document(
     Ok(ApiResponse::success(
         json!({ "id": doc.id, "status": doc.status, "title": doc.title }),
     ))
+}
+
+/// Reader view (质量验证): page-organized leaf chunks with recognized
+/// images interleaved — inspect what the RAG actually ingested.
+#[derive(Deserialize)]
+struct ReaderQuery {
+    page: Option<i64>,
+}
+
+async fn admin_document_reader(
+    auth: AuthUser,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Query(q): Query<ReaderQuery>,
+) -> AppResult<ApiResponse<Value>> {
+    auth.ensure_admin()?;
+    let id = parse_snowflake(&id)?;
+    let tenant = tenant_of(&auth);
+    let doc = crate::kb::models::document::find_document_by_id(&state.pool, id, &tenant)
+        .await?
+        .ok_or_else(|| AppError::NotFound("kb_document".into()))?;
+    // 页参数：?page=N 显式翻页；缺省 = 第一页（最小页码，无锚点为 NULL 组）。
+    let page = match q.page {
+        Some(p) => Some(p),
+        None => crate::kb::models::chunk::reader_first_page(&state.pool, id)
+            .await?
+            .or(Some(1)),
+    };
+    let view = crate::kb::models::chunk::reader_page(&state.pool, id, page).await?;
+    Ok(ApiResponse::success(json!({
+        "doc": {
+            "id": doc.id, "title": doc.title, "pages": doc.pages,
+            "parse_degraded": doc.parse_degraded, "parser_engine": doc.parser_engine,
+        },
+        "page": view.page, "total_pages": view.total_pages,
+        "blocks": view.blocks, "index": view.index,
+    })))
 }
 
 #[derive(Deserialize)]
@@ -2440,6 +2555,8 @@ async fn admin_update_faq(
 
 /// Chunk list: document drill-down (`doc_id` set → whole document, unpaged)
 /// or standalone browsing (paged across KBs, optional `kb_id` filter).
+/// Browsing paginates by parent group; each page carries the children of its
+/// parents so a page cut never splits a family. `total` counts groups.
 /// Every item carries its KB name and document title for list columns.
 #[derive(Deserialize)]
 struct ListChunksQuery {
@@ -2466,7 +2583,23 @@ async fn admin_list_chunks(
     } else {
         let page = q.page.unwrap_or(1).max(1);
         let page_size = q.page_size.unwrap_or(50).clamp(1, 200);
-        crate::kb::models::chunk::list_chunks_paged(&state.pool, q.kb_id, page, page_size).await?
+        let (parents, total) =
+            crate::kb::models::chunk::list_chunks_paged(&state.pool, q.kb_id, page, page_size)
+                .await?;
+        // Reunite each page's parents with their children, then restore the
+        // flat display order (kb → doc → seq keeps every family contiguous).
+        let parent_ids: Vec<i64> = parents.iter().map(|p| i64::from(p.id)).collect();
+        let children =
+            crate::kb::models::chunk::find_children_by_parents(&state.pool, &parent_ids).await?;
+        let mut rows: Vec<_> = parents.into_iter().chain(children).collect();
+        rows.sort_by_key(|c| {
+            (
+                i64::from(c.kb_id),
+                c.doc_id.map(i64::from).unwrap_or_default(),
+                c.seq,
+            )
+        });
+        (rows, total)
     };
     // Resolve kb_name / doc_title columns in two batch lookups.
     let kb_ids: Vec<i64> = {
@@ -2491,6 +2624,7 @@ async fn admin_list_chunks(
         .map(|c| {
             json!({
                 "id": c.id, "kind": c.kind, "parent_id": c.parent_id, "seq": c.seq,
+                "page": c.page,
                 "breadcrumb": c.breadcrumb, "bytes": c.content.len(),
                 "has_embedding": c.embedding.is_some(),
                 "preview": c.content.chars().take(100).collect::<String>(),

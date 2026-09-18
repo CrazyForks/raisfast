@@ -29,12 +29,17 @@ use crate::errors::app_error::{AppError, AppResult};
 /// One embeddable retrieval unit to index.
 ///
 /// `unit_id` is the `kb_chunks.id` snowflake; `kind` mirrors the chunk kind
-/// (`document` | `faq` | `wiki_page`) and doubles as a payload filter for
-/// future scoped searches [抄WK:types/chunk.go ChunkType*].
+/// (`document` | `faq` | `wiki_page` | `image`) and doubles as a payload
+/// filter for future scoped searches [抄WK:types/chunk.go ChunkType*].
+/// `doc_id` (the `kb_documents.id` snowflake) makes the index self-describing
+/// so document-scoped deletes never depend on reading SQL first — the
+/// re-parse orphan-vector bug (2026-09-18) was exactly that ordering trap.
+/// `None` for units without a document (faq, wiki_page).
 #[derive(Debug, Clone)]
 pub struct VectorItem {
     pub unit_id: i64,
     pub kb_id: i64,
+    pub doc_id: Option<i64>,
     pub kind: String,
     pub embedding: Vec<f32>,
 }
@@ -57,6 +62,12 @@ pub trait VectorIndex: Send + Sync {
     /// Remove specific units from one KB.
     async fn delete(&self, kb_id: i64, unit_ids: &[i64]) -> AppResult<()>;
 
+    /// Remove every unit of one document from one KB (payload/filter-scoped,
+    /// independent of SQL row state). Call this before re-parse or on doc
+    /// delete — the re-parse orphan-vector leak (2026-09-18) came from
+    /// deriving unit ids from rows that had already been wiped.
+    async fn delete_document(&self, kb_id: i64, doc_id: i64) -> AppResult<()>;
+
     /// Wipe one KB's entire index (used by re-parse idempotency and rebuild).
     async fn delete_all(&self, kb_id: i64) -> AppResult<()>;
 
@@ -75,6 +86,15 @@ pub trait VectorIndex: Send + Sync {
     /// Point count for one KB (DR9) — the diagnostics/health drift check
     /// compares this against the SQL embedded-chunk count.
     async fn count(&self, kb_id: i64) -> AppResult<u64>;
+
+    /// Count indexed units per document (index viewer / per-doc drift).
+    /// Doc ids absent from the index are simply missing from the map
+    /// (treat as 0). Units without a doc (faq/wiki_page) are not reported.
+    async fn doc_counts(
+        &self,
+        kb_id: i64,
+        doc_ids: &[i64],
+    ) -> AppResult<std::collections::HashMap<i64, u64>>;
 
     /// Human-readable backend name for health reporting and admin UI.
     fn backend_name(&self) -> &str;

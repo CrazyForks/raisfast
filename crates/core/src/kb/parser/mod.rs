@@ -15,6 +15,10 @@
 pub mod builtin;
 pub mod docreader;
 pub mod docreader_proto;
+pub mod mineru;
+pub mod mineru_cloud;
+pub mod paddleocr_vl;
+pub mod paddleocr_vl_cloud;
 
 use std::sync::Arc;
 

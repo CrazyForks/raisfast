@@ -1,0 +1,16 @@
+# PaddleOCR-VL 解析服务（独立容器，与 docreader / mineru 平级）。
+# raisfast 引擎 `paddleocr_vl` 调 POST {endpoint}/layout-parsing。
+services:
+  paddleocr-vl:
+    # tag 以 PaddleX 官方文档为准（docs.paddlepaddle.org.cn）
+    image: ccr-2vdh3abv-pub.cnc.bj.baidubce.com/paddlex/paddlex:3.3.2-cpu
+    container_name: raisfast-paddleocr-vl
+    ports:
+      - "${PADDLE_PORT:-50054}:8080"
+    volumes:
+      - paddlex-models:/root/.paddlex
+    command: paddlex --serve --pipeline PaddleOCR-VL --host 0.0.0.0 --port 8080
+    restart: unless-stopped
+
+volumes:
+  paddlex-models:
