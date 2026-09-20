@@ -93,6 +93,44 @@ pub struct ParserConfig {
     pub rules: Vec<ParserEngineRule>,
 }
 
+/// 外部下载地址校验（v1 子集，对齐 WK SSRF 层语义）：仅 https、
+/// 禁 loopback/私网/链路本地/未指定 IP 与 localhost 主机名。
+/// 声明偏差：DNS rebinding 防护未含（解析期校验后续可加）——
+/// 引擎 endpoint 本身来自管理员 env，不受此限制。
+pub fn validate_external_url(url: &str) -> AppResult<()> {
+    let err = || AppError::BadRequest(format!("blocked non-external url: {url}"));
+    let Some(rest) = url.strip_prefix("https://") else {
+        return Err(err());
+    };
+    let hostport = rest.split(['/', '?', '#']).next().unwrap_or_default();
+    let hostport = hostport
+        .rsplit_once('@')
+        .map(|(_, h)| h)
+        .unwrap_or(hostport);
+    let host = hostport.split(':').next().unwrap_or_default();
+    if host.is_empty() || host.eq_ignore_ascii_case("localhost") || host.ends_with(".local") {
+        return Err(err());
+    }
+    if let Ok(ip) = host.parse::<std::net::IpAddr>() {
+        let banned = match ip {
+            std::net::IpAddr::V4(v4) => {
+                v4.is_loopback() || v4.is_private() || v4.is_link_local() || v4.is_unspecified()
+            }
+            std::net::IpAddr::V6(v6) => {
+                v6.is_loopback()
+                    || v6.is_unspecified()
+                    || v6
+                        .to_ipv4_mapped()
+                        .is_some_and(|v4| v4.is_loopback() || v4.is_private())
+            }
+        };
+        if banned {
+            return Err(err());
+        }
+    }
+    Ok(())
+}
+
 /// Name → engine registry; `builtin` is always present and terminal.
 pub struct ParserRegistry {
     engines: Vec<Arc<dyn ParseEngine>>,

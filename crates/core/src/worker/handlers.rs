@@ -250,6 +250,25 @@ pub fn register_all(deps: HandlerDeps) -> JobHandlerRegistry {
             )),
         );
         registry.register(
+            "convert_document",
+            Box::new(kb::ConvertDocumentHandler::new(
+                kb_storage.clone(),
+                kb_runtime.parsers.clone(),
+                config.clone(),
+            )),
+        );
+        registry.register(
+            "recognize_image",
+            Box::new(kb::RecognizeImageHandler::new(
+                pool.clone(),
+                kb_runtime.clone(),
+                kb_storage.clone(),
+                config.clone(),
+                emitter.clone(),
+                llm_router.clone(),
+            )),
+        );
+        registry.register(
             "kb_distill_wiki",
             Box::new(kb::KbDistillWikiHandler::new(
                 pool.clone(),

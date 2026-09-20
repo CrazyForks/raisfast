@@ -230,7 +230,7 @@ async fn image_vlm_ref(
     }
 }
 
-async fn vlm_call(
+pub(crate) async fn vlm_call(
     deps: &KbDeps,
     tenant: &str,
     model: &str,

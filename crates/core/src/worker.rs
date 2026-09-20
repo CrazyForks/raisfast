@@ -148,6 +148,22 @@ pub enum Job {
         doc_ids: Vec<i64>,
         tenant_id: String,
     },
+    /// 独立文档转换 job（dev-docs/document/service-design.md M1）。
+    ConvertDocument {
+        /// 公开 job id（同时是结果存储目录键）。
+        job_id: String,
+        tenant_id: String,
+        filename: String,
+        engine: Option<String>,
+        extract_images: bool,
+    },
+    /// 独立图像识别 job（dev-docs/document/service-design.md M2）。
+    RecognizeImage {
+        job_id: String,
+        tenant_id: String,
+        model: Option<String>,
+        prompt: Option<String>,
+    },
     /// Custom job type, supports arbitrary `job_type` + JSON payload
     ///
     /// When no built-in Handler matches, WorkerRunner falls back to plugin dispatch.
@@ -183,6 +199,8 @@ impl Job {
             Job::KbRebuildVectorIndex { .. } => "kb_rebuild_vector_index",
             Job::KbRunsCleanup {} => "kb_runs_cleanup",
             Job::KbDistillWiki { .. } => "kb_distill_wiki",
+            Job::ConvertDocument { .. } => "convert_document",
+            Job::RecognizeImage { .. } => "recognize_image",
             Job::Custom { job_type, .. } => job_type,
         }
     }

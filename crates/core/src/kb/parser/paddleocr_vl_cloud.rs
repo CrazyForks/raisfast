@@ -236,6 +236,7 @@ impl ParseEngine for PaddleOcrVlCloudEngine {
     ) -> AppResult<ParseOutcome> {
         let job_id = self.submit_job(filename, bytes).await?;
         let jsonl_url = self.poll_job(&job_id).await?;
+        super::validate_external_url(&jsonl_url)?;
         let resp = self
             .http
             .get(&jsonl_url)
@@ -259,6 +260,7 @@ impl ParseEngine for PaddleOcrVlCloudEngine {
             if !markdown.contains(path.as_str()) {
                 continue;
             }
+            super::validate_external_url(url)?;
             if let Ok(img) = self
                 .http
                 .get(url)

@@ -316,6 +316,7 @@ impl ParseEngine for MineruCloudEngine {
         let (markdown, images) = if let Some(md) = inline {
             (md, Vec::new())
         } else if let Some(zip_url) = item["full_zip_url"].as_str() {
+            super::validate_external_url(zip_url)?;
             let zip_bytes = self
                 .http
                 .get(zip_url)

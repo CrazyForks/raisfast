@@ -480,3 +480,124 @@ impl JobHandler for KbRunsCleanupHandler {
         Ok(())
     }
 }
+
+/// 独立文档转换 job（dev-docs/document/service-design.md M1）。
+/// 执行体在 `kb::parse_service::run`——meta.json 是对外的状态文档。
+pub struct ConvertDocumentHandler {
+    storage: Arc<dyn Storage>,
+    parsers: std::sync::Arc<crate::kb::parser::ParserRegistry>,
+    config: Arc<crate::config::app::AppConfig>,
+}
+
+impl ConvertDocumentHandler {
+    pub fn new(
+        storage: Arc<dyn Storage>,
+        parsers: std::sync::Arc<crate::kb::parser::ParserRegistry>,
+        config: Arc<crate::config::app::AppConfig>,
+    ) -> Self {
+        Self {
+            storage,
+            parsers,
+            config,
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl JobHandler for ConvertDocumentHandler {
+    async fn handle(&self, job: &Job) -> AppResult<()> {
+        match job {
+            Job::ConvertDocument {
+                job_id,
+                tenant_id,
+                filename,
+                engine,
+                extract_images,
+            } => {
+                crate::kb::parse_service::run(
+                    &self.storage,
+                    &self.parsers,
+                    self.config.kb.parser_engine.as_deref(),
+                    job_id,
+                    tenant_id,
+                    filename,
+                    engine.as_deref(),
+                    *extract_images,
+                )
+                .await
+            }
+            _ => Ok(()),
+        }
+    }
+}
+
+/// 独立图像识别 job（M2）：meta.json 为状态文档，VLM 走 llm 底座。
+pub struct RecognizeImageHandler {
+    pool: crate::db::Pool,
+    runtime: Arc<KbRuntime>,
+    storage: Arc<dyn Storage>,
+    config: Arc<crate::config::app::AppConfig>,
+    emitter: crate::event::EventEmitter,
+    llm_router: Arc<crate::llm::service::LlmRouter>,
+}
+
+impl RecognizeImageHandler {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        pool: crate::db::Pool,
+        runtime: Arc<KbRuntime>,
+        storage: Arc<dyn Storage>,
+        config: Arc<crate::config::app::AppConfig>,
+        emitter: crate::event::EventEmitter,
+        llm_router: Arc<crate::llm::service::LlmRouter>,
+    ) -> Self {
+        Self {
+            pool,
+            runtime,
+            storage,
+            config,
+            emitter,
+            llm_router,
+        }
+    }
+
+    fn deps(&self) -> crate::kb::service::KbDeps {
+        crate::kb::service::KbDeps {
+            pool: self.pool.clone(),
+            config: self.config.clone(),
+            storage: self.storage.clone(),
+            vector: self.runtime.vector.clone(),
+            kbsearch: self.runtime.kbsearch.clone(),
+            embedder: self.runtime.embedder.clone(),
+            reranker: self.runtime.reranker.clone(),
+            parsers: self.runtime.parsers.clone(),
+            router: self.llm_router.clone(),
+            emitter: self.emitter.clone(),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl JobHandler for RecognizeImageHandler {
+    async fn handle(&self, job: &Job) -> AppResult<()> {
+        match job {
+            Job::RecognizeImage {
+                job_id,
+                tenant_id,
+                model,
+                prompt,
+            } => {
+                crate::kb::recognize_service::run(
+                    &self.deps(),
+                    &self.storage,
+                    job_id,
+                    tenant_id,
+                    model.as_deref(),
+                    prompt.as_deref(),
+                )
+                .await
+            }
+            _ => Ok(()),
+        }
+    }
+}

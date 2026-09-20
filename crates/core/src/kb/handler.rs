@@ -65,6 +65,50 @@ pub fn routes(
         r,
         registry,
         config.api_restful,
+        "/document-conversions",
+        post,
+        admin_create_document_conversion,
+        "system",
+        "document-conversions",
+        "admin"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        config.api_restful,
+        "/document-conversions/{id}",
+        get,
+        admin_get_document_conversion,
+        "system",
+        "document-conversions",
+        "admin"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        config.api_restful,
+        "/image-recognitions",
+        post,
+        admin_create_image_recognition,
+        "system",
+        "image-recognitions",
+        "admin"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        config.api_restful,
+        "/image-recognitions/{id}",
+        get,
+        admin_get_image_recognition,
+        "system",
+        "image-recognitions",
+        "admin"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        config.api_restful,
         "/admin/kb/knowledge-bases/{id}",
         put,
         admin_update_kb,
@@ -880,6 +924,171 @@ async fn admin_list_kbs(
     Ok(ApiResponse::success(
         json!({ "items": kbs, "total": total, "page": page, "page_size": page_size }),
     ))
+}
+
+// ── document conversions（独立文档转换服务，design: dev-docs/document/service-design.md）──
+
+/// 提交转换 job（multipart: file 必填；engine / extract_images 可选）。
+async fn admin_create_document_conversion(
+    auth: AuthUser,
+    State(state): State<AppState>,
+    mut multipart: Multipart,
+) -> AppResult<ApiResponse<Value>> {
+    auth.ensure_admin()?;
+    let deps = state.kb_deps()?;
+    let tenant = auth.tenant_id().unwrap_or("default").to_string();
+
+    let mut filename = String::new();
+    let mut data: axum::body::Bytes = axum::body::Bytes::new();
+    let mut engine: Option<String> = None;
+    let mut extract_images = true;
+    while let Some(field) = multipart
+        .next_field()
+        .await
+        .map_err(|e| AppError::BadRequest(format!("multipart read failed: {e}")))?
+    {
+        match field.name().unwrap_or_default() {
+            "file" => {
+                filename = field.file_name().unwrap_or("untitled").to_string();
+                data = field
+                    .bytes()
+                    .await
+                    .map_err(|e| AppError::BadRequest(format!("file read failed: {e}")))?;
+            }
+            "engine" => {
+                let v = field
+                    .text()
+                    .await
+                    .map_err(|e| AppError::BadRequest(format!("engine read failed: {e}")))?;
+                engine = Some(v.trim().to_string()).filter(|s| !s.is_empty());
+            }
+            "extract_images" => {
+                let v = field.text().await.map_err(|e| {
+                    AppError::BadRequest(format!("extract_images read failed: {e}"))
+                })?;
+                extract_images = v.trim().eq_ignore_ascii_case("true");
+            }
+            _ => {}
+        }
+    }
+    if data.is_empty() {
+        return Err(AppError::BadRequest("file field missing".into()));
+    }
+
+    let queue = crate::worker::DefaultJobQueue::new(state.pool.clone());
+    let job_id = crate::kb::parse_service::submit(
+        &deps.storage,
+        &deps.parsers,
+        &queue,
+        &tenant,
+        &filename,
+        &data,
+        engine.as_deref(),
+        extract_images,
+    )
+    .await?;
+    Ok(ApiResponse::success(
+        json!({ "job_id": job_id, "status": "queued" }),
+    ))
+}
+
+/// 轮询转换 job：meta.json 是状态文档；completed 时附 markdown 内联。
+async fn admin_get_document_conversion(
+    auth: AuthUser,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> AppResult<ApiResponse<Value>> {
+    auth.ensure_admin()?;
+    let deps = state.kb_deps()?;
+    let Some((mut meta, markdown)) =
+        crate::kb::parse_service::read_status(&deps.storage, &id).await?
+    else {
+        return Err(AppError::NotFound("document_conversion".into()));
+    };
+    let _ = auth;
+    if let Some(md) = markdown {
+        meta["markdown"] = json!(md);
+    }
+    Ok(ApiResponse::success(meta))
+}
+
+// ── image recognitions（独立图像识别服务，M2）────────────────────────
+
+/// 提交识别 job（multipart: image 必填；model / prompt 可选）。
+async fn admin_create_image_recognition(
+    auth: AuthUser,
+    State(state): State<AppState>,
+    mut multipart: Multipart,
+) -> AppResult<ApiResponse<Value>> {
+    auth.ensure_admin()?;
+    let deps = state.kb_deps()?;
+    let tenant = auth.tenant_id().unwrap_or("default").to_string();
+
+    let mut filename = String::new();
+    let mut data: axum::body::Bytes = axum::body::Bytes::new();
+    let mut model: Option<String> = None;
+    let mut prompt: Option<String> = None;
+    while let Some(field) = multipart
+        .next_field()
+        .await
+        .map_err(|e| AppError::BadRequest(format!("multipart read failed: {e}")))?
+    {
+        match field.name().unwrap_or_default() {
+            "image" => {
+                filename = field.file_name().unwrap_or("image.png").to_string();
+                data = field
+                    .bytes()
+                    .await
+                    .map_err(|e| AppError::BadRequest(format!("image read failed: {e}")))?;
+            }
+            "model" => {
+                let v = field
+                    .text()
+                    .await
+                    .map_err(|e| AppError::BadRequest(format!("model read failed: {e}")))?;
+                model = Some(v.trim().to_string()).filter(|s| !s.is_empty());
+            }
+            "prompt" => {
+                let v = field
+                    .text()
+                    .await
+                    .map_err(|e| AppError::BadRequest(format!("prompt read failed: {e}")))?;
+                prompt = Some(v).filter(|s| !s.is_empty());
+            }
+            _ => {}
+        }
+    }
+    if data.is_empty() {
+        return Err(AppError::BadRequest("image field missing".into()));
+    }
+
+    let queue = crate::worker::DefaultJobQueue::new(state.pool.clone());
+    let job_id = crate::kb::recognize_service::submit(
+        &deps.storage,
+        &queue,
+        &tenant,
+        &filename,
+        &data,
+        model.as_deref(),
+        prompt.as_deref(),
+    )
+    .await?;
+    Ok(ApiResponse::success(
+        json!({ "job_id": job_id, "status": "queued" }),
+    ))
+}
+
+async fn admin_get_image_recognition(
+    auth: AuthUser,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> AppResult<ApiResponse<Value>> {
+    auth.ensure_admin()?;
+    let deps = state.kb_deps()?;
+    let Some(meta) = crate::kb::recognize_service::read_status(&deps.storage, &id).await? else {
+        return Err(AppError::NotFound("image_recognition".into()));
+    };
+    Ok(ApiResponse::success(meta))
 }
 
 // ── documents ──────────────────────────────────────────────────────
