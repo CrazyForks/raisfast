@@ -131,6 +131,10 @@ impl ParseEngine for PaddleOcrVlEngine {
         "paddleocr_vl"
     }
 
+    fn category(&self) -> &'static str {
+        "ocr"
+    }
+
     fn supports(&self, mime: &str, filename: &str) -> bool {
         if mime == "application/pdf" {
             return true;

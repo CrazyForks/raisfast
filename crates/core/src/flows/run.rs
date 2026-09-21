@@ -16,6 +16,11 @@ use std::sync::Arc;
 
 use super::exec::FlowsExec;
 
+/// docparse runtime from the process-wide host (None before boot / in tests).
+fn docparse_runtime(tenant: &str) -> Option<Arc<super::docparse::DocParseRuntime>> {
+    super::docparse::DocParseRuntime::from_shared(tenant.to_string()).map(Arc::new)
+}
+
 use super::engine::{self, NodeExecutor, Persist, S_FAILED, S_SUCCESS, S_WAITING, Snapshot};
 use super::graph::{self, Graph};
 use super::model;
@@ -214,6 +219,7 @@ pub async fn run_flow_latest(
         plugins,
         router: router.clone(),
         tenant_id: Some(flow.tenant_id.clone()),
+        docparse: docparse_runtime(&flow.tenant_id),
     };
     execute_instance(pool, instance_id, &exec).await?;
     model::find_instance_by_id(pool, instance_id).await
@@ -282,6 +288,7 @@ pub async fn run_definition_latest(
         plugins,
         router: router.clone(),
         tenant_id: Some(flow.tenant_id.clone()),
+        docparse: docparse_runtime(&flow.tenant_id),
     };
     engine::run_persisted(&graph, &mut snap, &exec, &persist).await?;
     record_node_runs(pool, instance_id, &graph, &snap).await?;
@@ -690,6 +697,7 @@ pub async fn resume_instance(
         plugins,
         router: router.clone(),
         tenant_id: Some(inst.tenant_id.clone()),
+        docparse: docparse_runtime(&inst.tenant_id),
     };
     execute_instance(pool, instance_id, &exec).await?;
     Ok(())
@@ -777,6 +785,7 @@ async fn sweep_one(
             plane,
             plugins,
             router: router.clone(),
+            docparse: docparse_runtime(&inst.tenant_id),
             tenant_id: Some(inst.tenant_id.clone()),
         };
         execute_instance(pool, row.instance_id, &exec).await?;

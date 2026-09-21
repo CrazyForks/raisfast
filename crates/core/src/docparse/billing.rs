@@ -46,18 +46,22 @@ pub struct EnginePricing {
     pub price_per_call: i64,
 }
 
-/// 从 `docparse_engines` 表查引擎定价；未配置的引擎视为免费。
+/// 从 `docparse_engines` 表查引擎定价（租户隔离目录 [对齐 llm_models 模式]）；
+/// 未配置的引擎视为免费。
 pub async fn get_engine_pricing(
     pool: &crate::db::Pool,
+    tenant: &str,
     engine_name: &str,
 ) -> AppResult<EnginePricing> {
     let sql = format!(
         "SELECT engine_name, enabled, price_per_page, price_per_call \
-         FROM docparse_engines WHERE engine_name = {}",
-        Driver::ph(1)
+         FROM docparse_engines WHERE tenant_id = {} AND engine_name = {}",
+        Driver::ph(1),
+        Driver::ph(2)
     );
     let row: Option<(String, bool, i64, i64)> =
         sqlx::query_as(crate::db::safe_sql(&sql))
+            .bind(tenant)
             .bind(engine_name)
             .fetch_optional(pool)
             .await

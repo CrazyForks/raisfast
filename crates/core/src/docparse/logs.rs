@@ -12,7 +12,8 @@ use crate::errors::app_error::{AppError, AppResult};
 
 #[derive(Debug, Serialize, sqlx::FromRow)]
 pub struct ParseJobLog {
-    pub id: i64,
+    /// SnowflakeId——serde 输出字符串，避免 JS 端 i64 精度丢失。
+    pub id: crate::types::snowflake_id::SnowflakeId,
     pub tenant_id: String,
     pub kind: String,
     pub status: String,

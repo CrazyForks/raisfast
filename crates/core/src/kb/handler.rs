@@ -175,6 +175,28 @@ pub fn routes(
         r,
         registry,
         config.api_restful,
+        "/admin/docparse/tokens/{id}/enable",
+        post,
+        admin_enable_docparse_token,
+        "system",
+        "admin/kb/diagnostics",
+        "admin"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        config.api_restful,
+        "/admin/docparse/tokens/{id}",
+        delete,
+        admin_delete_docparse_token,
+        "system",
+        "admin/kb/diagnostics",
+        "admin"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        config.api_restful,
         "/admin/kb/knowledge-bases/{id}",
         put,
         admin_update_kb,
@@ -1209,24 +1231,60 @@ async fn admin_list_docparse_engines(
 ) -> AppResult<ApiResponse<Value>> {
     auth.ensure_admin()?;
     let deps = state.kb_deps()?;
-    let sql = "SELECT engine_name, enabled, price_per_page, price_per_call, cost_per_page, updated_at FROM docparse_engines ORDER BY engine_name";
-    let rows: Vec<(String, bool, i64, i64, i64, String)> =
-        sqlx::query_as(crate::db::safe_sql(sql))
+    let tenant = auth.tenant_id().unwrap_or("default").to_string();
+    // Registry is the source of truth for which engines exist (and their
+    // category, from the trait); per-tenant table rows are admin overrides
+    // (enabled / pricing) [tenant-scoped pricing, aligned with llm_models].
+    // Merging both ways also surfaces table-only engines (configured rows
+    // whose engine isn't registered in this build).
+    let sql = format!(
+        "SELECT engine_name, enabled, price_per_page, price_per_call, cost_per_page, \
+         COALESCE(category, 'document'), updated_at FROM docparse_engines WHERE tenant_id = {}",
+        Driver::ph(1)
+    );
+    let rows: Vec<(String, bool, i64, i64, i64, String, String)> =
+        sqlx::query_as(crate::db::safe_sql(&sql))
+            .bind(&tenant)
             .fetch_all(&deps.pool)
             .await
             .map_err(|e| AppError::Internal(anyhow::anyhow!("{e}")))?;
-    let items: Vec<Value> = rows
-        .into_iter()
-        .map(|(name, enabled, ppp, ppc, cost, updated)| {
-            let registered = deps.parsers.names().iter().any(|n| *n == name);
-            json!({
-                "engine_name": name, "enabled": enabled,
-                "price_per_page": ppp, "price_per_call": ppc,
-                "cost_per_page": cost, "registered": registered,
-                "updated_at": updated,
+    let mut overrides: std::collections::HashMap<String, (bool, i64, i64, i64, String, String)> =
+        rows.into_iter()
+            .map(|(name, enabled, ppp, ppc, cost, cat, updated)| {
+                (name, (enabled, ppp, ppc, cost, cat, updated))
             })
-        })
-        .collect();
+            .collect();
+
+    let mut items: Vec<Value> = Vec::new();
+    for name in deps.parsers.names() {
+        let category = deps
+            .parsers
+            .get(name)
+            .map(|e| e.category())
+            .unwrap_or("document");
+        let (enabled, ppp, ppc, cost, updated) = match overrides.remove(name) {
+            Some((enabled, ppp, ppc, cost, _cat, updated)) => {
+                (enabled, ppp, ppc, cost, Some(updated))
+            }
+            None => (true, 0, 0, 0, None),
+        };
+        items.push(json!({
+            "engine_name": name, "enabled": enabled,
+            "price_per_page": ppp, "price_per_call": ppc,
+            "cost_per_page": cost, "registered": true,
+            "category": category, "updated_at": updated,
+        }));
+    }
+    let mut leftovers: Vec<_> = overrides.into_iter().collect();
+    leftovers.sort_by(|a, b| a.0.cmp(&b.0));
+    for (name, (enabled, ppp, ppc, cost, category, updated)) in leftovers {
+        items.push(json!({
+            "engine_name": name, "enabled": enabled,
+            "price_per_page": ppp, "price_per_call": ppc,
+            "cost_per_page": cost, "registered": false,
+            "category": category, "updated_at": updated,
+        }));
+    }
     Ok(ApiResponse::success(json!({ "items": items })))
 }
 
@@ -1246,8 +1304,10 @@ async fn admin_update_docparse_engine(
 ) -> AppResult<ApiResponse<Value>> {
     auth.ensure_admin()?;
     let deps = state.kb_deps()?;
+    let tenant = auth.tenant_id().unwrap_or("default").to_string();
     let sets: Vec<String> = [
-        body.enabled.map(|v| format!("enabled = {}", if v { "TRUE" } else { "FALSE" })),
+        body.enabled
+            .map(|v| format!("enabled = {}", if v { "TRUE" } else { "FALSE" })),
         body.price_per_page.map(|v| format!("price_per_page = {v}")),
         body.price_per_call.map(|v| format!("price_per_call = {v}")),
         body.cost_per_page.map(|v| format!("cost_per_page = {v}")),
@@ -1259,17 +1319,56 @@ async fn admin_update_docparse_engine(
         return Err(AppError::BadRequest("no fields to update".into()));
     }
     let sql = format!(
-        "UPDATE docparse_engines SET {}, updated_at = {} WHERE engine_name = {}",
+        "UPDATE docparse_engines SET {}, updated_at = {} WHERE engine_name = {} AND tenant_id = {}",
         sets.join(", "),
         Driver::ph(1),
-        Driver::ph(2)
+        Driver::ph(2),
+        Driver::ph(3)
     );
-    sqlx::query(crate::db::safe_sql(&sql))
+    let result = sqlx::query(crate::db::safe_sql(&sql))
         .bind(crate::utils::tz::now_utc())
         .bind(&name)
+        .bind(&tenant)
         .execute(&deps.pool)
         .await
         .map_err(|e| AppError::Internal(anyhow::anyhow!("{e}")))?;
+    // First touch of a registry-known engine: the per-tenant override row
+    // doesn't exist yet → INSERT it (category from the trait). MySQL has no
+    // RETURNING; rows_affected decides update-vs-insert [AGENTS rule #10].
+    if result.rows_affected() == 0 {
+        let category = deps
+            .parsers
+            .get(&name)
+            .map(|e| e.category())
+            .unwrap_or("document");
+        let insert = format!(
+            "INSERT INTO docparse_engines \
+             (id, tenant_id, engine_name, enabled, price_per_page, price_per_call, cost_per_page, category, updated_at) \
+             VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {})",
+            Driver::ph(1),
+            Driver::ph(2),
+            Driver::ph(3),
+            Driver::ph(4),
+            Driver::ph(5),
+            Driver::ph(6),
+            Driver::ph(7),
+            Driver::ph(8),
+            Driver::ph(9)
+        );
+        sqlx::query(crate::db::safe_sql(&insert))
+            .bind(crate::utils::id::new_id())
+            .bind(&tenant)
+            .bind(&name)
+            .bind(body.enabled.unwrap_or(true))
+            .bind(body.price_per_page.unwrap_or(0))
+            .bind(body.price_per_call.unwrap_or(0))
+            .bind(body.cost_per_page.unwrap_or(0))
+            .bind(category)
+            .bind(crate::utils::tz::now_utc())
+            .execute(&deps.pool)
+            .await
+            .map_err(|e| AppError::Internal(anyhow::anyhow!("{e}")))?;
+    }
     Ok(ApiResponse::success(json!({ "updated": true })))
 }
 
@@ -1288,9 +1387,23 @@ async fn admin_create_docparse_token(
         .get("daily_page_quota")
         .and_then(|v| v.parse::<i64>().ok())
         .unwrap_or(0);
-    let (raw, id) = crate::docparse::tokens::create(&deps.pool, &tenant, &name, quota).await?;
+    // Owner: explicit user_id (admin acting on behalf, ID_ENCODING-aware —
+    // UserPicker submits encoded ids) or the caller [照抄 llm
+    // admin_create_token 的 parse_id + owner 存在性校验]。
+    let user_id = match q.get("user_id") {
+        Some(raw) if !raw.trim().is_empty() => {
+            let id = parse_snowflake(raw)?;
+            crate::models::user::find_by_id(&state.pool, id, Some(&tenant))
+                .await?
+                .ok_or_else(|| AppError::BadRequest(format!("user not found: {raw}")))?
+                .id
+        }
+        _ => auth.ensure_snowflake_user_id()?,
+    };
+    let (raw, id) =
+        crate::docparse::tokens::create(&deps.pool, &tenant, user_id, &name, quota).await?;
     Ok(ApiResponse::success(json!({
-        "id": id, "token": raw, "name": name,
+        "id": id, "user_id": user_id, "token": raw, "name": name,
         "daily_page_quota": quota, "status": "active",
     })))
 }
@@ -1302,18 +1415,63 @@ async fn admin_list_docparse_tokens(
     auth.ensure_admin()?;
     let deps = state.kb_deps()?;
     let tenant = auth.tenant_id().unwrap_or("default").to_string();
-    let items = crate::docparse::tokens::list_by_tenant(&deps.pool, &tenant).await?;
+    let rows = crate::docparse::tokens::list_by_tenant(&deps.pool, &tenant).await?;
+    // Resolve owner usernames (admin list view) [照抄 llm token list]。
+    let ids: Vec<SnowflakeId> = rows.iter().map(|r| r.user_id).collect();
+    let names = crate::models::user::find_usernames_by_ids(&deps.pool, &ids).await?;
+    let items: Vec<Value> = rows
+        .into_iter()
+        .map(|t| {
+            json!({
+                "id": t.id,
+                "user_id": t.user_id,
+                "username": names.get(&t.user_id.0),
+                "name": t.name,
+                "token_prefix": t.token_prefix,
+                // Reversible copy for the admin UI; NULL when token_enc was
+                // never stored (legacy rows) or decryption fails.
+                "token": t.token_enc.as_deref().and_then(crate::llm::crypto::decrypt),
+                "status": t.status,
+                "daily_page_quota": t.daily_page_quota,
+                "created_at": t.created_at,
+                "last_used_at": t.last_used_at,
+            })
+        })
+        .collect();
     Ok(ApiResponse::success(json!({ "items": items })))
 }
 
 async fn admin_disable_docparse_token(
     auth: AuthUser,
     State(state): State<AppState>,
-    Path(id): Path<i64>,
+    Path(id): Path<String>,
 ) -> AppResult<ApiResponse<Value>> {
     auth.ensure_admin()?;
-    crate::docparse::tokens::disable(&state.pool, id).await?;
+    let id = parse_snowflake(&id)?;
+    crate::docparse::tokens::set_status(&state.pool, id, "disabled").await?;
     Ok(ApiResponse::success(json!({ "disabled": true })))
+}
+
+async fn admin_enable_docparse_token(
+    auth: AuthUser,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> AppResult<ApiResponse<Value>> {
+    auth.ensure_admin()?;
+    let id = parse_snowflake(&id)?;
+    crate::docparse::tokens::set_status(&state.pool, id, "active").await?;
+    Ok(ApiResponse::success(json!({ "enabled": true })))
+}
+
+async fn admin_delete_docparse_token(
+    auth: AuthUser,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> AppResult<ApiResponse<Value>> {
+    auth.ensure_admin()?;
+    let id = parse_snowflake(&id)?;
+    crate::docparse::tokens::delete(&state.pool, id).await?;
+    Ok(ApiResponse::success(json!({ "deleted": true })))
 }
 
 // ── documents ──────────────────────────────────────────────────────

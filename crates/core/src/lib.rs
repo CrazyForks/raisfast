@@ -436,6 +436,19 @@ pub async fn build_app_state(
         }
     };
 
+    // docparse 底座 host（flow `docparse` 节点专用；与 `integration::shared`
+    // 同构：worker/handler 在 AppState 之前构造，故走进程级单例）。parser
+    // registry 复用 KB runtime（启用时），否则独立构建（builtin 恒在）。
+    let docparse_parsers = kb_runtime
+        .as_ref()
+        .map(|rt| rt.parsers.clone())
+        .unwrap_or_else(|| std::sync::Arc::new(crate::docparse::build_registry(&config.kb)));
+    crate::docparse::set_shared(std::sync::Arc::new(crate::docparse::DocParseHost {
+        storage: storage.clone(),
+        parsers: docparse_parsers,
+        global_engine: config.kb.parser_engine.clone(),
+    }));
+
     let state = AppState {
         pool: pool.clone(),
         config: Arc::new(config.clone()),

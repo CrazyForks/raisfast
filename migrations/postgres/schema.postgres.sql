@@ -2005,13 +2005,18 @@ CREATE INDEX IF NOT EXISTS idx_docparse_job_logs_tenant ON docparse_job_logs(ten
 -- ── docparse 引擎定价目录 + 账本计费字段（M4b）──────────────────────
 CREATE TABLE IF NOT EXISTS docparse_engines (
     id              BIGINT PRIMARY KEY,
-    engine_name     VARCHAR(64) NOT NULL UNIQUE,
+    tenant_id       TEXT NOT NULL DEFAULT 'default',
+    engine_name     VARCHAR(64) NOT NULL,
     enabled         BOOLEAN NOT NULL DEFAULT true,
     price_per_page  BIGINT NOT NULL DEFAULT 0,
     price_per_call  BIGINT NOT NULL DEFAULT 0,
     cost_per_page   BIGINT NOT NULL DEFAULT 0,
-    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    category        VARCHAR(16) NOT NULL DEFAULT 'document',
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (tenant_id, engine_name)
 );
+ALTER TABLE docparse_engines ADD COLUMN IF NOT EXISTS tenant_id TEXT NOT NULL DEFAULT 'default';
+ALTER TABLE docparse_engines ADD COLUMN IF NOT EXISTS category VARCHAR(16) DEFAULT 'document';
 ALTER TABLE docparse_job_logs ADD COLUMN IF NOT EXISTS billing_mode VARCHAR(16) DEFAULT 'post';
 ALTER TABLE docparse_job_logs ADD COLUMN IF NOT EXISTS price_charged BIGINT;
 ALTER TABLE docparse_job_logs ADD COLUMN IF NOT EXISTS payment_status VARCHAR(16);
@@ -2019,9 +2024,11 @@ ALTER TABLE docparse_job_logs ADD COLUMN IF NOT EXISTS payment_status VARCHAR(16
 CREATE TABLE IF NOT EXISTS docparse_tokens (
     id BIGINT PRIMARY KEY,
     tenant_id TEXT NOT NULL,
+    user_id BIGINT NOT NULL DEFAULT 0,
     name TEXT NOT NULL,
     token_hash TEXT NOT NULL UNIQUE,
     token_prefix TEXT NOT NULL,
+    token_enc TEXT,
     status TEXT NOT NULL DEFAULT 'active',
     daily_page_quota BIGINT NOT NULL DEFAULT 0,
     created_at TIMESTAMPTZ NOT NULL,

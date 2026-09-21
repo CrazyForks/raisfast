@@ -1933,12 +1933,15 @@ CREATE TABLE IF NOT EXISTS docparse_job_logs (
 );
 CREATE TABLE IF NOT EXISTS docparse_engines (
     id BIGINT PRIMARY KEY,
-    engine_name VARCHAR(64) NOT NULL UNIQUE,
+    tenant_id VARCHAR(64) NOT NULL DEFAULT 'default',
+    engine_name VARCHAR(64) NOT NULL,
     enabled BOOLEAN NOT NULL DEFAULT true,
     price_per_page BIGINT NOT NULL DEFAULT 0,
     price_per_call BIGINT NOT NULL DEFAULT 0,
     cost_per_page BIGINT NOT NULL DEFAULT 0,
-    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+    category VARCHAR(16) NOT NULL DEFAULT 'document',
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY uq_docparse_engines_tenant_engine (tenant_id, engine_name)
 );
 ALTER TABLE docparse_job_logs ADD COLUMN billing_mode VARCHAR(16) DEFAULT 'post';
 ALTER TABLE docparse_job_logs ADD COLUMN price_charged BIGINT;
@@ -1947,9 +1950,11 @@ ALTER TABLE docparse_job_logs ADD COLUMN payment_status VARCHAR(16);
 CREATE TABLE IF NOT EXISTS docparse_tokens (
     id BIGINT PRIMARY KEY,
     tenant_id VARCHAR(64) NOT NULL,
+    user_id BIGINT NOT NULL DEFAULT 0,
     name VARCHAR(200) NOT NULL,
     token_hash VARCHAR(64) NOT NULL UNIQUE,
     token_prefix VARCHAR(16) NOT NULL,
+    token_enc TEXT,
     status VARCHAR(32) NOT NULL DEFAULT 'active',
     daily_page_quota BIGINT NOT NULL DEFAULT 0,
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,

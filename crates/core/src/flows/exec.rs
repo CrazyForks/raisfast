@@ -28,6 +28,8 @@ pub struct FlowsExec {
     pub tenant_id: Option<String>,
     /// LLM 底座（llm 节点唯一入口，§10.2）。
     pub router: Arc<crate::llm::service::LlmRouter>,
+    /// docparse 底座（docparse 节点入口）；`None` 时该节点显式报错。
+    pub docparse: Option<Arc<super::docparse::DocParseRuntime>>,
 }
 
 impl FlowsExec {
@@ -162,6 +164,14 @@ impl NodeExecutor for FlowsExec {
                 };
                 super::llm::run_llm(&runtime, node, pool).await
             }
+            nodes::T_DOCPARSE => {
+                let Some(rt) = &self.docparse else {
+                    return Err(AppError::Internal(anyhow::anyhow!(
+                        "docparse runtime unavailable (host not initialized)"
+                    )));
+                };
+                super::docparse::run_docparse(rt, node, pool).await
+            }
             nodes::T_EGRESS => {
                 let cfg: EgressConfig = serde_json::from_value(node.data.config.clone())
                     .map_err(|e| AppError::BadRequest(format!("egress config: {e}")))?;
@@ -222,6 +232,7 @@ mod tests {
                 crate::llm::cache::ChannelCache::default(),
             ),
             tenant_id: None,
+            docparse: None,
         };
         let err = exec
             .exec(
@@ -243,6 +254,7 @@ mod tests {
                 crate::llm::cache::ChannelCache::default(),
             ),
             tenant_id: None,
+            docparse: None,
         };
         let err = exec
             .exec(
@@ -267,6 +279,7 @@ mod tests {
                 crate::llm::cache::ChannelCache::default(),
             ),
             tenant_id: None,
+            docparse: None,
         };
         let err = exec
             .exec(

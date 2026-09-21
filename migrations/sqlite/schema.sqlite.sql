@@ -1994,12 +1994,15 @@ CREATE TABLE IF NOT EXISTS docparse_job_logs (
 CREATE INDEX IF NOT EXISTS idx_docparse_job_logs_tenant ON docparse_job_logs(tenant_id, created_at);
 CREATE TABLE IF NOT EXISTS docparse_engines (
     id BIGINT PRIMARY KEY,
-    engine_name TEXT NOT NULL UNIQUE,
+    tenant_id TEXT NOT NULL DEFAULT 'default',
+    engine_name TEXT NOT NULL,
     enabled INTEGER NOT NULL DEFAULT 1,
     price_per_page BIGINT NOT NULL DEFAULT 0,
     price_per_call BIGINT NOT NULL DEFAULT 0,
     cost_per_page BIGINT NOT NULL DEFAULT 0,
-    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+    category TEXT NOT NULL DEFAULT 'document',
+    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+    UNIQUE (tenant_id, engine_name)
 );
 ALTER TABLE docparse_job_logs ADD COLUMN billing_mode TEXT DEFAULT 'post';
 ALTER TABLE docparse_job_logs ADD COLUMN price_charged BIGINT;
@@ -2008,9 +2011,11 @@ ALTER TABLE docparse_job_logs ADD COLUMN payment_status TEXT;
 CREATE TABLE IF NOT EXISTS docparse_tokens (
     id BIGINT PRIMARY KEY,
     tenant_id TEXT NOT NULL,
+    user_id BIGINT NOT NULL DEFAULT 0,
     name TEXT NOT NULL,
     token_hash TEXT NOT NULL UNIQUE,
     token_prefix TEXT NOT NULL,
+    token_enc TEXT,
     status TEXT NOT NULL DEFAULT 'active',
     daily_page_quota BIGINT NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),

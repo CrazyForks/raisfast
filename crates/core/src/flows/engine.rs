@@ -293,7 +293,12 @@ pub async fn run_persisted(
                 mark_node_success(snap, &id, Value::Object(out));
                 fan_out_after_run(graph, snap, &id, &mut queue)?;
             }
-            nodes::T_SCRIPT | nodes::T_EGRESS | nodes::T_LLM | nodes::T_HTTP | nodes::T_CT => {
+            nodes::T_SCRIPT
+            | nodes::T_EGRESS
+            | nodes::T_LLM
+            | nodes::T_HTTP
+            | nodes::T_CT
+            | nodes::T_DOCPARSE => {
                 let mods: NodeModifiers =
                     serde_json::from_value(node.data.modifiers.clone()).unwrap_or_default();
                 let attempts = mods
@@ -309,7 +314,11 @@ pub async fn run_persisted(
                 // ignores the fed input (llm-node.md W5) — feed it nothing.
                 let input = if matches!(
                     node.data.kind.as_str(),
-                    nodes::T_LLM | nodes::T_HTTP | nodes::T_CT | nodes::T_ITERATION
+                    nodes::T_LLM
+                        | nodes::T_HTTP
+                        | nodes::T_CT
+                        | nodes::T_ITERATION
+                        | nodes::T_DOCPARSE
                 ) {
                     Value::Object(serde_json::Map::new())
                 } else {
@@ -891,7 +900,8 @@ fn resume_completed(
         | nodes::T_LLM
         | nodes::T_HTTP
         | nodes::T_CT
-        | nodes::T_ITERATION => {
+        | nodes::T_ITERATION
+        | nodes::T_DOCPARSE => {
             // Same verdict fan-out as the live path: a succeeded exec node
             // skips its error_out edges (they were Skipped in the prior pass).
             fan_out_exec(graph, snap, id, queue, false)?;

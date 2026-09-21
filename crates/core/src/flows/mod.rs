@@ -16,6 +16,7 @@
 
 pub mod await_infra;
 pub mod ct;
+pub mod docparse;
 pub mod engine;
 pub mod events;
 pub mod exec;
@@ -60,6 +61,7 @@ crate::export_types!(
     nodes::HttpKeyValue,
     nodes::CtConfig,
     nodes::IterationConfig,
+    nodes::DocParseConfig,
     nodes::CtFilterRow,
     nodes::CtSetRow,
     nodes::NodeConfigVariant,

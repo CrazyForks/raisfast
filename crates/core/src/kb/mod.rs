@@ -55,47 +55,9 @@ pub fn build_kb_runtime(
     if let Some(model) = config.kb.rerank_model.as_deref() {
         tracing::info!("kb rerank default model: '{model}' (per-KB rows may override)");
     }
-    // Parser registry: builtin always; docreader when its endpoint is
-    // configured (kb-parser-engines-design §2 D3).
-    let mut engines: Vec<std::sync::Arc<dyn crate::docparse::ParseEngine>> = Vec::new();
-    if let Some(docreader) = crate::docparse::docreader::DocreaderEngine::from_config(&config.kb) {
-        tracing::info!(
-            "kb parse engine 'docreader' configured ({})",
-            config.kb.docreader_url.as_deref().unwrap_or_default()
-        );
-        engines.push(std::sync::Arc::new(docreader));
-    }
-    if let Some(mineru) = crate::docparse::mineru::MineruEngine::from_config(&config.kb) {
-        tracing::info!(
-            "kb parse engine 'mineru' configured ({})",
-            config.kb.mineru_url.as_deref().unwrap_or_default()
-        );
-        engines.push(std::sync::Arc::new(mineru));
-    }
-    if let Some(engine) = crate::docparse::mineru_cloud::MineruCloudEngine::from_config(&config.kb)
-    {
-        tracing::info!("kb parse engine 'mineru_cloud' configured (api key set)");
-        engines.push(std::sync::Arc::new(engine));
-    }
-    if let Some(engine) = crate::docparse::paddleocr_vl::PaddleOcrVlEngine::from_config(&config.kb)
-    {
-        tracing::info!(
-            "kb parse engine 'paddleocr_vl' configured ({})",
-            config
-                .kb
-                .paddleocr_vl_endpoint
-                .as_deref()
-                .unwrap_or_default()
-        );
-        engines.push(std::sync::Arc::new(engine));
-    }
-    if let Some(engine) =
-        crate::docparse::paddleocr_vl_cloud::PaddleOcrVlCloudEngine::from_config(&config.kb)
-    {
-        tracing::info!("kb parse engine 'paddleocr_vl_cloud' configured (token set)");
-        engines.push(std::sync::Arc::new(engine));
-    }
-    let parsers = std::sync::Arc::new(crate::docparse::ParserRegistry::new(engines));
+    // Parser registry: builtin always; optional engines wired when configured
+    // (kb-parser-engines-design §2 D3). Shared builder with the flow docparse node.
+    let parsers = std::sync::Arc::new(crate::docparse::build_registry(&config.kb));
     Ok(Some(std::sync::Arc::new(KbRuntime {
         vector,
         kbsearch: std::sync::Arc::new(kbsearch),

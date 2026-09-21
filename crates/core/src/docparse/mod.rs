@@ -22,9 +22,10 @@ pub mod recognition;
 pub mod tokens;
 pub mod webhook;
 
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use crate::errors::app_error::{AppError, AppResult};
+use crate::storage::Storage;
 
 /// One engine-produced image: `ref_name` is the reference in the markdown
 /// (`images/fig-1.jpg` / an external URL), so image↔chunk association
@@ -61,6 +62,12 @@ pub struct ParseOutcome {
 #[async_trait::async_trait]
 pub trait ParseEngine: Send + Sync {
     fn name(&self) -> &'static str;
+    /// Capability class: `"document"` (doc→markdown) or `"ocr"` (vision/
+    /// image-centric). Admin UI grouping key only — routing stays driven
+    /// by `supports`, never by category.
+    fn category(&self) -> &'static str {
+        "document"
+    }
     /// Whether this engine takes the file (mime primary, filename
     /// extension fallback).
     fn supports(&self, mime: &str, filename: &str) -> bool;
@@ -256,6 +263,70 @@ pub fn validate_parser_config(
         }
     }
     Ok(())
+}
+
+/// Build the parser registry from KB config: `builtin` always present;
+/// optional engines registered when their endpoint/key/url is configured
+/// (kb-parser-engines-design §2 D3). Shared by the KB runtime and the
+/// process-wide [`DocParseHost`] (flow `docparse` node).
+#[must_use]
+pub fn build_registry(kb: &crate::config::app::KbConfig) -> ParserRegistry {
+    let mut engines: Vec<Arc<dyn ParseEngine>> = Vec::new();
+    if let Some(docreader) = docreader::DocreaderEngine::from_config(kb) {
+        tracing::info!(
+            "docparse engine 'docreader' configured ({})",
+            kb.docreader_url.as_deref().unwrap_or_default()
+        );
+        engines.push(Arc::new(docreader));
+    }
+    if let Some(mineru) = mineru::MineruEngine::from_config(kb) {
+        tracing::info!(
+            "docparse engine 'mineru' configured ({})",
+            kb.mineru_url.as_deref().unwrap_or_default()
+        );
+        engines.push(Arc::new(mineru));
+    }
+    if let Some(engine) = mineru_cloud::MineruCloudEngine::from_config(kb) {
+        tracing::info!("docparse engine 'mineru_cloud' configured (api key set)");
+        engines.push(Arc::new(engine));
+    }
+    if let Some(engine) = paddleocr_vl::PaddleOcrVlEngine::from_config(kb) {
+        tracing::info!(
+            "docparse engine 'paddleocr_vl' configured ({})",
+            kb.paddleocr_vl_endpoint.as_deref().unwrap_or_default()
+        );
+        engines.push(Arc::new(engine));
+    }
+    if let Some(engine) = paddleocr_vl_cloud::PaddleOcrVlCloudEngine::from_config(kb) {
+        tracing::info!("docparse engine 'paddleocr_vl_cloud' configured (token set)");
+        engines.push(Arc::new(engine));
+    }
+    ParserRegistry::new(engines)
+}
+
+/// Process-wide docparse host — set once at boot, read by flow `docparse`
+/// node execution (which runs from worker/handlers built before `AppState`).
+/// Mirrors `integration::shared`: parsing is a base capability, not a KB-only
+/// one (docparse/README §3.0).
+pub struct DocParseHost {
+    pub storage: Arc<dyn Storage>,
+    pub parsers: Arc<ParserRegistry>,
+    /// Global default engine (`RAISFAST_KB_PARSER_ENGINE`); per-node override
+    /// wins, missing both → `builtin`.
+    pub global_engine: Option<String>,
+}
+
+static SHARED: OnceLock<Arc<DocParseHost>> = OnceLock::new();
+
+/// Install the shared docparse host (called once from `build_app_state`).
+pub fn set_shared(host: Arc<DocParseHost>) {
+    let _ = SHARED.set(host);
+}
+
+/// Access the shared docparse host, if initialized.
+#[must_use]
+pub fn shared() -> Option<Arc<DocParseHost>> {
+    SHARED.get().cloned()
 }
 
 #[cfg(test)]

@@ -78,6 +78,7 @@ pub const T_LLM: &str = "llm";
 pub const T_HTTP: &str = "http";
 pub const T_CT: &str = "ct";
 pub const T_ITERATION: &str = "iteration";
+pub const T_DOCPARSE: &str = "docparse";
 
 #[cfg_attr(feature = "export-types", derive(ts_rs::TS))]
 #[derive(Debug, Clone, Deserialize)]
@@ -547,6 +548,25 @@ pub struct LlmConfig {
     pub json_schema: Option<Value>,
 }
 
+/// `docparse` node config (docparse-node.md §2). Parses one document into
+/// markdown through the shared docparse engine registry. `input` is a
+/// ValueExpr resolving to a file reference — a storage key or an external
+/// `https://` URL (SSRF-validated). `engine` overrides the global default;
+/// absent → registry routing (explicit → global → builtin).
+#[cfg_attr(feature = "export-types", derive(ts_rs::TS))]
+#[derive(Debug, Clone, Deserialize)]
+pub struct DocParseConfig {
+    /// ValueExpr resolving to one file reference (string).
+    #[cfg_attr(feature = "export-types", ts(type = "unknown"))]
+    pub input: Value,
+    /// Parser engine override (name from the registry); absent → global default.
+    #[serde(default)]
+    pub engine: Option<String>,
+    /// Whether to extract embedded images (adds the asset pass; off saves cost).
+    #[serde(default)]
+    pub extract_images: bool,
+}
+
 /// Declared output fields of a node (v2 D2): what the node writes into its
 /// pool namespace. Drives skip-null semantics (D6) and lint law 3 (D4).
 ///
@@ -554,6 +574,7 @@ pub struct LlmConfig {
 /// - `script` → `output_schema` properties (empty when undeclared → law-3 skip)
 /// - `egress` → fixed `response`
 /// - `llm`    → fixed `text`/`structured`/`usage`/`latency_ms`
+/// - `docparse` → fixed `markdown`/`images`/`engine`/`pages`/`warnings`
 /// - `await`  → fixed `resume`
 /// - `branch` → fixed `handle`
 #[must_use]
@@ -606,6 +627,13 @@ pub fn declared_output_fields(kind: &str, config: &Value) -> Vec<String> {
             };
             c.assignments.into_iter().map(|a| a.key).collect()
         }
+        T_DOCPARSE => vec![
+            "markdown".into(),
+            "images".into(),
+            "engine".into(),
+            "pages".into(),
+            "warnings".into(),
+        ],
         _ => Vec::new(),
     }
 }
@@ -1117,6 +1145,21 @@ pub fn validate_node(kind: &str, _version: i64, config: &Value) -> AppResult<()>
                 ));
             }
         }
+        T_DOCPARSE => {
+            let c: DocParseConfig = serde_json::from_value(config.clone()).map_err(type_error)?;
+            if c.input.is_null() {
+                return Err(AppError::BadRequest("docparse: input 不能为空".into()));
+            }
+            validate_value_expr("docparse.input", &c.input)?;
+            if let Some(e) = &c.engine
+                && (e.trim().is_empty() || !crate::db::driver::is_safe_identifier(e.trim()))
+            {
+                return Err(AppError::BadRequest(format!(
+                    "docparse: engine '{}' 非法标识符",
+                    e
+                )));
+            }
+        }
         other => {
             return Err(AppError::BadRequest(format!(
                 "node type '{other}' not supported (v1: start|end|script|egress|branch)"
@@ -1141,6 +1184,7 @@ pub enum NodeKind {
     Http,
     Ct,
     Iteration,
+    Docparse,
 }
 
 /// TS-only union of every node's config shape (editor drives panels off it).
@@ -1161,6 +1205,7 @@ pub enum NodeConfigVariant {
     Http(HttpConfig),
     Ct(CtConfig),
     Iteration(IterationConfig),
+    DocParse(DocParseConfig),
 }
 
 /// TS-only union for ValueExpr (literal | ref selector | expr string).
