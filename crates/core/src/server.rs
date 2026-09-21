@@ -134,6 +134,7 @@ async fn build_app(
 
     let mut registry = RouteRegistry::default();
 
+    let worker_shutdown = shutdown_rx.clone();
     let mut state = crate::build_app_state(config, shutdown_rx).await?;
     let pool = state.pool.clone();
     let eventbus = state.eventbus.clone();
@@ -154,6 +155,7 @@ async fn build_app(
             cache_for_workers,
             kb_for_workers,
             state.llm_router.clone(),
+            worker_shutdown,
         )
         .await;
     }
@@ -1036,6 +1038,7 @@ async fn spawn_workers(
     cache: Arc<dyn crate::cache::CacheStore>,
     kb: Option<(Arc<crate::kb::KbRuntime>, Arc<dyn crate::storage::Storage>)>,
     llm_router: Arc<crate::llm::service::LlmRouter>,
+    shutdown: tokio::sync::watch::Receiver<bool>,
 ) -> Arc<crate::worker::JobHandlerRegistry> {
     use crate::worker::{
         CronScheduler, DefaultJobQueue, JobEnqueuer, PluginCronDispatcher, StuckJobSweeper,
@@ -1080,15 +1083,36 @@ async fn spawn_workers(
 
     JobEnqueuer::spawn(eventbus, queue.clone());
 
-    let runner = WorkerRunner::new(
+    // Two pools over one queue: the IO pool claims everything except CPU-bound
+    // job types; the CPU pool claims only those. This stops a long document
+    // parse from occupying an IO worker slot (worker-execution-assessment §6).
+    let cpu_types = registry.job_types_by_class(crate::worker::ExecutionClass::Cpu);
+
+    let io_runner = WorkerRunner::new(
         queue.clone(),
         registry.clone(),
         pool.clone(),
         Duration::from_millis(config.worker_poll_interval_ms),
         config.worker_batch_size,
     )
+    .with_visibility_timeout(Duration::from_secs(config.worker_visibility_timeout_secs))
+    .with_claim_filter(crate::worker::JobTypeFilter::Except(cpu_types.clone()))
+    .with_shutdown(shutdown.clone())
+    .with_plugin_dispatcher(Arc::new(PluginCronDispatcher::new(plugins.clone())));
+    io_runner.spawn(config.worker_concurrency);
+
+    let cpu_runner = WorkerRunner::new(
+        queue.clone(),
+        registry.clone(),
+        pool.clone(),
+        Duration::from_millis(config.worker_poll_interval_ms),
+        config.worker_batch_size,
+    )
+    .with_visibility_timeout(Duration::from_secs(config.worker_visibility_timeout_secs))
+    .with_claim_filter(crate::worker::JobTypeFilter::Only(cpu_types))
+    .with_shutdown(shutdown)
     .with_plugin_dispatcher(Arc::new(PluginCronDispatcher::new(plugins)));
-    runner.spawn(config.worker_concurrency);
+    cpu_runner.spawn(config.worker_cpu_concurrency);
 
     StuckJobSweeper::new(
         queue,

@@ -9,7 +9,7 @@ use std::sync::Arc;
 use crate::config::app::AppConfig;
 use crate::db::Pool;
 use crate::errors::app_error::AppResult;
-use crate::worker::{Job, JobHandler};
+use crate::worker::{ExecutionClass, Job, JobHandler};
 
 /// Thumbnail generation handler
 pub struct GenerateThumbnailHandler {
@@ -33,6 +33,10 @@ impl GenerateThumbnailHandler {
 
 #[async_trait::async_trait]
 impl JobHandler for GenerateThumbnailHandler {
+    fn execution_class(&self) -> ExecutionClass {
+        ExecutionClass::Cpu
+    }
+
     async fn handle(&self, job: &Job) -> AppResult<()> {
         let Job::GenerateThumbnail { media_id, size } = job else {
             return Ok(());

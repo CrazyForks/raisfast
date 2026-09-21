@@ -63,7 +63,7 @@ pub async fn insert(
         "user_id" => user_id,
         "currency" => currency,
         "amount" => amount,
-        "status" => RedemptionCodeStatus::Pending,
+        "status" => RedemptionCodeStatus::Pending.as_str(),
         "created_by" => created_by,
         "expires_at" => expires_at,
         "created_at" => now,

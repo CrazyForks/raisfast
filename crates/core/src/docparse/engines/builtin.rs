@@ -4,8 +4,23 @@
 //! is identical to the pre-registry pipeline (zero-regression E1
 //! acceptance).
 
+use std::sync::OnceLock;
+
 use super::{ParseOpts, ParseOutcome, ParsedImage};
 use crate::errors::app_error::{AppError, AppResult};
+
+/// Upper bound on concurrently running builtin parses. The parsers are
+/// CPU- and memory-heavy (a single scanned PDF can OOM a container —
+/// `dev-docs/document/service-design.md` §), so bounding matters more than
+/// throughput; raise only alongside the machine's memory budget.
+const MAX_CONCURRENT_PARSES: usize = 2;
+
+/// Process-wide parse gate: bounds concurrent blocking parses across every
+/// caller (KB ingest, doc conversion, flow nodes).
+fn parse_semaphore() -> &'static tokio::sync::Semaphore {
+    static SEM: OnceLock<tokio::sync::Semaphore> = OnceLock::new();
+    SEM.get_or_init(|| tokio::sync::Semaphore::new(MAX_CONCURRENT_PARSES))
+}
 
 pub struct BuiltinEngine;
 
@@ -33,7 +48,23 @@ impl super::ParseEngine for BuiltinEngine {
         filename: &str,
         opts: &ParseOpts,
     ) -> AppResult<ParseOutcome> {
-        parse_builtin(bytes, mime, filename, opts)
+        // anydoc / pdf-inspector are synchronous and CPU-bound. Run them on the
+        // blocking pool so a large PDF cannot stall the shared async runtime
+        // (HTTP + other jobs). See dev-docs/worker-execution-assessment.md.
+        let permit = parse_semaphore()
+            .acquire()
+            .await
+            .map_err(|e| AppError::Internal(anyhow::anyhow!("parse gate closed: {e}")))?;
+        let bytes = bytes.to_vec();
+        let mime = mime.to_string();
+        let filename = filename.to_string();
+        let opts = *opts;
+        tokio::task::spawn_blocking(move || {
+            let _permit = permit;
+            parse_builtin(&bytes, &mime, &filename, &opts)
+        })
+        .await
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("parse task join error: {e}")))?
     }
 }
 

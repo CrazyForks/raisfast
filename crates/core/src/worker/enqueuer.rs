@@ -54,10 +54,12 @@ impl JobEnqueuer {
                 })]
             }
             Event::KbDocumentCreated(data) => {
-                vec![NewJob::from(Job::KbProcessDocument {
+                let mut job = NewJob::from(Job::KbProcessDocument {
                     doc_id: data.id,
                     tenant_id: data.tenant_id.clone(),
-                })]
+                });
+                job.timeout_secs = Some(super::LONG_JOB_TIMEOUT_SECS);
+                vec![job]
             }
             Event::PostUpdated(data) => {
                 let post_id: i64 = *data.id;

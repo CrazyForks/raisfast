@@ -571,7 +571,13 @@ async fn process_document_inner(
     // 页锚点偏移必须在空白化【之前】取（等长替换，偏移对齐原文）。
     let marks = crate::kb::parse_quality::page_marks(&markdown);
     let markdown = crate::kb::parse_quality::blank_page_marks(&markdown);
-    let raw_chunks = chunker::chunk_markdown(&markdown, &cfg);
+    // text-splitter chunking is CPU-bound; keep it off the shared async runtime.
+    let (markdown, raw_chunks) = tokio::task::spawn_blocking(move || {
+        let chunks = chunker::chunk_markdown(&markdown, &cfg);
+        (markdown, chunks)
+    })
+    .await
+    .map_err(|e| AppError::Internal(anyhow::anyhow!("chunk task join error: {e}")))?;
     let now = crate::utils::tz::now_utc();
     let mut inserts = Vec::with_capacity(raw_chunks.len());
     let mut chunk_ids: Vec<Option<SnowflakeId>> = vec![None; raw_chunks.len()];
@@ -776,6 +782,7 @@ async fn process_document_inner(
             tenant_id: tenant_id.to_string(),
         });
         new_job.priority = -5; // bulk VLM work must not starve online jobs
+        new_job.timeout_secs = Some(crate::worker::LONG_JOB_TIMEOUT_SECS);
         queue.enqueue(new_job).await?;
         tracing::info!("[kb] doc {doc_id}: queued recognition for {image_count} image(s)");
     }

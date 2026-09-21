@@ -9,8 +9,8 @@ use crate::errors::app_error::{AppError, AppResult};
 use crate::utils::tz::Timestamp;
 
 use super::{
-    JobFilter, JobQueue, JobRow, JobStats, JobStatus, NewJob, QueuedJob, backoff_duration,
-    parse_job, serialize_job,
+    JobFilter, JobQueue, JobRow, JobStats, JobStatus, JobTypeFilter, NewJob, QueuedJob,
+    backoff_duration, parse_job, serialize_job,
 };
 use crate::types::snowflake_id::SnowflakeId;
 
@@ -23,6 +23,24 @@ impl DefaultJobQueue {
     #[must_use]
     pub fn new(pool: Pool) -> Self {
         Self { pool }
+    }
+}
+
+/// Builds the `job_type` filter fragment and its bind values, with placeholders
+/// starting at `start`. Empty allow/deny lists yield no fragment (the caller
+/// short-circuits an empty `Only` before reaching here).
+fn type_filter_sql(filter: &JobTypeFilter, start: usize) -> (String, Vec<String>) {
+    let clause = |op: &str, types: &[String]| -> (String, Vec<String>) {
+        let phs: Vec<String> = (0..types.len()).map(|i| Driver::ph(start + i)).collect();
+        (
+            format!(" AND job_type {op} ({})", phs.join(", ")),
+            types.to_vec(),
+        )
+    };
+    match filter {
+        JobTypeFilter::Any => (String::new(), Vec::new()),
+        JobTypeFilter::Only(types) => clause("IN", types),
+        JobTypeFilter::Except(types) => clause("NOT IN", types),
     }
 }
 
@@ -73,6 +91,20 @@ impl JobQueue for DefaultJobQueue {
     }
 
     async fn dequeue(&self, limit: usize) -> AppResult<Vec<QueuedJob>> {
+        self.dequeue_filtered(limit, &JobTypeFilter::Any).await
+    }
+
+    async fn dequeue_filtered(
+        &self,
+        limit: usize,
+        filter: &JobTypeFilter,
+    ) -> AppResult<Vec<QueuedJob>> {
+        // `Only` with no types can never match — skip the round trip.
+        if let JobTypeFilter::Only(types) = filter
+            && types.is_empty()
+        {
+            return Ok(Vec::new());
+        }
         let now = crate::utils::tz::now_utc();
         let limit_i64 = limit as i64;
 
@@ -85,28 +117,30 @@ impl JobQueue for DefaultJobQueue {
             // job gets executed twice. SKIP LOCKED makes the claim atomic.
             let mut tx = self.pool.begin().await?;
 
+            let (filter_sql, filter_binds) = type_filter_sql(filter, 3);
             let select_sql = format!(
                 "SELECT {COL_ID} FROM jobs \
-                 WHERE status = {} AND (run_after IS NULL OR run_after <= {}) \
+                 WHERE status = {} AND (run_after IS NULL OR run_after <= {}){filter_sql} \
                  ORDER BY priority DESC, created_at ASC LIMIT {} \
                  FOR UPDATE SKIP LOCKED",
                 Driver::ph(1),
                 Driver::ph(2),
-                Driver::ph(3)
+                Driver::ph(3 + filter_binds.len())
             );
-            let ids: Vec<i64> = sqlx::query_scalar::<_, i64>(crate::db::safe_sql(&select_sql))
+            let mut sel = sqlx::query_scalar::<_, i64>(crate::db::safe_sql(&select_sql))
                 .bind(JobStatus::Pending.as_str())
-                .bind(now)
-                .bind(limit_i64)
-                .fetch_all(&mut *tx)
-                .await?;
+                .bind(now);
+            for t in &filter_binds {
+                sel = sel.bind(t);
+            }
+            let ids: Vec<i64> = sel.bind(limit_i64).fetch_all(&mut *tx).await?;
 
             let mut jobs = Vec::with_capacity(ids.len());
             for id in ids {
                 let update_sql = format!(
                     "UPDATE jobs SET status = {}, attempts = attempts + 1, updated_at = {} \
                      WHERE {COL_ID} = {} \
-                     RETURNING {COL_ID}, job_type, payload, attempts, max_attempts, created_at, cron_schedule_id, cron_log_id",
+                     RETURNING {COL_ID}, job_type, payload, attempts, max_attempts, created_at, cron_schedule_id, cron_log_id, timeout_secs",
                     Driver::ph(1),
                     Driver::ph(2),
                     Driver::ph(3)
@@ -131,6 +165,7 @@ impl JobQueue for DefaultJobQueue {
                 let created_at: Timestamp = r.get::<Timestamp, _>("created_at");
                 let cron_schedule_id: Option<i64> = r.get::<Option<i64>, _>("cron_schedule_id");
                 let cron_log_id: Option<i64> = r.get::<Option<i64>, _>("cron_log_id");
+                let timeout_secs: Option<i32> = r.get::<Option<i32>, _>("timeout_secs");
                 match parse_job(&job_type, &payload) {
                     Ok(job) => jobs.push(QueuedJob {
                         id: id.to_string(),
@@ -140,6 +175,7 @@ impl JobQueue for DefaultJobQueue {
                         created_at,
                         cron_schedule_id: cron_schedule_id.map(SnowflakeId),
                         cron_log_id: cron_log_id.map(SnowflakeId),
+                        timeout_secs,
                     }),
                     Err(e) => {
                         tracing::error!("failed to parse job {id}: {e}");
@@ -158,13 +194,14 @@ impl JobQueue for DefaultJobQueue {
         {
             // SQLite: single-writer model with global write lock, UPDATE is atomic.
             let returning = crate::db::Driver::returning_col(&format!(
-                "{COL_ID}, job_type, payload, attempts, max_attempts, created_at, cron_schedule_id, cron_log_id"
+                "{COL_ID}, job_type, payload, attempts, max_attempts, created_at, cron_schedule_id, cron_log_id, timeout_secs"
             ));
+            let (filter_sql, filter_binds) = type_filter_sql(filter, 5);
             let sql = format!(
                 "UPDATE jobs SET status = {}, attempts = attempts + 1, updated_at = {}
                  WHERE {COL_ID} IN (
                    SELECT {COL_ID} FROM jobs
-                   WHERE status = {} AND (run_after IS NULL OR run_after <= {})
+                   WHERE status = {} AND (run_after IS NULL OR run_after <= {}){filter_sql}
                    ORDER BY priority DESC, created_at ASC LIMIT {}
                  )
                  {returning}",
@@ -172,18 +209,18 @@ impl JobQueue for DefaultJobQueue {
                 Driver::ph(2),
                 Driver::ph(3),
                 Driver::ph(4),
-                Driver::ph(5)
+                Driver::ph(5 + filter_binds.len())
             );
 
-            let rows: Vec<crate::db::pool::DbRow> =
-                sqlx::query::<crate::db::pool::Db>(crate::db::safe_sql(&sql))
-                    .bind(JobStatus::Running.as_str())
-                    .bind(now)
-                    .bind(JobStatus::Pending.as_str())
-                    .bind(now)
-                    .bind(limit_i64)
-                    .fetch_all(&self.pool)
-                    .await?;
+            let mut q = sqlx::query::<crate::db::pool::Db>(crate::db::safe_sql(&sql))
+                .bind(JobStatus::Running.as_str())
+                .bind(now)
+                .bind(JobStatus::Pending.as_str())
+                .bind(now);
+            for t in &filter_binds {
+                q = q.bind(t);
+            }
+            let rows: Vec<crate::db::pool::DbRow> = q.bind(limit_i64).fetch_all(&self.pool).await?;
 
             let mut jobs = Vec::with_capacity(rows.len());
             for row in rows {
@@ -196,6 +233,7 @@ impl JobQueue for DefaultJobQueue {
                 let created_at: Timestamp = row.get::<Timestamp, _>("created_at");
                 let cron_schedule_id: Option<i64> = row.get::<Option<i64>, _>("cron_schedule_id");
                 let cron_log_id: Option<i64> = row.get::<Option<i64>, _>("cron_log_id");
+                let timeout_secs: Option<i32> = row.get::<Option<i32>, _>("timeout_secs");
                 match parse_job(&job_type, &payload) {
                     Ok(job) => jobs.push(QueuedJob {
                         id: id.to_string(),
@@ -205,6 +243,7 @@ impl JobQueue for DefaultJobQueue {
                         created_at,
                         cron_schedule_id: cron_schedule_id.map(SnowflakeId),
                         cron_log_id: cron_log_id.map(SnowflakeId),
+                        timeout_secs,
                     }),
                     Err(e) => {
                         tracing::error!("failed to parse job {id}: {e}");
@@ -225,22 +264,23 @@ impl JobQueue for DefaultJobQueue {
             // This is atomic, race-free, and avoids the N+1 query problem.
             let mut tx = self.pool.begin().await?;
 
+            let (filter_sql, filter_binds) = type_filter_sql(filter, 2);
             let select_sql = format!(
-                "SELECT {COL_ID}, job_type, payload, attempts, max_attempts, created_at, cron_schedule_id, cron_log_id \
+                "SELECT {COL_ID}, job_type, payload, attempts, max_attempts, created_at, cron_schedule_id, cron_log_id, timeout_secs \
                  FROM jobs \
-                 WHERE status = 'pending' AND (run_after IS NULL OR run_after <= {}) \
+                 WHERE status = 'pending' AND (run_after IS NULL OR run_after <= {}){filter_sql} \
                  ORDER BY priority DESC, created_at ASC \
                  LIMIT {} \
                  FOR UPDATE SKIP LOCKED",
                 Driver::ph(1),
-                Driver::ph(2)
+                Driver::ph(2 + filter_binds.len())
             );
-            let rows: Vec<crate::db::pool::DbRow> =
-                sqlx::query::<crate::db::pool::Db>(crate::db::safe_sql(&select_sql))
-                    .bind(now)
-                    .bind(limit_i64)
-                    .fetch_all(&mut *tx)
-                    .await?;
+            let mut q =
+                sqlx::query::<crate::db::pool::Db>(crate::db::safe_sql(&select_sql)).bind(now);
+            for t in &filter_binds {
+                q = q.bind(t);
+            }
+            let rows: Vec<crate::db::pool::DbRow> = q.bind(limit_i64).fetch_all(&mut *tx).await?;
 
             if rows.is_empty() {
                 tx.commit().await?;
@@ -279,6 +319,7 @@ impl JobQueue for DefaultJobQueue {
                 let created_at: Timestamp = row.get::<Timestamp, _>("created_at");
                 let cron_schedule_id: Option<i64> = row.get::<Option<i64>, _>("cron_schedule_id");
                 let cron_log_id: Option<i64> = row.get::<Option<i64>, _>("cron_log_id");
+                let timeout_secs: Option<i32> = row.get::<Option<i32>, _>("timeout_secs");
 
                 match parse_job(&job_type, &payload) {
                     Ok(job) => jobs.push(QueuedJob {
@@ -289,6 +330,7 @@ impl JobQueue for DefaultJobQueue {
                         created_at,
                         cron_schedule_id: cron_schedule_id.map(SnowflakeId),
                         cron_log_id: cron_log_id.map(SnowflakeId),
+                        timeout_secs,
                     }),
                     Err(e) => {
                         tracing::error!("failed to parse job {id}: {e}");
@@ -630,7 +672,7 @@ impl JobQueue for DefaultJobQueue {
 mod tests {
     use super::*;
     use crate::types::snowflake_id::SnowflakeId;
-    use crate::worker::{Job, NewJob};
+    use crate::worker::{Job, JobTypeFilter, NewJob};
 
     async fn setup() -> DefaultJobQueue {
         let pool = crate::test_pool!();
@@ -664,6 +706,54 @@ mod tests {
         assert_eq!(jobs[0].job.job_type(), "generate_sitemap");
         assert_eq!(jobs[0].attempts, 1);
         assert_eq!(jobs[0].max_attempts, 3);
+    }
+
+    #[tokio::test]
+    async fn dequeue_carries_timeout_secs() {
+        let q = setup().await;
+        let mut job = sample_job();
+        job.timeout_secs = Some(3600);
+        q.enqueue(job).await.unwrap();
+
+        let jobs = q.dequeue(10).await.unwrap();
+        assert_eq!(jobs[0].timeout_secs, Some(3600));
+
+        // Unset stays None.
+        q.enqueue(sample_job()).await.unwrap();
+        let jobs = q.dequeue(10).await.unwrap();
+        assert_eq!(jobs[0].timeout_secs, None);
+    }
+
+    #[tokio::test]
+    async fn dequeue_filtered_only_and_except() {
+        let q = setup().await;
+        q.enqueue(sample_job()).await.unwrap();
+        q.enqueue(NewJob::from(Job::RebuildSearchIndex { post_ids: vec![1] }))
+            .await
+            .unwrap();
+
+        let only = JobTypeFilter::Only(vec!["generate_sitemap".to_string()]);
+        let jobs = q.dequeue_filtered(10, &only).await.unwrap();
+        assert_eq!(jobs.len(), 1);
+        assert_eq!(jobs[0].job.job_type(), "generate_sitemap");
+
+        let except = JobTypeFilter::Except(vec!["generate_sitemap".to_string()]);
+        let jobs = q.dequeue_filtered(10, &except).await.unwrap();
+        assert_eq!(jobs.len(), 1);
+        assert_eq!(jobs[0].job.job_type(), "rebuild_search_index");
+    }
+
+    #[tokio::test]
+    async fn dequeue_filtered_only_empty_claims_nothing() {
+        let q = setup().await;
+        q.enqueue(sample_job()).await.unwrap();
+
+        let jobs = q
+            .dequeue_filtered(10, &JobTypeFilter::Only(Vec::new()))
+            .await
+            .unwrap();
+        assert!(jobs.is_empty());
+        assert_eq!(q.stats().await.unwrap().pending, 1);
     }
 
     #[tokio::test]

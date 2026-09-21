@@ -48,9 +48,14 @@ define_enum!(
     }
 );
 
+/// Visibility timeout (seconds) for long-running jobs (document parse, image
+/// recognition, document conversion). Keeps `StuckJobSweeper` from reclaiming a
+/// live job; the runner additionally heartbeats `updated_at` independently.
+pub const LONG_JOB_TIMEOUT_SECS: i32 = 3600;
+
 pub use dispatcher::PluginCronDispatcher;
 pub use enqueuer::JobEnqueuer;
-pub use handler::{HandlerMeta, JobHandler, JobHandlerRegistry, LogJobHandler};
+pub use handler::{ExecutionClass, HandlerMeta, JobHandler, JobHandlerRegistry, LogJobHandler};
 pub use job_queue::DefaultJobQueue;
 pub use runner::WorkerRunner;
 pub use scheduler::{
@@ -268,6 +273,23 @@ pub struct QueuedJob {
     pub cron_schedule_id: Option<SnowflakeId>,
     /// Cron execution-log row id (mirror of `NewJob::cron_log_id`).
     pub cron_log_id: Option<SnowflakeId>,
+    /// Per-job visibility timeout in seconds (mirror of `NewJob::timeout_secs`).
+    /// `None` = use the global `worker_visibility_timeout_secs`. Used by the
+    /// runner to drive the long-job heartbeat interval.
+    pub timeout_secs: Option<i32>,
+}
+
+/// Job-type allow/deny filter used by a worker pool when claiming.
+///
+/// `Any` = no filter (single-pool / tests). `Only` = claim just these types
+/// (CPU pool). `Except` = claim everything else (IO pool, so plugin/`Custom`
+/// jobs with no registered handler still get claimed).
+#[derive(Debug, Clone, Default)]
+pub enum JobTypeFilter {
+    #[default]
+    Any,
+    Only(Vec<String>),
+    Except(Vec<String>),
 }
 
 /// Job queue trait
@@ -275,6 +297,13 @@ pub struct QueuedJob {
 pub trait JobQueue: Send + Sync {
     async fn enqueue(&self, new_job: NewJob) -> AppResult<()>;
     async fn dequeue(&self, limit: usize) -> AppResult<Vec<QueuedJob>>;
+    /// Same as [`JobQueue::dequeue`] but restricted by a job-type filter. The
+    /// filter is applied in SQL so a pool never claims a job it will not run.
+    async fn dequeue_filtered(
+        &self,
+        limit: usize,
+        filter: &JobTypeFilter,
+    ) -> AppResult<Vec<QueuedJob>>;
     async fn complete(&self, id: &str) -> AppResult<()>;
     async fn fail(&self, id: &str, error: &str) -> AppResult<()>;
     async fn dead(&self, id: &str, error: &str) -> AppResult<()>;

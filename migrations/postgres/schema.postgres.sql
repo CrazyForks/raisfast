@@ -299,6 +299,7 @@ CREATE TABLE IF NOT EXISTS content_revisions (
     record_id BIGINT NOT NULL,
     revision_number BIGINT NOT NULL,
     snapshot JSONB NOT NULL,
+    created_by BIGINT,
     expires_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW(),
     UNIQUE(content_type, record_id, revision_number)
@@ -2034,8 +2035,8 @@ CREATE TABLE IF NOT EXISTS docparse_tokens (
     created_at TIMESTAMPTZ NOT NULL,
     last_used_at TIMESTAMPTZ
 );
-CREATE INDEX idx_docparse_tokens_hash ON docparse_tokens(token_hash);
-CREATE INDEX idx_docparse_tokens_tenant ON docparse_tokens(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_docparse_tokens_hash ON docparse_tokens(token_hash);
+CREATE INDEX IF NOT EXISTS idx_docparse_tokens_tenant ON docparse_tokens(tenant_id);
 
 CREATE TABLE IF NOT EXISTS docparse_usage_summary (
     id BIGINT PRIMARY KEY,

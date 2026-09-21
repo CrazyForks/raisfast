@@ -93,15 +93,15 @@ pub async fn submit(
     )
     .await?;
 
+    let mut new_job = crate::worker::NewJob::from(crate::worker::Job::RecognizeImage {
+        job_id: job_id.clone(),
+        tenant_id: tenant.to_string(),
+        model: model.map(str::to_string),
+        prompt: prompt.map(str::to_string),
+    });
+    new_job.timeout_secs = Some(crate::worker::LONG_JOB_TIMEOUT_SECS);
     queue
-        .enqueue(crate::worker::NewJob::from(
-            crate::worker::Job::RecognizeImage {
-                job_id: job_id.clone(),
-                tenant_id: tenant.to_string(),
-                model: model.map(str::to_string),
-                prompt: prompt.map(str::to_string),
-            },
-        ))
+        .enqueue(new_job)
         .await
         .map_err(|e| AppError::Internal(anyhow::anyhow!("enqueue recognize job: {e}")))?;
     Ok(job_id)

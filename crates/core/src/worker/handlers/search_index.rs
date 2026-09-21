@@ -8,7 +8,7 @@ use std::sync::Arc;
 use crate::errors::app_error::AppResult;
 use crate::search::{SearchEngine, SearchablePost};
 use crate::types::snowflake_id::SnowflakeId;
-use crate::worker::{Job, JobHandler};
+use crate::worker::{ExecutionClass, Job, JobHandler};
 
 /// Search index rebuild handler
 pub struct RebuildSearchIndexHandler {
@@ -25,6 +25,10 @@ impl RebuildSearchIndexHandler {
 
 #[async_trait::async_trait]
 impl JobHandler for RebuildSearchIndexHandler {
+    fn execution_class(&self) -> ExecutionClass {
+        ExecutionClass::Cpu
+    }
+
     fn coalesce_key(&self, job: &Job) -> Option<String> {
         match job {
             Job::RebuildSearchIndex { .. } => Some("rebuild_search_index".to_string()),

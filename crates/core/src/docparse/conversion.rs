@@ -107,16 +107,16 @@ pub async fn submit(
     )
     .await?;
 
+    let mut new_job = crate::worker::NewJob::from(crate::worker::Job::ConvertDocument {
+        job_id: job_id.clone(),
+        tenant_id: tenant.to_string(),
+        filename: filename.to_string(),
+        engine: engine.map(str::to_string),
+        extract_images,
+    });
+    new_job.timeout_secs = Some(crate::worker::LONG_JOB_TIMEOUT_SECS);
     queue
-        .enqueue(crate::worker::NewJob::from(
-            crate::worker::Job::ConvertDocument {
-                job_id: job_id.clone(),
-                tenant_id: tenant.to_string(),
-                filename: filename.to_string(),
-                engine: engine.map(str::to_string),
-                extract_images,
-            },
-        ))
+        .enqueue(new_job)
         .await
         .map_err(|e| AppError::Internal(anyhow::anyhow!("enqueue convert job: {e}")))?;
     Ok(job_id)

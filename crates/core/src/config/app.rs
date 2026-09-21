@@ -121,6 +121,10 @@ pub struct AppConfig {
     pub worker_enabled: bool,
     #[serde(default = "default_worker_concurrency")]
     pub worker_concurrency: usize,
+    /// Size of the dedicated CPU pool (document parse / image / index). Defaults
+    /// to `min(cpu cores, 4)`.
+    #[serde(default = "default_worker_cpu_concurrency")]
+    pub worker_cpu_concurrency: usize,
     #[serde(default = "default_worker_poll_interval_ms")]
     pub worker_poll_interval_ms: u64,
     #[serde(default = "default_worker_batch_size")]
@@ -1418,6 +1422,12 @@ fn default_worker_concurrency() -> usize {
     2
 }
 
+fn default_worker_cpu_concurrency() -> usize {
+    std::thread::available_parallelism()
+        .map(|n| n.get().min(4))
+        .unwrap_or(2)
+}
+
 fn default_worker_poll_interval_ms() -> u64 {
     500
 }
@@ -1689,6 +1699,10 @@ impl AppConfig {
                 .ok()
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(default_worker_concurrency()),
+            worker_cpu_concurrency: env::var("WORKER_CPU_CONCURRENCY")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(default_worker_cpu_concurrency()),
             worker_poll_interval_ms: env::var("WORKER_POLL_INTERVAL_MS")
                 .ok()
                 .and_then(|v| v.parse().ok())
@@ -1936,6 +1950,7 @@ impl AppConfig {
             rate_limit_api_token_window: default_rate_limit_api_token_window(),
             worker_enabled: false,
             worker_concurrency: default_worker_concurrency(),
+            worker_cpu_concurrency: default_worker_cpu_concurrency(),
             worker_poll_interval_ms: default_worker_poll_interval_ms(),
             worker_batch_size: default_worker_batch_size(),
             worker_default_max_attempts: default_worker_max_attempts(),

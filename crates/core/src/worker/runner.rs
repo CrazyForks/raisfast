@@ -5,10 +5,15 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::db::Pool;
+use crate::constants::COL_ID;
+use crate::db::{DbDriver, Driver, Pool};
+use crate::errors::app_error::{AppError, AppResult};
 use crate::types::snowflake_id::SnowflakeId;
 
-use super::{CronExecStatus, JobHandlerRegistry, JobQueue, PluginCronDispatcher};
+use super::{
+    CronExecStatus, JobHandlerRegistry, JobQueue, JobStatus, JobTypeFilter, PluginCronDispatcher,
+    QueuedJob,
+};
 
 /// Worker executor
 pub struct WorkerRunner {
@@ -18,6 +23,15 @@ pub struct WorkerRunner {
     pool: Pool,
     poll_interval: Duration,
     batch_size: usize,
+    /// Global job visibility timeout, used as the heartbeat cadence basis for
+    /// jobs without a per-job `timeout_secs`. Mirrors
+    /// `worker_visibility_timeout_secs`.
+    visibility_timeout: Duration,
+    /// Which job types this pool may claim. `Any` for a single-pool setup.
+    claim: JobTypeFilter,
+    /// Shutdown signal. When it flips true the worker stops claiming and exits
+    /// after finishing the job it is currently running.
+    shutdown: Option<tokio::sync::watch::Receiver<bool>>,
 }
 
 impl WorkerRunner {
@@ -38,7 +52,33 @@ impl WorkerRunner {
             pool,
             poll_interval,
             batch_size,
+            visibility_timeout: Duration::from_secs(300),
+            claim: JobTypeFilter::Any,
+            shutdown: None,
         }
+    }
+
+    /// Attaches a shutdown signal so the worker drains and exits cleanly.
+    #[must_use]
+    pub fn with_shutdown(mut self, shutdown: tokio::sync::watch::Receiver<bool>) -> Self {
+        self.shutdown = Some(shutdown);
+        self
+    }
+
+    /// Sets the global visibility timeout used as the heartbeat cadence basis
+    /// for jobs without a per-job `timeout_secs`.
+    #[must_use]
+    pub fn with_visibility_timeout(mut self, timeout: Duration) -> Self {
+        self.visibility_timeout = timeout;
+        self
+    }
+
+    /// Restricts which job types this pool claims (IO pool = `Except(cpu)`,
+    /// CPU pool = `Only(cpu)`).
+    #[must_use]
+    pub fn with_claim_filter(mut self, claim: JobTypeFilter) -> Self {
+        self.claim = claim;
+        self
     }
 
     /// Sets the plugin Cron dispatcher
@@ -66,7 +106,20 @@ impl WorkerRunner {
         loop {
             interval.tick().await;
 
-            match self.queue.dequeue(self.batch_size).await {
+            // Graceful shutdown: stop claiming once signalled. The job currently
+            // running (if any) already finished — `execute_batch` is awaited
+            // below — so this only drops unstarted work, which the sweeper
+            // reclaims after the visibility timeout.
+            if self.shutdown.as_ref().is_some_and(|rx| *rx.borrow()) {
+                tracing::info!("worker-{worker_id} shutting down (drained)");
+                return;
+            }
+
+            match self
+                .queue
+                .dequeue_filtered(self.batch_size, &self.claim)
+                .await
+            {
                 Ok(jobs) => {
                     self.execute_batch(&jobs, worker_id).await;
                 }
@@ -110,7 +163,16 @@ impl WorkerRunner {
                 None => group[0].job.clone(),
             };
             let handler_start = std::time::Instant::now();
-            let result = self.handlers.handle(&merged).await;
+            let heartbeat = self.spawn_heartbeat(
+                group.iter().map(|q| q.id.clone()).collect(),
+                heartbeat_interval(self.effective_timeout(group[0])),
+            );
+            let enforced = group[0]
+                .timeout_secs
+                .filter(|s| *s > 0)
+                .map(|s| Duration::from_secs(s as u64));
+            let result = run_with_timeout(enforced, self.handlers.handle(&merged)).await;
+            heartbeat.abort();
             let elapsed_ms = handler_start.elapsed().as_millis() as i64;
 
             if let Err(e) = result {
@@ -153,13 +215,26 @@ impl WorkerRunner {
         // Measure handler execution time for cron log writeback.
         let handler_start = std::time::Instant::now();
 
+        let heartbeat = self.spawn_heartbeat(
+            vec![job.id.clone()],
+            heartbeat_interval(self.effective_timeout(job)),
+        );
+
+        // Hard timeout only when explicitly requested on the job; jobs without
+        // it are kept alive by the heartbeat instead. See §10.1 decision #3.
+        let enforced = job
+            .timeout_secs
+            .filter(|s| *s > 0)
+            .map(|s| Duration::from_secs(s as u64));
+
         let result = if self.handlers.has_handler(job_type) {
-            self.handlers.handle_queued(job).await
+            run_with_timeout(enforced, self.handlers.handle_queued(job)).await
         } else if let Some(ref dispatcher) = self.plugin_dispatcher {
             tracing::info!("no built-in handler for '{job_type}', dispatching to plugins");
-            dispatcher.dispatch(&job.job).await
+            run_with_timeout(enforced, dispatcher.dispatch(&job.job)).await
         } else {
             tracing::warn!("no handler for job type '{job_type}', marking dead");
+            heartbeat.abort();
             self.queue.dead(&job.id, "no handler registered").await?;
             self.trace_flip(job, false, "no handler registered".to_string())
                 .await;
@@ -167,6 +242,8 @@ impl WorkerRunner {
                 .await;
             return Ok(());
         };
+
+        heartbeat.abort();
 
         let elapsed_ms = handler_start.elapsed().as_millis() as i64;
 
@@ -195,6 +272,33 @@ impl WorkerRunner {
             }
         }
         Ok(())
+    }
+
+    /// Effective visibility timeout for a job: its own `timeout_secs` when set,
+    /// otherwise the global `visibility_timeout`.
+    fn effective_timeout(&self, job: &QueuedJob) -> Duration {
+        job.timeout_secs
+            .filter(|s| *s > 0)
+            .map(|s| Duration::from_secs(s as u64))
+            .unwrap_or(self.visibility_timeout)
+    }
+
+    /// Spawns a task that periodically bumps `updated_at` for the given running
+    /// jobs. Without it, `StuckJobSweeper` reclaims a long-running job as stuck
+    /// and re-dispatches it while the original execution is still in flight.
+    /// The caller must `abort()` the returned handle once the handler returns.
+    fn spawn_heartbeat(&self, ids: Vec<String>, interval: Duration) -> tokio::task::JoinHandle<()> {
+        let pool = self.pool.clone();
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(interval).await;
+                for id in &ids {
+                    if let Err(e) = touch_running_job(&pool, id).await {
+                        tracing::warn!("heartbeat for job {id} failed: {e}");
+                    }
+                }
+            }
+        })
     }
 
     /// Integration-plane trace writeback: flip the receipt's pending
@@ -269,8 +373,59 @@ impl WorkerRunner {
             pool: self.pool.clone(),
             poll_interval: self.poll_interval,
             batch_size: self.batch_size,
+            visibility_timeout: self.visibility_timeout,
+            claim: self.claim.clone(),
+            shutdown: self.shutdown.clone(),
         }
     }
+}
+
+/// Runs `fut` under an optional hard timeout. A timeout flips the job to a
+/// failure so it follows the normal retry/dead path. Note: the underlying
+/// sync CPU work (e.g. `spawn_blocking` parse) is not cancellable, so it keeps
+/// running in the background — the heartbeat keeps the row alive until it ends.
+async fn run_with_timeout<F>(limit: Option<Duration>, fut: F) -> AppResult<()>
+where
+    F: std::future::Future<Output = AppResult<()>>,
+{
+    match limit {
+        Some(d) => match tokio::time::timeout(d, fut).await {
+            Ok(r) => r,
+            Err(_) => Err(AppError::Internal(anyhow::anyhow!(
+                "job timed out after {}s",
+                d.as_secs()
+            ))),
+        },
+        None => fut.await,
+    }
+}
+
+/// Heartbeat cadence: roughly three beats per visibility window, clamped to
+/// `[1s, 60s]` so short timeouts are still respected without hammering the DB.
+fn heartbeat_interval(timeout: Duration) -> Duration {
+    (timeout / 3).clamp(Duration::from_secs(1), Duration::from_secs(60))
+}
+
+/// Bumps `updated_at` on a still-`running` job. No-op once the job reached a
+/// terminal state, so it can never resurrect a completed/failed row.
+async fn touch_running_job(pool: &Pool, job_id: &str) -> AppResult<()> {
+    let id: i64 = job_id
+        .parse()
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("invalid id: {e}")))?;
+    let now = crate::utils::tz::now_utc();
+    let sql = format!(
+        "UPDATE jobs SET updated_at = {} WHERE {COL_ID} = {} AND status = {}",
+        Driver::ph(1),
+        Driver::ph(2),
+        Driver::ph(3)
+    );
+    sqlx::query::<crate::db::pool::Db>(crate::db::safe_sql(&sql))
+        .bind(now)
+        .bind(id)
+        .bind(JobStatus::Running.as_str())
+        .execute(pool)
+        .await?;
+    Ok(())
 }
 
 #[cfg(test)]
@@ -307,6 +462,110 @@ mod tests {
         registry.register("send_welcome_email", Box::new(FailHandler));
         registry.register("rebuild_search_index", Box::new(LogJobHandler));
         (queue, Arc::new(registry), pool)
+    }
+
+    #[test]
+    fn heartbeat_interval_is_clamped() {
+        assert_eq!(
+            heartbeat_interval(Duration::from_secs(300)),
+            Duration::from_secs(60)
+        );
+        assert_eq!(
+            heartbeat_interval(Duration::from_secs(90)),
+            Duration::from_secs(30)
+        );
+        assert_eq!(
+            heartbeat_interval(Duration::from_secs(3)),
+            Duration::from_secs(1)
+        );
+    }
+
+    #[tokio::test]
+    async fn heartbeat_does_not_resurrect_terminal_job() {
+        let (queue, _registry, pool) = setup().await;
+        queue
+            .enqueue(NewJob::from(Job::GenerateSitemap))
+            .await
+            .unwrap();
+        let jobs = queue.dequeue(10).await.unwrap();
+        let id = jobs[0].id.clone();
+        queue.complete(&id).await.unwrap();
+
+        assert!(touch_running_job(&pool, &id).await.is_ok());
+
+        let stats = queue.stats().await.unwrap();
+        assert_eq!(stats.completed, 1);
+        assert_eq!(stats.running, 0);
+    }
+
+    struct SlowHandler;
+
+    #[async_trait::async_trait]
+    impl crate::worker::JobHandler for SlowHandler {
+        async fn handle(&self, _job: &Job) -> AppResult<()> {
+            tokio::time::sleep(Duration::from_secs(5)).await;
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn execute_enforces_timeout() {
+        let (queue, _registry, pool) = setup().await;
+        let mut registry = JobHandlerRegistry::new();
+        registry.register("slow_job", Box::new(SlowHandler));
+        let runner = WorkerRunner::new(
+            queue.clone(),
+            Arc::new(registry),
+            pool,
+            Duration::from_millis(50),
+            5,
+        );
+
+        queue
+            .enqueue(NewJob {
+                job: Job::Custom {
+                    job_type: "slow_job".into(),
+                    payload: serde_json::json!({}),
+                },
+                max_attempts: Some(3),
+                run_after: None,
+                cron_schedule_id: None,
+                cron_log_id: None,
+                priority: 0,
+                timeout_secs: Some(1),
+                dedup_key: None,
+            })
+            .await
+            .unwrap();
+        let jobs = queue.dequeue(10).await.unwrap();
+
+        let start = std::time::Instant::now();
+        assert!(runner.execute(&jobs[0]).await.is_ok());
+        assert!(start.elapsed() < Duration::from_secs(3));
+
+        // Timed out → retryable → back to pending (attempt 1 of 3).
+        let stats = queue.stats().await.unwrap();
+        assert_eq!(stats.pending, 1);
+        assert_eq!(stats.completed, 0);
+    }
+
+    #[tokio::test]
+    async fn shutdown_stops_claiming() {
+        let (queue, registry, pool) = setup().await;
+        queue
+            .enqueue(NewJob::from(Job::GenerateSitemap))
+            .await
+            .unwrap();
+
+        let (_tx, rx) = tokio::sync::watch::channel(true);
+        let runner = WorkerRunner::new(queue.clone(), registry, pool, Duration::from_millis(20), 5)
+            .with_shutdown(rx);
+        runner.spawn(1);
+        tokio::time::sleep(Duration::from_millis(120)).await;
+
+        let stats = queue.stats().await.unwrap();
+        assert_eq!(stats.pending, 1);
+        assert_eq!(stats.running, 0);
     }
 
     #[tokio::test]

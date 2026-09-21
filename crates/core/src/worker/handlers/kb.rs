@@ -6,7 +6,7 @@ use std::sync::Arc;
 use crate::errors::app_error::AppResult;
 use crate::kb::KbRuntime;
 use crate::storage::Storage;
-use crate::worker::{Job, JobHandler};
+use crate::worker::{ExecutionClass, Job, JobHandler};
 
 pub struct KbProcessDocumentHandler {
     pool: crate::db::Pool,
@@ -40,6 +40,10 @@ impl KbProcessDocumentHandler {
 
 #[async_trait::async_trait]
 impl JobHandler for KbProcessDocumentHandler {
+    fn execution_class(&self) -> ExecutionClass {
+        ExecutionClass::Cpu
+    }
+
     fn coalesce_key(&self, job: &Job) -> Option<String> {
         match job {
             Job::KbProcessDocument { doc_id, .. } => Some(format!("kb_process_doc_{doc_id}")),
@@ -280,6 +284,10 @@ impl KbImageRecognizeHandler {
 
 #[async_trait::async_trait]
 impl JobHandler for KbImageRecognizeHandler {
+    fn execution_class(&self) -> ExecutionClass {
+        ExecutionClass::Cpu
+    }
+
     /// Coalesce key is per-doc: duplicate recognition requests for the same
     /// doc merge into one idempotent run (rows are status-driven).
     fn coalesce_key(&self, job: &Job) -> Option<String> {
@@ -508,6 +516,10 @@ impl ConvertDocumentHandler {
 
 #[async_trait::async_trait]
 impl JobHandler for ConvertDocumentHandler {
+    fn execution_class(&self) -> ExecutionClass {
+        ExecutionClass::Cpu
+    }
+
     async fn handle(&self, job: &Job) -> AppResult<()> {
         match job {
             Job::ConvertDocument {
@@ -561,6 +573,10 @@ impl RecognizeImageHandler {
 
 #[async_trait::async_trait]
 impl JobHandler for RecognizeImageHandler {
+    fn execution_class(&self) -> ExecutionClass {
+        ExecutionClass::Cpu
+    }
+
     async fn handle(&self, job: &Job) -> AppResult<()> {
         match job {
             Job::RecognizeImage {

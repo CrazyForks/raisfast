@@ -33,10 +33,27 @@ pub struct HandlerMeta {
     pub icon: Option<&'static str>,
 }
 
+/// Execution class of a job handler — which worker pool should claim it.
+///
+/// `Cpu` marks handlers whose work is primarily local CPU (document parsing,
+/// image transcoding); they are claimed only by the dedicated CPU pool so they
+/// cannot occupy IO worker slots (dev-docs/worker-execution-assessment.md §4.1).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ExecutionClass {
+    #[default]
+    Io,
+    Cpu,
+}
+
 /// Job handler trait
 #[async_trait::async_trait]
 pub trait JobHandler: Send + Sync {
     async fn handle(&self, job: &Job) -> AppResult<()>;
+
+    /// Execution class used by the runner for pool routing. Defaults to `Io`.
+    fn execution_class(&self) -> ExecutionClass {
+        ExecutionClass::Io
+    }
 
     /// Full-context variant: the runner dispatches through this so handlers
     /// that need job identity (id / attempts / max_attempts — e.g. KB run
@@ -102,6 +119,17 @@ impl JobHandlerRegistry {
     #[must_use]
     pub fn get_handler(&self, job_type: &str) -> Option<&dyn JobHandler> {
         self.handlers.get(job_type).map(|b| b.as_ref())
+    }
+
+    /// Job type strings whose handler reports the given execution class. Used
+    /// at startup to build each pool's claim filter.
+    #[must_use]
+    pub fn job_types_by_class(&self, class: ExecutionClass) -> Vec<String> {
+        self.handlers
+            .iter()
+            .filter(|(_, h)| h.execution_class() == class)
+            .map(|(k, _)| k.clone())
+            .collect()
     }
 
     /// Returns the metadata for a registered handler, if it has one.
@@ -225,6 +253,35 @@ mod tests {
         for job in &jobs {
             assert!(handler.handle(job).await.is_ok());
         }
+    }
+
+    struct CpuHandler;
+
+    #[async_trait::async_trait]
+    impl JobHandler for CpuHandler {
+        async fn handle(&self, _job: &Job) -> AppResult<()> {
+            Ok(())
+        }
+
+        fn execution_class(&self) -> ExecutionClass {
+            ExecutionClass::Cpu
+        }
+    }
+
+    #[test]
+    fn job_types_by_class_splits_pools() {
+        let mut registry = JobHandlerRegistry::new();
+        registry.register("generate_sitemap", Box::new(LogJobHandler));
+        registry.register("kb_process_document", Box::new(CpuHandler));
+
+        assert_eq!(
+            registry.job_types_by_class(ExecutionClass::Cpu),
+            vec!["kb_process_document".to_string()]
+        );
+        assert_eq!(
+            registry.job_types_by_class(ExecutionClass::Io),
+            vec!["generate_sitemap".to_string()]
+        );
     }
 
     #[test]
