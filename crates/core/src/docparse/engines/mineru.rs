@@ -85,53 +85,30 @@ pub struct MiddlePage {
 #[derive(Deserialize)]
 struct MiddleBlock {
     #[serde(default)]
-    content: Vec<MiddleContent>,
-}
-
-#[derive(Deserialize)]
-struct MiddleContent {
-    /// `text` 块是字符串；`doc_title`/`table` 等块是嵌套 content 数组
-    /// （真实 middle_json 两种都出现——数组形态曾让整份解码失败，
-    /// 页锚点全军覆没，2026-09-18）。
-    #[serde(default)]
-    content: Option<MiddleContentValue>,
-}
-
-#[derive(Deserialize)]
-#[serde(untagged)]
-enum MiddleContentValue {
-    Text(String),
-    Nested(Vec<MiddleContent>),
-}
-
-impl MiddleContent {
-    fn collect_text(&self, out: &mut String) {
-        match &self.content {
-            Some(MiddleContentValue::Text(t)) => out.push_str(t),
-            Some(MiddleContentValue::Nested(items)) => {
-                for item in items {
-                    item.collect_text(out);
-                }
-            }
-            _ => {}
-        }
-    }
-
-    fn text(&self) -> Option<String> {
-        let mut out = String::new();
-        self.collect_text(&mut out);
-        let t = out.trim().to_string();
-        (!t.is_empty()).then_some(t)
-    }
+    content: serde_json::Value,
 }
 
 impl MiddlePage {
-    /// First non-empty text snippet of the page — the anchor lookup needle.
+    /// 从 blocks 的 content Value 中递归提取全部文本。
     pub fn first_text(&self) -> Option<String> {
-        self.blocks
-            .iter()
-            .flat_map(|b| b.content.iter())
-            .find_map(|c| c.text())
+        for block in &self.blocks {
+            let text = extract_texts(&block.content).join("");
+            let t = text.trim().to_string();
+            if !t.is_empty() {
+                return Some(t);
+            }
+        }
+        None
+    }
+}
+
+/// 递归提取 serde_json::Value 中所有文本（处理字符串和嵌套数组）。
+fn extract_texts(v: &serde_json::Value) -> Vec<String> {
+    match v {
+        serde_json::Value::String(s) => vec![s.clone()],
+        serde_json::Value::Array(arr) => arr.iter().flat_map(extract_texts).collect(),
+        serde_json::Value::Object(map) => map.get("content").map(extract_texts).unwrap_or_default(),
+        _ => Vec::new(),
     }
 }
 
@@ -139,32 +116,65 @@ impl MiddlePage {
 /// first text snippet (located in reading order; pages whose snippet is not
 /// found are skipped — best-effort, like the docreader patch this mirrors).
 /// Returns the anchored markdown and the total page count.
-fn inject_page_anchors(markdown: &str, pages: &[MiddlePage]) -> (String, u32) {
+/// Inject `<!-- page:N -->` anchors into the markdown.
+///
+/// Two-pass algorithm for comprehensive coverage:
+/// ① Text match — locate each page's first text snippet in the markdown.
+/// ② Proportional fallback — unmatched pages get an estimated position
+///    based on `page_idx / total_pages * md_len`.
+///
+/// Every page gets an anchor; `page_of` attributes each chunk to the nearest
+/// preceding anchor. Returns the anchored markdown and the total page count.
+pub(crate) fn inject_page_anchors(markdown: &str, pages: &[MiddlePage]) -> (String, u32) {
     let total = pages.len() as u32;
-    // (byte position in markdown, page number 1-based), pages in idx order.
-    let mut marks: Vec<(usize, u32)> = Vec::new();
+    let md_bytes = markdown.len();
+
+    // Pass ①: text-matched positions (byte offsets in original markdown).
+    let mut text_matched: Vec<(u32, usize)> = Vec::new(); // (page_no, byte_pos)
     let mut search_from = 0usize;
     for page in pages {
         let Some(needle) = page.first_text() else {
             continue;
         };
-        let needle: String = {
-            // Cap the needle — long blocks still match by their head.
-            let head: String = needle.chars().take(48).collect();
-            head
-        };
-        if let Some(pos) = markdown[search_from.min(markdown.len())..]
-            .find(&needle)
-            .map(|rel| search_from + rel)
-        {
-            marks.push((pos, page.page_idx + 1));
+        let needle: String = needle.chars().take(48).collect();
+        if let Some(rel) = markdown[search_from.min(markdown.len())..].find(&needle) {
+            let pos = search_from + rel;
+            text_matched.push((page.page_idx + 1, pos));
             search_from = pos + needle.len();
         }
     }
+
+    // Pass ②: proportional fallback for unmatched pages.
+    if text_matched.len() < total as usize {
+        let matched_set: std::collections::HashSet<u32> =
+            text_matched.iter().map(|(p, _)| *p).collect();
+        let mut filled: Vec<(u32, usize)> = Vec::new();
+        for page_no in 1..=total {
+            if matched_set.contains(&page_no) {
+                continue;
+            }
+            let est = (page_no as usize * md_bytes)
+                .checked_div(total as usize)
+                .unwrap_or(0);
+            filled.push((page_no, est));
+        }
+        text_matched.extend(filled);
+        text_matched.sort_by_key(|(_, pos)| *pos);
+    }
+
+    // Inject anchors from the end to preserve positions.
+    let mut sorted: Vec<(u32, usize)> = text_matched;
+    sorted.sort_by_key(|&(_, pos)| std::cmp::Reverse(pos));
     let mut out = markdown.to_string();
-    for (pos, page_no) in marks.iter().rev() {
-        let anchor = format!("<!-- page:{} -->\n\n", page_no);
-        out.insert_str(*pos, &anchor);
+    for &(page_no, pos) in &sorted {
+        let anchor = format!(
+            "<!-- page:{} -->
+
+",
+            page_no
+        );
+        let pos = pos.min(out.len());
+        out.insert_str(pos, &anchor);
     }
     (out, total)
 }
@@ -450,26 +460,20 @@ mod tests {
             MiddlePage {
                 page_idx: 0,
                 blocks: vec![MiddleBlock {
-                    content: vec![MiddleContent {
-                        content: Some(MiddleContentValue::Text("第一页开头内容".into())),
-                    }],
-                }],
+                content: serde_json::json!([{"type": "text", "content": "第一页开头内容"}]),
+            }],
             },
             MiddlePage {
                 page_idx: 1,
                 blocks: vec![MiddleBlock {
-                    content: vec![MiddleContent {
-                        content: Some(MiddleContentValue::Text("第二页开头内容".into())),
-                    }],
-                }],
+                content: serde_json::json!([{"type": "text", "content": "第二页开头内容"}]),
+            }],
             },
             MiddlePage {
                 page_idx: 2,
                 blocks: vec![MiddleBlock {
-                    content: vec![MiddleContent {
-                        content: Some(MiddleContentValue::Text("第三页开头内容".into())),
-                    }],
-                }],
+                content: serde_json::json!([{"type": "text", "content": "第三页开头内容"}]),
+            }],
             },
         ];
         let (out, total) = inject_page_anchors(md, &pages);
@@ -522,26 +526,22 @@ mod tests {
             MiddlePage {
                 page_idx: 0,
                 blocks: vec![MiddleBlock {
-                    content: vec![MiddleContent {
-                        content: Some(MiddleContentValue::Text("只有这一段".into())),
-                    }],
-                }],
+                content: serde_json::json!([{"type": "text", "content": "只有这一段"}]),
+            }],
             },
             MiddlePage {
                 page_idx: 1,
                 blocks: vec![MiddleBlock {
-                    content: vec![MiddleContent {
-                        content: Some(MiddleContentValue::Text("这段不在markdown里".into())),
-                    }],
-                }],
+                content: serde_json::json!([{"type": "text", "content": "这段不在markdown里"}]),
+            }],
             },
         ];
         let (out, total) = inject_page_anchors(md, &pages);
         assert_eq!(total, 2, "page count stays truthful");
         assert!(out.contains("<!-- page:1 -->"));
         assert!(
-            !out.contains("<!-- page:2 -->"),
-            "unlocatable page gets no anchor"
+            out.contains("<!-- page:2 -->"),
+            "proportional fallback now covers every page"
         );
     }
 
@@ -579,5 +579,33 @@ mod tests {
             outcome.markdown
         );
         assert_eq!(outcome.pages, Some(1));
+    }
+}
+
+#[cfg(test)]
+mod jieti_verify {
+    use super::*;
+
+    /// 真实 17MB 文档锚点覆盖验证（需 /tmp/jieti.* 产物文件存在）。
+    #[test]
+    fn verify_real_jieti_anchor_coverage() {
+        let Ok(md) = std::fs::read_to_string("/tmp/jieti.md") else {
+            println!("SKIP: /tmp/jieti.md not found");
+            return;
+        };
+        let Ok(raw) = std::fs::read_to_string("/tmp/jieti.middle.json") else {
+            println!("SKIP: /tmp/jieti.middle.json not found");
+            return;
+        };
+        let middle: MiddleJson = serde_json::from_str(&raw).unwrap();
+        println!("pages: {}", middle.pages.len());
+
+        let (out, total) = inject_page_anchors(&md, &middle.pages);
+        let count = out.matches("<!-- page:").count();
+        println!("anchors: {count} / {total} pages");
+        assert_eq!(total, 197);
+        assert!(count >= 150, "coverage must be ≥75%: {count}/197");
+        assert!(out.contains("<!-- page:1 -->"));
+        assert!(out.contains("<!-- page:197 -->"));
     }
 }
