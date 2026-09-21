@@ -227,7 +227,7 @@ pub struct KbDeps {
     pub reranker: Option<Arc<dyn crate::kb::rerank::KbReranker>>,
     /// Parser engine registry (builtin always; service engines as
     /// configured) — kb-parser-engines-design §2.
-    pub parsers: Arc<crate::kb::parser::ParserRegistry>,
+    pub parsers: Arc<crate::docparse::ParserRegistry>,
     /// LLM 底座（chat + embedding 唯一入口，§10.2）。
     pub router: Arc<crate::llm::service::LlmRouter>,
     pub emitter: EventEmitter,
@@ -281,13 +281,21 @@ pub async fn upload_document(
     // Type the builtin cannot parse (image-as-document): reject at upload
     // with a clear error unless a service engine is routable — never
     // accept-and-fail-silently (kb-parser-engines-design §0).
-    let builtin = crate::kb::parser::builtin::BuiltinEngine;
-    if !crate::kb::parser::ParseEngine::supports(&builtin, &mime, filename) {
+    let builtin = crate::docparse::builtin::BuiltinEngine;
+    if !crate::docparse::ParseEngine::supports(&builtin, &mime, filename) {
         let kb = knowledge_base::find_kb_by_id(&deps.pool, kb_id, tenant_id).await?;
         let routable = match kb {
             Some(kb) => deps
                 .parsers
-                .route(deps, &kb, None, &mime, filename)
+                .route(
+                    deps.config.kb.parser_engine.as_deref(),
+                    kb.parser_config.as_ref().and_then(|v| {
+                        serde_json::from_value::<crate::docparse::ParserConfig>(v.clone()).ok()
+                    }),
+                    None,
+                    &mime,
+                    filename,
+                )
                 .await
                 .map(|(e, _)| e.supports(&mime, filename))
                 .unwrap_or(false),
@@ -451,7 +459,15 @@ async fn process_document_inner(
     let filename = doc.storage_key.as_deref().unwrap_or_default();
     let (engine, route_warnings) = deps
         .parsers
-        .route(deps, &kb, doc.parser_engine.as_deref(), mime, filename)
+        .route(
+            deps.config.kb.parser_engine.as_deref(),
+            kb.parser_config.as_ref().and_then(|v| {
+                serde_json::from_value::<crate::docparse::ParserConfig>(v.clone()).ok()
+            }),
+            doc.parser_engine.as_deref(),
+            mime,
+            filename,
+        )
         .await?;
     let (markdown, parsed) = match &doc.storage_key {
         Some(key) => {
@@ -466,7 +482,7 @@ async fn process_document_inner(
                     &bytes,
                     mime,
                     filename,
-                    &crate::kb::parser::ParseOpts {
+                    &crate::docparse::ParseOpts {
                         extract_images: image_cfg.is_some(),
                     },
                 )
@@ -766,41 +782,6 @@ async fn process_document_inner(
     Ok(())
 }
 
-/// Degraded PDF parse: keep text pages, insert placeholders for scanned
-/// pages. Fails only when nothing extractable remains.
-pub(crate) fn extract_pdf_skip_ocr(
-    bytes: &[u8],
-    ocr_pages: &[u32],
-    page_count: u32,
-) -> AppResult<String> {
-    let extracted = pdf_inspector::extract_pages_markdown_mem(bytes, None)
-        .map_err(|e| AppError::BadRequest(format!("document parse failed: {e}")))?;
-    let mut md = String::new();
-    for page in &extracted.pages {
-        if page.needs_ocr {
-            let reason = page.ocr_reason.as_deref().unwrap_or("scanned page");
-            md.push_str(&format!(
-                "\n\n> [第 {} 页为扫描件（{}），需要 OCR，已跳过]\n",
-                page.page + 1,
-                reason
-            ));
-        } else {
-            md.push_str(&page.markdown);
-        }
-    }
-    if md.trim().is_empty() {
-        return Err(AppError::BadRequest(format!(
-            "document parse failed: pages {ocr_pages:?} of {page_count} need OCR and no extractable text remains"
-        )));
-    }
-    tracing::warn!(
-        "[kb] pdf degraded parse: {} of {} pages need OCR (skipped: {ocr_pages:?}), placeholders inserted",
-        ocr_pages.len(),
-        page_count
-    );
-    Ok(md)
-}
-
 /// Delete a document everywhere (SQL + vector + FTS), then emit.
 pub async fn delete_document_everywhere(
     deps: &KbDeps,
@@ -987,7 +968,7 @@ mod tests {
             kbsearch: Arc::new(KbSearchEngine::open_in_memory().unwrap()),
             embedder: Arc::new(MockEmbedder { dim: 4 }),
             reranker: None,
-            parsers: std::sync::Arc::new(crate::kb::parser::ParserRegistry::new(Vec::new())),
+            parsers: std::sync::Arc::new(crate::docparse::ParserRegistry::new(Vec::new())),
             router,
             emitter: EventEmitter::eventbus_only(bus),
         }
@@ -1560,7 +1541,7 @@ mod faq_tests {
             kbsearch: Arc::new(crate::kb::kbsearch::KbSearchEngine::open_in_memory().unwrap()),
             embedder: Arc::new(OneHotEmbedder),
             reranker: None,
-            parsers: std::sync::Arc::new(crate::kb::parser::ParserRegistry::new(Vec::new())),
+            parsers: std::sync::Arc::new(crate::docparse::ParserRegistry::new(Vec::new())),
             router,
             emitter: crate::event::EventEmitter::eventbus_only(crate::eventbus::EventBus::new(16)),
         }

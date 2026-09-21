@@ -1911,3 +1911,23 @@ CREATE TABLE IF NOT EXISTS redemption_codes (
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 );
+
+-- ── 文档转换/图像识别用量账本（dev-docs/document/service-design.md §7）────
+CREATE TABLE IF NOT EXISTS docparse_job_logs (
+    id BIGINT PRIMARY KEY,
+    tenant_id VARCHAR(64) NOT NULL,
+    kind VARCHAR(32) NOT NULL,
+    status VARCHAR(32) NOT NULL,
+    engine VARCHAR(64) NULL,
+    model VARCHAR(128) NULL,
+    filename VARCHAR(500) NULL,
+    input_bytes BIGINT,
+    pages BIGINT,
+    chars BIGINT,
+    duration_ms BIGINT,
+    error TEXT NULL,
+    result_key VARCHAR(500) NULL,
+    created_at DATETIME NOT NULL,
+    finished_at DATETIME NULL,
+    INDEX idx_docparse_job_logs_tenant (tenant_id, created_at)
+);

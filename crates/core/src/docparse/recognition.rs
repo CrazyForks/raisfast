@@ -17,7 +17,7 @@ use crate::worker::JobQueue as _;
 pub const MAX_IMAGE_BYTES: usize = 10 * 1024 * 1024;
 
 fn storage_dir(job_id: &str) -> String {
-    format!("kb/recognize/{job_id}")
+    format!("recognize/{job_id}")
 }
 
 fn meta_key(job_id: &str) -> String {
@@ -33,6 +33,7 @@ fn input_key(job_id: &str, ext: &str) -> String {
 /// `RAISFAST_KB_IMAGE_MODEL`；两者皆无 → job failed（显式可见）。
 #[allow(clippy::too_many_arguments)]
 pub async fn submit(
+    pool: &crate::db::Pool,
     storage: &Arc<dyn Storage>,
     queue: &crate::worker::DefaultJobQueue,
     tenant: &str,
@@ -40,6 +41,7 @@ pub async fn submit(
     image: &[u8],
     model: Option<&str>,
     prompt: Option<&str>,
+    callback_url: Option<&str>,
 ) -> AppResult<String> {
     if image.len() > MAX_IMAGE_BYTES {
         return Err(AppError::BadRequest(format!(
@@ -47,7 +49,24 @@ pub async fn submit(
             image.len()
         )));
     }
-    let job_id = crate::utils::id::new_id().to_string();
+    let job_id_int = crate::utils::id::new_id();
+    let job_id = job_id_int.to_string();
+
+    // 用量账本（§7）
+    crate::docparse::logs::insert(
+        pool,
+        job_id_int,
+        tenant,
+        "recognize",
+        "queued",
+        None,
+        model,
+        filename,
+        image.len() as i64,
+        None,
+    )
+    .await?;
+
     let ext = filename
         .rsplit('.')
         .next()
@@ -68,6 +87,7 @@ pub async fn submit(
             "filename": filename,
             "model": model,
             "input_key": input,
+            "callback_url": callback_url,
             "created_at": crate::utils::tz::now_utc().to_rfc3339(),
         }),
     )
@@ -113,41 +133,142 @@ async fn write_meta(
         .await
 }
 
+/// Vision 调用：经 llm 底座 router（日志记 Kb 源——识别能力自 KB 演化，
+/// M3 可增设独立 LogSource）[抄RF:kb/images.rs vlm_call，依赖反转]。
+async fn vlm_call(
+    router: &Arc<crate::llm::service::LlmRouter>,
+    tenant: &str,
+    model: &str,
+    system: &str,
+    user: &str,
+    image_ref: &str,
+) -> AppResult<String> {
+    let messages = [
+        raisfast_agent::messages::ChatMessage {
+            role: raisfast_agent::messages::ChatRole::System,
+            content: Some(system.to_string()),
+            images: Vec::new(),
+            tool_calls: None,
+            tool_call_id: None,
+        },
+        raisfast_agent::messages::ChatMessage {
+            role: raisfast_agent::messages::ChatRole::User,
+            content: Some(user.to_string()),
+            images: vec![image_ref.to_string()],
+            tool_calls: None,
+            tool_call_id: None,
+        },
+    ];
+    let request = raisfast_agent::provider::ChatRequest {
+        messages: &messages,
+        tools: None,
+        temperature: Some(0.0),
+        max_tokens: None,
+        stop: None,
+    };
+    let resp = router
+        .call(tenant, crate::llm::models::log::LogSource::Kb)
+        .chat(Some(model), &request)
+        .await?;
+    Ok(resp.text.unwrap_or_default())
+}
+
 /// worker 执行体：running → VLM caption + OCR → completed/failed。
+/// （参数 8 个系依赖显式化的代价——底座模块不持 KbDeps，见 §3.0.3。）
+#[allow(clippy::too_many_arguments)]
 pub async fn run(
-    deps: &crate::kb::service::KbDeps,
+    pool: &crate::db::Pool,
+    router: &Arc<crate::llm::service::LlmRouter>,
+    image_model_default: Option<&str>,
     storage: &Arc<dyn Storage>,
     job_id: &str,
     tenant: &str,
     model: Option<&str>,
     prompt: Option<&str>,
 ) -> AppResult<()> {
+    let started = std::time::Instant::now();
     let raw = storage.get(&meta_key(job_id)).await?;
     let mut meta: serde_json::Value = serde_json::from_slice(&raw)
         .map_err(|e| AppError::Internal(anyhow::anyhow!("meta decode: {e}")))?;
     meta["status"] = json!("running");
     write_meta(storage, job_id, meta.clone()).await?;
 
-    let result = recognize_inner(deps, storage, tenant, &mut meta, model, prompt).await;
+    let resolved_model = model
+        .map(str::trim)
+        .filter(|m| !m.is_empty())
+        .map(str::to_string);
+    let result = recognize_inner(
+        router,
+        image_model_default,
+        storage,
+        tenant,
+        &mut meta,
+        model,
+        prompt,
+    )
+    .await;
     match result {
         Ok(()) => {
+            let _ = crate::docparse::logs::finish(
+                pool,
+                job_id.parse().unwrap_or(0),
+                "completed",
+                resolved_model.as_deref(),
+                None,
+                Some(meta["caption"].as_str().map_or(0, |s| s.chars().count()) as i64),
+                Some(started.elapsed().as_millis() as i64),
+                None,
+            )
+            .await;
             meta["status"] = json!("completed");
             meta["finished_at"] = json!(crate::utils::tz::now_utc().to_rfc3339());
-            write_meta(storage, job_id, meta).await?;
+            write_meta(storage, job_id, meta.clone()).await?;
+            fire_callback(job_id, &meta).await;
             Ok(())
         }
         Err(e) => {
+            let _ = crate::docparse::logs::finish(
+                pool,
+                job_id.parse().unwrap_or(0),
+                "failed",
+                resolved_model.as_deref(),
+                None,
+                None,
+                Some(started.elapsed().as_millis() as i64),
+                Some(&e.to_string()),
+            )
+            .await;
             meta["status"] = json!("failed");
             meta["error"] = json!(e.to_string());
             meta["finished_at"] = json!(crate::utils::tz::now_utc().to_rfc3339());
-            write_meta(storage, job_id, meta).await?;
+            write_meta(storage, job_id, meta.clone()).await?;
+            fire_callback(job_id, &meta).await;
             Err(e)
         }
     }
 }
 
+/// M3 webhook：job 终态回调（meta.callback_url，best-effort）。
+async fn fire_callback(job_id: &str, meta: &serde_json::Value) {
+    if let Some(cb) = meta["callback_url"].as_str() {
+        crate::docparse::webhook::fire(
+            cb,
+            &json!({
+                "job_id": job_id,
+                "kind": "recognize",
+                "status": meta["status"],
+                "caption": meta["caption"],
+                "ocr_text": meta["ocr_text"],
+                "error": meta["error"],
+            }),
+        )
+        .await;
+    }
+}
+
 async fn recognize_inner(
-    deps: &crate::kb::service::KbDeps,
+    router: &Arc<crate::llm::service::LlmRouter>,
+    image_model_default: Option<&str>,
     storage: &Arc<dyn Storage>,
     tenant: &str,
     meta: &mut serde_json::Value,
@@ -158,7 +279,7 @@ async fn recognize_inner(
         .map(str::trim)
         .filter(|m| !m.is_empty())
         .map(str::to_string)
-        .or_else(|| deps.config.kb.image_model.clone())
+        .or_else(|| image_model_default.map(str::to_string))
         .filter(|m| !m.trim().is_empty())
         .ok_or_else(|| {
             AppError::BadRequest(
@@ -191,8 +312,8 @@ async fn recognize_inner(
     let ocr_system = prompt_file!("src/kb/prompts/image_ocr.md");
     let user_note = prompt.unwrap_or_default();
 
-    let caption = crate::kb::images::vlm_call(
-        deps,
+    let caption = vlm_call(
+        router,
         tenant,
         &model,
         &caption_system,
@@ -200,8 +321,8 @@ async fn recognize_inner(
         &image_ref,
     )
     .await?;
-    let ocr = crate::kb::images::vlm_call(
-        deps,
+    let ocr = vlm_call(
+        router,
         tenant,
         &model,
         &ocr_system,
@@ -218,7 +339,7 @@ async fn recognize_inner(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::kb::service::KbDeps;
+    use crate::config::app::AppConfig;
     use raisfast_agent::{ChatRequest, ChatResponse, ModelProvider, ProviderError};
 
     struct MockVlm;
@@ -237,19 +358,15 @@ mod tests {
         }
     }
 
-    struct NoopEmbedder;
-
-    #[async_trait::async_trait]
-    impl crate::kb::service::KbEmbedder for NoopEmbedder {
-        async fn embed(&self, _tenant: &str, texts: &[&str]) -> AppResult<Vec<Vec<f32>>> {
-            Ok(texts.iter().map(|_| vec![0.0_f32; 4]).collect())
-        }
-    }
-
-    async fn deps() -> (KbDeps, Arc<dyn Storage>) {
-        let pool = crate::test_pool!();
+    async fn deps(
+        pool: crate::db::Pool,
+    ) -> (
+        Arc<crate::llm::service::LlmRouter>,
+        Arc<AppConfig>,
+        Arc<dyn Storage>,
+    ) {
         let router = crate::llm::service::LlmRouter::with_provider_for_test(
-            Some(pool.clone()),
+            Some(pool),
             Arc::new(MockVlm),
             &["kb-test-model"],
             Some("kb-test-model"),
@@ -261,27 +378,17 @@ mod tests {
             crate::storage::local::LocalStorage::new("/tmp/kb-recognize-test/uploads", "/uploads")
                 .unwrap(),
         );
-        let deps = KbDeps {
-            pool: pool.clone(),
-            config: Arc::new(config),
-            storage: storage.clone(),
-            vector: Arc::new(crate::kb::vectors::BruteForceIndex::new()),
-            kbsearch: Arc::new(crate::kb::kbsearch::KbSearchEngine::open_in_memory().unwrap()),
-            embedder: Arc::new(NoopEmbedder),
-            reranker: None,
-            parsers: Arc::new(crate::kb::parser::ParserRegistry::new(Vec::new())),
-            router,
-            emitter: crate::event::EventEmitter::eventbus_only(crate::eventbus::EventBus::new(16)),
-        };
-        (deps, storage)
+        (router, Arc::new(config), storage)
     }
 
     #[tokio::test]
     async fn recognize_job_lifecycle() {
-        let (deps, storage) = deps().await;
-        let queue = crate::worker::DefaultJobQueue::new(deps.pool.clone());
+        let pool = crate::test_pool!();
+        let (router, _config, storage) = deps(pool.clone()).await;
+        let queue = crate::worker::DefaultJobQueue::new(pool.clone());
 
         let job_id = submit(
+            &pool,
             &storage,
             &queue,
             "default",
@@ -289,13 +396,16 @@ mod tests {
             b"PNGDATA",
             Some("kb-test-model"),
             None,
+            None,
         )
         .await
         .unwrap();
 
         // worker 执行体（等价 RecognizeImageHandler）
         run(
-            &deps,
+            &pool,
+            &router,
+            Some("kb-test-model"),
             &storage,
             &job_id,
             "default",
@@ -313,13 +423,19 @@ mod tests {
 
     #[tokio::test]
     async fn recognize_without_model_fails_visible() {
-        let (deps, storage) = deps().await;
-        let queue = crate::worker::DefaultJobQueue::new(deps.pool.clone());
-        let job_id = submit(&storage, &queue, "default", "a.png", b"X", None, None)
-            .await
-            .unwrap();
+        let pool = crate::test_pool!();
+        let (router, _config, storage) = deps(pool.clone()).await;
+        let queue = crate::worker::DefaultJobQueue::new(pool.clone());
+        let job_id = submit(
+            &pool, &storage, &queue, "default", "a.png", b"X", None, None, None,
+        )
+        .await
+        .unwrap();
         // 无模型（参数与全局皆无）→ job 显式 failed，不静默
-        let _ = run(&deps, &storage, &job_id, "default", None, None).await;
+        let _ = run(
+            &pool, &router, None, &storage, &job_id, "default", None, None,
+        )
+        .await;
         let meta = read_status(&storage, &job_id).await.unwrap().unwrap();
         assert_eq!(meta["status"], "failed");
     }

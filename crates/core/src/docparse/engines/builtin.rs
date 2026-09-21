@@ -76,7 +76,7 @@ pub fn parse_builtin(
             ..Default::default()
         }),
         Err(anydoc::ConvertError::NeedsOcr { pages, page_count }) => {
-            let markdown = crate::kb::service::extract_pdf_skip_ocr(bytes, &pages, page_count)?;
+            let markdown = extract_pdf_skip_ocr(bytes, &pages, page_count)?;
             Ok(ParseOutcome {
                 markdown,
                 engine: "builtin".into(),
@@ -112,4 +112,36 @@ fn embedded_assets(bytes: &[u8], extract: bool) -> Vec<ParsedImage> {
             .collect(),
         Err(_) => Vec::new(),
     }
+}
+
+/// Degraded PDF parse: keep text pages, insert placeholders for scanned
+/// pages. Fails only when nothing extractable remains（自 kb/service.rs 迁入
+/// ——通用解析能力归 docparse 底座）.
+pub fn extract_pdf_skip_ocr(bytes: &[u8], ocr_pages: &[u32], page_count: u32) -> AppResult<String> {
+    let extracted = pdf_inspector::extract_pages_markdown_mem(bytes, None)
+        .map_err(|e| AppError::BadRequest(format!("document parse failed: {e}")))?;
+    let mut md = String::new();
+    for page in &extracted.pages {
+        if page.needs_ocr {
+            let reason = page.ocr_reason.as_deref().unwrap_or("scanned page");
+            md.push_str(&format!(
+                "\n\n> [第 {} 页为扫描件（{}），需要 OCR，已跳过]\n",
+                page.page + 1,
+                reason
+            ));
+        } else {
+            md.push_str(&page.markdown);
+        }
+    }
+    if md.trim().is_empty() {
+        return Err(AppError::BadRequest(format!(
+            "document parse failed: pages {ocr_pages:?} of {page_count} need OCR and no extractable text remains"
+        )));
+    }
+    tracing::warn!(
+        "[docparse] pdf degraded parse: {} of {} pages need OCR (skipped: {ocr_pages:?}), placeholders inserted",
+        ocr_pages.len(),
+        page_count
+    );
+    Ok(md)
 }

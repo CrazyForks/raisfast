@@ -12,8 +12,8 @@ use std::sync::Arc;
 
 use serde_json::json;
 
+use crate::docparse::ParserRegistry;
 use crate::errors::app_error::{AppError, AppResult};
-use crate::kb::parser::ParserRegistry;
 use crate::storage::Storage;
 use crate::worker::JobQueue as _;
 
@@ -22,7 +22,7 @@ pub const MAX_INPUT_BYTES: usize = 20 * 1024 * 1024;
 
 /// 结果存储键前缀（挂 /uploads 挂载点，可经 web 直接访问）。
 pub fn storage_dir(job_id: &str) -> String {
-    format!("kb/parse/{job_id}")
+    format!("parse/{job_id}")
 }
 
 pub fn meta_key(job_id: &str) -> String {
@@ -42,6 +42,7 @@ fn input_key(job_id: &str, filename: &str) -> String {
 /// 提交参数 → 校验 → 输入落存储 → meta(queued) → 入队。
 #[allow(clippy::too_many_arguments)]
 pub async fn submit(
+    pool: &crate::db::Pool,
     storage: &Arc<dyn Storage>,
     parsers: &ParserRegistry,
     queue: &crate::worker::DefaultJobQueue,
@@ -50,6 +51,7 @@ pub async fn submit(
     bytes: &[u8],
     engine: Option<&str>,
     extract_images: bool,
+    callback_url: Option<&str>,
 ) -> AppResult<String> {
     if bytes.len() > MAX_INPUT_BYTES {
         return Err(AppError::BadRequest(format!(
@@ -65,7 +67,23 @@ pub async fn submit(
             parsers.names()
         )));
     }
-    let job_id = crate::utils::id::new_id().to_string();
+    let job_id_int = crate::utils::id::new_id();
+    let job_id = job_id_int.to_string();
+
+    // 用量账本（§7）：提交即落行，终态回填计费字段。
+    crate::docparse::logs::insert(
+        pool,
+        job_id_int,
+        tenant,
+        "convert",
+        "queued",
+        engine,
+        None,
+        filename,
+        bytes.len() as i64,
+        None,
+    )
+    .await?;
 
     // 输入先行落存储（worker 只拿路径，不背文件字节）。
     let input = input_key(&job_id, filename);
@@ -82,6 +100,7 @@ pub async fn submit(
             "filename": filename,
             "engine": engine,
             "extract_images": extract_images,
+            "callback_url": callback_url,
             "input_key": input,
             "created_at": crate::utils::tz::now_utc().to_rfc3339(),
         }),
@@ -134,6 +153,7 @@ pub async fn read_status(
 /// `route` 语义：显式 engine 优先，缺省走全局默认引擎，均未命中回 builtin。
 #[allow(clippy::too_many_arguments)]
 pub async fn run(
+    pool: &crate::db::Pool,
     storage: &Arc<dyn Storage>,
     parsers: &ParserRegistry,
     global_default: Option<&str>,
@@ -143,6 +163,7 @@ pub async fn run(
     engine: Option<&str>,
     extract_images: bool,
 ) -> AppResult<()> {
+    let started = std::time::Instant::now();
     set_status(storage, job_id, "running").await?;
 
     let result = convert_inner(
@@ -158,6 +179,17 @@ pub async fn run(
 
     match result {
         Ok(outcome) => {
+            let _ = crate::docparse::logs::finish(
+                pool,
+                job_id.parse().unwrap_or(0),
+                "completed",
+                Some(&outcome.engine),
+                outcome.pages.map(i64::from),
+                Some(i64::try_from(outcome.markdown.chars().count()).unwrap_or(0)),
+                Some(started.elapsed().as_millis() as i64),
+                None,
+            )
+            .await;
             write_meta(
                 storage,
                 job_id,
@@ -176,6 +208,17 @@ pub async fn run(
             .await?;
         }
         Err(e) => {
+            let _ = crate::docparse::logs::finish(
+                pool,
+                job_id.parse().unwrap_or(0),
+                "failed",
+                None,
+                None,
+                None,
+                Some(started.elapsed().as_millis() as i64),
+                Some(&e.to_string()),
+            )
+            .await;
             write_meta(
                 storage,
                 job_id,
@@ -190,6 +233,24 @@ pub async fn run(
             .await?;
             return Err(e);
         }
+    }
+
+    // M3 webhook：job 终态回调（best-effort，10s 超时，不阻塞结果本身）。
+    let final_meta: serde_json::Value =
+        serde_json::from_slice(&storage.get(&meta_key(job_id)).await.unwrap_or_default())
+            .unwrap_or(serde_json::Value::Null);
+    if let Some(cb) = final_meta["callback_url"].as_str() {
+        crate::docparse::webhook::fire(
+            cb,
+            &json!({
+                "job_id": job_id,
+                "kind": "convert",
+                "status": final_meta["status"],
+                "result_md_url": final_meta["result_md_url"],
+                "error": final_meta["error"],
+            }),
+        )
+        .await;
     }
     Ok(())
 }
@@ -228,7 +289,7 @@ async fn convert_inner(
         }
     };
     let mime = mime_guess::from_path(filename).first_or_octet_stream();
-    let opts = crate::kb::parser::ParseOpts { extract_images };
+    let opts = crate::docparse::ParseOpts { extract_images };
     let parsed = eng
         .parse(&bytes, mime.essence_str(), filename, &opts)
         .await?;
@@ -299,7 +360,7 @@ async fn set_status(storage: &Arc<dyn Storage>, job_id: &str, status: &str) -> A
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::kb::parser::{ParseEngine, ParseOpts, ParseOutcome, ParsedImage};
+    use crate::docparse::{ParseEngine, ParseOpts, ParseOutcome, ParsedImage};
 
     struct FakeEngine;
 
@@ -350,8 +411,10 @@ mod tests {
     #[tokio::test]
     async fn conversion_job_lifecycle() {
         let (storage, parsers, storage_assert) = deps_with_fake();
-        let queue = crate::worker::DefaultJobQueue::new(crate::test_pool!().clone());
+        let pool = crate::test_pool!();
+        let queue = crate::worker::DefaultJobQueue::new(pool.clone());
         let job_id = submit(
+            &pool,
             &storage,
             &parsers,
             &queue,
@@ -360,6 +423,7 @@ mod tests {
             b"hello conversion",
             Some("fake"),
             true,
+            None,
         )
         .await
         .unwrap();
@@ -371,6 +435,7 @@ mod tests {
 
         // worker 执行体（直接调用，等价 ConvertDocumentHandler）
         run(
+            &pool,
             &storage,
             &parsers,
             None,
@@ -389,7 +454,7 @@ mod tests {
         let md = md.expect("completed job carries markdown");
         assert!(md.contains("FAKE_TEST_OUTPUT"));
         assert!(
-            md.contains("/uploads/kb/parse/") || md.contains("kb/parse/"),
+            md.contains("/uploads/parse/") || md.contains("parse/"),
             "image ref must be rewritten: {md}"
         );
         // 图片确实落了存储（key 以 meta 记录为准）
@@ -402,7 +467,9 @@ mod tests {
     async fn unknown_engine_rejected() {
         let (storage, parsers, _sa) = deps_with_fake();
         let queue = crate::worker::DefaultJobQueue::new(crate::test_pool!().clone());
+        let pool = crate::test_pool!();
         let err = submit(
+            &pool,
             &storage,
             &parsers,
             &queue,
@@ -411,6 +478,7 @@ mod tests {
             b"x",
             Some("nope"),
             true,
+            None,
         )
         .await;
         assert!(err.is_err(), "unknown engine must be rejected");

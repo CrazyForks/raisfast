@@ -12,19 +12,18 @@
 //! through to the next layer); a RUNNING engine's parse error fails the
 //! document — never silently degrade to builtin.
 
-pub mod builtin;
-pub mod docreader;
-pub mod docreader_proto;
-pub mod mineru;
-pub mod mineru_cloud;
-pub mod paddleocr_vl;
-pub mod paddleocr_vl_cloud;
+pub mod conversion;
+pub mod engines;
+pub use engines::{
+    builtin, docreader, docreader_proto, mineru, mineru_cloud, paddleocr_vl, paddleocr_vl_cloud,
+};
+pub mod logs;
+pub mod recognition;
+pub mod webhook;
 
 use std::sync::Arc;
 
 use crate::errors::app_error::{AppError, AppResult};
-
-use crate::kb::service::KbDeps;
 
 /// One engine-produced image: `ref_name` is the reference in the markdown
 /// (`images/fig-1.jpg` / an external URL), so image↔chunk association
@@ -156,8 +155,8 @@ impl ParserRegistry {
     /// ③ builtin). Unavailable engines are skipped with a warn.
     pub async fn route(
         &self,
-        deps: &KbDeps,
-        kb: &crate::kb::models::knowledge_base::KbKnowledgeBase,
+        global_parser_engine: Option<&str>,
+        rules: Option<ParserConfig>,
         doc_engine_override: Option<&str>,
         mime: &str,
         filename: &str,
@@ -181,11 +180,7 @@ impl ParserRegistry {
             .and_then(|n| try_engine(n, "doc override"))
             .or_else(|| {
                 // ① KB-row rules by file type
-                let cfg = kb
-                    .parser_config
-                    .as_ref()
-                    .and_then(|v| serde_json::from_value::<ParserConfig>(v.clone()).ok())
-                    .unwrap_or_default();
+                let cfg = rules.unwrap_or_default();
                 let hit = cfg.rules.iter().find(|r| {
                     r.file_types.iter().any(|t| {
                         let t = t.trim().trim_start_matches('.');
@@ -196,10 +191,7 @@ impl ParserRegistry {
             })
             .or_else(|| {
                 // ② global default
-                try_engine(
-                    deps.config.kb.parser_engine.as_deref().unwrap_or_default(),
-                    "global default",
-                )
+                try_engine(global_parser_engine.unwrap_or_default(), "global default")
             });
         // Resolve picked name → engine, probing availability.
         while let Some(name) = picked.take() {

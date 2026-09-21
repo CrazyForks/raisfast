@@ -808,7 +808,7 @@ mod tests {
             kbsearch: Arc::new(crate::kb::kbsearch::KbSearchEngine::open_in_memory().unwrap()),
             embedder: Arc::new(MockEmbedder { dim: 4 }),
             reranker,
-            parsers: std::sync::Arc::new(crate::kb::parser::ParserRegistry::new(Vec::new())),
+            parsers: std::sync::Arc::new(crate::docparse::ParserRegistry::new(Vec::new())),
             router,
             emitter: crate::event::EventEmitter::eventbus_only(bus),
         }

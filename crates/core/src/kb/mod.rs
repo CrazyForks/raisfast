@@ -27,7 +27,7 @@ pub struct KbRuntime {
     /// S5 reranker; `None` when no rerank model is configured (§6.1).
     pub reranker: Option<std::sync::Arc<dyn rerank::KbReranker>>,
     /// Parser engine registry.
-    pub parsers: std::sync::Arc<parser::ParserRegistry>,
+    pub parsers: std::sync::Arc<crate::docparse::ParserRegistry>,
 }
 
 /// Build the KB runtime from config; `Ok(None)` when the KB is disabled,
@@ -57,26 +57,28 @@ pub fn build_kb_runtime(
     }
     // Parser registry: builtin always; docreader when its endpoint is
     // configured (kb-parser-engines-design §2 D3).
-    let mut engines: Vec<std::sync::Arc<dyn parser::ParseEngine>> = Vec::new();
-    if let Some(docreader) = parser::docreader::DocreaderEngine::from_config(&config.kb) {
+    let mut engines: Vec<std::sync::Arc<dyn crate::docparse::ParseEngine>> = Vec::new();
+    if let Some(docreader) = crate::docparse::docreader::DocreaderEngine::from_config(&config.kb) {
         tracing::info!(
             "kb parse engine 'docreader' configured ({})",
             config.kb.docreader_url.as_deref().unwrap_or_default()
         );
         engines.push(std::sync::Arc::new(docreader));
     }
-    if let Some(mineru) = parser::mineru::MineruEngine::from_config(&config.kb) {
+    if let Some(mineru) = crate::docparse::mineru::MineruEngine::from_config(&config.kb) {
         tracing::info!(
             "kb parse engine 'mineru' configured ({})",
             config.kb.mineru_url.as_deref().unwrap_or_default()
         );
         engines.push(std::sync::Arc::new(mineru));
     }
-    if let Some(engine) = parser::mineru_cloud::MineruCloudEngine::from_config(&config.kb) {
+    if let Some(engine) = crate::docparse::mineru_cloud::MineruCloudEngine::from_config(&config.kb)
+    {
         tracing::info!("kb parse engine 'mineru_cloud' configured (api key set)");
         engines.push(std::sync::Arc::new(engine));
     }
-    if let Some(engine) = parser::paddleocr_vl::PaddleOcrVlEngine::from_config(&config.kb) {
+    if let Some(engine) = crate::docparse::paddleocr_vl::PaddleOcrVlEngine::from_config(&config.kb)
+    {
         tracing::info!(
             "kb parse engine 'paddleocr_vl' configured ({})",
             config
@@ -88,12 +90,12 @@ pub fn build_kb_runtime(
         engines.push(std::sync::Arc::new(engine));
     }
     if let Some(engine) =
-        parser::paddleocr_vl_cloud::PaddleOcrVlCloudEngine::from_config(&config.kb)
+        crate::docparse::paddleocr_vl_cloud::PaddleOcrVlCloudEngine::from_config(&config.kb)
     {
         tracing::info!("kb parse engine 'paddleocr_vl_cloud' configured (token set)");
         engines.push(std::sync::Arc::new(engine));
     }
-    let parsers = std::sync::Arc::new(parser::ParserRegistry::new(engines));
+    let parsers = std::sync::Arc::new(crate::docparse::ParserRegistry::new(engines));
     Ok(Some(std::sync::Arc::new(KbRuntime {
         vector,
         kbsearch: std::sync::Arc::new(kbsearch),
@@ -107,10 +109,7 @@ pub mod images;
 pub mod kbsearch;
 pub mod models;
 pub mod parse_quality;
-pub mod parse_service;
-pub mod parser;
 pub mod pipeline;
-pub mod recognize_service;
 pub mod service;
 pub mod trace;
 pub mod vectors;

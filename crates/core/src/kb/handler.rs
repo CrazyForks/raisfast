@@ -109,6 +109,17 @@ pub fn routes(
         r,
         registry,
         config.api_restful,
+        "/admin/docparse/logs",
+        get,
+        admin_list_parse_logs,
+        "system",
+        "admin/kb/diagnostics",
+        "admin"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        config.api_restful,
         "/admin/kb/knowledge-bases/{id}",
         put,
         admin_update_kb,
@@ -692,7 +703,7 @@ async fn admin_create_kb(
     validate_rerank_params(req.rerank_window, req.rerank_threshold)?;
     if let Some(pc) = &req.parser_config {
         let deps = state.kb_deps()?;
-        crate::kb::parser::validate_parser_config(&deps.parsers, pc)?;
+        crate::docparse::validate_parser_config(&deps.parsers, pc)?;
     }
     let tenant = auth.tenant_id();
     let model = resolve_kb_model(&state, tenant, &req).await?;
@@ -934,7 +945,8 @@ async fn admin_create_document_conversion(
     State(state): State<AppState>,
     mut multipart: Multipart,
 ) -> AppResult<ApiResponse<Value>> {
-    auth.ensure_admin()?;
+    // 转换/识别为对外服务（M3）：admin JWT 与平台 api-token 身份均可提交
+    auth.ensure_authenticated()?;
     let deps = state.kb_deps()?;
     let tenant = auth.tenant_id().unwrap_or("default").to_string();
 
@@ -942,6 +954,7 @@ async fn admin_create_document_conversion(
     let mut data: axum::body::Bytes = axum::body::Bytes::new();
     let mut engine: Option<String> = None;
     let mut extract_images = true;
+    let mut callback_url: Option<String> = None;
     while let Some(field) = multipart
         .next_field()
         .await
@@ -968,6 +981,13 @@ async fn admin_create_document_conversion(
                 })?;
                 extract_images = v.trim().eq_ignore_ascii_case("true");
             }
+            "callback_url" => {
+                let v = field
+                    .text()
+                    .await
+                    .map_err(|e| AppError::BadRequest(format!("callback_url read failed: {e}")))?;
+                callback_url = Some(v.trim().to_string()).filter(|s| !s.is_empty());
+            }
             _ => {}
         }
     }
@@ -976,7 +996,8 @@ async fn admin_create_document_conversion(
     }
 
     let queue = crate::worker::DefaultJobQueue::new(state.pool.clone());
-    let job_id = crate::kb::parse_service::submit(
+    let job_id = crate::docparse::conversion::submit(
+        &state.pool,
         &deps.storage,
         &deps.parsers,
         &queue,
@@ -985,6 +1006,7 @@ async fn admin_create_document_conversion(
         &data,
         engine.as_deref(),
         extract_images,
+        callback_url.as_deref(),
     )
     .await?;
     Ok(ApiResponse::success(
@@ -998,10 +1020,10 @@ async fn admin_get_document_conversion(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<Value>> {
-    auth.ensure_admin()?;
+    auth.ensure_authenticated()?;
     let deps = state.kb_deps()?;
     let Some((mut meta, markdown)) =
-        crate::kb::parse_service::read_status(&deps.storage, &id).await?
+        crate::docparse::conversion::read_status(&deps.storage, &id).await?
     else {
         return Err(AppError::NotFound("document_conversion".into()));
     };
@@ -1020,7 +1042,7 @@ async fn admin_create_image_recognition(
     State(state): State<AppState>,
     mut multipart: Multipart,
 ) -> AppResult<ApiResponse<Value>> {
-    auth.ensure_admin()?;
+    auth.ensure_authenticated()?;
     let deps = state.kb_deps()?;
     let tenant = auth.tenant_id().unwrap_or("default").to_string();
 
@@ -1028,6 +1050,7 @@ async fn admin_create_image_recognition(
     let mut data: axum::body::Bytes = axum::body::Bytes::new();
     let mut model: Option<String> = None;
     let mut prompt: Option<String> = None;
+    let mut callback_url: Option<String> = None;
     while let Some(field) = multipart
         .next_field()
         .await
@@ -1055,6 +1078,13 @@ async fn admin_create_image_recognition(
                     .map_err(|e| AppError::BadRequest(format!("prompt read failed: {e}")))?;
                 prompt = Some(v).filter(|s| !s.is_empty());
             }
+            "callback_url" => {
+                let v = field
+                    .text()
+                    .await
+                    .map_err(|e| AppError::BadRequest(format!("callback_url read failed: {e}")))?;
+                callback_url = Some(v.trim().to_string()).filter(|s| !s.is_empty());
+            }
             _ => {}
         }
     }
@@ -1063,7 +1093,8 @@ async fn admin_create_image_recognition(
     }
 
     let queue = crate::worker::DefaultJobQueue::new(state.pool.clone());
-    let job_id = crate::kb::recognize_service::submit(
+    let job_id = crate::docparse::recognition::submit(
+        &state.pool,
         &deps.storage,
         &queue,
         &tenant,
@@ -1071,6 +1102,7 @@ async fn admin_create_image_recognition(
         &data,
         model.as_deref(),
         prompt.as_deref(),
+        callback_url.as_deref(),
     )
     .await?;
     Ok(ApiResponse::success(
@@ -1083,12 +1115,35 @@ async fn admin_get_image_recognition(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<Value>> {
-    auth.ensure_admin()?;
+    auth.ensure_authenticated()?;
     let deps = state.kb_deps()?;
-    let Some(meta) = crate::kb::recognize_service::read_status(&deps.storage, &id).await? else {
+    let Some(meta) = crate::docparse::recognition::read_status(&deps.storage, &id).await? else {
         return Err(AppError::NotFound("image_recognition".into()));
     };
     Ok(ApiResponse::success(meta))
+}
+
+/// 解析用量账本查询（ops）：按租户列最近的转换/识别 job。
+#[derive(Deserialize)]
+struct ParseLogsQuery {
+    limit: Option<i64>,
+}
+
+async fn admin_list_parse_logs(
+    auth: AuthUser,
+    State(state): State<AppState>,
+    Query(q): Query<ParseLogsQuery>,
+) -> AppResult<ApiResponse<Value>> {
+    auth.ensure_admin()?;
+    let deps = state.kb_deps()?;
+    let tenant = auth.tenant_id().unwrap_or("default").to_string();
+    let items = crate::docparse::logs::list_by_tenant(
+        &deps.pool,
+        &tenant,
+        q.limit.unwrap_or(50).clamp(1, 500),
+    )
+    .await?;
+    Ok(ApiResponse::success(json!({ "items": items })))
 }
 
 // ── documents ──────────────────────────────────────────────────────

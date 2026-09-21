@@ -28,6 +28,7 @@ pub mod content_type;
 pub mod db;
 pub mod llm;
 pub use db::DbDriver;
+pub mod docparse;
 pub mod dto;
 pub mod errors;
 pub mod event;

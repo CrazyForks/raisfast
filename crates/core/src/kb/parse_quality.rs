@@ -9,8 +9,8 @@
 //! VISIBLE (scanned-page degradation is a first-class marker on the doc
 //! row, not a buried log line).
 
+use crate::docparse::ParseOutcome;
 use crate::errors::app_error::{AppError, AppResult};
-use crate::kb::parser::ParseOutcome;
 
 /// Placeholder line inserted by `extract_pdf_skip_ocr` for scanned pages —
 /// excluded from the effective-content measure (a doc of pure placeholders

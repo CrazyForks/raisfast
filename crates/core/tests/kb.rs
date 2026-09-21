@@ -110,7 +110,7 @@ async fn deps_with_provider(provider: Arc<dyn ModelProvider>) -> KbDeps {
         kbsearch: Arc::new(raisfast::kb::kbsearch::KbSearchEngine::open_in_memory().unwrap()),
         embedder: Arc::new(SumEmbedder(4)),
         reranker: None,
-        parsers: std::sync::Arc::new(raisfast::kb::parser::ParserRegistry::new(Vec::new())),
+        parsers: std::sync::Arc::new(raisfast::docparse::ParserRegistry::new(Vec::new())),
         router,
         emitter: raisfast::event::EventEmitter::eventbus_only(raisfast::eventbus::EventBus::new(
             16,
@@ -1475,7 +1475,7 @@ async fn s21_chunk_edit_failure_records_failed_run() {
         kbsearch: good.kbsearch.clone(),
         embedder: Arc::new(FailingEmbedder),
         reranker: None,
-        parsers: std::sync::Arc::new(raisfast::kb::parser::ParserRegistry::new(Vec::new())),
+        parsers: std::sync::Arc::new(raisfast::docparse::ParserRegistry::new(Vec::new())),
         router: good.router.clone(),
         emitter: good.emitter.clone(),
     };
@@ -1530,7 +1530,7 @@ async fn s22_cold_bruteforce_rebuilds_on_first_search() {
         kbsearch: deps.kbsearch.clone(),
         embedder: deps.embedder.clone(),
         reranker: None,
-        parsers: std::sync::Arc::new(raisfast::kb::parser::ParserRegistry::new(Vec::new())),
+        parsers: std::sync::Arc::new(raisfast::docparse::ParserRegistry::new(Vec::new())),
         router: deps.router.clone(),
         emitter: deps.emitter.clone(),
     };
@@ -1793,7 +1793,15 @@ async fn s22_parser_route_layers_and_fallback() {
     // ① 规则命中但引擎不存在 → warn + builtin 兜底
     let (engine, warnings) = deps
         .parsers
-        .route(&deps, &kb_row, None, "application/pdf", "p.pdf")
+        .route(
+            None,
+            kb_row.parser_config.as_ref().and_then(|v| {
+                serde_json::from_value::<raisfast::docparse::ParserConfig>(v.clone()).ok()
+            }),
+            None,
+            "application/pdf",
+            "p.pdf",
+        )
         .await
         .unwrap();
     assert_eq!(engine.name(), "builtin");
@@ -1807,7 +1815,15 @@ async fn s22_parser_route_layers_and_fallback() {
     // ⓪ 文档级覆盖优先于规则；未知覆盖同样回落
     let (engine, warnings) = deps
         .parsers
-        .route(&deps, &kb_row, Some("ghost"), "text/markdown", "n.md")
+        .route(
+            None,
+            kb_row.parser_config.as_ref().and_then(|v| {
+                serde_json::from_value::<raisfast::docparse::ParserConfig>(v.clone()).ok()
+            }),
+            Some("ghost"),
+            "text/markdown",
+            "n.md",
+        )
         .await
         .unwrap();
     assert_eq!(engine.name(), "builtin");
@@ -1819,7 +1835,15 @@ async fn s22_parser_route_layers_and_fallback() {
     // 非命中类型 → 无警告直达 builtin
     let (engine, warnings) = deps
         .parsers
-        .route(&deps, &kb_row, None, "text/markdown", "n.md")
+        .route(
+            None,
+            kb_row.parser_config.as_ref().and_then(|v| {
+                serde_json::from_value::<raisfast::docparse::ParserConfig>(v.clone()).ok()
+            }),
+            None,
+            "text/markdown",
+            "n.md",
+        )
         .await
         .unwrap();
     assert_eq!(engine.name(), "builtin");
@@ -1848,12 +1872,12 @@ struct FakeDocreader {
 }
 
 #[async_trait::async_trait]
-impl raisfast::kb::parser::docreader_proto::DocReader for FakeDocreader {
+impl raisfast::docparse::docreader_proto::DocReader for FakeDocreader {
     async fn read(
         &self,
-        _request: tonic::Request<raisfast::kb::parser::docreader_proto::pb::ReadRequest>,
+        _request: tonic::Request<raisfast::docparse::docreader_proto::pb::ReadRequest>,
     ) -> std::result::Result<
-        tonic::Response<raisfast::kb::parser::docreader_proto::pb::ReadResponse>,
+        tonic::Response<raisfast::docparse::docreader_proto::pb::ReadResponse>,
         tonic::Status,
     > {
         Err(tonic::Status::unimplemented("use read_stream"))
@@ -1863,7 +1887,7 @@ impl raisfast::kb::parser::docreader_proto::DocReader for FakeDocreader {
         Box<
             dyn futures::Stream<
                     Item = std::result::Result<
-                        raisfast::kb::parser::docreader_proto::pb::ReadStreamResponse,
+                        raisfast::docparse::docreader_proto::pb::ReadStreamResponse,
                         tonic::Status,
                     >,
                 > + Send,
@@ -1872,9 +1896,9 @@ impl raisfast::kb::parser::docreader_proto::DocReader for FakeDocreader {
 
     async fn read_stream(
         &self,
-        request: tonic::Request<raisfast::kb::parser::docreader_proto::pb::ReadRequest>,
+        request: tonic::Request<raisfast::docparse::docreader_proto::pb::ReadRequest>,
     ) -> std::result::Result<tonic::Response<Self::ReadStreamStream>, tonic::Status> {
-        use raisfast::kb::parser::docreader_proto::pb;
+        use raisfast::docparse::docreader_proto::pb;
         let req = request.into_inner();
         assert!(
             !req.file_content.is_empty(),
@@ -1911,13 +1935,13 @@ impl raisfast::kb::parser::docreader_proto::DocReader for FakeDocreader {
 
     async fn list_engines(
         &self,
-        _request: tonic::Request<raisfast::kb::parser::docreader_proto::pb::ListEnginesRequest>,
+        _request: tonic::Request<raisfast::docparse::docreader_proto::pb::ListEnginesRequest>,
     ) -> std::result::Result<
-        tonic::Response<raisfast::kb::parser::docreader_proto::pb::ListEnginesResponse>,
+        tonic::Response<raisfast::docparse::docreader_proto::pb::ListEnginesResponse>,
         tonic::Status,
     > {
         Ok(tonic::Response::new(
-            raisfast::kb::parser::docreader_proto::pb::ListEnginesResponse { engines: vec![] },
+            raisfast::docparse::docreader_proto::pb::ListEnginesResponse { engines: vec![] },
         ))
     }
 }
@@ -1927,7 +1951,7 @@ async fn spawn_fake_docreader(fake: FakeDocreader) -> String {
     let addr = listener.local_addr().unwrap();
     tokio::spawn(async move {
         let _ = tonic::transport::Server::builder()
-            .add_service(raisfast::kb::parser::docreader_proto::DocReaderServer::new(
+            .add_service(raisfast::docparse::docreader_proto::DocReaderServer::new(
                 fake,
             ))
             .serve_with_incoming(tokio_stream::wrappers::TcpListenerStream::new(listener))
@@ -1945,11 +1969,11 @@ async fn s23_docreader_engine_full_chain() {
         image_ref: "images/fig-1.png",
     })
     .await;
-    let engine = std::sync::Arc::new(raisfast::kb::parser::docreader::DocreaderEngine::new(
+    let engine = std::sync::Arc::new(raisfast::docparse::docreader::DocreaderEngine::new(
         fake_url, 10,
     ));
-    assert!(raisfast::kb::parser::ParseEngine::probe(engine.as_ref()).await);
-    deps.parsers = std::sync::Arc::new(raisfast::kb::parser::ParserRegistry::new(vec![
+    assert!(raisfast::docparse::ParseEngine::probe(engine.as_ref()).await);
+    deps.parsers = std::sync::Arc::new(raisfast::docparse::ParserRegistry::new(vec![
         engine.clone(),
     ]));
 

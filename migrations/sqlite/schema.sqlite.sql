@@ -1972,3 +1972,23 @@ CREATE TABLE IF NOT EXISTS redemption_codes (
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
+
+-- ── 文档转换/图像识别用量账本（dev-docs/document/service-design.md §7）────
+CREATE TABLE IF NOT EXISTS docparse_job_logs (
+    id BIGINT PRIMARY KEY,
+    tenant_id TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    status TEXT NOT NULL,
+    engine TEXT,
+    model TEXT,
+    filename TEXT,
+    input_bytes BIGINT,
+    pages BIGINT,
+    chars BIGINT,
+    duration_ms BIGINT,
+    error TEXT,
+    result_key TEXT,
+    created_at TIMESTAMPTZ NOT NULL,
+    finished_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_docparse_job_logs_tenant ON docparse_job_logs(tenant_id, created_at);

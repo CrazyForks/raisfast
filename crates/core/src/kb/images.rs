@@ -116,7 +116,7 @@ pub fn extract_external_images(markdown: &str) -> Vec<(String, usize)> {
 pub async fn register_document_images(
     deps: &KbDeps,
     doc: &crate::kb::models::document::KbDocument,
-    engine_images: &[crate::kb::parser::ParsedImage],
+    engine_images: &[crate::docparse::ParsedImage],
     markdown: &str,
     chunk_rows: &[(SnowflakeId, i64, i64)], // (chunk_id, byte_start, byte_end)
     tenant_id: &str,
