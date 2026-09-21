@@ -120,6 +120,61 @@ pub fn routes(
         r,
         registry,
         config.api_restful,
+        "/admin/docparse/engines",
+        get,
+        admin_list_docparse_engines,
+        "system",
+        "admin/kb/diagnostics",
+        "admin"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        config.api_restful,
+        "/admin/docparse/engines/{name}",
+        put,
+        admin_update_docparse_engine,
+        "system",
+        "admin/kb/diagnostics",
+        "admin"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        config.api_restful,
+        "/admin/docparse/tokens",
+        get,
+        admin_list_docparse_tokens,
+        "system",
+        "admin/kb/diagnostics",
+        "admin"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        config.api_restful,
+        "/admin/docparse/tokens",
+        post,
+        admin_create_docparse_token,
+        "system",
+        "admin/kb/diagnostics",
+        "admin"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        config.api_restful,
+        "/admin/docparse/tokens/{id}/disable",
+        post,
+        admin_disable_docparse_token,
+        "system",
+        "admin/kb/diagnostics",
+        "admin"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        config.api_restful,
         "/admin/kb/knowledge-bases/{id}",
         put,
         admin_update_kb,
@@ -1144,6 +1199,121 @@ async fn admin_list_parse_logs(
     )
     .await?;
     Ok(ApiResponse::success(json!({ "items": items })))
+}
+
+// ── docparse 引擎管理 ───────────────────────────────────────────────
+
+async fn admin_list_docparse_engines(
+    auth: AuthUser,
+    State(state): State<AppState>,
+) -> AppResult<ApiResponse<Value>> {
+    auth.ensure_admin()?;
+    let deps = state.kb_deps()?;
+    let sql = "SELECT engine_name, enabled, price_per_page, price_per_call, cost_per_page, updated_at FROM docparse_engines ORDER BY engine_name";
+    let rows: Vec<(String, bool, i64, i64, i64, String)> =
+        sqlx::query_as(crate::db::safe_sql(sql))
+            .fetch_all(&deps.pool)
+            .await
+            .map_err(|e| AppError::Internal(anyhow::anyhow!("{e}")))?;
+    let items: Vec<Value> = rows
+        .into_iter()
+        .map(|(name, enabled, ppp, ppc, cost, updated)| {
+            let registered = deps.parsers.names().iter().any(|n| *n == name);
+            json!({
+                "engine_name": name, "enabled": enabled,
+                "price_per_page": ppp, "price_per_call": ppc,
+                "cost_per_page": cost, "registered": registered,
+                "updated_at": updated,
+            })
+        })
+        .collect();
+    Ok(ApiResponse::success(json!({ "items": items })))
+}
+
+#[derive(Deserialize)]
+struct UpdateEngineBody {
+    enabled: Option<bool>,
+    price_per_page: Option<i64>,
+    price_per_call: Option<i64>,
+    cost_per_page: Option<i64>,
+}
+
+async fn admin_update_docparse_engine(
+    auth: AuthUser,
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+    Json(body): Json<UpdateEngineBody>,
+) -> AppResult<ApiResponse<Value>> {
+    auth.ensure_admin()?;
+    let deps = state.kb_deps()?;
+    let sets: Vec<String> = [
+        body.enabled.map(|v| format!("enabled = {}", if v { "TRUE" } else { "FALSE" })),
+        body.price_per_page.map(|v| format!("price_per_page = {v}")),
+        body.price_per_call.map(|v| format!("price_per_call = {v}")),
+        body.cost_per_page.map(|v| format!("cost_per_page = {v}")),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+    if sets.is_empty() {
+        return Err(AppError::BadRequest("no fields to update".into()));
+    }
+    let sql = format!(
+        "UPDATE docparse_engines SET {}, updated_at = {} WHERE engine_name = {}",
+        sets.join(", "),
+        Driver::ph(1),
+        Driver::ph(2)
+    );
+    sqlx::query(crate::db::safe_sql(&sql))
+        .bind(crate::utils::tz::now_utc())
+        .bind(&name)
+        .execute(&deps.pool)
+        .await
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("{e}")))?;
+    Ok(ApiResponse::success(json!({ "updated": true })))
+}
+
+// ── docparse token 管理 ─────────────────────────────────────────────
+
+async fn admin_create_docparse_token(
+    auth: AuthUser,
+    State(state): State<AppState>,
+    Query(q): Query<std::collections::HashMap<String, String>>,
+) -> AppResult<ApiResponse<Value>> {
+    auth.ensure_admin()?;
+    let deps = state.kb_deps()?;
+    let tenant = auth.tenant_id().unwrap_or("default").to_string();
+    let name = q.get("name").cloned().unwrap_or_else(|| "default".into());
+    let quota = q
+        .get("daily_page_quota")
+        .and_then(|v| v.parse::<i64>().ok())
+        .unwrap_or(0);
+    let (raw, id) = crate::docparse::tokens::create(&deps.pool, &tenant, &name, quota).await?;
+    Ok(ApiResponse::success(json!({
+        "id": id, "token": raw, "name": name,
+        "daily_page_quota": quota, "status": "active",
+    })))
+}
+
+async fn admin_list_docparse_tokens(
+    auth: AuthUser,
+    State(state): State<AppState>,
+) -> AppResult<ApiResponse<Value>> {
+    auth.ensure_admin()?;
+    let deps = state.kb_deps()?;
+    let tenant = auth.tenant_id().unwrap_or("default").to_string();
+    let items = crate::docparse::tokens::list_by_tenant(&deps.pool, &tenant).await?;
+    Ok(ApiResponse::success(json!({ "items": items })))
+}
+
+async fn admin_disable_docparse_token(
+    auth: AuthUser,
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+) -> AppResult<ApiResponse<Value>> {
+    auth.ensure_admin()?;
+    crate::docparse::tokens::disable(&state.pool, id).await?;
+    Ok(ApiResponse::success(json!({ "disabled": true })))
 }
 
 // ── documents ──────────────────────────────────────────────────────

@@ -460,20 +460,20 @@ mod tests {
             MiddlePage {
                 page_idx: 0,
                 blocks: vec![MiddleBlock {
-                content: serde_json::json!([{"type": "text", "content": "第一页开头内容"}]),
-            }],
+                    content: serde_json::json!([{"type": "text", "content": "第一页开头内容"}]),
+                }],
             },
             MiddlePage {
                 page_idx: 1,
                 blocks: vec![MiddleBlock {
-                content: serde_json::json!([{"type": "text", "content": "第二页开头内容"}]),
-            }],
+                    content: serde_json::json!([{"type": "text", "content": "第二页开头内容"}]),
+                }],
             },
             MiddlePage {
                 page_idx: 2,
                 blocks: vec![MiddleBlock {
-                content: serde_json::json!([{"type": "text", "content": "第三页开头内容"}]),
-            }],
+                    content: serde_json::json!([{"type": "text", "content": "第三页开头内容"}]),
+                }],
             },
         ];
         let (out, total) = inject_page_anchors(md, &pages);
@@ -526,14 +526,14 @@ mod tests {
             MiddlePage {
                 page_idx: 0,
                 blocks: vec![MiddleBlock {
-                content: serde_json::json!([{"type": "text", "content": "只有这一段"}]),
-            }],
+                    content: serde_json::json!([{"type": "text", "content": "只有这一段"}]),
+                }],
             },
             MiddlePage {
                 page_idx: 1,
                 blocks: vec![MiddleBlock {
-                content: serde_json::json!([{"type": "text", "content": "这段不在markdown里"}]),
-            }],
+                    content: serde_json::json!([{"type": "text", "content": "这段不在markdown里"}]),
+                }],
             },
         ];
         let (out, total) = inject_page_anchors(md, &pages);

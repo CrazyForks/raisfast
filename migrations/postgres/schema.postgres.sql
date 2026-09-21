@@ -2002,3 +2002,46 @@ CREATE TABLE IF NOT EXISTS docparse_job_logs (
     finished_at TIMESTAMPTZ
 );
 CREATE INDEX IF NOT EXISTS idx_docparse_job_logs_tenant ON docparse_job_logs(tenant_id, created_at);
+-- ── docparse 引擎定价目录 + 账本计费字段（M4b）──────────────────────
+CREATE TABLE IF NOT EXISTS docparse_engines (
+    id              BIGINT PRIMARY KEY,
+    engine_name     VARCHAR(64) NOT NULL UNIQUE,
+    enabled         BOOLEAN NOT NULL DEFAULT true,
+    price_per_page  BIGINT NOT NULL DEFAULT 0,
+    price_per_call  BIGINT NOT NULL DEFAULT 0,
+    cost_per_page   BIGINT NOT NULL DEFAULT 0,
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+ALTER TABLE docparse_job_logs ADD COLUMN IF NOT EXISTS billing_mode VARCHAR(16) DEFAULT 'post';
+ALTER TABLE docparse_job_logs ADD COLUMN IF NOT EXISTS price_charged BIGINT;
+ALTER TABLE docparse_job_logs ADD COLUMN IF NOT EXISTS payment_status VARCHAR(16);
+
+CREATE TABLE IF NOT EXISTS docparse_tokens (
+    id BIGINT PRIMARY KEY,
+    tenant_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    token_hash TEXT NOT NULL UNIQUE,
+    token_prefix TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'active',
+    daily_page_quota BIGINT NOT NULL DEFAULT 0,
+    created_at TIMESTAMPTZ NOT NULL,
+    last_used_at TIMESTAMPTZ
+);
+CREATE INDEX idx_docparse_tokens_hash ON docparse_tokens(token_hash);
+CREATE INDEX idx_docparse_tokens_tenant ON docparse_tokens(tenant_id);
+
+CREATE TABLE IF NOT EXISTS docparse_usage_summary (
+    id BIGINT PRIMARY KEY,
+    tenant_id TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    engine TEXT NOT NULL,
+    date TEXT NOT NULL,
+    total_jobs INTEGER NOT NULL DEFAULT 0,
+    completed_jobs INTEGER NOT NULL DEFAULT 0,
+    failed_jobs INTEGER NOT NULL DEFAULT 0,
+    total_pages BIGINT NOT NULL DEFAULT 0,
+    total_chars BIGINT NOT NULL DEFAULT 0,
+    total_duration_ms BIGINT NOT NULL DEFAULT 0,
+    total_price_charged BIGINT NOT NULL DEFAULT 0,
+    UNIQUE(tenant_id, kind, engine, date)
+);

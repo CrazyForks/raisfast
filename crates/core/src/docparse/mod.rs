@@ -19,6 +19,7 @@ pub use engines::{
 };
 pub mod logs;
 pub mod recognition;
+pub mod tokens;
 pub mod webhook;
 
 use std::sync::Arc;
