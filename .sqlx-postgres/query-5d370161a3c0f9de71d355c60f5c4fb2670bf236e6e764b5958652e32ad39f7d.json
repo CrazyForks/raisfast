@@ -1,0 +1,24 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO \"kb_images\" (\"id\", \"kb_id\", \"doc_id\", \"chunk_id\", \"page\", \"storage_key\", \"mime_type\", \"bytes\", \"source\", \"original_url\", \"created_at\") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8",
+        "Int8",
+        "Int8",
+        "Int8",
+        "Text",
+        "Text",
+        "Int8",
+        "Text",
+        "Text",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "5d370161a3c0f9de71d355c60f5c4fb2670bf236e6e764b5958652e32ad39f7d"
+}

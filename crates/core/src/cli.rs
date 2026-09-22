@@ -87,6 +87,23 @@ enum Commands {
         #[command(subcommand)]
         action: McpAction,
     },
+    /// Internal: run a self-contained compute function out-of-process
+    /// (hard-cancellable).
+    #[command(hide = true)]
+    Compute {
+        /// Compute kind (e.g. `parse_builtin`, `chunk_markdown`)
+        #[arg(long)]
+        kind: String,
+        /// Raw input payload file path
+        #[arg(long)]
+        input: String,
+        /// Kind-specific JSON params file path
+        #[arg(long)]
+        params: String,
+        /// Output JSON envelope file path
+        #[arg(long)]
+        output: String,
+    },
     /// Proxy management (multi-tenant reverse proxy)
     #[cfg(all(feature = "proxy", unix))]
     Proxy {
@@ -457,6 +474,15 @@ pub fn print_banner(config: &AppConfig) {
 pub async fn run(cli: Cli) -> anyhow::Result<()> {
     // Config-free commands are dispatched before config init so they work
     // without DATABASE_URL (required on non-SQLite builds).
+    if let Some(Commands::Compute {
+        kind,
+        input,
+        params,
+        output,
+    }) = &cli.command
+    {
+        return raisfast::compute::child_main(kind, input, params, output);
+    }
     if let Some(Commands::App { action }) = &cli.command {
         return match action {
             AppAction::New {
@@ -502,6 +528,9 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
     match cli.command {
         // Dispatched before config init above.
         Some(Commands::App { .. }) => unreachable!("app commands handled before config init"),
+        Some(Commands::Compute { .. }) => {
+            unreachable!("compute handled before config init")
+        }
 
         None
         | Some(Commands::Server {

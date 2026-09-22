@@ -30,7 +30,7 @@ use crate::storage::Storage;
 /// One engine-produced image: `ref_name` is the reference in the markdown
 /// (`images/fig-1.jpg` / an external URL), so image↔chunk association
 /// survives via the markdown position [抄WK:Asset.Name 形态].
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ParsedImage {
     pub ref_name: String,
     pub mime_type: String,
@@ -40,14 +40,14 @@ pub struct ParsedImage {
 /// Parse options derived from pipeline config (recognition off → engines
 /// skip the asset pass, halving parse cost for text-only indexing
 /// [抄WK:anydoc_reader extractImages 开关]).
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
 pub struct ParseOpts {
     pub extract_images: bool,
 }
 
 /// Unified parse result: all engines isomorphic, downstream (chunk /
 /// image registration / recognition) shared [抄WK:doc.go ReadResult 契约].
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct ParseOutcome {
     pub markdown: String,
     pub images: Vec<ParsedImage>,

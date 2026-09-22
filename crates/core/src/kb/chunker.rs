@@ -18,7 +18,7 @@ pub const DEFAULT_CHILD_SIZE: usize = 384;
 
 /// Chunking knobs (per-KB overrides land with KB config in M2 admin APIs;
 /// v1 uses the WK defaults).
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
 pub struct ChunkerConfig {
     pub parent_size: usize,
     pub child_size: usize,
@@ -34,7 +34,7 @@ impl Default for ChunkerConfig {
 }
 
 /// A produced chunk with source span and heading breadcrumb.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Chunk {
     pub content: String,
     /// Heading path like `# Top > ## Section` (empty when no heading).

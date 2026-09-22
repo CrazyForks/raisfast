@@ -135,6 +135,11 @@ pub struct AppConfig {
     pub worker_cron_tick_ms: u64,
     #[serde(default = "default_worker_visibility_timeout_secs")]
     pub worker_visibility_timeout_secs: u64,
+    /// Hard runtime cap (seconds) applied to any job that does not set its own
+    /// `timeout_secs`; bounds runaway/hung jobs. `0` disables the global cap.
+    /// Env `WORKER_JOB_TIMEOUT_SECS` (default 86400 = 24h).
+    #[serde(default = "default_worker_job_timeout_secs")]
+    pub worker_job_timeout_secs: u64,
     #[serde(default = "default_worker_sweep_interval_secs")]
     pub worker_sweep_interval_secs: u64,
     #[serde(default)]
@@ -829,6 +834,11 @@ pub struct KbConfig {
     /// `RAISFAST_KB_PARSER_ENGINE`.
     #[serde(default)]
     pub parser_engine: Option<String>,
+    /// Max concurrent builtin parses. Parsing is CPU- and memory-heavy, so this
+    /// bounds memory use across KB ingest / conversion / flow parse. Env
+    /// `RAISFAST_KB_PARSER_CONCURRENCY` (default 2).
+    #[serde(default = "default_kb_parser_concurrency")]
+    pub parser_concurrency: usize,
     /// docreader service gRPC endpoint (e.g. `http://127.0.0.1:50051`);
     /// unset → the docreader engine never registers. Env
     /// `RAISFAST_KB_DOCREADER_URL`.
@@ -930,6 +940,10 @@ fn default_kb_docreader_timeout() -> u64 {
     300
 }
 
+fn default_kb_parser_concurrency() -> usize {
+    2
+}
+
 fn default_kb_mineru_timeout() -> u64 {
     1800
 }
@@ -955,6 +969,7 @@ impl Default for KbConfig {
             distill_model: None,
             image_model: None,
             parser_engine: None,
+            parser_concurrency: default_kb_parser_concurrency(),
             docreader_url: None,
             docreader_timeout_secs: default_kb_docreader_timeout(),
             mineru_url: None,
@@ -1039,6 +1054,11 @@ impl KbConfig {
             parser_engine: env::var("RAISFAST_KB_PARSER_ENGINE")
                 .ok()
                 .filter(|v| !v.is_empty()),
+            parser_concurrency: env::var("RAISFAST_KB_PARSER_CONCURRENCY")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .filter(|c| *c > 0)
+                .unwrap_or(defaults.parser_concurrency),
             mineru_url: env::var("RAISFAST_KB_MINERU_URL")
                 .ok()
                 .filter(|v| !v.is_empty()),
@@ -1433,7 +1453,16 @@ fn default_worker_poll_interval_ms() -> u64 {
 }
 
 fn default_worker_batch_size() -> usize {
-    20
+    // Small: a worker runs its batch sequentially, so a large batch lets one
+    // worker hoard long jobs and starve the others (throughput floors at
+    // N/(batch × latency) regardless of worker count). Bench (500-job/100ms):
+    // batch 1/2 ≈ 274/s vs batch 20 ≈ 98/s at 32 workers. 2 keeps a little
+    // coalescing and is near-best for tiny jobs too.
+    2
+}
+
+fn default_worker_job_timeout_secs() -> u64 {
+    86400
 }
 
 fn default_worker_max_attempts() -> u32 {
@@ -1723,6 +1752,10 @@ impl AppConfig {
                 .ok()
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(default_worker_visibility_timeout_secs()),
+            worker_job_timeout_secs: env::var("WORKER_JOB_TIMEOUT_SECS")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(default_worker_job_timeout_secs()),
             worker_sweep_interval_secs: env::var("WORKER_SWEEP_INTERVAL_SECS")
                 .ok()
                 .and_then(|v| v.parse().ok())
@@ -1956,6 +1989,7 @@ impl AppConfig {
             worker_default_max_attempts: default_worker_max_attempts(),
             worker_cron_tick_ms: default_worker_cron_tick_ms(),
             worker_visibility_timeout_secs: default_worker_visibility_timeout_secs(),
+            worker_job_timeout_secs: default_worker_job_timeout_secs(),
             worker_sweep_interval_secs: default_worker_sweep_interval_secs(),
             cron_seed_enabled: false,
             cron_schedules: vec![],

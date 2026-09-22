@@ -358,6 +358,30 @@ impl JobQueue for DefaultJobQueue {
         Ok(())
     }
 
+    async fn requeue(&self, id: &str) -> AppResult<()> {
+        let now = crate::utils::tz::now_utc();
+        let id: i64 = id
+            .parse()
+            .map_err(|e| AppError::Internal(anyhow::anyhow!("invalid id: {e}")))?;
+        let sql = format!(
+            "UPDATE jobs SET status = {}, attempts = CASE WHEN attempts > 0 THEN attempts - 1 ELSE 0 END, \
+             error = NULL, updated_at = {} WHERE {COL_ID} = {} AND status = {}",
+            Driver::ph(1),
+            Driver::ph(2),
+            Driver::ph(3),
+            Driver::ph(4)
+        );
+        sqlx::query::<crate::db::pool::Db>(crate::db::safe_sql(&sql))
+            .bind(JobStatus::Pending.as_str())
+            .bind(now)
+            .bind(id)
+            .bind(JobStatus::Running.as_str())
+            .execute(&self.pool)
+            .await?;
+        tracing::debug!("job {id} requeued (unclaimed)");
+        Ok(())
+    }
+
     async fn fail(&self, id: &str, error: &str) -> AppResult<()> {
         let now = crate::utils::tz::now_utc();
         let id: i64 = id
@@ -420,12 +444,43 @@ impl JobQueue for DefaultJobQueue {
         Ok(())
     }
 
+    async fn cancel(&self, id: &str) -> AppResult<()> {
+        let now = crate::utils::tz::now_utc();
+        let id: i64 = id
+            .parse()
+            .map_err(|e| AppError::Internal(anyhow::anyhow!("invalid id: {e}")))?;
+        // Only a `pending` or `running` job can be cancelled; a job that already
+        // reached a terminal state is left untouched.
+        let sql = format!(
+            "UPDATE jobs SET status = {}, error = {}, updated_at = {} \
+             WHERE {COL_ID} = {} AND status IN ({}, {})",
+            Driver::ph(1),
+            Driver::ph(2),
+            Driver::ph(3),
+            Driver::ph(4),
+            Driver::ph(5),
+            Driver::ph(6)
+        );
+        sqlx::query::<crate::db::pool::Db>(crate::db::safe_sql(&sql))
+            .bind(JobStatus::Cancelled.as_str())
+            .bind("cancelled by admin")
+            .bind(now)
+            .bind(id)
+            .bind(JobStatus::Pending.as_str())
+            .bind(JobStatus::Running.as_str())
+            .execute(&self.pool)
+            .await?;
+        tracing::warn!("job {id} cancelled");
+        Ok(())
+    }
+
     async fn stats(&self) -> AppResult<JobStats> {
         let p1 = Driver::ph(1);
         let p2 = Driver::ph(2);
         let p3 = Driver::ph(3);
         let p4 = Driver::ph(4);
         let p5 = Driver::ph(5);
+        let p6 = Driver::ph(6);
         let row: crate::db::pool::DbRow =
             sqlx::query::<crate::db::pool::Db>(crate::db::safe_sql(&format!(
                 "SELECT
@@ -433,7 +488,8 @@ impl JobQueue for DefaultJobQueue {
                 {p1} as running,
                 {p2} as completed,
                 {p3} as failed,
-                {p4} as dead
+                {p4} as dead,
+                {p5} as cancelled
              FROM jobs",
                 p0 = Driver::cast_int(&format!(
                     "COALESCE(SUM(CASE WHEN status = {p1} THEN 1 ELSE 0 END), 0)"
@@ -450,12 +506,16 @@ impl JobQueue for DefaultJobQueue {
                 p4 = Driver::cast_int(&format!(
                     "COALESCE(SUM(CASE WHEN status = {p5} THEN 1 ELSE 0 END), 0)"
                 )),
+                p5 = Driver::cast_int(&format!(
+                    "COALESCE(SUM(CASE WHEN status = {p6} THEN 1 ELSE 0 END), 0)"
+                )),
             )))
             .bind(JobStatus::Pending.as_str())
             .bind(JobStatus::Running.as_str())
             .bind(JobStatus::Completed.as_str())
             .bind(JobStatus::Failed.as_str())
             .bind(JobStatus::Dead.as_str())
+            .bind(JobStatus::Cancelled.as_str())
             .fetch_one(&self.pool)
             .await?;
 
@@ -465,6 +525,7 @@ impl JobQueue for DefaultJobQueue {
             completed: row.get("completed"),
             failed: row.get("failed"),
             dead: row.get("dead"),
+            cancelled: row.get("cancelled"),
         })
     }
 
@@ -591,15 +652,17 @@ impl JobQueue for DefaultJobQueue {
 
     async fn cleanup(&self) -> AppResult<u64> {
         let sql = format!(
-            "DELETE FROM jobs WHERE status IN ({}, {}) AND updated_at < {}",
+            "DELETE FROM jobs WHERE status IN ({}, {}, {}) AND updated_at < {}",
             Driver::ph(1),
             Driver::ph(2),
+            Driver::ph(3),
             crate::db::Driver::ago_expr(7)
         );
         let result: crate::db::pool::DbQueryResult =
             sqlx::query::<crate::db::pool::Db>(crate::db::safe_sql(&sql))
                 .bind(JobStatus::Completed.as_str())
                 .bind(JobStatus::Dead.as_str())
+                .bind(JobStatus::Cancelled.as_str())
                 .execute(&self.pool)
                 .await?;
 
@@ -722,6 +785,30 @@ mod tests {
         q.enqueue(sample_job()).await.unwrap();
         let jobs = q.dequeue(10).await.unwrap();
         assert_eq!(jobs[0].timeout_secs, None);
+    }
+
+    #[tokio::test]
+    async fn cancel_marks_pending_job_cancelled() {
+        let q = setup().await;
+        q.enqueue(sample_job()).await.unwrap();
+        let (rows, _) = q
+            .list(
+                JobFilter {
+                    status: Some(JobStatus::Pending),
+                    job_type: None,
+                },
+                1,
+                10,
+            )
+            .await
+            .unwrap();
+        let id = rows[0].id.clone();
+
+        q.cancel(&id).await.unwrap();
+
+        let stats = q.stats().await.unwrap();
+        assert_eq!(stats.cancelled, 1);
+        assert_eq!(stats.pending, 0);
     }
 
     #[tokio::test]

@@ -1,0 +1,12 @@
+{
+  "db_name": "MySQL",
+  "query": "INSERT INTO `redemption_codes` (`id`, `code_hash`, `code_enc`, `user_id`, `currency`, `amount`, `status`, `created_by`, `expires_at`, `created_at`, `updated_at`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 11
+    },
+    "nullable": []
+  },
+  "hash": "7f9194e055ad265b9462d5521be5364336147db61db4cf73e497705f864a4d58"
+}

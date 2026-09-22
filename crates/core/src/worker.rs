@@ -34,6 +34,7 @@ define_enum!(
         Completed = "completed",
         Failed = "failed",
         Dead = "dead",
+        Cancelled = "cancelled",
     }
 );
 
@@ -305,6 +306,13 @@ pub trait JobQueue: Send + Sync {
         filter: &JobTypeFilter,
     ) -> AppResult<Vec<QueuedJob>>;
     async fn complete(&self, id: &str) -> AppResult<()>;
+    /// Marks a `pending` or `running` job as `cancelled`. Terminal jobs are
+    /// left untouched (idempotent). Returns an error only on DB failure.
+    async fn cancel(&self, id: &str) -> AppResult<()>;
+    /// Returns a claimed-but-not-yet-started job to `pending`, undoing the
+    /// claim's attempt increment. Used when a graceful shutdown arrives while a
+    /// batch is only partly processed.
+    async fn requeue(&self, id: &str) -> AppResult<()>;
     async fn fail(&self, id: &str, error: &str) -> AppResult<()>;
     async fn dead(&self, id: &str, error: &str) -> AppResult<()>;
     async fn stats(&self) -> AppResult<JobStats>;
@@ -342,6 +350,7 @@ pub struct JobStats {
     pub completed: i64,
     pub failed: i64,
     pub dead: i64,
+    pub cancelled: i64,
 }
 
 /// Job list row (for admin API)

@@ -1,0 +1,29 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO \"kb_knowledge_bases\" (\"id\", \"name\", \"description\", \"slug\", \"kind\", \"indexing_strategy\", \"embedding_model\", \"embedding_dim\", \"rerank_model\", \"rerank_window\", \"rerank_threshold\", \"chat_model\", \"distill_model\", \"image_config\", \"parser_config\", \"created_at\") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Jsonb",
+        "Text",
+        "Int8",
+        "Text",
+        "Int8",
+        "Float8",
+        "Text",
+        "Text",
+        "Jsonb",
+        "Jsonb",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "8b292fc7c73d01a70efbdc501e3ec1f85e8c3b1a1b65d8932e35068bf4ad4e9a"
+}

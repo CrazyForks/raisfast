@@ -70,6 +70,17 @@ pub fn routes(
         r,
         registry,
         restful,
+        "/admin/jobs/{id}/cancel",
+        post,
+        self::cancel,
+        "system",
+        "admin/jobs",
+        "admin"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        restful,
         "/admin/jobs/{id}",
         delete,
         self::remove,
@@ -212,6 +223,32 @@ pub async fn retry(
     let sid = crate::types::snowflake_id::parse_id(&id)?;
     let queue = DefaultJobQueue::new(state.pool.clone());
     queue.retry(&sid.0.to_string()).await?;
+    Ok(ApiResponse::success(()))
+}
+
+/// POST /api/v1/admin/jobs/{id}/cancel — Cancel a pending/running job
+///
+/// Signals the in-process runner (which aborts the handler at its next await
+/// point and hard-kills any out-of-process parse) and marks the row `cancelled`.
+/// Terminal jobs are left untouched.
+#[utoipa::path(post, path = "/admin/jobs/{id}/cancel", tag = "jobs",
+    security(("bearer_auth" = [])),
+    params(("id" = String, Path, description = "Job ID")),
+    responses((status = 200, description = "Job cancelled"))
+)]
+pub async fn cancel(
+    _auth: AuthUser,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> AppResult<ApiResponse<()>> {
+    let sid = crate::types::snowflake_id::parse_id(&id)?;
+    let key = sid.0.to_string();
+    // Signal the in-process runner first; if the job is not running here
+    // (pending, or claimed by another process), fall back to the DB write.
+    if !crate::cancellation::JOB_CANCELS.cancel(&key) {
+        let queue = DefaultJobQueue::new(state.pool.clone());
+        queue.cancel(&key).await?;
+    }
     Ok(ApiResponse::success(()))
 }
 

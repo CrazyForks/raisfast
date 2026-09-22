@@ -571,13 +571,42 @@ async fn process_document_inner(
     // 页锚点偏移必须在空白化【之前】取（等长替换，偏移对齐原文）。
     let marks = crate::kb::parse_quality::page_marks(&markdown);
     let markdown = crate::kb::parse_quality::blank_page_marks(&markdown);
-    // text-splitter chunking is CPU-bound; keep it off the shared async runtime.
-    let (markdown, raw_chunks) = tokio::task::spawn_blocking(move || {
-        let chunks = chunker::chunk_markdown(&markdown, &cfg);
-        (markdown, chunks)
-    })
-    .await
-    .map_err(|e| AppError::Internal(anyhow::anyhow!("chunk task join error: {e}")))?;
+    // text-splitter chunking is CPU-bound; run it out-of-process when possible
+    // (hard-killable) and otherwise on the blocking pool.
+    let via_subprocess = if crate::compute::subprocess_supported() {
+        let params = serde_json::to_value(cfg)
+            .map_err(|e| AppError::Internal(anyhow::anyhow!("chunk params: {e}")))?;
+        match crate::compute::run::<Vec<chunker::Chunk>>(
+            "chunk_markdown",
+            markdown.as_bytes(),
+            &params,
+        )
+        .await
+        {
+            Ok(chunks) => Some(chunks),
+            Err(crate::compute::ComputeError::Cancelled) => {
+                return Err(AppError::BadRequest("document chunking cancelled".into()));
+            }
+            Err(crate::compute::ComputeError::Rejected(msg)) => {
+                return Err(AppError::BadRequest(format!("document chunking failed: {msg}")));
+            }
+            Err(crate::compute::ComputeError::Unavailable(e)) => {
+                tracing::warn!("chunk subprocess unavailable ({e}); falling back in-process");
+                None
+            }
+        }
+    } else {
+        None
+    };
+    let raw_chunks = match via_subprocess {
+        Some(chunks) => chunks,
+        None => {
+            let md = markdown.clone();
+            tokio::task::spawn_blocking(move || chunker::chunk_markdown(&md, &cfg))
+                .await
+                .map_err(|e| AppError::Internal(anyhow::anyhow!("chunk task join error: {e}")))?
+        }
+    };
     let now = crate::utils::tz::now_utc();
     let mut inserts = Vec::with_capacity(raw_chunks.len());
     let mut chunk_ids: Vec<Option<SnowflakeId>> = vec![None; raw_chunks.len()];

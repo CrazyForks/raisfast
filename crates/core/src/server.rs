@@ -134,6 +134,9 @@ async fn build_app(
 
     let mut registry = RouteRegistry::default();
 
+    // Bound concurrent CPU-heavy parses before any worker/flow can trigger one.
+    crate::docparse::engines::builtin::init_parse_concurrency(config.kb.parser_concurrency);
+
     let worker_shutdown = shutdown_rx.clone();
     let mut state = crate::build_app_state(config, shutdown_rx).await?;
     let pool = state.pool.clone();
@@ -1087,6 +1090,8 @@ async fn spawn_workers(
     // job types; the CPU pool claims only those. This stops a long document
     // parse from occupying an IO worker slot (worker-execution-assessment §6).
     let cpu_types = registry.job_types_by_class(crate::worker::ExecutionClass::Cpu);
+    let hard_timeout = (config.worker_job_timeout_secs > 0)
+        .then(|| Duration::from_secs(config.worker_job_timeout_secs));
 
     let io_runner = WorkerRunner::new(
         queue.clone(),
@@ -1096,6 +1101,7 @@ async fn spawn_workers(
         config.worker_batch_size,
     )
     .with_visibility_timeout(Duration::from_secs(config.worker_visibility_timeout_secs))
+    .with_hard_timeout(hard_timeout)
     .with_claim_filter(crate::worker::JobTypeFilter::Except(cpu_types.clone()))
     .with_shutdown(shutdown.clone())
     .with_plugin_dispatcher(Arc::new(PluginCronDispatcher::new(plugins.clone())));
@@ -1109,6 +1115,7 @@ async fn spawn_workers(
         config.worker_batch_size,
     )
     .with_visibility_timeout(Duration::from_secs(config.worker_visibility_timeout_secs))
+    .with_hard_timeout(hard_timeout)
     .with_claim_filter(crate::worker::JobTypeFilter::Only(cpu_types))
     .with_shutdown(shutdown)
     .with_plugin_dispatcher(Arc::new(PluginCronDispatcher::new(plugins)));

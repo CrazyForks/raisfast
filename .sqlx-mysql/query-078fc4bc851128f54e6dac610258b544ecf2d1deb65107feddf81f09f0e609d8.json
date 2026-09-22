@@ -1,0 +1,12 @@
+{
+  "db_name": "MySQL",
+  "query": "INSERT INTO `kb_chunks` (`id`, `kb_id`, `doc_id`, `faq_id`, `wiki_page_id`, `kind`, `parent_id`, `seq`, `content`, `breadcrumb`, `byte_start`, `byte_end`, `questions`, `embedding`, `embedding_model`, `image_info`, `page`, `created_at`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 18
+    },
+    "nullable": []
+  },
+  "hash": "078fc4bc851128f54e6dac610258b544ecf2d1deb65107feddf81f09f0e609d8"
+}

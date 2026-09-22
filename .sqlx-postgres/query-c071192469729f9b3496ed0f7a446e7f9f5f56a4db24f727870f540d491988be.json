@@ -1,0 +1,25 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO \"redemption_codes\" (\"id\", \"code_hash\", \"code_enc\", \"user_id\", \"currency\", \"amount\", \"status\", \"created_by\", \"expires_at\", \"created_at\", \"updated_at\", \"tenant_id\") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text",
+        "Text",
+        "Int8",
+        "Varchar",
+        "Int8",
+        "Varchar",
+        "Int8",
+        "Timestamptz",
+        "Timestamptz",
+        "Timestamptz",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "c071192469729f9b3496ed0f7a446e7f9f5f56a4db24f727870f540d491988be"
+}

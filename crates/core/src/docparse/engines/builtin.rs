@@ -9,17 +9,35 @@ use std::sync::OnceLock;
 use super::{ParseOpts, ParseOutcome, ParsedImage};
 use crate::errors::app_error::{AppError, AppResult};
 
-/// Upper bound on concurrently running builtin parses. The parsers are
+/// Default upper bound on concurrently running builtin parses. The parsers are
 /// CPU- and memory-heavy (a single scanned PDF can OOM a container —
 /// `dev-docs/document/service-design.md` §), so bounding matters more than
 /// throughput; raise only alongside the machine's memory budget.
-const MAX_CONCURRENT_PARSES: usize = 2;
+const DEFAULT_PARSE_CONCURRENCY: usize = 2;
+
+/// Configured parse-concurrency override, set once at startup from
+/// `RAISFAST_KB_PARSER_CONCURRENCY` (see [`init_parse_concurrency`]).
+static PARSE_LIMIT: OnceLock<usize> = OnceLock::new();
+
+/// Overrides the builtin parse concurrency. Call once at startup, before
+/// workers start; later calls are ignored (first wins). The semaphore is
+/// created lazily on first use, so the value is picked up as long as this runs
+/// during startup.
+pub fn init_parse_concurrency(limit: usize) {
+    let _ = PARSE_LIMIT.set(limit.max(1));
+}
 
 /// Process-wide parse gate: bounds concurrent blocking parses across every
 /// caller (KB ingest, doc conversion, flow nodes).
 fn parse_semaphore() -> &'static tokio::sync::Semaphore {
     static SEM: OnceLock<tokio::sync::Semaphore> = OnceLock::new();
-    SEM.get_or_init(|| tokio::sync::Semaphore::new(MAX_CONCURRENT_PARSES))
+    SEM.get_or_init(|| {
+        let limit = PARSE_LIMIT
+            .get()
+            .copied()
+            .unwrap_or(DEFAULT_PARSE_CONCURRENCY);
+        tokio::sync::Semaphore::new(limit)
+    })
 }
 
 pub struct BuiltinEngine;
@@ -48,23 +66,45 @@ impl super::ParseEngine for BuiltinEngine {
         filename: &str,
         opts: &ParseOpts,
     ) -> AppResult<ParseOutcome> {
-        // anydoc / pdf-inspector are synchronous and CPU-bound. Run them on the
-        // blocking pool so a large PDF cannot stall the shared async runtime
-        // (HTTP + other jobs). See dev-docs/worker-execution-assessment.md.
-        let permit = parse_semaphore()
+        // Bound concurrent parses (each is CPU- and memory-heavy).
+        let _permit = parse_semaphore()
             .acquire()
             .await
             .map_err(|e| AppError::Internal(anyhow::anyhow!("parse gate closed: {e}")))?;
+
+        // Preferred: parse in a child process so a hung/cancelled parse can be
+        // hard-killed (`kill_on_drop` + the job cancel token). Tests and
+        // unusually-named binaries fall back to the in-process path.
+        if crate::compute::subprocess_supported() {
+            let params = serde_json::json!({
+                "mime": mime,
+                "filename": filename,
+                "extract_images": opts.extract_images,
+            });
+            match crate::compute::run::<ParseOutcome>("parse_builtin", bytes, &params).await {
+                Ok(outcome) => return Ok(outcome),
+                Err(crate::compute::ComputeError::Cancelled) => {
+                    return Err(AppError::BadRequest("document parse cancelled".into()));
+                }
+                Err(crate::compute::ComputeError::Rejected(msg)) => {
+                    // A real parse failure — do not retry in-process.
+                    return Err(AppError::BadRequest(format!("document parse failed: {msg}")));
+                }
+                Err(crate::compute::ComputeError::Unavailable(e)) => {
+                    tracing::warn!("parse subprocess unavailable ({e}); falling back in-process");
+                }
+            }
+        }
+
+        // Fallback: synchronous parse on the blocking pool (won't stall the
+        // async runtime, but cannot be hard-killed).
         let bytes = bytes.to_vec();
         let mime = mime.to_string();
         let filename = filename.to_string();
         let opts = *opts;
-        tokio::task::spawn_blocking(move || {
-            let _permit = permit;
-            parse_builtin(&bytes, &mime, &filename, &opts)
-        })
-        .await
-        .map_err(|e| AppError::Internal(anyhow::anyhow!("parse task join error: {e}")))?
+        tokio::task::spawn_blocking(move || parse_builtin(&bytes, &mime, &filename, &opts))
+            .await
+            .map_err(|e| AppError::Internal(anyhow::anyhow!("parse task join error: {e}")))?
     }
 }
 

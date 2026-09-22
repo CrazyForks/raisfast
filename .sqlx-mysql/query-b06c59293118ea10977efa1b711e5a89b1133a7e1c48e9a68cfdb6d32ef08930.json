@@ -1,0 +1,12 @@
+{
+  "db_name": "MySQL",
+  "query": "INSERT INTO `kb_images` (`id`, `kb_id`, `doc_id`, `chunk_id`, `page`, `storage_key`, `mime_type`, `bytes`, `source`, `original_url`, `created_at`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 11
+    },
+    "nullable": []
+  },
+  "hash": "b06c59293118ea10977efa1b711e5a89b1133a7e1c48e9a68cfdb6d32ef08930"
+}

@@ -163,13 +163,40 @@ pub async fn execute_schema(pool: &Pool) -> anyhow::Result<()> {
     #[cfg(not(feature = "db-sqlite"))]
     {
         for stmt in split_sql_statements(crate::db::schema::SCHEMA_SQL) {
-            sqlx::query::<crate::db::pool::Db>(crate::db::safe_sql(&stmt))
+            if let Err(e) = sqlx::query::<crate::db::pool::Db>(crate::db::safe_sql(&stmt))
                 .execute(pool)
                 .await
-                .map_err(|e| anyhow::anyhow!("schema statement failed: {e}\nSQL: {stmt}"))?;
+            {
+                // MySQL lacks `ADD COLUMN IF NOT EXISTS`, so re-applying the
+                // baseline schema (shared test DB, db-init on an existing DB)
+                // reports duplicate column/key instead of the PG-style no-op.
+                // Treat those as already-applied — the schema is meant to be
+                // idempotent.
+                if is_mysql_duplicate(&e) {
+                    tracing::debug!("schema statement already applied, skipping: {e}");
+                    continue;
+                }
+                return Err(anyhow::anyhow!("schema statement failed: {e}\nSQL: {stmt}"));
+            }
         }
     }
     Ok(())
+}
+
+/// Whether `e` is MySQL's "duplicate column/key" error from re-applying an
+/// idempotent schema. Always `false` on other backends.
+#[cfg(not(feature = "db-sqlite"))]
+fn is_mysql_duplicate(e: &sqlx::Error) -> bool {
+    if !cfg!(feature = "db-mysql") {
+        return false;
+    }
+    match e {
+        sqlx::Error::Database(db) => {
+            let msg = db.message();
+            msg.contains("Duplicate column name") || msg.contains("Duplicate key name")
+        }
+        _ => false,
+    }
 }
 
 /// Split a SQL script into individual statements, respecting string literals and comments.
