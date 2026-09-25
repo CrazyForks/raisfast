@@ -61,6 +61,18 @@ const PRESETS: &[ProviderPreset] = &[
         requires_auth: false,
     },
     ProviderPreset {
+        key: "seedance",
+        display_name: "Seedance (火山方舟/即梦, video)",
+        default_base_url: "https://ark.cn-beijing.volces.com/api/v3",
+        requires_auth: true,
+    },
+    ProviderPreset {
+        key: "minimax",
+        display_name: "MiniMax (海螺, video)",
+        default_base_url: "https://api.minimaxi.com/v1",
+        requires_auth: true,
+    },
+    ProviderPreset {
         key: "replicate",
         display_name: "Replicate (video/multi)",
         default_base_url: "https://api.replicate.com/v1",

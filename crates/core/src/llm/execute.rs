@@ -145,6 +145,14 @@ impl ModelProvider for SideEffectGuard {
         self.inner.speech(text, voice, model).await
     }
 
+    async fn music(
+        &self,
+        request: &raisfast_agent::provider::MusicRequest,
+        model: &str,
+    ) -> Result<Vec<u8>, ProviderError> {
+        self.inner.music(request, model).await
+    }
+
     async fn video_submit(
         &self,
         request: &raisfast_agent::provider::VideoRequest,
@@ -196,6 +204,18 @@ impl LlmRouter {
             .entry((ep.channel_id, ep.key_index))
             .or_insert_with(|| match ep.provider.as_str() {
                 "anthropic" => Arc::new(crate::llm::providers::AnthropicProvider::new(
+                    ep.base_url.clone(),
+                    Some(ep.api_key.clone()),
+                    ep.param_override.clone(),
+                    ep.header_override.clone(),
+                )) as Arc<dyn ModelProvider>,
+                "seedance" => Arc::new(crate::llm::providers::SeedanceProvider::new(
+                    ep.base_url.clone(),
+                    Some(ep.api_key.clone()),
+                    ep.param_override.clone(),
+                    ep.header_override.clone(),
+                )) as Arc<dyn ModelProvider>,
+                "minimax" => Arc::new(crate::llm::providers::MiniMaxProvider::new(
                     ep.base_url.clone(),
                     Some(ep.api_key.clone()),
                     ep.param_override.clone(),
@@ -921,6 +941,42 @@ impl LlmCall<'_> {
                 billing,
                 |p, ep| async move {
                     p.speech(text, voice, &ep.upstream_model)
+                        .await
+                        .map_err(ExecError::Upstream)
+                },
+            )
+            .await
+    }
+
+    /// 音乐生成（同步；per_call 计费）。模型 None → 不支持默认解析
+    /// （price 差异大），节点侧必填。
+    pub async fn music(
+        self,
+        model: &str,
+        request: &raisfast_agent::provider::MusicRequest,
+    ) -> AppResult<Vec<u8>> {
+        let (model, info) = self
+            .prepare(Some(model), "", "music", &[LlmModelType::Music])
+            .await?;
+        let billing = self
+            .billing(
+                &info,
+                RelayUsage {
+                    prompt_tokens: 1,
+                    completion_tokens: 1,
+                    cache_read_tokens: 0,
+                    cache_write_tokens: 0,
+                },
+            )
+            .await?;
+        self.router
+            .execute(
+                &self.ctx(),
+                &model,
+                self.source,
+                billing,
+                |p, ep| async move {
+                    p.music(request, &ep.upstream_model)
                         .await
                         .map_err(ExecError::Upstream)
                 },

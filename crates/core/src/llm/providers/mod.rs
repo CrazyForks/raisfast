@@ -12,12 +12,16 @@
 pub mod anthropic;
 pub mod elevenlabs;
 pub mod kling;
+pub mod minimax;
 pub mod replicate;
+pub mod seedance;
 
 pub use anthropic::AnthropicProvider;
 pub use elevenlabs::ElevenLabsProvider;
 pub use kling::KlingProvider;
+pub use minimax::MiniMaxProvider;
 pub use replicate::ReplicateProvider;
+pub use seedance::SeedanceProvider;
 
 /// Map a `WxH` size string to the nearest aspect-ratio enum label shared by
 /// video providers (Kling/Replicate input vocab): `16:9` / `1:1` / `9:16`.

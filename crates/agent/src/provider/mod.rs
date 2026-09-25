@@ -121,6 +121,14 @@ pub struct VideoRequest {
     pub callback_url: Option<String>,
 }
 
+/// Music generation request (prompt = style description; lyrics optional —
+/// model-dependent, e.g. MiniMax music-01 uses lyrics templates).
+#[derive(Debug, Clone)]
+pub struct MusicRequest {
+    pub prompt: String,
+    pub lyrics: Option<String>,
+}
+
 /// One reference image attached to a [`VideoRequest`].
 #[derive(Debug, Clone)]
 pub struct VideoInputRef {
@@ -299,6 +307,11 @@ pub trait ModelProvider: Send + Sync {
         _model: &str,
     ) -> Result<Vec<u8>, ProviderError> {
         Err(self.unsupported_message("speech"))
+    }
+
+    /// Music generation (prompt/lyrics → audio bytes).
+    async fn music(&self, _request: &MusicRequest, _model: &str) -> Result<Vec<u8>, ProviderError> {
+        Err(self.unsupported_message("music generation"))
     }
 
     /// Submit an async video-generation task (`POST /videos`).

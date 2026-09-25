@@ -55,6 +55,8 @@ crate::export_types!(
     nodes::ChatMessage,
     nodes::ChatConfig,
     nodes::ImageConfig,
+    nodes::MusicConfig,
+    nodes::RenderConfig,
     nodes::SpeechConfig,
     nodes::VideoConfig,
     nodes::HttpConfig,

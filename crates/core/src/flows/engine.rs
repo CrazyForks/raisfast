@@ -298,6 +298,8 @@ pub async fn run_persisted(
             | nodes::T_CHAT
             | nodes::T_IMAGE
             | nodes::T_SPEECH
+            | nodes::T_MUSIC
+            | nodes::T_RENDER
             | nodes::T_HTTP
             | nodes::T_CT
             | nodes::T_DOCPARSE => {
@@ -319,6 +321,8 @@ pub async fn run_persisted(
                     nodes::T_CHAT
                         | nodes::T_IMAGE
                         | nodes::T_SPEECH
+                        | nodes::T_MUSIC
+                        | nodes::T_RENDER
                         | nodes::T_VIDEO
                         | nodes::T_HTTP
                         | nodes::T_CT
@@ -997,6 +1001,8 @@ fn resume_completed(
         | nodes::T_CT
         | nodes::T_ITERATION
         | nodes::T_DOCPARSE
+        | nodes::T_MUSIC
+        | nodes::T_RENDER
         | nodes::T_VIDEO => {
             // Same verdict fan-out as the live path: a succeeded exec node
             // skips its error_out edges (they were Skipped in the prior pass).

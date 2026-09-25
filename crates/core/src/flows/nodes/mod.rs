@@ -15,6 +15,8 @@ pub mod ct;
 pub mod docparse;
 pub mod http;
 pub mod image;
+pub mod music;
+pub mod render;
 pub mod speech;
 pub mod video;
 
@@ -23,6 +25,8 @@ pub use ct::{CtConfig, CtFilterRow, CtSetRow};
 pub use docparse::DocParseConfig;
 pub use http::{HttpConfig, HttpKeyValue};
 pub use image::ImageConfig;
+pub use music::MusicConfig;
+pub use render::RenderConfig;
 pub use speech::SpeechConfig;
 pub use video::{DEFAULT_VIDEO_DEADLINE_SECS, VideoConfig};
 
@@ -102,6 +106,8 @@ pub const T_CHAT: &str = "chat";
 pub const T_LLM_LEGACY: &str = "llm";
 pub const T_IMAGE: &str = "image";
 pub const T_SPEECH: &str = "speech";
+pub const T_MUSIC: &str = "music";
+pub const T_RENDER: &str = "render";
 pub const T_VIDEO: &str = "video";
 pub const T_HTTP: &str = "http";
 pub const T_CT: &str = "ct";
@@ -908,10 +914,12 @@ pub fn validate_node(kind: &str, _version: i64, config: &Value) -> AppResult<()>
         T_DOCPARSE => docparse::validate(config)?,
         T_IMAGE => image::validate(config)?,
         T_SPEECH => speech::validate(config)?,
+        T_MUSIC => music::validate(config)?,
+        T_RENDER => render::validate(config)?,
         T_VIDEO => video::validate(config)?,
         other => {
             return Err(AppError::BadRequest(format!(
-                "node type '{other}' not supported (start|end|script|egress|branch|await|transform|chat|image|speech|http|ct|iteration|docparse)"
+                "node type '{other}' not supported (start|end|script|egress|branch|await|transform|chat|image|speech|video|music|render|http|ct|iteration|docparse)"
             )));
         }
     }
@@ -935,6 +943,8 @@ pub enum NodeKind {
     Image,
     Speech,
     Video,
+    Music,
+    Render,
     Http,
     Ct,
     Iteration,
@@ -959,6 +969,8 @@ pub enum NodeConfigVariant {
     Image(ImageConfig),
     Speech(SpeechConfig),
     Video(VideoConfig),
+    Music(MusicConfig),
+    Render(RenderConfig),
     Http(HttpConfig),
     Ct(CtConfig),
     Iteration(IterationConfig),

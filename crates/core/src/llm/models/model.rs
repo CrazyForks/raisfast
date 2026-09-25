@@ -21,6 +21,7 @@ define_enum!(
         Vlm = "vlm",
         Image = "image",
         Video = "video",
+        Music = "music",
     }
 );
 
