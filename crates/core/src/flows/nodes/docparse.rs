@@ -19,9 +19,51 @@ use crate::docparse::{ParseOpts, ParserRegistry};
 use crate::errors::app_error::{AppError, AppResult};
 use crate::storage::Storage;
 
-use super::engine::{ExecOutcome, Pool};
-use super::graph::GraphNode;
-use super::nodes::DocParseConfig;
+use crate::flows::engine::{ExecOutcome, Pool};
+use crate::flows::graph::GraphNode;
+
+/// `docparse` node config (docparse-node.md §2). Parses one document into
+/// markdown through the shared docparse engine registry. `input` is a
+/// ValueExpr resolving to a file reference — a storage key or an external
+/// `https://` URL (SSRF-validated). `engine` overrides the global default;
+/// absent → registry routing (explicit → global → builtin).
+#[cfg_attr(feature = "export-types", derive(ts_rs::TS))]
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct DocParseConfig {
+    /// ValueExpr resolving to one file reference (string).
+    #[cfg_attr(feature = "export-types", ts(type = "unknown"))]
+    pub input: serde_json::Value,
+    /// Parser engine override (name from the registry); absent → global default.
+    #[serde(default)]
+    pub engine: Option<String>,
+    /// Whether to extract embedded images (adds the asset pass; off saves cost).
+    #[serde(default)]
+    pub extract_images: bool,
+}
+
+/// Config validation (moved from the central registry; media-nodes.md §5).
+pub(super) fn validate(config: &serde_json::Value) -> crate::errors::app_error::AppResult<()> {
+    let c: DocParseConfig = serde_json::from_value(config.clone()).map_err(|e| {
+        crate::errors::app_error::AppError::BadRequest(format!(
+            "node 'docparse' config invalid: {e}"
+        ))
+    })?;
+    if c.input.is_null() {
+        return Err(crate::errors::app_error::AppError::BadRequest(
+            "docparse: input 不能为空".into(),
+        ));
+    }
+    super::validate_value_expr("docparse.input", &c.input)?;
+    if let Some(e) = &c.engine
+        && (e.trim().is_empty() || !crate::db::driver::is_safe_identifier(e.trim()))
+    {
+        return Err(crate::errors::app_error::AppError::BadRequest(format!(
+            "docparse: engine '{}' 非法标识符",
+            e
+        )));
+    }
+    Ok(())
+}
 
 /// Per-run docparse runtime (registry + storage + global default engine).
 /// Built from the process-wide [`crate::docparse::shared`] host; tests inject
@@ -123,7 +165,7 @@ pub async fn run_docparse(
         .map_err(|e| AppError::BadRequest(format!("docparse config: {e}")))?;
 
     // Whole-string ref keeps its typed value; a file ref must be a string.
-    let raw = super::engine::resolve(&cfg.input, pool)?;
+    let raw = crate::flows::engine::resolve(&cfg.input, pool)?;
     let reference = raw.as_str().map(str::to_string).ok_or_else(|| {
         AppError::BadRequest(
             "docparse: input 须解析为文件引用字符串（存储 key 或 https URL）".into(),

@@ -1,10 +1,30 @@
-//! Node registry + config schemas (contracts.md C1).
+//! Node registry + config schemas (contracts.md C1; media-nodes.md for the
+//! modality node group).
 //!
-//! v1 types: start/end/script/egress/branch (+ await config reserved for P2).
-//! `validate_node(type, version, config)` deserializes config into a strong Rust
-//! struct — shape errors surface as 400 here, not at runtime. Unknown keys are
-//! tolerated (extra=allow) so frontend can carry display fields; required keys
+//! One node = one file: each node's config + executor + node-specific helpers
+//! live in its submodule (`chat`/`image`/`speech`/`ct`/`http`/`docparse`);
+//! engine-inline nodes (start/end/script/egress/branch/transform/iteration
+//! and await's park) keep their configs here. `validate_node(type, version,
+//! config)` deserializes config into a strong Rust struct — shape errors
+//! surface as 400 here, not at runtime. Unknown keys are tolerated
+//! (extra=allow) so frontend can carry display fields; required keys
 //! and value shapes are enforced.
+
+pub mod chat;
+pub mod ct;
+pub mod docparse;
+pub mod http;
+pub mod image;
+pub mod speech;
+pub mod video;
+
+pub use chat::{ChatConfig, ChatMessage};
+pub use ct::{CtConfig, CtFilterRow, CtSetRow};
+pub use docparse::DocParseConfig;
+pub use http::{HttpConfig, HttpKeyValue};
+pub use image::ImageConfig;
+pub use speech::SpeechConfig;
+pub use video::{DEFAULT_VIDEO_DEADLINE_SECS, VideoConfig};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -66,7 +86,10 @@ pub fn is_valid_action_id(id: &str) -> bool {
         && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
-/// Known node types for v1.
+/// Known node types. `chat` was renamed from `llm` (media-nodes.md §1):
+/// node types align with the llm-facade modality names. The legacy `"llm"`
+/// wire value is accepted as a permanent read alias (graph.rs `read_node`)
+/// so pre-migration canvas JSON keeps running.
 pub const T_START: &str = "start";
 pub const T_END: &str = "end";
 pub const T_SCRIPT: &str = "script";
@@ -74,7 +97,12 @@ pub const T_EGRESS: &str = "egress";
 pub const T_BRANCH: &str = "branch";
 pub const T_AWAIT: &str = "await";
 pub const T_TRANSFORM: &str = "transform";
-pub const T_LLM: &str = "llm";
+pub const T_CHAT: &str = "chat";
+/// Legacy alias of [`T_CHAT`] written by pre-rename canvases; read-only.
+pub const T_LLM_LEGACY: &str = "llm";
+pub const T_IMAGE: &str = "image";
+pub const T_SPEECH: &str = "speech";
+pub const T_VIDEO: &str = "video";
 pub const T_HTTP: &str = "http";
 pub const T_CT: &str = "ct";
 pub const T_ITERATION: &str = "iteration";
@@ -420,160 +448,16 @@ fn iteration_body_depth(body: &Value) -> usize {
         .unwrap_or(0)
 }
 
-/// One filter row of a `ct` node: `value` is a C3.1 template.
-#[cfg_attr(feature = "export-types", derive(ts_rs::TS))]
-#[derive(Debug, Clone, Deserialize)]
-pub struct CtFilterRow {
-    pub field: String,
-    pub op: String,
-    #[serde(default)]
-    pub value: String,
-}
-
-/// One payload field of a `ct` node (`insert`/`update`): `value` is a template.
-#[cfg_attr(feature = "export-types", derive(ts_rs::TS))]
-#[derive(Debug, Clone, Deserialize)]
-pub struct CtSetRow {
-    pub field: String,
-    #[serde(default)]
-    pub value: String,
-}
-
-/// `ct` node config — first-class CRUD on a content type (tenant isolation
-/// and soft-delete/ownable protocols inherited from the CT repository).
-#[cfg_attr(feature = "export-types", derive(ts_rs::TS))]
-#[derive(Debug, Clone, Deserialize)]
-pub struct CtConfig {
-    /// Content-type plural name.
-    pub content_type: String,
-    pub op: String,
-    #[serde(default)]
-    pub filters: Vec<CtFilterRow>,
-    #[serde(default)]
-    pub sort: Option<String>,
-    /// Record id (template) — required for `update` / `delete`.
-    #[serde(default)]
-    pub id: Option<String>,
-    /// Payload rows for `insert` / `update`.
-    #[serde(default)]
-    pub values: Vec<CtSetRow>,
-    #[serde(default)]
-    #[cfg_attr(feature = "export-types", ts(type = "number"))]
-    pub page: Option<i64>,
-    #[serde(default)]
-    #[cfg_attr(feature = "export-types", ts(type = "number"))]
-    pub page_size: Option<i64>,
-}
-
-/// Operations allowed on the `ct` node.
-pub const CT_OPS: &[&str] = &[
-    "find_one",
-    "find_page",
-    "count",
-    "insert",
-    "update",
-    "delete",
-];
-
-/// Filter operators exposed to flow authors (subset of repository FilterOp).
-pub const CT_FILTER_OPS: &[&str] = &["eq", "ne", "gt", "gte", "lt", "lte", "contains", "like"];
-
-/// Max rows a `find_page` may return in one run (safety cap).
-pub const CT_MAX_PAGE_SIZE: i64 = 100;
-
-/// One header/query row of an `http` node: `value` is a C3.1 template
-/// (`{{#ns.field#}}` refs allowed).
-#[cfg_attr(feature = "export-types", derive(ts_rs::TS))]
-#[derive(Debug, Clone, Deserialize)]
-pub struct HttpKeyValue {
-    pub key: String,
-    #[serde(default)]
-    pub value: String,
-}
-
-/// `http` node config (n8n HTTP Request shape): method/url/headers/query/body
-/// all render C3.1 templates before the request fires.
-#[cfg_attr(feature = "export-types", derive(ts_rs::TS))]
-#[derive(Debug, Clone, Deserialize)]
-pub struct HttpConfig {
-    #[serde(default = "default_http_method")]
-    pub method: String,
-    pub url: String,
-    #[serde(default)]
-    pub headers: Vec<HttpKeyValue>,
-    #[serde(default)]
-    pub query: Vec<HttpKeyValue>,
-    #[serde(default)]
-    pub body: Option<String>,
-    #[serde(default)]
-    #[cfg_attr(feature = "export-types", ts(type = "number"))]
-    pub timeout_ms: Option<i64>,
-}
-
-fn default_http_method() -> String {
-    "GET".to_string()
-}
-
-/// Methods allowed on the `http` node.
-pub const HTTP_METHODS: &[&str] = &["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"];
-
-/// One chat message of an `llm` node: `text` is a C3.1 template (`{{#ns.name#}}`).
-#[cfg_attr(feature = "export-types", derive(ts_rs::TS))]
-#[derive(Debug, Clone, Deserialize)]
-pub struct LlmMessage {
-    pub role: String,
-    pub text: String,
-}
-
-/// `llm` node config (llm-node.md §2). Error handling stays orthogonal via
-/// `modifiers.on_error_strategy` (C1.4); the node ignores engine-fed `input`
-/// (variables are read from the pool through message templates).
-#[cfg_attr(feature = "export-types", derive(ts_rs::TS))]
-#[derive(Debug, Clone, Deserialize)]
-pub struct LlmConfig {
-    pub model: Option<String>,
-    #[serde(default)]
-    pub messages: Vec<LlmMessage>,
-    pub temperature: Option<f64>,
-    #[serde(default)]
-    #[cfg_attr(feature = "export-types", ts(type = "number"))]
-    pub max_tokens: Option<i64>,
-    #[serde(default)]
-    pub stop: Option<Vec<String>>,
-    #[serde(default)]
-    #[cfg_attr(feature = "export-types", ts(type = "number"))]
-    pub timeout_ms: Option<i64>,
-    #[serde(default)]
-    #[cfg_attr(feature = "export-types", ts(type = "unknown"))]
-    pub json_schema: Option<Value>,
-}
-
-/// `docparse` node config (docparse-node.md §2). Parses one document into
-/// markdown through the shared docparse engine registry. `input` is a
-/// ValueExpr resolving to a file reference — a storage key or an external
-/// `https://` URL (SSRF-validated). `engine` overrides the global default;
-/// absent → registry routing (explicit → global → builtin).
-#[cfg_attr(feature = "export-types", derive(ts_rs::TS))]
-#[derive(Debug, Clone, Deserialize)]
-pub struct DocParseConfig {
-    /// ValueExpr resolving to one file reference (string).
-    #[cfg_attr(feature = "export-types", ts(type = "unknown"))]
-    pub input: Value,
-    /// Parser engine override (name from the registry); absent → global default.
-    #[serde(default)]
-    pub engine: Option<String>,
-    /// Whether to extract embedded images (adds the asset pass; off saves cost).
-    #[serde(default)]
-    pub extract_images: bool,
-}
-
 /// Declared output fields of a node (v2 D2): what the node writes into its
 /// pool namespace. Drives skip-null semantics (D6) and lint law 3 (D4).
 ///
 /// - `start`  → declared start variables
 /// - `script` → `output_schema` properties (empty when undeclared → law-3 skip)
 /// - `egress` → fixed `response`
-/// - `llm`    → fixed `text`/`structured`/`usage`/`latency_ms`
+/// - `chat`   → fixed `text`/`structured`/`usage`/`latency_ms`
+/// - `image`  → fixed `images`/`model`/`n`
+/// - `speech` → fixed `audio`/`chars`/`voice`/`model`
+/// - `video`  → fixed `resume`（resume payload: `{video:{key,url},task_id,status}`）
 /// - `docparse` → fixed `markdown`/`images`/`engine`/`pages`/`warnings`
 /// - `await`  → fixed `resume`
 /// - `branch` → fixed `handle`
@@ -596,11 +480,18 @@ pub fn declared_output_fields(kind: &str, config: &Value) -> Vec<String> {
                 .unwrap_or_default()
         }
         T_EGRESS => vec!["response".into()],
-        T_LLM => vec![
+        T_CHAT => vec![
             "text".into(),
             "structured".into(),
             "usage".into(),
             "latency_ms".into(),
+        ],
+        T_IMAGE => vec!["images".into(), "model".into(), "n".into()],
+        T_SPEECH => vec![
+            "audio".into(),
+            "chars".into(),
+            "voice".into(),
+            "model".into(),
         ],
         T_AWAIT => vec!["resume".into()],
         T_HTTP => vec![
@@ -638,7 +529,7 @@ pub fn declared_output_fields(kind: &str, config: &Value) -> Vec<String> {
     }
 }
 
-/// Shallow JSON-Schema check shared by script output validation and the llm
+/// Shallow JSON-Schema check shared by script output validation and the chat
 /// structured output path: only `type` and `required` (recursive for nested
 /// objects); other keywords ignored (v2 D8 — one validator, no second dialect).
 pub fn shallow_schema_check(value: &Value, schema: &Value) -> Result<(), String> {
@@ -725,7 +616,9 @@ fn validate_input_map(
 }
 
 /// Deserialize + validate a node config against its known schema. Unknown type
-/// or version → `BadRequest`.
+/// or version → `BadRequest`. Engine-inline node bodies live here; the
+/// submodule-backed nodes (`chat`/`image`/`speech`/`ct`/`http`/`docparse`)
+/// validate in their own files (one node = one file, media-nodes.md §5).
 pub fn validate_node(kind: &str, _version: i64, config: &Value) -> AppResult<()> {
     let type_error =
         |e: serde_json::Error| AppError::BadRequest(format!("node '{kind}' config invalid: {e}"));
@@ -985,191 +878,49 @@ pub fn validate_node(kind: &str, _version: i64, config: &Value) -> AppResult<()>
                     "iteration: 嵌套深度超上限 {ITER_MAX_DEPTH}"
                 )));
             }
-            // await inside a body cannot park (NoopPersist) — reject at publish
-            // instead of failing every item at runtime.
+            // await/video inside a body cannot park (NoopPersist; the
+            // snapshot's waiting list is top-level only — media-nodes.md
+            // §8-2). Reject at publish instead of failing every item at
+            // runtime.
             if body
                 .get("nodes")
                 .and_then(Value::as_array)
                 .is_some_and(|ns| {
                     ns.iter().any(|n| {
-                        n.get("data")
-                            .and_then(|d| d.get("type"))
-                            .and_then(Value::as_str)
-                            == Some("await")
+                        matches!(
+                            n.get("data")
+                                .and_then(|d| d.get("type"))
+                                .and_then(Value::as_str),
+                            Some("await") | Some("video")
+                        )
                     })
                 })
             {
                 return Err(AppError::BadRequest(
-                    "iteration: 循环体内暂不支持 await（等待语义需外层配合，见 iteration-node.md）"
+                    "iteration: 循环体内暂不支持 await/video（等待语义需外层配合，见 iteration-node.md / media-nodes.md §8-2）"
                         .into(),
                 ));
             }
         }
-        T_CT => {
-            let c: CtConfig = serde_json::from_value(config.clone()).map_err(type_error)?;
-            if c.content_type.trim().is_empty() {
-                return Err(AppError::BadRequest("ct: content_type 不能为空".into()));
-            }
-            if !CT_OPS.contains(&c.op.as_str()) {
-                return Err(AppError::BadRequest(format!(
-                    "ct: op '{}' 非法（允许: {}）",
-                    c.op,
-                    CT_OPS.join("/")
-                )));
-            }
-            if matches!(c.op.as_str(), "update" | "delete")
-                && c.id.as_deref().is_none_or(|v| v.trim().is_empty())
-            {
-                return Err(AppError::BadRequest(format!("ct: op '{}' 需要 id", c.op)));
-            }
-            for f in &c.filters {
-                if !crate::db::driver::is_safe_identifier(&f.field) {
-                    return Err(AppError::BadRequest(format!(
-                        "ct: filters.field '{}' 非法标识符",
-                        f.field
-                    )));
-                }
-                if !CT_FILTER_OPS.contains(&f.op.as_str()) {
-                    return Err(AppError::BadRequest(format!(
-                        "ct: filters.op '{}' 非法（允许: {}）",
-                        f.op,
-                        CT_FILTER_OPS.join("/")
-                    )));
-                }
-            }
-            for v in &c.values {
-                if !crate::db::driver::is_safe_identifier(&v.field) {
-                    return Err(AppError::BadRequest(format!(
-                        "ct: values.field '{}' 非法标识符",
-                        v.field
-                    )));
-                }
-            }
-            if let Some(sort) = &c.sort {
-                let field = sort.trim_start_matches('-');
-                if !crate::db::driver::is_safe_identifier(field) || field.is_empty() {
-                    return Err(AppError::BadRequest(format!(
-                        "ct: sort '{}' 非法（field 或 -field）",
-                        sort
-                    )));
-                }
-            }
-            if c.page.is_some_and(|p| p < 1) || c.page_size.is_some_and(|p| p < 1) {
-                return Err(AppError::BadRequest("ct: page/page_size 须 ≥1".into()));
-            }
-            if c.page_size.is_some_and(|p| p > CT_MAX_PAGE_SIZE) {
-                return Err(AppError::BadRequest(format!(
-                    "ct: page_size 上限 {CT_MAX_PAGE_SIZE}"
-                )));
-            }
-        }
-        T_HTTP => {
-            let c: HttpConfig = serde_json::from_value(config.clone()).map_err(type_error)?;
-            if !HTTP_METHODS.contains(&c.method.as_str()) {
-                return Err(AppError::BadRequest(format!(
-                    "http: method '{}' 非法（允许: {}）",
-                    c.method,
-                    HTTP_METHODS.join("/")
-                )));
-            }
-            let url = c.url.trim();
-            if url.is_empty() {
-                return Err(AppError::BadRequest("http: url 不能为空".into()));
-            }
-            if !(url.starts_with("http://") || url.starts_with("https://")) {
-                return Err(AppError::BadRequest(
-                    "http: url 须以 http:// 或 https:// 开头".into(),
-                ));
-            }
-            for (where_, rows) in [("headers", &c.headers), ("query", &c.query)] {
-                for r in rows {
-                    if r.key.trim().is_empty() {
-                        return Err(AppError::BadRequest(format!(
-                            "http: {where_}[].key 不能为空"
-                        )));
-                    }
-                }
-            }
-            if c.timeout_ms.is_some_and(|t| t < 1) {
-                return Err(AppError::BadRequest("http: timeout_ms 须为 ≥1".into()));
-            }
-        }
-        T_LLM => {
-            let c: LlmConfig = serde_json::from_value(config.clone()).map_err(type_error)?;
-            if c.messages.is_empty() {
-                return Err(AppError::BadRequest(
-                    "llm: messages 不能为空且需至少一条 user".into(),
-                ));
-            }
-            if c.messages[0].role == "system" && c.messages.len() == 1 {
-                return Err(AppError::BadRequest(
-                    "llm: messages 不能为空且需至少一条 user".into(),
-                ));
-            }
-            if !c.messages.iter().any(|m| m.role == "user") {
-                return Err(AppError::BadRequest(
-                    "llm: messages 不能为空且需至少一条 user".into(),
-                ));
-            }
-            for m in &c.messages {
-                if !matches!(m.role.as_str(), "system" | "user" | "assistant") {
-                    return Err(AppError::BadRequest(format!(
-                        "llm: role '{}' 非法 (system|user|assistant)",
-                        m.role
-                    )));
-                }
-                if m.text.trim().is_empty() {
-                    return Err(AppError::BadRequest(format!(
-                        "llm: messages[{}] text 不能为空",
-                        m.role
-                    )));
-                }
-            }
-            if let Some(t) = c.temperature
-                && !(0.0..=2.0).contains(&t)
-            {
-                return Err(AppError::BadRequest("llm: temperature 须在 [0,2]".into()));
-            }
-            if c.max_tokens.is_some_and(|t| t <= 0) {
-                return Err(AppError::BadRequest("llm: max_tokens 须 > 0".into()));
-            }
-            if c.stop.as_ref().is_some_and(|s| s.len() > 4) {
-                return Err(AppError::BadRequest("llm: stop 最多 4 条".into()));
-            }
-            if let Some(schema) = &c.json_schema
-                && !(schema.is_object()
-                    && schema.get("type").and_then(Value::as_str) == Some("object"))
-            {
-                return Err(AppError::BadRequest(
-                    "llm: json_schema 须为 {\"type\":\"object\",...}".into(),
-                ));
-            }
-        }
-        T_DOCPARSE => {
-            let c: DocParseConfig = serde_json::from_value(config.clone()).map_err(type_error)?;
-            if c.input.is_null() {
-                return Err(AppError::BadRequest("docparse: input 不能为空".into()));
-            }
-            validate_value_expr("docparse.input", &c.input)?;
-            if let Some(e) = &c.engine
-                && (e.trim().is_empty() || !crate::db::driver::is_safe_identifier(e.trim()))
-            {
-                return Err(AppError::BadRequest(format!(
-                    "docparse: engine '{}' 非法标识符",
-                    e
-                )));
-            }
-        }
+        T_CT => ct::validate(config)?,
+        T_HTTP => http::validate(config)?,
+        T_CHAT => chat::validate(config)?,
+        T_DOCPARSE => docparse::validate(config)?,
+        T_IMAGE => image::validate(config)?,
+        T_SPEECH => speech::validate(config)?,
+        T_VIDEO => video::validate(config)?,
         other => {
             return Err(AppError::BadRequest(format!(
-                "node type '{other}' not supported (v1: start|end|script|egress|branch)"
+                "node type '{other}' not supported (start|end|script|egress|branch|await|transform|chat|image|speech|http|ct|iteration|docparse)"
             )));
         }
     }
     Ok(())
 }
 
-/// Node type string union (TS literal union; wire = `data.type`).
+/// Node type string union (TS literal union; wire = `data.type`). `chat` is
+/// the renamed `llm` (media-nodes.md §1) — legacy `"llm"` canvases are
+/// aliased at load time (graph.rs `read_node`), never re-saved.
 #[cfg_attr(feature = "export-types", derive(ts_rs::TS))]
 #[cfg_attr(feature = "export-types", ts(rename_all = "lowercase"))]
 #[allow(dead_code)]
@@ -1180,7 +931,10 @@ pub enum NodeKind {
     Egress,
     Branch,
     Await,
-    Llm,
+    Chat,
+    Image,
+    Speech,
+    Video,
     Http,
     Ct,
     Iteration,
@@ -1201,7 +955,10 @@ pub enum NodeConfigVariant {
     Egress(EgressConfig),
     Branch(BranchConfig),
     Await(AwaitConfig),
-    Llm(LlmConfig),
+    Chat(ChatConfig),
+    Image(ImageConfig),
+    Speech(SpeechConfig),
+    Video(VideoConfig),
     Http(HttpConfig),
     Ct(CtConfig),
     Iteration(IterationConfig),
@@ -1224,6 +981,86 @@ pub enum ValueExpr {
     Expr {
         expr: String,
     },
+}
+
+// ── shared plumbing for the modality node group (media-nodes.md §5) ──────
+
+/// LLM 底座 runtime shared by the modality nodes (`chat`/`image`/`speech`,
+/// later `video`). 模型访问唯一入口 = llm 底座（design §10.2）——节点只带
+/// 租户与（可选）触发用户，路由/号池/failover/计费全在内核。
+#[derive(Clone)]
+pub struct LlmRuntime {
+    pub router: std::sync::Arc<crate::llm::service::LlmRouter>,
+    pub tenant: String,
+    /// 触发用户（计费归因/日限额）；cron/system = None。
+    pub caller: Option<crate::types::snowflake_id::SnowflakeId>,
+}
+
+/// Render a C3.1 template string against the pool. Prompts are always text:
+/// a whole-string `{{#ref#}}` returning an object is stringified instead of
+/// failing (C3.1 keeps typed values).
+pub(crate) fn render_prompt_text(text: &str, pool: &super::engine::Pool) -> AppResult<String> {
+    match super::expr::resolve_text(text, pool)? {
+        Value::String(s) => Ok(s),
+        other => Ok(match &other {
+            Value::String(s) => s.clone(),
+            v => serde_json::to_string(v).unwrap_or_default(),
+        }),
+    }
+}
+
+/// Cap for a single media asset download (URL-only upstream images).
+pub(crate) const MEDIA_DOWNLOAD_MAX_BYTES: usize = 64 * 1024 * 1024;
+
+/// SSRF-checked HTTPS download of a URL-only upstream asset (media-nodes.md
+/// §6 — upstream URLs are transient signed addresses, never forwarded raw).
+/// Redirects disabled: a 302 to a private host must not bypass the SSRF check
+/// (same discipline as docparse's input loader).
+pub(crate) async fn download_https(url: &str) -> AppResult<Vec<u8>> {
+    crate::docparse::validate_external_url(url)?;
+    let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(std::time::Duration::from_secs(120))
+        .build()
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("media http client: {e}")))?;
+    let resp = client
+        .get(url)
+        .send()
+        .await
+        .map_err(|e| AppError::BadRequest(format!("media: 下载失败 {e}")))?;
+    if !resp.status().is_success() {
+        return Err(AppError::BadRequest(format!(
+            "media: 下载失败 HTTP {}",
+            resp.status()
+        )));
+    }
+    let bytes = resp
+        .bytes()
+        .await
+        .map_err(|e| AppError::BadRequest(format!("media: 读取响应失败 {e}")))?;
+    if bytes.len() > MEDIA_DOWNLOAD_MAX_BYTES {
+        return Err(AppError::BadRequest(format!(
+            "media: 文件过大 {} bytes (max {MEDIA_DOWNLOAD_MAX_BYTES})",
+            bytes.len()
+        )));
+    }
+    Ok(bytes.to_vec())
+}
+
+/// Sniff an image's extension + content type from magic bytes (fallback png).
+#[must_use]
+pub(crate) fn sniff_image(bytes: &[u8]) -> (&'static str, &'static str) {
+    if bytes.starts_with(&[0x89, b'P', b'N', b'G']) {
+        ("png", "image/png")
+    } else if bytes.starts_with(&[0xFF, 0xD8, 0xFF]) {
+        ("jpg", "image/jpeg")
+    } else if bytes.len() >= 12 && &bytes[8..12] == b"WEBP" {
+        ("webp", "image/webp")
+    } else if bytes.starts_with(b"GIF8") {
+        ("gif", "image/gif")
+    } else {
+        ("png", "image/png")
+    }
 }
 
 #[cfg(test)]
@@ -1440,115 +1277,6 @@ mod tests {
                 &json!({"items": {"ref": ["a"]}, "body": two_ends})
             )
             .is_err()
-        );
-    }
-
-    #[test]
-    fn http_config_validation() {
-        let ok = json!({
-            "method": "POST",
-            "url": "https://api.example.com/{{#start.uid#}}",
-            "headers": [{"key": "Authorization", "value": "Bearer x"}],
-            "query": [{"key": "q", "value": "{{#start.q#}}"}],
-            "body": "{\"k\": 1}",
-            "timeout_ms": 5000
-        });
-        assert!(validate_node(T_HTTP, 1, &ok).is_ok());
-
-        assert!(
-            validate_node(
-                T_HTTP,
-                1,
-                &json!({"method": "FETCH", "url": "https://x.io"})
-            )
-            .is_err(),
-            "非法 method"
-        );
-        assert!(
-            validate_node(T_HTTP, 1, &json!({"method": "GET", "url": ""})).is_err(),
-            "空 url"
-        );
-        assert!(
-            validate_node(T_HTTP, 1, &json!({"method": "GET", "url": "ftp://x.io"})).is_err(),
-            "非 http scheme"
-        );
-        assert!(
-            validate_node(T_HTTP, 1, &json!({"method": "GET", "url": "https://x.io", "headers": [{"key": "", "value": "1"}]})).is_err(),
-            "空 header key"
-        );
-        assert!(
-            validate_node(
-                T_HTTP,
-                1,
-                &json!({"method": "GET", "url": "https://x.io", "timeout_ms": 0})
-            )
-            .is_err(),
-            "timeout < 1"
-        );
-    }
-
-    #[test]
-    fn llm_config_validation() {
-        let ok = json!({
-            "messages": [
-                {"role": "system", "text": "你是助手"},
-                {"role": "user", "text": "hi {{#start.q#}}"}
-            ],
-            "temperature": 0.3, "max_tokens": 100, "stop": ["\n"]
-        });
-        assert!(validate_node(T_LLM, 1, &ok).is_ok());
-
-        assert!(
-            validate_node(T_LLM, 1, &json!({"messages": []})).is_err(),
-            "空 messages"
-        );
-        assert!(
-            validate_node(
-                T_LLM,
-                1,
-                &json!({"messages": [{"role": "system", "text": "only sys"}]})
-            )
-            .is_err(),
-            "只有 system 无 user"
-        );
-        assert!(
-            validate_node(
-                T_LLM,
-                1,
-                &json!({"messages": [{"role": "tool", "text": "x"}]})
-            )
-            .is_err(),
-            "非法 role"
-        );
-        assert!(
-            validate_node(
-                T_LLM,
-                1,
-                &json!({"messages": [{"role": "user", "text": "x"}], "temperature": 5.0})
-            )
-            .is_err(),
-            "temperature 越界"
-        );
-        assert!(
-            validate_node(
-                T_LLM,
-                1,
-                &json!({"messages": [{"role": "user", "text": "x"}], "stop": ["a","b","c","d","e"]})
-            )
-            .is_err(),
-            "stop 超 4 条"
-        );
-        assert!(
-            validate_node(
-                T_LLM,
-                1,
-                &json!({
-                    "messages": [{"role": "user", "text": "x"}],
-                    "json_schema": {"type": "array"}
-                })
-            )
-            .is_err(),
-            "json_schema 非 object"
         );
     }
 }

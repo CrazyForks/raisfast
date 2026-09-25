@@ -295,7 +295,7 @@ mod tests {
     }
 
     fn llm(id: &str, text: &str) -> Value {
-        json!({"id": id, "data": {"type": "llm", "config": {
+        json!({"id": id, "data": {"type": "chat", "config": {
             "messages": [{"role": "user", "text": text}]
         }}})
     }

@@ -315,6 +315,25 @@ impl ModelProvider for OpenAiCompatProvider {
         if let Some(size) = &request.size {
             body["size"] = Value::String(size.clone());
         }
+        // Reference images (image-to-video / first frame): the OpenAI Videos
+        // wire field is a single `input_reference` string — multiple refs
+        // additionally ride `input_references` for aggregators that accept
+        // first/last-frame pairs.
+        if let Some(first) = request
+            .input_references
+            .first()
+            .and_then(|r| r.to_wire_string())
+        {
+            body["input_reference"] = Value::String(first);
+        }
+        if request.input_references.len() > 1 {
+            let refs: Vec<Value> = request
+                .input_references
+                .iter()
+                .filter_map(|r| r.to_wire_string().map(Value::String))
+                .collect();
+            body["input_references"] = Value::Array(refs);
+        }
         let text = self.send_json_to(VIDEOS_ENDPOINT, &body).await?;
         let parsed: OpenAiVideoTask = serde_json::from_str(&text)
             .map_err(|e| ProviderError::Parse(format!("{e}: {text}")))?;

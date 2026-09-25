@@ -110,6 +110,50 @@ pub struct VideoRequest {
     pub seconds: Option<String>,
     /// Wire size string, e.g. `1280x720` (None = provider default).
     pub size: Option<String>,
+    /// Optional reference images — image-to-video / first-frame anchoring.
+    /// Empty = pure text-to-video. Exactly one of `url`/`b64_json` is set
+    /// per ref; the openai-compat wire emits the first ref as
+    /// `input_reference` (data-URL when only b64 is available).
+    pub input_references: Vec<VideoInputRef>,
+}
+
+/// One reference image attached to a [`VideoRequest`].
+#[derive(Debug, Clone)]
+pub struct VideoInputRef {
+    /// Publicly fetchable https URL (upstream pulls it).
+    pub url: Option<String>,
+    /// Inline base64 payload (no public URL required); `mime` describes it.
+    pub b64_json: Option<String>,
+    /// Mime of the b64 payload, e.g. `image/png` (used to build a data-URL).
+    pub mime: Option<String>,
+}
+
+impl VideoInputRef {
+    /// A public-URL reference.
+    #[must_use]
+    pub fn from_url(url: impl Into<String>) -> Self {
+        Self {
+            url: Some(url.into()),
+            b64_json: None,
+            mime: None,
+        }
+    }
+
+    /// The wire string for OpenAI-compat `input_reference`: the URL, or a
+    /// data-URL synthesized from the inline payload.
+    #[must_use]
+    pub fn to_wire_string(&self) -> Option<String> {
+        if let Some(url) = &self.url {
+            return Some(url.clone());
+        }
+        self.b64_json.as_ref().map(|b64| {
+            // RFC 2397: data:[<mime>][;base64],<data>
+            format!(
+                "data:{};base64,{b64}",
+                self.mime.as_deref().unwrap_or("image/png")
+            )
+        })
+    }
 }
 
 /// Terminal-or-not state of an async video task.

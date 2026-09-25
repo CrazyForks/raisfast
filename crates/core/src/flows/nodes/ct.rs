@@ -17,10 +17,131 @@ use crate::content_type::repository::{
 use crate::errors::app_error::{AppError, AppResult};
 use crate::types::snowflake_id::SnowflakeId;
 
-use super::engine::{ExecOutcome, Pool};
-use super::expr;
-use super::graph::GraphNode;
-use super::nodes::{CT_MAX_PAGE_SIZE, CtConfig};
+use crate::flows::engine::{ExecOutcome, Pool};
+use crate::flows::graph::GraphNode;
+
+/// One filter row of a `ct` node: `value` is a C3.1 template.
+#[cfg_attr(feature = "export-types", derive(ts_rs::TS))]
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct CtFilterRow {
+    pub field: String,
+    pub op: String,
+    #[serde(default)]
+    pub value: String,
+}
+
+/// One payload field of a `ct` node (`insert`/`update`): `value` is a template.
+#[cfg_attr(feature = "export-types", derive(ts_rs::TS))]
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct CtSetRow {
+    pub field: String,
+    #[serde(default)]
+    pub value: String,
+}
+
+/// `ct` node config — first-class CRUD on a content type (tenant isolation
+/// and soft-delete/ownable protocols inherited from the CT repository).
+#[cfg_attr(feature = "export-types", derive(ts_rs::TS))]
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct CtConfig {
+    /// Content-type plural name.
+    pub content_type: String,
+    pub op: String,
+    #[serde(default)]
+    pub filters: Vec<CtFilterRow>,
+    #[serde(default)]
+    pub sort: Option<String>,
+    /// Record id (template) — required for `update` / `delete`.
+    #[serde(default)]
+    pub id: Option<String>,
+    /// Payload rows for `insert` / `update`.
+    #[serde(default)]
+    pub values: Vec<CtSetRow>,
+    #[serde(default)]
+    #[cfg_attr(feature = "export-types", ts(type = "number"))]
+    pub page: Option<i64>,
+    #[serde(default)]
+    #[cfg_attr(feature = "export-types", ts(type = "number"))]
+    pub page_size: Option<i64>,
+}
+
+/// Operations allowed on the `ct` node.
+pub const CT_OPS: &[&str] = &[
+    "find_one",
+    "find_page",
+    "count",
+    "insert",
+    "update",
+    "delete",
+];
+
+/// Filter operators exposed to flow authors (subset of repository FilterOp).
+pub const CT_FILTER_OPS: &[&str] = &["eq", "ne", "gt", "gte", "lt", "lte", "contains", "like"];
+
+/// Max rows a `find_page` may return in one run (safety cap).
+pub const CT_MAX_PAGE_SIZE: i64 = 100;
+
+/// Config validation (moved from the central registry; media-nodes.md §5).
+pub(super) fn validate(config: &serde_json::Value) -> AppResult<()> {
+    let c: CtConfig = serde_json::from_value(config.clone())
+        .map_err(|e| AppError::BadRequest(format!("node 'ct' config invalid: {e}")))?;
+    if c.content_type.trim().is_empty() {
+        return Err(AppError::BadRequest("ct: content_type 不能为空".into()));
+    }
+    if !CT_OPS.contains(&c.op.as_str()) {
+        return Err(AppError::BadRequest(format!(
+            "ct: op '{}' 非法（允许: {}）",
+            c.op,
+            CT_OPS.join("/")
+        )));
+    }
+    if matches!(c.op.as_str(), "update" | "delete")
+        && c.id.as_deref().is_none_or(|v| v.trim().is_empty())
+    {
+        return Err(AppError::BadRequest(format!("ct: op '{}' 需要 id", c.op)));
+    }
+    for f in &c.filters {
+        if !crate::db::driver::is_safe_identifier(&f.field) {
+            return Err(AppError::BadRequest(format!(
+                "ct: filters.field '{}' 非法标识符",
+                f.field
+            )));
+        }
+        if !CT_FILTER_OPS.contains(&f.op.as_str()) {
+            return Err(AppError::BadRequest(format!(
+                "ct: filters.op '{}' 非法（允许: {}）",
+                f.op,
+                CT_FILTER_OPS.join("/")
+            )));
+        }
+    }
+    for v in &c.values {
+        if !crate::db::driver::is_safe_identifier(&v.field) {
+            return Err(AppError::BadRequest(format!(
+                "ct: values.field '{}' 非法标识符",
+                v.field
+            )));
+        }
+    }
+    if let Some(sort) = &c.sort {
+        let field = sort.trim_start_matches('-');
+        if !crate::db::driver::is_safe_identifier(field) || field.is_empty() {
+            return Err(AppError::BadRequest(format!(
+                "ct: sort '{}' 非法（field 或 -field）",
+                sort
+            )));
+        }
+    }
+    if c.page.is_some_and(|p| p < 1) || c.page_size.is_some_and(|p| p < 1) {
+        return Err(AppError::BadRequest("ct: page/page_size 须 ≥1".into()));
+    }
+    if c.page_size.is_some_and(|p| p > CT_MAX_PAGE_SIZE) {
+        return Err(AppError::BadRequest(format!(
+            "ct: page_size 上限 {CT_MAX_PAGE_SIZE}"
+        )));
+    }
+    Ok(())
+}
 
 pub struct CtRuntime {
     pub registry: Arc<crate::content_type::ContentTypeRegistry>,
@@ -58,7 +179,7 @@ fn filter_op(op: &str) -> Option<FilterOp> {
 /// Render a template to a typed Value (whole-string refs keep type — a number
 /// filter value stays a number).
 fn render_value(text: &str, pool: &Pool) -> AppResult<Value> {
-    expr::resolve_text(text, pool)
+    crate::flows::expr::resolve_text(text, pool)
 }
 
 fn render_id(template: &str, pool: &Pool) -> AppResult<SnowflakeId> {

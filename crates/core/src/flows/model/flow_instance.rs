@@ -230,6 +230,25 @@ pub async fn set_instance_waiting(
     Ok(())
 }
 
+/// Waiting instances of one waiting kind (media-nodes.md §5 poller feed):
+/// `video` rows parked by a video submit, indexed by (status, waiting_kind).
+pub async fn find_waiting_by_kind(
+    pool: &crate::db::Pool,
+    waiting_kind: &str,
+) -> AppResult<Vec<FlowInstance>> {
+    let sql = format!(
+        "SELECT {FLOW_INSTANCE_COLS} FROM flow_instance \
+         WHERE status = 'waiting' AND waiting_kind = {}",
+        Driver::ph(1)
+    );
+    Ok(
+        sqlx::query_as::<crate::db::pool::Db, FlowInstance>(crate::db::safe_sql(&sql))
+            .bind(waiting_kind)
+            .fetch_all(pool)
+            .await?,
+    )
+}
+
 /// Update instance terminal/running status + optional finished_at.
 #[allow(clippy::too_many_arguments)]
 pub async fn update_instance_status(

@@ -817,11 +817,16 @@ impl LlmCall<'_> {
     /// 文生图。
     pub async fn image(
         self,
-        model: &str,
+        model: Option<&str>,
         request: &raisfast_agent::provider::ImageRequest,
     ) -> AppResult<Vec<raisfast_agent::provider::GeneratedImage>> {
         let (model, info) = self
-            .prepare(Some(model), "", "image", &[LlmModelType::Image])
+            .prepare(
+                model,
+                "llm.default_image_model",
+                "image",
+                &[LlmModelType::Image],
+            )
             .await?;
         let n = request.n.max(1) as i64;
         let estimate = RelayUsage {
@@ -878,10 +883,16 @@ impl LlmCall<'_> {
             .await
     }
 
-    /// 文生语音（按输入字符精确计费，input-side 结算语义 §9.3）。
-    pub async fn speech(self, model: &str, text: &str, voice: &str) -> AppResult<Vec<u8>> {
+    /// 文生语音（按输入字符精确计费，input-side 结算语义 §9.3）。模型
+    /// None → 租户默认 `llm.default_speech_model`。
+    pub async fn speech(self, model: Option<&str>, text: &str, voice: &str) -> AppResult<Vec<u8>> {
         let (model, info) = self
-            .prepare(Some(model), "", "speech", &[LlmModelType::Tts])
+            .prepare(
+                model,
+                "llm.default_speech_model",
+                "speech",
+                &[LlmModelType::Tts],
+            )
             .await?;
         let estimate = RelayUsage {
             prompt_tokens: text.chars().count().max(1) as i64,

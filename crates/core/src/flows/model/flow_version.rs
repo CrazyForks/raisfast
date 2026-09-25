@@ -116,3 +116,95 @@ pub async fn find_version_by_id(
             .await?,
     )
 }
+
+/// Rewrite `"type": "llm"` node data to `"chat"` inside a definition/draft
+/// JSON value (recursive — covers iteration bodies). Returns whether
+/// anything changed (media-nodes.md §1.2 one-time migration).
+fn rewrite_llm_node_kind(value: &mut Value) -> bool {
+    let mut changed = false;
+    match value {
+        Value::Object(map) => {
+            if let Some(data) = map.get_mut("data")
+                && let Some(t) = data.get_mut("type")
+                && t.as_str() == Some("llm")
+            {
+                *t = Value::String("chat".into());
+                changed = true;
+            }
+            for (_, v) in map.iter_mut() {
+                changed |= rewrite_llm_node_kind(v);
+            }
+        }
+        Value::Array(items) => {
+            for item in items.iter_mut() {
+                changed |= rewrite_llm_node_kind(item);
+            }
+        }
+        _ => {}
+    }
+    changed
+}
+
+/// One-time startup migration (media-nodes.md §1.2): rewrite stored `"llm"`
+/// node kinds to `"chat"` in every published `flow_version.definition` and
+/// every working draft in `flow.extra._draft`. The graph loader keeps a
+/// permanent read alias, so this is canonicalization (canvas shows `chat`,
+/// republish writes clean JSON) rather than a correctness requirement —
+/// leftovers from backup restores are still executed fine.
+///
+/// # Errors
+///
+/// Propagates DB errors; per-row failures abort the run (safe to re-run —
+/// the rewrite is idempotent).
+pub async fn migrate_llm_node_kind(pool: &crate::db::Pool) -> AppResult<u64> {
+    const NEEDLE: &str = "\"type\":\"llm\"";
+    let mut migrated: u64 = 0;
+
+    // Published versions.
+    let needle = format!("%{NEEDLE}%");
+    let version_ids: Vec<i64> =
+        sqlx::query_scalar::<crate::db::pool::Db, i64>(crate::db::safe_sql(&format!(
+            "SELECT id FROM flow_version WHERE definition LIKE {}",
+            Driver::ph(1)
+        )))
+        .bind(needle.clone())
+        .fetch_all(pool)
+        .await?;
+    for vid in version_ids {
+        let Some(mut version) = find_version_by_id(pool, SnowflakeId(vid)).await? else {
+            continue;
+        };
+        if rewrite_llm_node_kind(&mut version.definition) {
+            let update = format!(
+                "UPDATE flow_version SET definition = {} WHERE id = {}",
+                Driver::ph(1),
+                Driver::ph(2)
+            );
+            sqlx::query(crate::db::safe_sql(&update))
+                .bind(&version.definition)
+                .bind(vid)
+                .execute(pool)
+                .await?;
+            migrated += 1;
+        }
+    }
+
+    // Working drafts (flow.extra._draft).
+    let draft_sql = format!("SELECT id FROM flow WHERE extra LIKE {}", Driver::ph(1));
+    let flow_ids: Vec<i64> =
+        sqlx::query_scalar::<crate::db::pool::Db, i64>(crate::db::safe_sql(&draft_sql))
+            .bind(format!("%{NEEDLE}%"))
+            .fetch_all(pool)
+            .await?;
+    for fid in flow_ids {
+        let flow = super::flow::find_flow_by_id(pool, SnowflakeId(fid)).await?;
+        let Some(mut draft) = super::flow::flow_draft(&flow) else {
+            continue;
+        };
+        if rewrite_llm_node_kind(&mut draft) {
+            super::flow::set_flow_draft(pool, SnowflakeId(fid), Some(draft)).await?;
+            migrated += 1;
+        }
+    }
+    Ok(migrated)
+}

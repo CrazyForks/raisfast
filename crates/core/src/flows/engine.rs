@@ -167,7 +167,7 @@ pub struct ExecOutcome {
 }
 
 /// Async executor for action nodes (`script`/`egress`/`llm`). The variable
-/// pool is passed for template-driven nodes (`llm` reads `{{#…#}}` refs
+/// pool is passed for template-driven nodes (`chat` reads `{{#…#}}` refs
 /// directly instead of a mapped input).
 #[async_trait]
 pub trait NodeExecutor: Send + Sync {
@@ -295,7 +295,9 @@ pub async fn run_persisted(
             }
             nodes::T_SCRIPT
             | nodes::T_EGRESS
-            | nodes::T_LLM
+            | nodes::T_CHAT
+            | nodes::T_IMAGE
+            | nodes::T_SPEECH
             | nodes::T_HTTP
             | nodes::T_CT
             | nodes::T_DOCPARSE => {
@@ -310,11 +312,14 @@ pub async fn run_persisted(
                 // Directly after `start` with no explicit `input` mapping: pass
                 // the caller's trigger inputs through by default, so external /
                 // manual runs reach the first script without extra wiring.
-                // `llm` reads variables through message templates instead and
+                // `chat` reads variables through message templates instead and
                 // ignores the fed input (llm-node.md W5) — feed it nothing.
                 let input = if matches!(
                     node.data.kind.as_str(),
-                    nodes::T_LLM
+                    nodes::T_CHAT
+                        | nodes::T_IMAGE
+                        | nodes::T_SPEECH
+                        | nodes::T_VIDEO
                         | nodes::T_HTTP
                         | nodes::T_CT
                         | nodes::T_ITERATION
@@ -416,6 +421,96 @@ pub async fn run_persisted(
                     }
                     Some(e) => {
                         dispatch_node_failure(graph, snap, &id, &mods, e, &mut queue)?;
+                    }
+                }
+            }
+            nodes::T_VIDEO => {
+                // Async submit→park (media-nodes.md §4.2). Two-step durable
+                // write guards against double billing: `submitting` persisted
+                // before the upstream call, `submitted` right after. A crash
+                // in between leaves an unconfirmed state that is NEVER
+                // resubmitted — the node fails with a recovery pointer.
+                // Submit-time channel failover lives in the facade; no engine
+                // retry on top (retrying a possibly-accepted paid submit
+                // means double billing).
+                let mods: NodeModifiers =
+                    serde_json::from_value(node.data.modifiers.clone()).unwrap_or_default();
+                let prior_phase = snap
+                    .node_states
+                    .get(&id)
+                    .and_then(|s| s.output.as_ref())
+                    .and_then(|o| o.get("phase"))
+                    .and_then(Value::as_str)
+                    .map(str::to_string);
+                match prior_phase.as_deref() {
+                    // Crash window: the submit may have reached the provider
+                    // (already billed). Never resubmit — fail the node; the
+                    // remote task can be recovered via llm_tasks / provider
+                    // console (MPT UnconfirmedTaskError discipline).
+                    Some("submitting") => {
+                        let err = json!({
+                            "message": "video 提交状态不确定（崩溃窗口），已放弃自动重试；请凭 llm_tasks / 上游控制台找回远端任务",
+                            "phase": "submitting",
+                            "unconfirmed": true,
+                        });
+                        dispatch_node_failure(graph, snap, &id, &mods, err, &mut queue)?;
+                    }
+                    // Replay after a crash post-submit: re-park without
+                    // calling the executor again.
+                    Some("submitted") => {
+                        let st = snap.node_states.entry(id.clone()).or_default();
+                        st.status = N_WAITING.to_string();
+                        if !snap.waiting_nodes.contains(&id) {
+                            snap.waiting_nodes.push(id.clone());
+                        }
+                        snap.status = S_WAITING.to_string();
+                        persist.persist(snap).await?;
+                        break;
+                    }
+                    _ => {
+                        // Fresh submit: claim + phase=submitting persisted →
+                        // executor submits → phase=submitted persisted → park.
+                        set_in_progress(snap, &id, 1);
+                        let st = snap.node_states.get_mut(&id);
+                        if let Some(st) = st {
+                            st.output = Some(json!({"phase": "submitting"}));
+                        }
+                        persist.persist(snap).await?;
+                        match exec
+                            .exec(node, Value::Object(serde_json::Map::new()), &snap.pool)
+                            .await
+                        {
+                            Ok(o) if o.output.get("phase") == Some(&json!("submitted")) => {
+                                let st = snap.node_states.entry(id.clone()).or_default();
+                                st.status = N_WAITING.to_string();
+                                st.output = Some(o.output);
+                                if let Some(u) = o.usage {
+                                    st.usage = Some(u);
+                                }
+                                if let Some(l) = o.latency_ms {
+                                    st.latency_ms = Some(l);
+                                }
+                                if !snap.waiting_nodes.contains(&id) {
+                                    snap.waiting_nodes.push(id.clone());
+                                }
+                                snap.status = S_WAITING.to_string();
+                                persist.persist(snap).await?;
+                                break;
+                            }
+                            Ok(o) => {
+                                // Executor contract violation — treat as an
+                                // engine error, never as success.
+                                let err = json!({
+                                    "message": "video executor 返回了未知产物（缺少 phase=submitted）",
+                                    "output": o.output,
+                                });
+                                dispatch_node_failure(graph, snap, &id, &mods, err, &mut queue)?;
+                            }
+                            Err(e) => {
+                                let err = json!({"message": e.to_string()});
+                                dispatch_node_failure(graph, snap, &id, &mods, err, &mut queue)?;
+                            }
+                        }
                     }
                 }
             }
@@ -897,13 +992,16 @@ fn resume_completed(
         nodes::T_END => {}
         nodes::T_SCRIPT
         | nodes::T_EGRESS
-        | nodes::T_LLM
+        | nodes::T_CHAT
         | nodes::T_HTTP
         | nodes::T_CT
         | nodes::T_ITERATION
-        | nodes::T_DOCPARSE => {
+        | nodes::T_DOCPARSE
+        | nodes::T_VIDEO => {
             // Same verdict fan-out as the live path: a succeeded exec node
             // skips its error_out edges (they were Skipped in the prior pass).
+            // Video completed via resume (single `out` port; the poller's
+            // done/fail/timeout distinction lands in the payload, not ports).
             fan_out_exec(graph, snap, id, queue, false)?;
         }
         _ => {
@@ -1192,6 +1290,106 @@ mod tests {
         assert_eq!(snap.status, S_SUCCESS);
         assert_eq!(snap.outputs.unwrap()["answer"], "hi");
         assert_eq!(snap.node_states["end"].status, N_SUCCESS);
+    }
+
+    /// Executor that mimics the video submit segment.
+    struct VideoSubmitExec;
+    #[async_trait]
+    impl NodeExecutor for VideoSubmitExec {
+        async fn exec(
+            &self,
+            _node: &GraphNode,
+            _input: Value,
+            _pool: &Pool,
+        ) -> AppResult<ExecOutcome> {
+            Ok(ExecOutcome {
+                output: json!({
+                    "phase": "submitted",
+                    "task_id": "task-1",
+                    "model": "vid",
+                    "deadline_unix": 4102444800_i64,
+                }),
+                usage: None,
+                latency_ms: None,
+            })
+        }
+    }
+
+    fn video_graph() -> Graph {
+        graph_of(def(
+            json!([
+                node("start", "start", json!({})),
+                node("v", "video", json!({"model": "vid", "prompt": "a cat"})),
+                node("e", "end", json!({"outputs": []}))
+            ]),
+            json!([edge("start", "out", "v"), edge("v", "out", "e")]),
+        ))
+    }
+
+    #[tokio::test]
+    async fn video_submit_parks_instance_waiting() {
+        let g = video_graph();
+        let mut snap = Snapshot::new();
+        run(&g, &mut snap, &VideoSubmitExec).await.unwrap();
+        assert_eq!(snap.status, S_WAITING);
+        assert_eq!(snap.node_states["v"].status, N_WAITING);
+        assert_eq!(snap.waiting_nodes, vec!["v".to_string()]);
+        // Two-step durable write landed on the submitted phase.
+        assert_eq!(
+            snap.node_states["v"].output.as_ref().unwrap()["phase"],
+            "submitted"
+        );
+        assert_eq!(
+            snap.node_states["v"].output.as_ref().unwrap()["task_id"],
+            "task-1"
+        );
+        // end not reached while parked
+        assert!(!snap.node_states.contains_key("e"));
+    }
+
+    #[tokio::test]
+    async fn video_replay_after_submit_re_parks_without_resubmit() {
+        let g = video_graph();
+        let mut snap = Snapshot::new();
+        run(&g, &mut snap, &VideoSubmitExec).await.unwrap();
+        // Replay the same snapshot (crash + restart path): the executor must
+        // NOT be called again — but run() drives from the start; assert the
+        // node stays parked with the same task id.
+        run(&g, &mut snap, &VideoSubmitExec).await.unwrap();
+        assert_eq!(snap.status, S_WAITING);
+        assert_eq!(
+            snap.node_states["v"].output.as_ref().unwrap()["task_id"],
+            "task-1"
+        );
+    }
+
+    #[tokio::test]
+    async fn video_unconfirmed_submit_window_fails_node() {
+        // Snapshot replay with phase=submitting persisted (crash between the
+        // two durable writes): never resubmit — node fails with the recovery
+        // pointer, engine status reflects the failure.
+        let g = video_graph();
+        let mut snap = Snapshot::new();
+        let mut start_ns = HashMap::new();
+        start_ns.insert("q".into(), json!("x"));
+        snap.pool.insert("start".into(), start_ns);
+        let st = super::NodeState {
+            status: N_IN_PROGRESS.to_string(),
+            output: Some(json!({"phase": "submitting"})),
+            ..Default::default()
+        };
+        snap.node_states.insert("v".into(), st);
+        run(&g, &mut snap, &VideoSubmitExec).await.unwrap();
+        assert_eq!(
+            snap.status, S_FAILED,
+            "unconfirmed submit must fail the run"
+        );
+        let err = snap.node_states["v"].error.as_ref().unwrap();
+        assert!(
+            err.to_string().contains("不确定")
+                || err["message"].as_str().unwrap().contains("不确定"),
+            "{err}"
+        );
     }
 
     #[tokio::test]

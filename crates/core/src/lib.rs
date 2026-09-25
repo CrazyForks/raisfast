@@ -28,6 +28,8 @@ pub mod content_type;
 pub mod db;
 pub mod llm;
 pub use db::DbDriver;
+pub mod cancellation;
+pub mod compute;
 pub mod docparse;
 pub mod dto;
 pub mod errors;
@@ -37,8 +39,6 @@ pub mod flows;
 pub mod graphql;
 pub mod handlers;
 pub mod integration;
-pub mod cancellation;
-pub mod compute;
 pub mod kb;
 #[cfg(feature = "mcp")]
 pub mod mcp;
@@ -282,11 +282,13 @@ pub async fn build_app_state(
     crate::apps::set_shared(apps_registry.clone());
 
     // Shared CT runtime for the flows `ct` node (registry + repository).
-    crate::flows::ct::set_shared_ct(std::sync::Arc::new(crate::flows::ct::CtRuntime {
-        registry: ct_registry.clone(),
-        protocols: protocol_registry.clone(),
-        repo: crate::content_type::repository::ContentRepository::new(pool.clone()),
-    }));
+    crate::flows::nodes::ct::set_shared_ct(std::sync::Arc::new(
+        crate::flows::nodes::ct::CtRuntime {
+            registry: ct_registry.clone(),
+            protocols: protocol_registry.clone(),
+            repo: crate::content_type::repository::ContentRepository::new(pool.clone()),
+        },
+    ));
 
     let ct_tables: Vec<String> = ct_registry
         .all()
@@ -415,6 +417,24 @@ pub async fn build_app_state(
     let webhook_service = Arc::new(crate::webhook::WebhookService::new(pool.clone()));
 
     let storage = crate::storage::create_storage(config)?;
+    // Media nodes (`image`/`speech`, later `video`) persist generated assets
+    // through the process-wide storage handle (media-nodes.md §5).
+    crate::flows::exec::set_shared_storage(storage.clone());
+    // One-time `llm`→`chat` node-kind canonicalization over stored flow
+    // definitions and drafts (media-nodes.md §1.2). Best-effort at boot: the
+    // graph loader's permanent read alias keeps any leftover executable.
+    {
+        let mig_pool = pool.clone();
+        tokio::spawn(async move {
+            match crate::flows::model::flow_version::migrate_llm_node_kind(&mig_pool).await {
+                Ok(n) if n > 0 => {
+                    tracing::info!("migrated {n} stored flow definition(s): llm node → chat")
+                }
+                Ok(_) => {}
+                Err(e) => tracing::warn!("llm→chat flow migration skipped: {e}"),
+            }
+        });
+    }
 
     let mut svc_builder = app::ServiceRegistryBuilder::new();
     svc_builder.register(search.clone());

@@ -12,10 +12,81 @@ use serde_json::{Map, Value, json};
 
 use crate::errors::app_error::{AppError, AppResult};
 
-use super::engine::{ExecOutcome, Pool};
-use super::expr;
-use super::graph::GraphNode;
-use super::nodes::HttpConfig;
+use crate::flows::engine::{ExecOutcome, Pool};
+use crate::flows::graph::GraphNode;
+
+/// One header/query row of an `http` node: `value` is a C3.1 template
+/// (`{{#ns.field#}}` refs allowed).
+#[cfg_attr(feature = "export-types", derive(ts_rs::TS))]
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct HttpKeyValue {
+    pub key: String,
+    #[serde(default)]
+    pub value: String,
+}
+
+/// `http` node config (n8n HTTP Request shape): method/url/headers/query/body
+/// all render C3.1 templates before the request fires.
+#[cfg_attr(feature = "export-types", derive(ts_rs::TS))]
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct HttpConfig {
+    #[serde(default = "default_http_method")]
+    pub method: String,
+    pub url: String,
+    #[serde(default)]
+    pub headers: Vec<HttpKeyValue>,
+    #[serde(default)]
+    pub query: Vec<HttpKeyValue>,
+    #[serde(default)]
+    pub body: Option<String>,
+    #[serde(default)]
+    #[cfg_attr(feature = "export-types", ts(type = "number"))]
+    pub timeout_ms: Option<i64>,
+}
+
+fn default_http_method() -> String {
+    "GET".to_string()
+}
+
+/// Methods allowed on the `http` node.
+pub const HTTP_METHODS: &[&str] = &["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"];
+
+/// Config validation (moved from the central registry; media-nodes.md §5).
+pub(super) fn validate(config: &serde_json::Value) -> AppResult<()> {
+    let c: HttpConfig = serde_json::from_value(config.clone())
+        .map_err(|e| AppError::BadRequest(format!("node 'http' config invalid: {e}")))?;
+    if !HTTP_METHODS.contains(&c.method.as_str()) {
+        return Err(AppError::BadRequest(format!(
+            "http: method '{}' 非法（允许: {}）",
+            c.method,
+            HTTP_METHODS.join("/")
+        )));
+    }
+    let url = c.url.trim();
+    if url.is_empty() {
+        return Err(AppError::BadRequest("http: url 不能为空".into()));
+    }
+    if !(url.starts_with("http://") || url.starts_with("https://")) {
+        return Err(AppError::BadRequest(
+            "http: url 须以 http:// 或 https:// 开头".into(),
+        ));
+    }
+    for (where_, rows) in [("headers", &c.headers), ("query", &c.query)] {
+        for r in rows {
+            if r.key.trim().is_empty() {
+                return Err(AppError::BadRequest(format!(
+                    "http: {where_}[].key 不能为空"
+                )));
+            }
+        }
+    }
+    if c.timeout_ms.is_some_and(|t| t < 1) {
+        return Err(AppError::BadRequest(
+            "http: timeout_ms 须为 ≥1 的整数".into(),
+        ));
+    }
+    Ok(())
+}
 
 static HTTP: OnceLock<reqwest::Client> = OnceLock::new();
 
@@ -26,7 +97,7 @@ fn client() -> &'static reqwest::Client {
 /// Render a template to plain text (scalars stringify; whole-object refs
 /// serialize as JSON — headers/query need text).
 fn render_text(text: &str, pool: &Pool) -> AppResult<String> {
-    match expr::resolve_text(text, pool)? {
+    match crate::flows::expr::resolve_text(text, pool)? {
         Value::String(s) => Ok(s),
         other => Ok(serde_json::to_string(&other).unwrap_or_default()),
     }
@@ -198,5 +269,39 @@ mod tests {
         assert_eq!(host_of("https://api.x.io/v1?y=1"), "api.x.io");
         assert_eq!(host_of("http://user:pw@10.0.0.1:8080/a"), "10.0.0.1");
         assert_eq!(host_of("http://[::1]:9000/x"), "::1");
+    }
+
+    #[test]
+    fn http_config_validation() {
+        let ok = json!({
+            "method": "POST",
+            "url": "https://api.example.com/{{#start.uid#}}",
+            "headers": [{"key": "Authorization", "value": "Bearer x"}],
+            "query": [{"key": "q", "value": "{{#start.q#}}"}],
+            "body": "{\"k\": 1}",
+            "timeout_ms": 5000
+        });
+        assert!(validate(&ok).is_ok());
+
+        assert!(
+            validate(&json!({"method": "FETCH", "url": "https://x.io"})).is_err(),
+            "非法 method"
+        );
+        assert!(
+            validate(&json!({"method": "GET", "url": ""})).is_err(),
+            "空 url"
+        );
+        assert!(
+            validate(&json!({"method": "GET", "url": "ftp://x.io"})).is_err(),
+            "非 http scheme"
+        );
+        assert!(
+            validate(&json!({"method": "GET", "url": "https://x.io", "headers": [{"key": "", "value": "1"}]})).is_err(),
+            "空 header key"
+        );
+        assert!(
+            validate(&json!({"method": "GET", "url": "https://x.io", "timeout_ms": 0})).is_err(),
+            "timeout < 1"
+        );
     }
 }

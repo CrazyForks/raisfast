@@ -30,7 +30,8 @@ pub use flow_api_key::{
 };
 pub use flow_instance::{
     FlowInstance, finalize_instance, find_instance_by_id, find_instances_by_trigger_page,
-    find_instances_page, insert_flow_instance, set_instance_waiting, update_instance_status,
+    find_instances_page, find_waiting_by_kind, insert_flow_instance, set_instance_waiting,
+    update_instance_status,
 };
 pub use flow_instance_snapshot::{delete_snapshot, find_snapshot, upsert_snapshot};
 pub use flow_node_run::{FlowNodeRun, find_node_runs, record_node_run};

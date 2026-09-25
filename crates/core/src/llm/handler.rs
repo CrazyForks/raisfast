@@ -2226,6 +2226,10 @@ pub struct DefaultsReq {
     pub chat_model: Option<String>,
     #[serde(default)]
     pub embedding_model: Option<String>,
+    #[serde(default)]
+    pub image_model: Option<String>,
+    #[serde(default)]
+    pub speech_model: Option<String>,
 }
 
 /// Read the resolved default chat/embedding models (tenant option, global
@@ -2263,6 +2267,18 @@ pub async fn put_defaults(
             &state,
             tenant,
             crate::llm::defaults::EMBEDDING_MODEL_KEY,
+            value,
+        )
+        .await?;
+    }
+    if let Some(value) = body.image_model {
+        write_default(&state, tenant, crate::llm::defaults::IMAGE_MODEL_KEY, value).await?;
+    }
+    if let Some(value) = body.speech_model {
+        write_default(
+            &state,
+            tenant,
+            crate::llm::defaults::SPEECH_MODEL_KEY,
             value,
         )
         .await?;

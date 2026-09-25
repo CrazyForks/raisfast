@@ -15,12 +15,18 @@ use crate::llm::models::model::{LlmModel, LlmModelStatus, LlmModelType};
 pub const CHAT_MODEL_KEY: &str = "llm.default_chat_model";
 /// Option key for the default embedding model.
 pub const EMBEDDING_MODEL_KEY: &str = "llm.default_embedding_model";
+/// Option key for the default image model (media-nodes.md §2.1).
+pub const IMAGE_MODEL_KEY: &str = "llm.default_image_model";
+/// Option key for the default speech (TTS) model (media-nodes.md §3.1).
+pub const SPEECH_MODEL_KEY: &str = "llm.default_speech_model";
 
-/// The two resolved default models (a value of `null` means unset).
+/// The resolved default models (a value of `null` means unset).
 #[derive(Debug, Clone, Serialize)]
 pub struct LlmDefaults {
     pub chat_model: Option<String>,
     pub embedding_model: Option<String>,
+    pub image_model: Option<String>,
+    pub speech_model: Option<String>,
 }
 
 /// Extract a model name from an option value. `null` / blank clears the
@@ -59,6 +65,8 @@ pub async fn read(pool: &crate::db::Pool, tenant: Option<&str>) -> AppResult<Llm
     Ok(LlmDefaults {
         chat_model: read_string(pool, CHAT_MODEL_KEY, tenant).await?,
         embedding_model: read_string(pool, EMBEDDING_MODEL_KEY, tenant).await?,
+        image_model: read_string(pool, IMAGE_MODEL_KEY, tenant).await?,
+        speech_model: read_string(pool, SPEECH_MODEL_KEY, tenant).await?,
     })
 }
 
@@ -77,6 +85,8 @@ pub async fn validate_option(
     let expected: &[LlmModelType] = match key {
         CHAT_MODEL_KEY => &[LlmModelType::Chat, LlmModelType::Vlm],
         EMBEDDING_MODEL_KEY => &[LlmModelType::Embedding],
+        IMAGE_MODEL_KEY => &[LlmModelType::Image],
+        SPEECH_MODEL_KEY => &[LlmModelType::Tts],
         _ => return Ok(()),
     };
     let Some(model) = model_name_from_value(value)? else {

@@ -69,12 +69,17 @@ fn read_node(n: &Value) -> AppResult<(String, NodeData)> {
         .get("id")
         .and_then(Value::as_str)
         .ok_or_else(|| AppError::BadRequest("node missing 'id'".into()))?;
-    let data: NodeData = serde_json::from_value(
+    let mut data: NodeData = serde_json::from_value(
         n.get("data")
             .cloned()
             .unwrap_or_else(|| serde_json::json!({})),
     )
     .map_err(|e| AppError::BadRequest(format!("node '{id}' data invalid: {e}")))?;
+    // Permanent read alias (media-nodes.md §1.2): pre-rename canvases stored
+    // `"llm"`; normalized to `"chat"` on load and never re-saved as `"llm"`.
+    if data.kind == nodes::T_LLM_LEGACY {
+        data.kind = nodes::T_CHAT.to_string();
+    }
     Ok((id.to_string(), data))
 }
 

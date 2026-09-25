@@ -8,7 +8,7 @@
 //!   allowlist derived from `host_permissions`). Zero state leakage: load →
 //!   call → unload per invocation.
 
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use async_trait::async_trait;
 use serde_json::Value;
@@ -16,20 +16,59 @@ use serde_json::Value;
 use crate::errors::app_error::{AppError, AppResult};
 use crate::integration::IntegrationPlane;
 use crate::plugins::{Permissions, PluginManager};
+use crate::storage::Storage;
 
 use super::engine::{ExecOutcome, NodeExecutor};
 use super::graph::GraphNode;
 use super::nodes::{self, EgressConfig, ScriptConfig};
+
+/// Process-wide storage handle for asset-producing nodes (`image`/`speech`,
+/// later `video`) — installed once at startup next to the AppState storage
+/// (same discipline as docparse's shared host). Tests may inject per-run
+/// storage through [`FlowsExec::storage`] instead.
+static SHARED_STORAGE: OnceLock<Arc<dyn Storage>> = OnceLock::new();
+
+/// Install the process-wide storage used by media nodes.
+pub fn set_shared_storage(storage: Arc<dyn Storage>) {
+    let _ = SHARED_STORAGE.set(storage);
+}
+
+pub(crate) fn shared_storage() -> Option<Arc<dyn Storage>> {
+    SHARED_STORAGE.get().cloned()
+}
 
 pub struct FlowsExec {
     pub plane: Option<Arc<IntegrationPlane>>,
     pub plugins: Option<Arc<PluginManager>>,
     /// Per-run tenant for tenant-scoped executors (`ct` node).
     pub tenant_id: Option<String>,
-    /// LLM 底座（llm 节点唯一入口，§10.2）。
+    /// LLM 底座（chat/image/speech 节点唯一入口，§10.2）。
     pub router: Arc<crate::llm::service::LlmRouter>,
     /// docparse 底座（docparse 节点入口）；`None` 时该节点显式报错。
-    pub docparse: Option<Arc<super::docparse::DocParseRuntime>>,
+    pub docparse: Option<Arc<super::nodes::docparse::DocParseRuntime>>,
+    /// Asset storage override for media nodes; `None` → process-wide shared
+    /// storage (installed at startup). Injected in tests.
+    pub storage: Option<Arc<dyn Storage>>,
+}
+
+impl FlowsExec {
+    fn media_storage(&self) -> AppResult<Arc<dyn Storage>> {
+        self.storage
+            .clone()
+            .or_else(shared_storage)
+            .ok_or_else(|| AppError::Internal(anyhow::anyhow!("storage unavailable")))
+    }
+
+    fn llm_runtime(&self) -> super::nodes::LlmRuntime {
+        super::nodes::LlmRuntime {
+            router: self.router.clone(),
+            tenant: self
+                .tenant_id
+                .clone()
+                .unwrap_or_else(|| "default".to_owned()),
+            caller: None,
+        }
+    }
 }
 
 impl FlowsExec {
@@ -151,18 +190,28 @@ impl NodeExecutor for FlowsExec {
     ) -> AppResult<ExecOutcome> {
         match node.data.kind.as_str() {
             nodes::T_SCRIPT => self.run_script(node, input).await,
-            nodes::T_HTTP => super::http::run_http(node, pool).await,
-            nodes::T_CT => super::ct::run_ct(node, pool, self.tenant_id.as_deref()).await,
-            nodes::T_LLM => {
-                let runtime = super::llm::LlmRuntime {
-                    router: self.router.clone(),
-                    tenant: self
-                        .tenant_id
-                        .clone()
-                        .unwrap_or_else(|| "default".to_owned()),
-                    caller: None,
-                };
-                super::llm::run_llm(&runtime, node, pool).await
+            nodes::T_HTTP => super::nodes::http::run_http(node, pool).await,
+            nodes::T_CT => super::nodes::ct::run_ct(node, pool, self.tenant_id.as_deref()).await,
+            nodes::T_CHAT => {
+                let runtime = self.llm_runtime();
+                super::nodes::chat::run_chat(&runtime, node, pool).await
+            }
+            nodes::T_IMAGE => {
+                let runtime = self.llm_runtime();
+                let storage = self.media_storage()?;
+                super::nodes::image::run_image(&runtime, &storage, node, pool).await
+            }
+            nodes::T_SPEECH => {
+                let runtime = self.llm_runtime();
+                let storage = self.media_storage()?;
+                super::nodes::speech::run_speech(&runtime, &storage, node, pool).await
+            }
+            nodes::T_VIDEO => {
+                // Submit segment only — the engine parks the run afterwards;
+                // completion is driven by the wait-poll hub (poll_infra.rs).
+                let runtime = self.llm_runtime();
+                let storage = self.media_storage()?;
+                super::nodes::video::run_video_submit(&runtime, &storage, node, pool).await
             }
             nodes::T_DOCPARSE => {
                 let Some(rt) = &self.docparse else {
@@ -170,7 +219,7 @@ impl NodeExecutor for FlowsExec {
                         "docparse runtime unavailable (host not initialized)"
                     )));
                 };
-                super::docparse::run_docparse(rt, node, pool).await
+                super::nodes::docparse::run_docparse(rt, node, pool).await
             }
             nodes::T_EGRESS => {
                 let cfg: EgressConfig = serde_json::from_value(node.data.config.clone())
@@ -233,6 +282,7 @@ mod tests {
             ),
             tenant_id: None,
             docparse: None,
+            storage: None,
         };
         let err = exec
             .exec(
@@ -255,6 +305,7 @@ mod tests {
             ),
             tenant_id: None,
             docparse: None,
+            storage: None,
         };
         let err = exec
             .exec(
@@ -280,6 +331,7 @@ mod tests {
             ),
             tenant_id: None,
             docparse: None,
+            storage: None,
         };
         let err = exec
             .exec(

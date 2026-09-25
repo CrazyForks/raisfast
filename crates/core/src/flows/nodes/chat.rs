@@ -1,35 +1,22 @@
-//! `llm` node executor (dev-docs/workflow/llm-node.md §4).
+//! `chat` node executor — formerly the `llm` node (media-nodes.md §1; spec
+//! history in llm-node.md).
 //!
 //! Template rendering via `expr::resolve_text` (C3.1), provider call through
-//! the shared `[ai]` runtime (or an injected test provider), structured output
+//! the llm foundation facade (or an injected test provider), structured output
 //! via prompt-constrained JSON + one corrective regeneration, error mapping
 //! 4xx→BadRequest so the engine's blind retry fails fast.
 
-use std::sync::Arc;
 use std::time::Instant;
 
-use raisfast_agent::ChatMessage;
+use raisfast_agent::ChatMessage as AgentChatMessage;
 use raisfast_agent::provider::ChatRequest;
 use serde_json::{Map, Value, json};
 
 use crate::errors::app_error::{AppError, AppResult};
-use crate::llm::service::LlmRouter;
 
-use super::engine::{ExecOutcome, Pool};
-use super::expr;
-use super::graph::GraphNode;
-use super::nodes::LlmConfig;
-
-/// LLM runtime an executor resolves per call: injected mock router (tests) or
-/// the process-wide router handle (production). 模型访问唯一入口 = llm 底座
-/// （design §10.2）——节点只带租户与（可选）触发用户，其余全在内核。
-#[derive(Clone)]
-pub struct LlmRuntime {
-    pub router: Arc<LlmRouter>,
-    pub tenant: String,
-    /// 触发用户（计费归因/日限额）；cron/system = None。
-    pub caller: Option<crate::types::snowflake_id::SnowflakeId>,
-}
+use super::LlmRuntime;
+use crate::flows::engine::{ExecOutcome, Pool};
+use crate::flows::graph::GraphNode;
 
 /// facade/内核已把错误分类为 AppError（4xx 确定性失败 fail-fast，
 /// 429/5xx/transport → Internal 可重试）——引擎重试语义由内核承接。
@@ -37,26 +24,100 @@ fn map_facade_error(e: AppError) -> AppError {
     e
 }
 
-fn render_prompt_text(text: &str, pool: &Pool) -> AppResult<String> {
-    // Prompts are always text: a whole-string `{{#ref#}}` returning an object
-    // is stringified instead of failing (C3.1 keeps typed values).
-    match expr::resolve_text(text, pool)? {
-        Value::String(s) => Ok(s),
-        other => Ok(match &other {
-            Value::String(s) => s.clone(),
-            v => serde_json::to_string(v).unwrap_or_default(),
-        }),
-    }
+/// One chat message of a `chat` node: `text` is a C3.1 template (`{{#ns.name#}}`).
+#[cfg_attr(feature = "export-types", derive(ts_rs::TS))]
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct ChatMessage {
+    pub role: String,
+    pub text: String,
 }
 
-fn to_chat_messages(cfg: &LlmConfig, pool: &Pool) -> AppResult<Vec<ChatMessage>> {
-    let mut out = Vec::with_capacity(cfg.messages.len());
+/// `chat` node config (llm-node.md §2; renamed from `LlmConfig`). Error
+/// handling stays orthogonal via `modifiers.on_error_strategy` (C1.4); the
+/// node ignores engine-fed `input` (variables are read from the pool through
+/// message templates).
+#[cfg_attr(feature = "export-types", derive(ts_rs::TS))]
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct ChatConfig {
+    pub model: Option<String>,
+    #[serde(default)]
+    pub messages: Vec<ChatMessage>,
+    pub temperature: Option<f64>,
+    #[serde(default)]
+    #[cfg_attr(feature = "export-types", ts(type = "number"))]
+    pub max_tokens: Option<i64>,
+    #[serde(default)]
+    pub stop: Option<Vec<String>>,
+    #[serde(default)]
+    #[cfg_attr(feature = "export-types", ts(type = "number"))]
+    pub timeout_ms: Option<i64>,
+    #[serde(default)]
+    #[cfg_attr(feature = "export-types", ts(type = "unknown"))]
+    pub json_schema: Option<Value>,
+}
+
+/// Config validation (moved from the central registry; media-nodes.md §5).
+pub(super) fn validate(config: &Value) -> AppResult<()> {
+    let c: ChatConfig = serde_json::from_value(config.clone())
+        .map_err(|e| AppError::BadRequest(format!("node 'chat' config invalid: {e}")))?;
+    if c.messages.is_empty() {
+        return Err(AppError::BadRequest(
+            "chat: messages 不能为空且需至少一条 user".into(),
+        ));
+    }
+    if c.messages[0].role == "system" && c.messages.len() == 1 {
+        return Err(AppError::BadRequest(
+            "chat: messages 不能为空且需至少一条 user".into(),
+        ));
+    }
+    if !c.messages.iter().any(|m| m.role == "user") {
+        return Err(AppError::BadRequest(
+            "chat: messages 不能为空且需至少一条 user".into(),
+        ));
+    }
+    for m in &c.messages {
+        if !matches!(m.role.as_str(), "system" | "user" | "assistant") {
+            return Err(AppError::BadRequest(format!(
+                "chat: role '{}' 非法 (system|user|assistant)",
+                m.role
+            )));
+        }
+        if m.text.trim().is_empty() {
+            return Err(AppError::BadRequest(format!(
+                "chat: messages[{}] text 不能为空",
+                m.role
+            )));
+        }
+    }
+    if let Some(t) = c.temperature
+        && !(0.0..=2.0).contains(&t)
+    {
+        return Err(AppError::BadRequest("chat: temperature 须在 [0,2]".into()));
+    }
+    if c.max_tokens.is_some_and(|t| t <= 0) {
+        return Err(AppError::BadRequest("chat: max_tokens 须 > 0".into()));
+    }
+    if c.stop.as_ref().is_some_and(|s| s.len() > 4) {
+        return Err(AppError::BadRequest("chat: stop 最多 4 条".into()));
+    }
+    if let Some(schema) = &c.json_schema
+        && !(schema.is_object() && schema.get("type").and_then(Value::as_str) == Some("object"))
+    {
+        return Err(AppError::BadRequest(
+            "chat: json_schema 须为 {\"type\":\"object\",...}".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn to_chat_messages(cfg: &ChatConfig, pool: &Pool) -> AppResult<Vec<AgentChatMessage>> {
+    let mut out: Vec<AgentChatMessage> = Vec::with_capacity(cfg.messages.len());
     for m in &cfg.messages {
-        let text = render_prompt_text(&m.text, pool)?;
+        let text = super::render_prompt_text(&m.text, pool)?;
         let msg = match m.role.as_str() {
-            "system" => ChatMessage::system(text),
-            "assistant" => ChatMessage::assistant(Some(text), None),
-            _ => ChatMessage::user(text),
+            "system" => AgentChatMessage::system(text),
+            "assistant" => AgentChatMessage::assistant(Some(text), None),
+            _ => AgentChatMessage::user(text),
         };
         out.push(msg);
     }
@@ -88,18 +149,18 @@ fn parse_json_text(text: &str) -> Option<Value> {
     serde_json::from_str::<Value>(inner.trim()).ok()
 }
 
-/// Execute the `llm` node against the variable pool.
+/// Execute the `chat` node against the variable pool.
 ///
 /// # Errors
 /// `BadRequest` on missing template refs, disabled `[ai]`, or a non-retryable
 /// provider error; `Internal` on transient provider/timeout failures.
-pub async fn run_llm(
+pub async fn run_chat(
     runtime: &LlmRuntime,
     node: &GraphNode,
     pool: &Pool,
 ) -> AppResult<ExecOutcome> {
-    let cfg: LlmConfig = serde_json::from_value(node.data.config.clone())
-        .map_err(|e| AppError::BadRequest(format!("llm config: {e}")))?;
+    let cfg: ChatConfig = serde_json::from_value(node.data.config.clone())
+        .map_err(|e| AppError::BadRequest(format!("chat config: {e}")))?;
     // 模型解析链在内核：显式指定 → 租户默认（llm.default_chat_model）→ 400。
     let model = cfg.model.clone();
     let call = runtime
@@ -131,37 +192,37 @@ pub async fn run_llm(
             call.clone().chat(model.as_deref(), &request),
         )
         .await
-        .map_err(|_| AppError::Internal(anyhow::anyhow!("llm 超时 {timeout_ms}ms")))?
+        .map_err(|_| AppError::Internal(anyhow::anyhow!("chat 超时 {timeout_ms}ms")))?
         .map_err(map_facade_error)?;
         if let Some(u) = response.usage {
             final_usage = Some(u);
         }
         let Some(text) = response.text else {
-            return Err(AppError::Internal(anyhow::anyhow!("llm 响应无文本内容")));
+            return Err(AppError::Internal(anyhow::anyhow!("chat 响应无文本内容")));
         };
         if let Some(schema) = &cfg.json_schema {
             let Some(parsed) = parse_json_text(&text) else {
                 if pass + 1 < passes {
-                    call_messages.push(ChatMessage::assistant(Some(text.clone()), None));
-                    call_messages.push(ChatMessage::user(format!(
+                    call_messages.push(AgentChatMessage::assistant(Some(text.clone()), None));
+                    call_messages.push(AgentChatMessage::user(format!(
                         "你上一条回复不是合法 JSON（解析失败）。请严格只输出符合此 JSON Schema 的 JSON，不要任何解释或代码围栏：\n{schema}"
                     )));
                     continue;
                 }
                 return Err(AppError::Internal(anyhow::anyhow!(
-                    "llm structured output 解析失败（含一次纠错重生成）"
+                    "chat structured output 解析失败（含一次纠错重生成）"
                 )));
             };
-            if let Err(reason) = super::nodes::shallow_schema_check(&parsed, schema) {
+            if let Err(reason) = super::shallow_schema_check(&parsed, schema) {
                 if pass + 1 < passes {
-                    call_messages.push(ChatMessage::assistant(Some(text.clone()), None));
-                    call_messages.push(ChatMessage::user(format!(
+                    call_messages.push(AgentChatMessage::assistant(Some(text.clone()), None));
+                    call_messages.push(AgentChatMessage::user(format!(
                         "你上一条回复不符合 JSON Schema（{reason}）。请严格只输出符合此 Schema 的 JSON，不要任何解释或代码围栏：\n{schema}"
                     )));
                     continue;
                 }
                 return Err(AppError::Internal(anyhow::anyhow!(
-                    "llm structured output 校验失败: {reason}"
+                    "chat structured output 校验失败: {reason}"
                 )));
             }
             structured = Some(parsed);
@@ -189,10 +250,13 @@ pub async fn run_llm(
 mod tests {
     use super::*;
     use crate::flows::graph::NodeData;
+    use crate::llm::service::LlmRouter;
     use crate::types::snowflake_id::SnowflakeId;
     use async_trait::async_trait;
     use raisfast_agent::TokenUsage;
     use raisfast_agent::provider::{ChatResponse, ModelProvider, ProviderError};
+    use serde_json::json;
+    use std::sync::Arc;
     use std::sync::Mutex;
 
     async fn seed_option(pool: &crate::db::Pool, key: &str, value: serde_json::Value) {
@@ -335,11 +399,11 @@ mod tests {
         }
     }
 
-    fn llm_node(config: Value) -> GraphNode {
+    fn chat_node(config: Value) -> GraphNode {
         GraphNode {
             id: "n1".into(),
             data: NodeData {
-                kind: "llm".into(),
+                kind: "chat".into(),
                 version: 1,
                 title: String::new(),
                 desc: None,
@@ -379,12 +443,12 @@ mod tests {
     #[tokio::test]
     async fn happy_path_output_shape_and_usage() {
         let mock = Arc::new(MockProvider::new(vec![resp_with_usage("答案是42")]));
-        let node = llm_node(json!({
+        let node = chat_node(json!({
             "model": "m1",
             "messages": [{"role": "user", "text": "Q: {{#start.q#}}"}]
         }));
         let pool = pool_with(&[("start", "q", json!("1+1"))]);
-        let out = run_llm(&rt(mock.clone(), &["m1"]), &node, &pool)
+        let out = run_chat(&rt(mock.clone(), &["m1"]), &node, &pool)
             .await
             .unwrap();
         assert_eq!(out.output["text"], "答案是42");
@@ -415,11 +479,11 @@ mod tests {
             tenant: "default".to_owned(),
             caller: None,
         };
-        let node = llm_node(json!({
+        let node = chat_node(json!({
             "messages": [{"role": "user", "text": "hi"}],
             "temperature": 0.2, "max_tokens": 99, "stop": ["\n"]
         }));
-        run_llm(&rt, &node, &Pool::new()).await?;
+        run_chat(&rt, &node, &Pool::new()).await?;
         let seen = &mock.seen.lock().unwrap()[0];
         assert_eq!(seen.model, "default-model");
         assert_eq!(seen.max_tokens, Some(99));
@@ -430,10 +494,10 @@ mod tests {
     #[tokio::test]
     async fn missing_template_ref_is_bad_request() {
         let mock = Arc::new(MockProvider::new(vec![resp_with_usage("x")]));
-        let node = llm_node(json!({
+        let node = chat_node(json!({
             "model": "m1", "messages": [{"role": "user", "text": "{{#start.nope#}}"}]
         }));
-        let err = run_llm(&rt(mock, &["m1"]), &node, &Pool::new())
+        let err = run_chat(&rt(mock, &["m1"]), &node, &Pool::new())
             .await
             .unwrap_err();
         assert!(matches!(err, AppError::BadRequest(_)), "{err}");
@@ -445,10 +509,10 @@ mod tests {
             status: 401,
             body: "bad key".into(),
         })]));
-        let node = llm_node(json!({
+        let node = chat_node(json!({
             "model": "m1", "messages": [{"role": "user", "text": "hi"}]
         }));
-        let err = run_llm(&rt(mock, &["m1"]), &node, &Pool::new())
+        let err = run_chat(&rt(mock, &["m1"]), &node, &Pool::new())
             .await
             .unwrap_err();
         assert!(matches!(err, AppError::BadRequest(_)), "{err}");
@@ -481,11 +545,11 @@ mod tests {
             tenant: "default".to_owned(),
             caller: None,
         };
-        let node = llm_node(json!({
+        let node = chat_node(json!({
             "model": "m1",
             "messages": [{"role": "user", "text": "hi"}]
         }));
-        let out = run_llm(&rt, &node, &Pool::new()).await.unwrap();
+        let out = run_chat(&rt, &node, &Pool::new()).await.unwrap();
         assert_eq!(out.output["text"], "ok");
         assert_eq!(p2.seen.lock().unwrap()[0].model, "m1");
     }
@@ -495,11 +559,11 @@ mod tests {
         let mock = Arc::new(MockProvider::new(vec![resp_with_usage(
             "```json\n{\"score\": 9}\n```",
         )]));
-        let node = llm_node(json!({
+        let node = chat_node(json!({
             "model": "m1", "messages": [{"role": "user", "text": "质检"}],
             "json_schema": {"type":"object","properties":{"score":{"type":"number"}},"required":["score"]}
         }));
-        let out = run_llm(&rt(mock.clone(), &["m1"]), &node, &Pool::new())
+        let out = run_chat(&rt(mock.clone(), &["m1"]), &node, &Pool::new())
             .await
             .unwrap();
         assert_eq!(out.output["structured"]["score"], 9);
@@ -512,11 +576,11 @@ mod tests {
             resp_with_usage("抱歉，我无法输出 JSON"),
             resp_with_usage("{\"score\": 7}"),
         ]));
-        let node = llm_node(json!({
+        let node = chat_node(json!({
             "model": "m1", "messages": [{"role": "user", "text": "质检"}],
             "json_schema": {"type":"object","properties":{"score":{"type":"number"}},"required":["score"]}
         }));
-        let out = run_llm(&rt(mock.clone(), &["m1"]), &node, &Pool::new())
+        let out = run_chat(&rt(mock.clone(), &["m1"]), &node, &Pool::new())
             .await
             .unwrap();
         assert_eq!(out.output["structured"]["score"], 7);
@@ -534,11 +598,11 @@ mod tests {
             resp_with_usage("{\"nope\": 1}"),
             resp_with_usage("{\"still_nope\": 2}"),
         ]));
-        let node = llm_node(json!({
+        let node = chat_node(json!({
             "model": "m1", "messages": [{"role": "user", "text": "质检"}],
             "json_schema": {"type":"object","properties":{"score":{"type":"number"}},"required":["score"]}
         }));
-        let err = run_llm(&rt(mock, &["m1"]), &node, &Pool::new())
+        let err = run_chat(&rt(mock, &["m1"]), &node, &Pool::new())
             .await
             .unwrap_err();
         assert!(err.to_string().contains("校验失败"), "{err}");
@@ -557,8 +621,56 @@ mod tests {
     #[test]
     fn shallow_schema_check_types_and_required() {
         let schema = json!({"type":"object","properties":{"score":{"type":"number"},"tag":{"type":"string"}},"required":["score"]});
-        assert!(crate::flows::nodes::shallow_schema_check(&json!({"score": 1}), &schema).is_ok());
-        assert!(crate::flows::nodes::shallow_schema_check(&json!({}), &schema).is_err());
-        assert!(crate::flows::nodes::shallow_schema_check(&json!({"score":"x"}), &schema).is_err());
+        assert!(super::super::shallow_schema_check(&json!({"score": 1}), &schema).is_ok());
+        assert!(super::super::shallow_schema_check(&json!({}), &schema).is_err());
+        assert!(super::super::shallow_schema_check(&json!({"score":"x"}), &schema).is_err());
+    }
+
+    #[test]
+    fn chat_config_validation() {
+        let ok = json!({
+            "messages": [
+                {"role": "system", "text": "你是助手"},
+                {"role": "user", "text": "hi {{#start.q#}}"}
+            ],
+            "temperature": 0.3, "max_tokens": 100, "stop": ["\n"]
+        });
+        assert!(super::validate(&ok).is_ok());
+
+        assert!(
+            super::validate(&json!({"messages": []})).is_err(),
+            "空 messages"
+        );
+        assert!(
+            super::validate(&json!({"messages": [{"role": "system", "text": "only sys"}]}))
+                .is_err(),
+            "只有 system 无 user"
+        );
+        assert!(
+            super::validate(&json!({"messages": [{"role": "tool", "text": "x"}]})).is_err(),
+            "非法 role"
+        );
+        assert!(
+            super::validate(&json!({
+                "messages": [{"role": "user", "text": "x"}], "temperature": 5.0
+            }))
+            .is_err(),
+            "temperature 越界"
+        );
+        assert!(
+            super::validate(&json!({
+                "messages": [{"role": "user", "text": "x"}], "stop": ["a","b","c","d","e"]
+            }))
+            .is_err(),
+            "stop 超 4 条"
+        );
+        assert!(
+            super::validate(&json!({
+                "messages": [{"role": "user", "text": "x"}],
+                "json_schema": {"type": "array"}
+            }))
+            .is_err(),
+            "json_schema 非 object"
+        );
     }
 }

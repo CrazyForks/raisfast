@@ -174,6 +174,17 @@ async fn build_app(
 
     // Await-node background infra (timeout sweeper) — one indexed scan per
     // minute when nothing is parked (await-node.md §5).
+    // Generic async-wait hub (media-nodes.md §5): one sweep loop for every
+    // registered poller; video is the first scenario.
+    crate::flows::poll_infra::install(vec![std::sync::Arc::new(
+        crate::flows::nodes::video::VideoPoller,
+    )]);
+    crate::flows::poll_infra::spawn(
+        state.pool.clone(),
+        state.llm_router.clone(),
+        state.integration.clone(),
+        Some(state.plugins.clone()),
+    );
     crate::flows::await_infra::spawn(
         pool,
         state.llm_router.clone(),

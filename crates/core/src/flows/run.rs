@@ -17,8 +17,8 @@ use std::sync::Arc;
 use super::exec::FlowsExec;
 
 /// docparse runtime from the process-wide host (None before boot / in tests).
-fn docparse_runtime(tenant: &str) -> Option<Arc<super::docparse::DocParseRuntime>> {
-    super::docparse::DocParseRuntime::from_shared(tenant.to_string()).map(Arc::new)
+fn docparse_runtime(tenant: &str) -> Option<Arc<super::nodes::docparse::DocParseRuntime>> {
+    super::nodes::docparse::DocParseRuntime::from_shared(tenant.to_string()).map(Arc::new)
 }
 
 use super::engine::{self, NodeExecutor, Persist, S_FAILED, S_SUCCESS, S_WAITING, Snapshot};
@@ -150,7 +150,7 @@ impl<P: Persist> Persist for EventingPersist<P> {
 }
 
 /// Load a graph from the instance's locked flow version.
-async fn load_graph_for_instance(
+pub(crate) async fn load_graph_for_instance(
     pool: &crate::db::Pool,
     inst: &model::FlowInstance,
 ) -> AppResult<Graph> {
@@ -220,6 +220,7 @@ pub async fn run_flow_latest(
         router: router.clone(),
         tenant_id: Some(flow.tenant_id.clone()),
         docparse: docparse_runtime(&flow.tenant_id),
+        storage: None,
     };
     execute_instance(pool, instance_id, &exec).await?;
     model::find_instance_by_id(pool, instance_id).await
@@ -289,6 +290,7 @@ pub async fn run_definition_latest(
         router: router.clone(),
         tenant_id: Some(flow.tenant_id.clone()),
         docparse: docparse_runtime(&flow.tenant_id),
+        storage: None,
     };
     engine::run_persisted(&graph, &mut snap, &exec, &persist).await?;
     record_node_runs(pool, instance_id, &graph, &snap).await?;
@@ -592,11 +594,61 @@ async fn park_instance(
     let Some(node_id) = snap.waiting_nodes.first() else {
         return Ok(());
     };
-    let cfg = await_node_config(graph, node_id)?;
-    let timeout = cfg.timeout_secs.unwrap_or(DEFAULT_AWAIT_TIMEOUT_SECS);
-    let until = crate::utils::tz::now_utc() + chrono::Duration::seconds(timeout);
-    model::set_instance_waiting(pool, instance_id, "human", Some(until)).await?;
-    model::ensure_flow_resume_open(pool, instance_id, node_id, "human", Some(until)).await?;
+    // Typed by the parked node's kind (media-nodes.md §4.3): `await` parks as
+    // human-in-the-loop (`human`), `video` as a machine task (`video`) whose
+    // deadline comes from the node output written at submit time.
+    let kind = graph
+        .nodes
+        .get(node_id)
+        .map(|n| n.data.kind.as_str())
+        .unwrap_or("");
+    match kind {
+        super::nodes::T_AWAIT => {
+            let cfg = await_node_config(graph, node_id)?;
+            let timeout = cfg.timeout_secs.unwrap_or(DEFAULT_AWAIT_TIMEOUT_SECS);
+            let until = crate::utils::tz::now_utc() + chrono::Duration::seconds(timeout);
+            model::set_instance_waiting(pool, instance_id, "human", Some(until)).await?;
+            model::ensure_flow_resume_open(pool, instance_id, node_id, "human", Some(until))
+                .await?;
+            super::events::emit(
+                instance_id,
+                super::events::EV_AWAIT_PAUSED,
+                serde_json::json!({"node_id": node_id}),
+            );
+        }
+        kind if super::poll_infra::is_pollable(kind) => {
+            // Poll-backed machine wait (poll_infra.rs): the node output's
+            // `deadline_unix` (written at submit time) is the claim deadline.
+            let deadline_unix = snap
+                .node_states
+                .get(node_id)
+                .and_then(|st| st.output.as_ref())
+                .and_then(|o| o.get("deadline_unix"))
+                .and_then(serde_json::Value::as_i64)
+                .unwrap_or(i64::MAX);
+            let until = chrono::DateTime::from_timestamp(deadline_unix, 0);
+            let info = snap
+                .node_states
+                .get(node_id)
+                .and_then(|st| st.output.as_ref())
+                .cloned()
+                .unwrap_or(serde_json::Value::Null);
+            model::set_instance_waiting(pool, instance_id, kind, until).await?;
+            model::ensure_flow_resume_open(pool, instance_id, node_id, kind, until).await?;
+            if let Some(poller) = super::poll_infra::poller_for(kind) {
+                super::events::emit(
+                    instance_id,
+                    poller.park_event(),
+                    serde_json::json!({"node_id": node_id, "task": info}),
+                );
+            }
+        }
+        other => {
+            return Err(AppError::Internal(anyhow::anyhow!(
+                "park: 节点 {node_id} 类型 {other} 无等待语义"
+            )));
+        }
+    }
     Ok(())
 }
 
@@ -636,24 +688,52 @@ pub async fn resume_instance(
     let Some(node_id) = snap.waiting_nodes.first().cloned() else {
         return Err(AppError::BadRequest("实例没有等待中的节点".into()));
     };
-    let cfg = await_node_config(&graph, &node_id)?;
-    // The fired action must be a declared action (or the default submit /
-    // the built-in timeout sweep).
-    {
-        let allowed: Vec<&str> = if cfg.actions.is_empty() {
-            vec![super::nodes::AWAIT_DEFAULT_ACTION, super::nodes::H_TIMEOUT]
-        } else {
-            cfg.actions
-                .iter()
-                .map(|a| a.id.as_str())
-                .chain(std::iter::once(super::nodes::H_TIMEOUT))
-                .collect()
-        };
-        if !allowed.contains(&envelope.action.as_str()) {
+    // Typed resume validation (media-nodes.md §4.3): the action whitelist
+    // comes from the parked node's kind — `await` (declared actions / submit
+    // / timeout) or `video` (poller-only machine actions).
+    let head_kind = graph
+        .nodes
+        .get(&node_id)
+        .map(|n| n.data.kind.as_str())
+        .unwrap_or("");
+    let mut await_cfg: Option<super::nodes::AwaitConfig> = None;
+    match head_kind {
+        super::nodes::T_AWAIT => {
+            let cfg = await_node_config(&graph, &node_id)?;
+            let allowed: Vec<&str> = if cfg.actions.is_empty() {
+                vec![super::nodes::AWAIT_DEFAULT_ACTION, super::nodes::H_TIMEOUT]
+            } else {
+                cfg.actions
+                    .iter()
+                    .map(|a| a.id.as_str())
+                    .chain(std::iter::once(super::nodes::H_TIMEOUT))
+                    .collect()
+            };
+            if !allowed.contains(&envelope.action.as_str()) {
+                return Err(AppError::BadRequest(format!(
+                    "resume: action '{}' 不是该节点的操作（{}）",
+                    envelope.action,
+                    allowed.join(" | ")
+                )));
+            }
+            await_cfg = Some(cfg);
+        }
+        kind if super::poll_infra::is_pollable(kind) => {
+            // Poller vocabulary only (poll_infra.rs convention). Poll-backed
+            // claims never get a public resume token, so the open endpoint
+            // cannot reach this branch.
+            let allowed = super::poll_infra::poll_actions(kind);
+            if !allowed.contains(&envelope.action) {
+                return Err(AppError::BadRequest(format!(
+                    "resume: action '{}' 不是 {kind} 节点的操作（{}）",
+                    envelope.action,
+                    allowed.join(" | ")
+                )));
+            }
+        }
+        other => {
             return Err(AppError::BadRequest(format!(
-                "resume: action '{}' 不是该节点的操作（{}）",
-                envelope.action,
-                allowed.join(" | ")
+                "resume: 等待节点 {node_id} 类型 {other} 不支持 resume"
             )));
         }
     }
@@ -671,18 +751,31 @@ pub async fn resume_instance(
 
     let (payload, handle) = {
         let (payload, h) = envelope.normalize();
-        // No declared actions → the default submit keeps single-port semantics
-        // (all outgoing edges taken); declared actions route by handle.
-        (payload, h.filter(|_| !cfg.actions.is_empty()))
+        // await only: no declared actions → the default submit keeps
+        // single-port semantics (all outgoing edges taken); declared actions
+        // route by handle. video has a single `out` port — no handle routing.
+        let h = match await_cfg.as_ref() {
+            Some(cfg) if !cfg.actions.is_empty() => h,
+            _ => None,
+        };
+        (payload, h)
     };
     engine::resume_snapshot(&mut snap, payload, handle.as_deref())?;
     // C4: the resume decision itself (who/what fired it).
+    let (ev, resume_kind) = if super::poll_infra::is_pollable(head_kind) {
+        (super::events::EV_VIDEO_RESUMED, head_kind)
+    } else {
+        (
+            super::events::EV_AWAIT_RESUMED,
+            if handle.is_some() { "action" } else { "submit" },
+        )
+    };
     super::events::emit(
         instance_id,
-        super::events::EV_AWAIT_RESUMED,
+        ev,
         serde_json::json!({
             "node_id": node_id,
-            "resume_kind": if handle.is_some() { "action" } else { "submit" },
+            "resume_kind": resume_kind,
             "action": envelope.action,
             "approver": resumed_by.map(|u| u.to_string()),
         }),
@@ -698,6 +791,7 @@ pub async fn resume_instance(
         router: router.clone(),
         tenant_id: Some(inst.tenant_id.clone()),
         docparse: docparse_runtime(&inst.tenant_id),
+        storage: None,
     };
     execute_instance(pool, instance_id, &exec).await?;
     Ok(())
@@ -786,6 +880,7 @@ async fn sweep_one(
             plugins,
             router: router.clone(),
             docparse: docparse_runtime(&inst.tenant_id),
+            storage: None,
             tenant_id: Some(inst.tenant_id.clone()),
         };
         execute_instance(pool, row.instance_id, &exec).await?;
