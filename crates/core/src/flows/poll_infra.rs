@@ -26,7 +26,7 @@
 
 use std::sync::{Arc, OnceLock};
 
-use serde_json::json;
+use serde_json::{Value, json};
 
 use crate::errors::app_error::AppResult;
 use crate::integration::IntegrationPlane;
@@ -53,12 +53,41 @@ pub struct PollCtx<'a> {
 /// One async-poll scenario. `kind` is simultaneously the node type string,
 /// the `waiting_kind` marker and the claim kind — one vocabulary (media-nodes.md
 /// §4.3 typing).
+/// Everything a hook translator needs to turn a provider webhook body into
+/// a resume envelope (fetching artifacts included).
+pub struct HookCtx<'a> {
+    pub router: Arc<LlmRouter>,
+    pub tenant: &'a str,
+    pub instance_id: crate::types::snowflake_id::SnowflakeId,
+    pub node_id: &'a str,
+    /// Parked node output — carries the submit-time task handle (`task_id`,
+    /// `model`), letting the translator correlate the callback.
+    pub info: &'a serde_json::Value,
+    pub storage: Arc<dyn crate::storage::Storage>,
+}
+
 #[async_trait::async_trait]
 pub trait WaitPoller: Send + Sync {
     /// Node type + waiting/claim kind (e.g. "video").
     fn kind(&self) -> &'static str;
     /// Event emitted when the engine parks a node of this kind.
     fn park_event(&self) -> &'static str;
+    /// Whether this scenario accepts provider webhook callbacks (hook P1,
+    /// wait-triggers.md §4). `true` makes the engine mint a capability and
+    /// pass the callback URL to the submit.
+    fn supports_hook(&self) -> bool {
+        false
+    }
+    /// Provider webhook body → resume envelope. `Ok(None)` = non-terminal
+    /// event (keep parked). `Err` = transient → respond 5xx so the provider
+    /// retries; the claim's 409 keeps redelivery idempotent.
+    async fn translate_hook(
+        &self,
+        _ctx: &HookCtx<'_>,
+        _body: &Value,
+    ) -> AppResult<Option<ResumeEnvelope>> {
+        Ok(None)
+    }
     /// Inspect the parked task. `Ok(None)` = still pending, leave parked;
     /// `Ok(Some(envelope))` = terminal, resume with it. The infra has already
     /// handled the deadline timeout before this is called — a poller never
@@ -262,6 +291,67 @@ async fn decide(
         info: &info,
     };
     poller.poll(&ctx).await
+}
+
+/// Process-wide hook plumbing (media/wait-triggers §4): the pool for claim
+/// minting and the public base URL for capability URLs. Installed at startup
+/// next to the storage handle.
+static HOOK_INFRA: OnceLock<(crate::db::Pool, String)> = OnceLock::new();
+
+/// Install the hook infra. `base_url` is the externally reachable origin
+/// (config `base_url`) — capability URLs are `{base_url}/api/v1/flows/hooks/{id}`.
+pub fn install_hook_infra(pool: crate::db::Pool, base_url: String) {
+    let _ = HOOK_INFRA.set((pool, base_url.trim_end_matches('/').to_string()));
+}
+
+/// Mint a hook capability for a parked-to-be task: idempotently open the
+/// claim row and attach the callback credential (sha256 only — machine
+/// callbacks never need the display copy). Returns the capability URL, or
+/// `None` when the infra is not installed.
+pub async fn provision_callback(
+    instance_id: crate::types::snowflake_id::SnowflakeId,
+    node_id: &str,
+    kind: &str,
+) -> AppResult<Option<String>> {
+    let Some((pool, base_url)) = HOOK_INFRA.get() else {
+        return Ok(None);
+    };
+    super::model::ensure_flow_resume_open(pool, instance_id, node_id, kind, None).await?;
+    let Some(row) = super::model::find_open_flow_resume(pool, instance_id, node_id).await? else {
+        return Ok(None);
+    };
+    if row.token_hash.is_some() {
+        // Already provisioned (engine retry / replay) — keep the ORIGINAL
+        // capability; re-minting would orphan the URL already sent upstream.
+        return Ok(None);
+    }
+    let callback_id = crate::utils::id::random_hex(24);
+    use sha2::Digest as _;
+    let mut h = sha2::Sha256::new();
+    h.update(callback_id.as_bytes());
+    let hash = hex::encode(h.finalize());
+    super::model::set_flow_resume_token(pool, row.id, &hash, "").await?;
+    Ok(Some(format!("{base_url}/api/v1/flows/hooks/{callback_id}")))
+}
+
+/// Resolve a hook capability to its parked task context. `None` = unknown
+/// callback_id (404 to the caller).
+pub(crate) async fn resolve_hook(
+    pool: &crate::db::Pool,
+    callback_id: &str,
+) -> Option<(super::model::FlowResume, Arc<dyn WaitPoller>)> {
+    use sha2::Digest as _;
+    let mut h = sha2::Sha256::new();
+    h.update(callback_id.as_bytes());
+    let hash = hex::encode(h.finalize());
+    let row = super::model::find_open_by_token_hash(pool, &hash)
+        .await
+        .ok()??;
+    let inst = super::model::find_instance_by_id(pool, row.instance_id)
+        .await
+        .ok()?;
+    let poller = poller_for(&inst.waiting_kind.clone().unwrap_or_default())?;
+    Some((row, poller))
 }
 
 #[cfg(test)]

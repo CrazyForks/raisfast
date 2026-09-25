@@ -461,6 +461,17 @@ pub fn routes(
         r,
         registry,
         restful,
+        "/flows/hooks/{callback_id}",
+        post,
+        provider_hook,
+        "flows",
+        "flows/hooks",
+        "public"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        restful,
         "/admin/flows/instances/{id}/events",
         get,
         instance_events,
@@ -668,6 +679,98 @@ async fn ensure_resume_token(
     )
     .await?;
     Ok(Some(token))
+}
+
+/// Provider webhook callback (hook P1, wait-triggers.md §4): the capability
+/// callback_id IS the authorization. The parked scenario's poller translates
+/// the provider payload into a resume envelope; the claim's 409 keeps
+/// redelivery idempotent (mapped to 200 so providers stop retrying).
+///
+/// Response semantics: 200 = handled (or already handled); 400 = permanent
+/// rejection (unknown capability / untranslatable payload — providers should
+/// stop retrying); 5xx = transient (provider retries, self-healing).
+async fn provider_hook(
+    State(state): State<AppState>,
+    Path(callback_id): Path<String>,
+    body: axum::body::Bytes,
+) -> AppResult<axum::response::Response> {
+    use axum::http::StatusCode;
+    use axum::response::IntoResponse;
+
+    let Some((row, poller)) = super::poll_infra::resolve_hook(&state.pool, &callback_id).await
+    else {
+        return Ok((StatusCode::NOT_FOUND, "unknown callback").into_response());
+    };
+    let parsed: Value = match serde_json::from_slice(&body) {
+        Ok(v) => v,
+        Err(e) => {
+            // Malformed payload will never become translatable — permanent.
+            return Ok((StatusCode::BAD_REQUEST, format!("bad json: {e}")).into_response());
+        }
+    };
+    let inst = model::find_instance_by_id(&state.pool, row.instance_id).await?;
+    let Some(value) = model::find_snapshot(&state.pool, row.instance_id).await? else {
+        return Ok((StatusCode::NOT_FOUND, "no snapshot").into_response());
+    };
+    let snap: super::engine::Snapshot = serde_json::from_value(value)
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("snapshot parse: {e}")))?;
+    let Some(node_id) = snap.waiting_nodes.first() else {
+        return Ok((StatusCode::NOT_FOUND, "no waiting node").into_response());
+    };
+    let info = snap
+        .node_states
+        .get(node_id)
+        .and_then(|st| st.output.as_ref())
+        .cloned()
+        .unwrap_or(Value::Null);
+    let storage = super::exec::shared_storage()
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("storage unavailable")))?;
+    let ctx = super::poll_infra::HookCtx {
+        router: state.llm_router.clone(),
+        tenant: &inst.tenant_id,
+        instance_id: row.instance_id,
+        node_id,
+        info: &info,
+        storage,
+    };
+    let Some(envelope) = (match poller.translate_hook(&ctx, &parsed).await {
+        Ok(env) => env,
+        Err(e) => {
+            // Transient translation failure — 5xx invites provider retry.
+            return Ok((StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response());
+        }
+    }) else {
+        // Non-terminal event — acknowledge, keep parked.
+        return Ok((StatusCode::OK, "accepted").into_response());
+    };
+    match super::run::resume_instance(
+        &state.pool,
+        state.llm_router.clone(),
+        state.integration.clone(),
+        Some(state.plugins.clone()),
+        row.instance_id,
+        &envelope,
+        None,
+    )
+    .await
+    {
+        Ok(()) => {}
+        Err(AppError::Conflict(_)) => {
+            // Racing sweep / duplicate delivery already resumed — 200 stops
+            // provider retries.
+        }
+        Err(e) => return Err(e),
+    }
+    super::events::emit(
+        row.instance_id,
+        super::events::EV_VIDEO_RESUMED,
+        serde_json::json!({
+            "node_id": node_id,
+            "resume_kind": "hook",
+            "action": envelope.action,
+        }),
+    );
+    Ok((StatusCode::OK, "ok").into_response())
 }
 
 /// Public callback resume (n8n-style): the token IS the authorization — no

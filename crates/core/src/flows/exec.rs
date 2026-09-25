@@ -49,6 +49,8 @@ pub struct FlowsExec {
     /// Asset storage override for media nodes; `None` → process-wide shared
     /// storage (installed at startup). Injected in tests.
     pub storage: Option<Arc<dyn Storage>>,
+    /// Owning instance (hook provisioning + audit); tests may omit.
+    pub instance_id: Option<crate::types::snowflake_id::SnowflakeId>,
 }
 
 impl FlowsExec {
@@ -211,7 +213,31 @@ impl NodeExecutor for FlowsExec {
                 // completion is driven by the wait-poll hub (poll_infra.rs).
                 let runtime = self.llm_runtime();
                 let storage = self.media_storage()?;
-                super::nodes::video::run_video_submit(&runtime, &storage, node, pool).await
+                // Hook provisioning (wait-triggers.md §4): capability minted
+                // BEFORE the upstream submit — the provider must learn the
+                // callback URL in the same request. Idempotent; absent when
+                // the scenario declares no hook support or infra is not
+                // installed (tests / hook-less deployments).
+                let callback_url = (|| async {
+                    let hook = super::poll_infra::poller_for(node.data.kind.as_str())?;
+                    if !hook.supports_hook() {
+                        return None;
+                    }
+                    let instance_id = self.instance_id?;
+                    super::poll_infra::provision_callback(instance_id, &node.id, &runtime.tenant)
+                        .await
+                        .ok()
+                        .flatten()
+                })()
+                .await;
+                super::nodes::video::run_video_submit(
+                    &runtime,
+                    &storage,
+                    node,
+                    pool,
+                    callback_url.as_deref(),
+                )
+                .await
             }
             nodes::T_DOCPARSE => {
                 let Some(rt) = &self.docparse else {
@@ -283,6 +309,7 @@ mod tests {
             tenant_id: None,
             docparse: None,
             storage: None,
+            instance_id: None,
         };
         let err = exec
             .exec(
@@ -306,6 +333,7 @@ mod tests {
             tenant_id: None,
             docparse: None,
             storage: None,
+            instance_id: None,
         };
         let err = exec
             .exec(
@@ -332,6 +360,7 @@ mod tests {
             tenant_id: None,
             docparse: None,
             storage: None,
+            instance_id: None,
         };
         let err = exec
             .exec(

@@ -420,6 +420,9 @@ pub async fn build_app_state(
     // Media nodes (`image`/`speech`, later `video`) persist generated assets
     // through the process-wide storage handle (media-nodes.md §5).
     crate::flows::exec::set_shared_storage(storage.clone());
+    // Provider-hook capability plumbing (wait-triggers.md §4): claim pool +
+    // public origin for capability URLs.
+    crate::flows::poll_infra::install_hook_infra(pool.clone(), config.base_url.clone());
     // One-time `llm`→`chat` node-kind canonicalization over stored flow
     // definitions and drafts (media-nodes.md §1.2). Best-effort at boot: the
     // graph loader's permanent read alias keeps any leftover executable.

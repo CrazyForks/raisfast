@@ -7823,6 +7823,7 @@ async fn flow_engine_egress_e2e_acceptance() {
         router: state.llm_router.clone(),
         docparse: None,
         storage: None,
+        instance_id: None,
         tenant_id: Some("default".into()),
     };
     run::execute_instance(&state.pool, instance_id, &exec)

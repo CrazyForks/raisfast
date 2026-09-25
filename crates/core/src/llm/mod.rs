@@ -15,7 +15,7 @@ pub mod defaults;
 pub mod execute;
 pub mod handler;
 pub mod models;
-pub mod provider_anthropic;
+pub mod providers;
 pub mod queue;
 pub mod registry;
 pub mod relay;

@@ -186,6 +186,7 @@ pub async fn run_video_submit(
     storage: &Arc<dyn Storage>,
     node: &GraphNode,
     pool: &Pool,
+    callback_url: Option<&str>,
 ) -> AppResult<ExecOutcome> {
     let cfg: VideoConfig = serde_json::from_value(node.data.config.clone())
         .map_err(|e| AppError::BadRequest(format!("video config: {e}")))?;
@@ -210,6 +211,7 @@ pub async fn run_video_submit(
         seconds: cfg.seconds.clone(),
         size: cfg.size.clone(),
         input_references,
+        callback_url: callback_url.map(str::to_string),
     };
     let task = tokio::time::timeout(
         std::time::Duration::from_millis(timeout_ms),
@@ -258,6 +260,7 @@ pub(crate) async fn fetch_and_store(
             "video: 上游返回空视频 (task {task_id})"
         )));
     }
+    // Content endpoint gave us bytes — persist directly (no result URL).
     let key = format!("gen/flows/{instance_id}/{node_id}/video-{task_id}.mp4");
     storage.put(&key, &bytes, "video/mp4").await?;
     let url = storage
@@ -265,6 +268,48 @@ pub(crate) async fn fetch_and_store(
         .await
         .unwrap_or_else(|_| format!("/{key}"));
     Ok(json!({ "key": key, "url": url, "bytes": bytes.len() }))
+}
+
+/// Persist a completed video from its result URL (shared by the poll path
+/// and the hook path — media-nodes.md §6 asset convention).
+pub(crate) async fn store_from_url(
+    storage: &Arc<dyn Storage>,
+    instance_id: i64,
+    node_id: &str,
+    task_id: &str,
+    url: &str,
+) -> AppResult<Value> {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(300))
+        .build()
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("video download client: {e}")))?;
+    let resp = client
+        .get(url)
+        .send()
+        .await
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("video 下载失败: {e}")))?;
+    let status = resp.status().as_u16();
+    if !(200..300).contains(&status) {
+        return Err(AppError::Internal(anyhow::anyhow!(
+            "video: 下载失败 HTTP {status}"
+        )));
+    }
+    let bytes = resp
+        .bytes()
+        .await
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("video: 读取响应失败: {e}")))?;
+    if bytes.is_empty() {
+        return Err(AppError::Internal(anyhow::anyhow!(
+            "video: 上游返回空视频 (task {task_id})"
+        )));
+    }
+    let key = format!("gen/flows/{instance_id}/{node_id}/video-{task_id}.mp4");
+    storage.put(&key, &bytes, "video/mp4").await?;
+    let public_url = storage
+        .url(&key)
+        .await
+        .unwrap_or_else(|_| format!("/{key}"));
+    Ok(json!({ "key": key, "url": public_url, "bytes": bytes.len() }))
 }
 
 /// The video scenario of the generic wait-poll hub (`poll_infra.rs`):
@@ -281,6 +326,84 @@ impl super::super::poll_infra::WaitPoller for VideoPoller {
 
     fn park_event(&self) -> &'static str {
         super::super::events::EV_VIDEO_SUBMITTED
+    }
+
+    fn supports_hook(&self) -> bool {
+        true
+    }
+
+    /// Dialect sniff on the webhook body [自造-务实]: the node output carries
+    /// no channel identity (failover may pick any channel), so the payload
+    /// shape decides — Kling wraps in `{code, data:{task_status}}`,
+    /// Replicate posts a flat `{status, output}` prediction.
+    async fn translate_hook(
+        &self,
+        ctx: &super::super::poll_infra::HookCtx<'_>,
+        body: &Value,
+    ) -> AppResult<Option<super::ResumeEnvelope>> {
+        let (status, url) = if body
+            .get("data")
+            .and_then(|d| d.get("task_status"))
+            .is_some()
+        {
+            (
+                body.pointer("/data/task_status").and_then(Value::as_str),
+                body.pointer("/data/task_result/videos/0/url")
+                    .and_then(Value::as_str),
+            )
+        } else if body.get("status").is_some() {
+            let out = body.get("output");
+            let url = match out {
+                Some(Value::String(s)) => Some(s.as_str()),
+                Some(Value::Array(items)) => items.first().and_then(Value::as_str),
+                _ => None,
+            };
+            (body.get("status").and_then(Value::as_str), url)
+        } else {
+            (None, None) // unknown dialect — treat as non-terminal
+        };
+        let task_id = ctx
+            .info
+            .get("task_id")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+        match status {
+            Some("succeed") | Some("succeeded") => {
+                let Some(url) = url else {
+                    return Err(AppError::Internal(anyhow::anyhow!(
+                        "video hook: terminal success without result url"
+                    )));
+                };
+                let video =
+                    store_from_url(&ctx.storage, *ctx.instance_id, ctx.node_id, &task_id, url)
+                        .await?;
+                Ok(Some(super::ResumeEnvelope {
+                    action: "video.done".into(),
+                    data: Some(json!({
+                        "video": video,
+                        "task_id": task_id,
+                        "status": "completed",
+                        "via": "hook",
+                    })),
+                }))
+            }
+            Some("failed") | Some("canceled") => Ok(Some(super::ResumeEnvelope {
+                action: "video.fail".into(),
+                data: Some(json!({
+                    "task_id": task_id,
+                    "status": "failed",
+                    "via": "hook",
+                    "error": body
+                        .pointer("/data/task_status_msg")
+                        .or_else(|| body.get("error"))
+                        .and_then(Value::as_str)
+                        .unwrap_or("upstream failed"),
+                })),
+            })),
+            // submitted/processing/starting — non-terminal, keep parked.
+            _ => Ok(None),
+        }
     }
 
     async fn poll(
@@ -527,9 +650,15 @@ mod tests {
             .or_default()
             .insert("scene".into(), json!("夜晚的城市"));
         let storage: Arc<MemStorage> = Arc::new(MemStorage::default());
-        let out = run_video_submit(&rt, &(storage.clone() as Arc<dyn Storage>), &node, &pool)
-            .await
-            .unwrap();
+        let out = run_video_submit(
+            &rt,
+            &(storage.clone() as Arc<dyn Storage>),
+            &node,
+            &pool,
+            None,
+        )
+        .await
+        .unwrap();
         assert_eq!(out.output["phase"], "submitted");
         assert_eq!(out.output["model"], "vid-model");
         assert!(
@@ -548,9 +677,15 @@ mod tests {
             "model": "vid-model", "prompt": "{{#start.nope#}}"
         }));
         let storage: Arc<MemStorage> = Arc::new(MemStorage::default());
-        let err = run_video_submit(&rt, &(storage as Arc<dyn Storage>), &node, &Pool::new())
-            .await
-            .unwrap_err();
+        let err = run_video_submit(
+            &rt,
+            &(storage as Arc<dyn Storage>),
+            &node,
+            &Pool::new(),
+            None,
+        )
+        .await
+        .unwrap_err();
         assert!(matches!(err, AppError::BadRequest(_)), "{err}");
     }
 
@@ -575,9 +710,15 @@ mod tests {
             "images".into(),
             json!([{ "key": key, "url": format!("http://localhost/{key}") }]),
         );
-        let out = run_video_submit(&rt, &(storage.clone() as Arc<dyn Storage>), &node, &pool)
-            .await
-            .unwrap();
+        let out = run_video_submit(
+            &rt,
+            &(storage.clone() as Arc<dyn Storage>),
+            &node,
+            &pool,
+            None,
+        )
+        .await
+        .unwrap();
         assert_eq!(out.output["phase"], "submitted");
 
         // Scoped: drop the registry lock before the next submit — the mock
@@ -602,9 +743,15 @@ mod tests {
             "prompt": "https-passthrough-probe",
             "input_images": {"literal": ["https://cdn.example.com/a.png"]}
         }));
-        run_video_submit(&rt, &(storage as Arc<dyn Storage>), &node2, &Pool::new())
-            .await
-            .unwrap();
+        run_video_submit(
+            &rt,
+            &(storage as Arc<dyn Storage>),
+            &node2,
+            &Pool::new(),
+            None,
+        )
+        .await
+        .unwrap();
         {
             let reqs = seen_requests().lock().unwrap();
             let req2 = reqs

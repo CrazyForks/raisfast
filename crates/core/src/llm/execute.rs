@@ -195,7 +195,19 @@ impl LlmRouter {
             .providers
             .entry((ep.channel_id, ep.key_index))
             .or_insert_with(|| match ep.provider.as_str() {
-                "anthropic" => Arc::new(crate::llm::provider_anthropic::AnthropicProvider::new(
+                "anthropic" => Arc::new(crate::llm::providers::AnthropicProvider::new(
+                    ep.base_url.clone(),
+                    Some(ep.api_key.clone()),
+                    ep.param_override.clone(),
+                    ep.header_override.clone(),
+                )) as Arc<dyn ModelProvider>,
+                "replicate" => Arc::new(crate::llm::providers::ReplicateProvider::new(
+                    ep.base_url.clone(),
+                    Some(ep.api_key.clone()),
+                    ep.param_override.clone(),
+                    ep.header_override.clone(),
+                )) as Arc<dyn ModelProvider>,
+                "elevenlabs" => Arc::new(crate::llm::providers::ElevenLabsProvider::new(
                     ep.base_url.clone(),
                     Some(ep.api_key.clone()),
                     ep.param_override.clone(),

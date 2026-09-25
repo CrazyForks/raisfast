@@ -35,7 +35,7 @@ use raisfast_agent::provider::{
 use crate::llm::relay::adaptor::shared_client;
 use crate::llm::relay::anthropic::AnthropicAdaptor;
 
-pub(crate) struct AnthropicProvider {
+pub struct AnthropicProvider {
     http: reqwest::Client,
     base_url: String,
     api_key: Option<String>,
@@ -46,7 +46,7 @@ pub(crate) struct AnthropicProvider {
 impl AnthropicProvider {
     /// `base_url` is the anthropic root (no `/v1`), e.g.
     /// `https://api.anthropic.com`. Overrides ride the resolved channel.
-    pub(crate) fn new(
+    pub fn new(
         base_url: impl Into<String>,
         api_key: Option<String>,
         param_override: Option<Value>,

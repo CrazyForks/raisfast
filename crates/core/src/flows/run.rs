@@ -221,6 +221,7 @@ pub async fn run_flow_latest(
         tenant_id: Some(flow.tenant_id.clone()),
         docparse: docparse_runtime(&flow.tenant_id),
         storage: None,
+        instance_id: Some(instance_id),
     };
     execute_instance(pool, instance_id, &exec).await?;
     model::find_instance_by_id(pool, instance_id).await
@@ -291,6 +292,7 @@ pub async fn run_definition_latest(
         tenant_id: Some(flow.tenant_id.clone()),
         docparse: docparse_runtime(&flow.tenant_id),
         storage: None,
+        instance_id: Some(instance_id),
     };
     engine::run_persisted(&graph, &mut snap, &exec, &persist).await?;
     record_node_runs(pool, instance_id, &graph, &snap).await?;
@@ -792,6 +794,7 @@ pub async fn resume_instance(
         tenant_id: Some(inst.tenant_id.clone()),
         docparse: docparse_runtime(&inst.tenant_id),
         storage: None,
+        instance_id: Some(inst.id),
     };
     execute_instance(pool, instance_id, &exec).await?;
     Ok(())
@@ -881,6 +884,7 @@ async fn sweep_one(
             router: router.clone(),
             docparse: docparse_runtime(&inst.tenant_id),
             storage: None,
+            instance_id: Some(row.instance_id),
             tenant_id: Some(inst.tenant_id.clone()),
         };
         execute_instance(pool, row.instance_id, &exec).await?;

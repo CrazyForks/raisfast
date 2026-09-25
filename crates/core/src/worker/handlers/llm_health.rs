@@ -126,6 +126,12 @@ async fn probe_channel(row: &LlmChannel) -> ProbeOutcome {
     if model.is_empty() {
         return ProbeOutcome::Skip;
     }
+    // Speech/video-only providers have no chat surface to ping — probing
+    // would fail healthy channels. Skip them until a modality-aware probe
+    // is warranted (real-use-case driven).
+    if matches!(row.provider.as_str(), "elevenlabs" | "kling" | "replicate") {
+        return ProbeOutcome::Skip;
+    }
     let client = crate::llm::relay::shared_client();
     // Probe in the channel's own protocol (§7.5, mirrors the manual
     // `test_channel`): anthropic-native channels get a `/v1/messages` ping,

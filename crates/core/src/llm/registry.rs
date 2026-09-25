@@ -61,6 +61,24 @@ const PRESETS: &[ProviderPreset] = &[
         requires_auth: false,
     },
     ProviderPreset {
+        key: "replicate",
+        display_name: "Replicate (video/multi)",
+        default_base_url: "https://api.replicate.com/v1",
+        requires_auth: true,
+    },
+    ProviderPreset {
+        key: "kling",
+        display_name: "Kling AI (可灵, video)",
+        default_base_url: "https://api.klingai.com",
+        requires_auth: true,
+    },
+    ProviderPreset {
+        key: "elevenlabs",
+        display_name: "ElevenLabs (TTS)",
+        default_base_url: "https://api.elevenlabs.io/v1",
+        requires_auth: true,
+    },
+    ProviderPreset {
         key: "siliconflow",
         display_name: "SiliconFlow",
         default_base_url: "https://api.siliconflow.cn/v1",

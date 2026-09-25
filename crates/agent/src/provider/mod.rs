@@ -115,6 +115,10 @@ pub struct VideoRequest {
     /// per ref; the openai-compat wire emits the first ref as
     /// `input_reference` (data-URL when only b64 is available).
     pub input_references: Vec<VideoInputRef>,
+    /// Provider callback URL for completion notification (hook path —
+    /// wait-triggers.md §4). None = poll-only. Providers map it to their
+    /// own field (kling `callback_url`, replicate `webhook`).
+    pub callback_url: Option<String>,
 }
 
 /// One reference image attached to a [`VideoRequest`].
