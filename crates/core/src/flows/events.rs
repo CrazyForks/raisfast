@@ -44,6 +44,7 @@ pub const EV_AWAIT_PAUSED: &str = "workflow.node_await_paused";
 pub const EV_AWAIT_RESUMED: &str = "workflow.node_await_resumed";
 pub const EV_VIDEO_SUBMITTED: &str = "workflow.node_video_submitted";
 pub const EV_VIDEO_RESUMED: &str = "workflow.node_video_resumed";
+pub const EV_ITERATION_COMPLETED: &str = "workflow.node_iteration_completed";
 pub const EV_RUN_FINISHED: &str = "workflow.graph_run_finished";
 
 /// Emit a C4-shaped event `{type, ts, seq, instance_id, data}` onto the

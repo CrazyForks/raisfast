@@ -864,10 +864,42 @@ pub fn validate_node(kind: &str, _version: i64, config: &Value) -> AppResult<()>
                     })
                     .unwrap_or(0)
             };
-            if count_kind("start") != 1 || count_kind("end") != 1 {
+            let video_ids: Vec<String> = body
+                .get("nodes")
+                .and_then(Value::as_array)
+                .map(|ns| {
+                    ns.iter()
+                        .filter(|n| {
+                            n.get("data")
+                                .and_then(|d| d.get("type"))
+                                .and_then(Value::as_str)
+                                == Some(T_VIDEO)
+                        })
+                        .filter_map(|n| n.get("id").and_then(Value::as_str))
+                        .map(str::to_string)
+                        .collect()
+                })
+                .unwrap_or_default();
+            // Video-body iteration (iteration-video.md §2.1): the video node
+            // is the item boundary — `end` is optional and video nodes must
+            // have no outgoing edges.
+            if video_ids.is_empty() && (count_kind("start") != 1 || count_kind("end") != 1) {
                 return Err(AppError::BadRequest(
                     "iteration: body 必须恰好一个 start（无参数）和一个 end".into(),
                 ));
+            }
+            if !video_ids.is_empty()
+                && let Some(edges) = body.get("edges").and_then(Value::as_array)
+            {
+                for e in edges {
+                    let src = e.get("source").and_then(Value::as_str).unwrap_or_default();
+                    if video_ids.iter().any(|v| v == src) {
+                        return Err(AppError::BadRequest(
+                            "iteration: video 须为 item 的末位产出节点（不得有出边，结果由聚合器回填）"
+                                .into(),
+                        ));
+                    }
+                }
             }
             if body
                 .get("nodes")
@@ -884,26 +916,24 @@ pub fn validate_node(kind: &str, _version: i64, config: &Value) -> AppResult<()>
                     "iteration: 嵌套深度超上限 {ITER_MAX_DEPTH}"
                 )));
             }
-            // await/video inside a body cannot park (NoopPersist; the
-            // snapshot's waiting list is top-level only — media-nodes.md
-            // §8-2). Reject at publish instead of failing every item at
-            // runtime.
+            // await inside a body cannot park (NoopPersist; the snapshot's
+            // waiting list is top-level only). Video inside a body IS now
+            // supported (submit-only recorder + iteration park, media-nodes.md
+            // §8-2 / iteration-video.md §2).
             if body
                 .get("nodes")
                 .and_then(Value::as_array)
                 .is_some_and(|ns| {
                     ns.iter().any(|n| {
-                        matches!(
-                            n.get("data")
-                                .and_then(|d| d.get("type"))
-                                .and_then(Value::as_str),
-                            Some("await") | Some("video")
-                        )
+                        n.get("data")
+                            .and_then(|d| d.get("type"))
+                            .and_then(Value::as_str)
+                            == Some("await")
                     })
                 })
             {
                 return Err(AppError::BadRequest(
-                    "iteration: 循环体内暂不支持 await/video（等待语义需外层配合，见 iteration-node.md / media-nodes.md §8-2）"
+                    "iteration: 循环体内暂不支持 await（等待语义需外层配合，见 iteration-node.md）"
                         .into(),
                 ));
             }
@@ -1289,6 +1319,54 @@ mod tests {
                 &json!({"items": {"ref": ["a"]}, "body": two_ends})
             )
             .is_err()
+        );
+    }
+
+    #[test]
+    fn iteration_video_body_lint_rules() {
+        let body_with_video = json!({
+            "nodes": [
+                {"id": "bstart", "data": {"type": "start", "config": {}}},
+                {"id": "v", "data": {"type": "video", "config": {"model": "m", "prompt": "p"}}}
+            ],
+            "edges": [
+                {"source": "bstart", "sourceHandle": "out", "target": "v"}
+            ]
+        });
+        // video 体：end 可省略
+        assert!(
+            validate_node(
+                T_ITERATION,
+                1,
+                &json!({
+                    "items": {"literal": [1]}, "body": body_with_video
+                })
+            )
+            .is_ok()
+        );
+
+        // video 带出边 → 拒绝
+        let body_out_edge = json!({
+            "nodes": [
+                {"id": "bstart", "data": {"type": "start", "config": {}}},
+                {"id": "v", "data": {"type": "video", "config": {"model": "m", "prompt": "p"}}},
+                {"id": "bend", "data": {"type": "end", "config": {"outputs": []}}}
+            ],
+            "edges": [
+                {"source": "bstart", "sourceHandle": "out", "target": "v"},
+                {"source": "v", "sourceHandle": "out", "target": "bend"}
+            ]
+        });
+        assert!(
+            validate_node(
+                T_ITERATION,
+                1,
+                &json!({
+                    "items": {"literal": [1]}, "body": body_out_edge
+                })
+            )
+            .is_err(),
+            "video 有出边须拒绝"
         );
     }
 }

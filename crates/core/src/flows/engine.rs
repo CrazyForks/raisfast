@@ -11,7 +11,7 @@ use std::collections::{HashMap, VecDeque};
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 
 use crate::errors::app_error::{AppError, AppResult};
 
@@ -190,8 +190,27 @@ impl Persist for NoopPersist {
 }
 
 /// Run one full pass of the graph over the snapshot (serial, in-memory).
+/// How the engine treats `video` nodes (media/iteration-video.md §2.1):
+/// `Park` = top-level async submit→park (default); `SubmitOnly` = inside an
+/// iteration body — the node submits and completes immediately (task handle
+/// recorded), the wait is deferred to the iteration node's own park.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VideoInBody {
+    Park,
+    SubmitOnly,
+}
+
 pub async fn run(graph: &Graph, snap: &mut Snapshot, exec: &dyn NodeExecutor) -> AppResult<()> {
-    run_persisted(graph, snap, exec, &NoopPersist).await
+    run_persisted(graph, snap, exec, &NoopPersist, VideoInBody::Park).await
+}
+
+/// Outcome of an iteration pass (iteration-video.md §2.3): `Suspended` means
+/// some items' video tasks are in flight — the node parks and the wait-poll
+/// hub aggregates terminal states before completion.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IterationOutcome {
+    Completed,
+    Suspended,
 }
 
 /// Serial pass with a durability hook: [`Persist::persist`] is invoked right
@@ -203,6 +222,7 @@ pub async fn run_persisted(
     snap: &mut Snapshot,
     exec: &dyn NodeExecutor,
     persist: &dyn Persist,
+    video_in_body: VideoInBody,
 ) -> AppResult<()> {
     if snap.status != S_RUNNING {
         return Ok(());
@@ -406,18 +426,39 @@ pub async fn run_persisted(
                     .unwrap_or(1)
                     .max(1);
                 let mut last_err: Option<Value> = None;
+                let mut suspended = false;
                 for i in 1..=attempts {
                     // Claim before each attempt (A.3); progress from prior
                     // attempts survives so completed items are skipped.
                     set_in_progress(snap, &id, i);
                     persist.persist(snap).await?;
                     match run_iteration(graph, snap, &id, node, exec, persist).await {
-                        Ok(()) => {
+                        Ok(IterationOutcome::Completed) => {
                             last_err = None;
-                            break;
+                        }
+                        // Video-body iteration with in-flight tasks
+                        // (iteration-video.md §2.3): park the iteration node
+                        // itself — the wait-poll hub aggregates terminal
+                        // states and completes the node. Retrying while
+                        // tasks are in flight is meaningless.
+                        Ok(IterationOutcome::Suspended) => {
+                            last_err = None;
+                            suspended = true;
                         }
                         Err(e) => last_err = Some(e),
                     }
+                }
+                if suspended {
+                    // T_AWAIT-style park — claim typing handled by
+                    // park_instance (kind = "iteration").
+                    let st = snap.node_states.entry(id.clone()).or_default();
+                    st.status = N_WAITING.to_string();
+                    if !snap.waiting_nodes.contains(&id) {
+                        snap.waiting_nodes.push(id.clone());
+                    }
+                    snap.status = S_WAITING.to_string();
+                    persist.persist(snap).await?;
+                    break;
                 }
                 match last_err {
                     None => {
@@ -425,6 +466,34 @@ pub async fn run_persisted(
                     }
                     Some(e) => {
                         dispatch_node_failure(graph, snap, &id, &mods, e, &mut queue)?;
+                    }
+                }
+            }
+            nodes::T_VIDEO if video_in_body == VideoInBody::SubmitOnly => {
+                // Iteration-body video (iteration-video.md §2.1): submit-only
+                // recorder — no parking inside bodies. The task handle lands
+                // in the body output; the OUTER iteration node owns the
+                // two-step durable pending write and the park.
+                set_in_progress(snap, &id, 1);
+                persist.persist(snap).await?;
+                match exec
+                    .exec(node, Value::Object(serde_json::Map::new()), &snap.pool)
+                    .await
+                {
+                    Ok(o) => {
+                        mark_node_success(snap, &id, o.output);
+                        fan_out_exec(graph, snap, &id, &mut queue, false)?;
+                    }
+                    Err(e) => {
+                        let err = json!({"message": e.to_string()});
+                        dispatch_node_failure(
+                            graph,
+                            snap,
+                            &id,
+                            &NodeModifiers::default(),
+                            err,
+                            &mut queue,
+                        )?;
                     }
                 }
             }
@@ -597,7 +666,7 @@ async fn run_iteration(
     node: &GraphNode,
     exec: &dyn NodeExecutor,
     persist: &dyn Persist,
-) -> Result<(), Value> {
+) -> Result<IterationOutcome, Value> {
     let cfg: nodes::IterationConfig = serde_json::from_value(node.data.config.clone())
         .map_err(|e| json!({"message": format!("iteration config: {e}")}))?;
 
@@ -629,6 +698,17 @@ async fn run_iteration(
         .filter(|(ns, _)| ancestors.contains(ns.as_str()))
         .map(|(ns, v)| (ns.clone(), v.clone()))
         .collect();
+
+    // 3.5 Video-body fast path (iteration-video.md §2): items submit video
+    // tasks and the iteration node parks; the wait-poll hub aggregates.
+    let video_body = body_graph
+        .nodes
+        .values()
+        .any(|n| n.data.kind == nodes::T_VIDEO);
+    if video_body {
+        return run_video_iteration(snap, id, node, exec, persist, &body_graph, arr, parent_pool)
+            .await;
+    }
 
     // 4. Progress (per-item results, null = pending).
     let mut results: Vec<Value> = snap
@@ -670,7 +750,14 @@ async fn run_iteration(
                 let mut pool = parent;
                 pool.insert("item".to_string(), item_ns);
                 body_snap.pool = pool;
-                let _ = run_persisted(&body_graph, &mut body_snap, exec, &NoopPersist).await;
+                let _ = run_persisted(
+                    &body_graph,
+                    &mut body_snap,
+                    exec,
+                    &NoopPersist,
+                    VideoInBody::Park,
+                )
+                .await;
                 // run_persisted returns Ok on body failure too — the verdict
                 // lives in the snapshot status (S_FAILED/S_WAITING ≠ success).
                 let ok = body_snap.status == S_SUCCESS;
@@ -724,7 +811,253 @@ async fn run_iteration(
     if let Some(st) = snap.node_states.get_mut(id) {
         st.progress = None;
     }
-    Ok(())
+    Ok(IterationOutcome::Completed)
+}
+
+/// Video-body iteration (iteration-video.md §2.3): every item's body ends at
+/// its video node, which submits (no parking) and records the task handle.
+/// Per-item two-step durable writes; already-submitted items are skipped on
+/// replay; `submitting` crash-window items become unconfirmed errors.
+///
+/// Returns `Suspended` when at least one task is in flight (the node parks
+/// and the wait-poll hub aggregates) — abort-mode submit errors with nothing
+/// in flight fail the node immediately.
+#[allow(clippy::too_many_lines)]
+#[allow(clippy::too_many_arguments)]
+async fn run_video_iteration(
+    snap: &mut Snapshot,
+    id: &str,
+    node: &GraphNode,
+    exec: &dyn NodeExecutor,
+    persist: &dyn Persist,
+    body_graph: &Graph,
+    arr: &[Value],
+    parent_pool: Pool,
+) -> Result<IterationOutcome, Value> {
+    let cfg: nodes::IterationConfig = serde_json::from_value(node.data.config.clone())
+        .map_err(|e| json!({"message": format!("iteration config: {e}")}))?;
+    let total = arr.len();
+    let skip_mode = cfg.on_item_error.as_deref() == Some("skip");
+
+    // The single video node of the body (lint: exactly one, terminal).
+    let video_id = body_graph
+        .nodes
+        .values()
+        .find(|n| n.data.kind == nodes::T_VIDEO)
+        .map(|n| n.id.clone())
+        .ok_or_else(|| json!({"message": "iteration: body 未找到 video 节点"}))?;
+
+    // Progress: results + pending + errors (iteration-video.md §2.2).
+    let prior = snap
+        .node_states
+        .get(id)
+        .and_then(|st| st.progress.clone())
+        .unwrap_or_else(|| json!({}));
+    let mut results: Vec<Value> = prior
+        .get("results")
+        .and_then(Value::as_array)
+        .cloned()
+        .map(|mut r| {
+            r.resize(total, Value::Null);
+            r
+        })
+        .unwrap_or_else(|| vec![Value::Null; total]);
+    let mut pending: Vec<Value> = prior
+        .get("pending")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let mut errors: Map<String, Value> = prior
+        .get("errors")
+        .and_then(Value::as_object)
+        .cloned()
+        .unwrap_or_default();
+
+    // Terminal set helpers.
+    fn is_terminal(results: &[Value], errors: &Map<String, Value>, i: usize) -> bool {
+        results.get(i).is_some_and(|v| !v.is_null()) || errors.contains_key(&i.to_string())
+    }
+    fn pending_phase(pending: &[Value], i: usize) -> Option<String> {
+        pending
+            .iter()
+            .find(|p| p.get("item").and_then(Value::as_u64) == Some(i as u64))
+            .and_then(|p| p.get("phase"))
+            .and_then(Value::as_str)
+            .map(str::to_string)
+    }
+
+    let mut abort_stopped = false;
+    for i in 0..total {
+        if is_terminal(&results, &errors, i) {
+            continue;
+        }
+        match pending_phase(&pending, i).as_deref() {
+            // Already submitted and in flight — skip (idempotent replay).
+            Some("submitted") => continue,
+            // Crash window: submit may have reached the provider — never
+            // resubmit [照抄顶层 video Unconfirmed 纪律].
+            Some("submitting") => {
+                errors.insert(
+                    i.to_string(),
+                    json!({
+                        "status": "unconfirmed",
+                        "message": "提交状态不确定（崩溃窗口），已放弃自动重试；请凭 llm_tasks / 上游控制台找回",
+                    }),
+                );
+                if !skip_mode {
+                    abort_stopped = true;
+                    break;
+                }
+                continue;
+            }
+            _ => {}
+        }
+
+        // Two-step durable write: mark submitting FIRST [照抄 media-nodes §4.2].
+        pending.retain(|p| p.get("item").and_then(Value::as_u64) != Some(i as u64));
+        pending.push(json!({ "item": i, "phase": "submitting" }));
+        if let Some(st) = snap.node_states.get_mut(id) {
+            st.progress = Some(json!({"results": results, "pending": pending, "errors": errors}));
+        }
+        // Persist failure here is non-fatal: the marker lands on the next
+        // successful persist; worst case is the documented crash window.
+        if let Err(e) = persist.persist(snap).await {
+            tracing::warn!("video-iteration persist (submitting) failed: {e}");
+        }
+
+        // Run the body (video node submits via exec; SubmitOnly mode).
+        let mut body_snap = Snapshot::new();
+        let mut item_ns = std::collections::HashMap::new();
+        item_ns.insert("value".to_string(), arr[i].clone());
+        item_ns.insert("index".to_string(), json!(i));
+        item_ns.insert("total".to_string(), json!(total));
+        let mut pool = parent_pool.clone();
+        pool.insert("item".to_string(), item_ns);
+        body_snap.pool = pool;
+        // Async recursion (run_persisted → run_iteration → here) needs boxing.
+        let body_fut = Box::pin(run_persisted(
+            body_graph,
+            &mut body_snap,
+            exec,
+            &NoopPersist,
+            VideoInBody::SubmitOnly,
+        ));
+        let _ = body_fut.await;
+
+        // Extract the task handle from the body video node's state.
+        let task_info = body_snap
+            .node_states
+            .get(&video_id)
+            .and_then(|st| st.output.clone());
+        let task_id = task_info
+            .as_ref()
+            .and_then(|o| o.get("task_id"))
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+        if body_snap.status != S_SUCCESS || task_id.is_empty() {
+            // Submit failed (or produced no handle) — deterministic per-item
+            // error; honor abort/skip.
+            let err_body = body_snap
+                .node_states
+                .get(&video_id)
+                .and_then(|st| st.error.clone())
+                .unwrap_or_else(|| json!({"message": "video 提交失败"}));
+            errors.insert(i.to_string(), err_body);
+            if !skip_mode {
+                abort_stopped = true;
+                break;
+            }
+            // skip: terminal failed entry.
+            results[i] = json!({"status": "failed", "index": i});
+            if let Some(st) = snap.node_states.get_mut(id) {
+                st.progress =
+                    Some(json!({"results": results, "pending": pending, "errors": errors}));
+            }
+            if let Err(e) = persist.persist(snap).await {
+                tracing::warn!("video-iteration persist (failed item) failed: {e}");
+            }
+            continue;
+        }
+
+        // Record the in-flight handle (second step of the two-phase write).
+        let deadline_unix = task_info
+            .as_ref()
+            .and_then(|o| o.get("deadline_unix"))
+            .and_then(Value::as_i64)
+            .unwrap_or(i64::MAX);
+        let model = task_info
+            .as_ref()
+            .and_then(|o| o.get("model"))
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+        pending.retain(|p| p.get("item").and_then(Value::as_u64) != Some(i as u64));
+        pending.push(json!({
+            "item": i, "phase": "submitted",
+            "task_id": task_id, "model": model, "deadline_unix": deadline_unix,
+        }));
+        if let Some(st) = snap.node_states.get_mut(id) {
+            st.progress = Some(json!({"results": results, "pending": pending, "errors": errors}));
+        }
+        if let Err(e) = persist.persist(snap).await {
+            tracing::warn!("video-iteration persist (submitted) failed: {e}");
+        }
+    }
+
+    // Write final progress state.
+    if let Some(st) = snap.node_states.get_mut(id) {
+        st.progress = Some(json!({"results": results, "pending": pending, "errors": errors}));
+    }
+    let in_flight = pending
+        .iter()
+        .any(|p| p.get("phase").and_then(Value::as_str) == Some("submitted"));
+    if in_flight || abort_stopped {
+        // abort_stopped with nothing in flight still parks once — the
+        // aggregator converts it into a node failure with the recorded
+        // errors (verdict deferred, per iteration-video.md §2.3).
+        return Ok(IterationOutcome::Suspended);
+    }
+
+    // Everything terminal at submit time and nothing in flight: if any
+    // errors exist, defer to the aggregator's verdict by suspending (skip
+    // mode would already have terminal results; abort mode parks so the
+    // failure carries the full error map).
+    if errors.is_empty() && results.iter().all(|r| !r.is_null()) {
+        mark_node_success(snap, id, json!({ "items": results, "count": total }));
+        if let Some(st) = snap.node_states.get_mut(id) {
+            st.progress = None;
+        }
+        return Ok(IterationOutcome::Completed);
+    }
+    Ok(IterationOutcome::Suspended)
+}
+
+/// Complete a parked video-body iteration node (iteration-video.md §2.4).
+/// `results` = per-item terminal outcomes; `error` = Some → node fails
+/// (abort verdict) with the aggregated detail, None → success (skip verdict
+/// or all-completed). Clears the waiting head and flips the snapshot back to
+/// running so the caller can continue downstream execution.
+pub fn complete_suspended_iteration(
+    snap: &mut Snapshot,
+    id: &str,
+    results: Value,
+    count: usize,
+    error: Option<Value>,
+) {
+    snap.waiting_nodes.retain(|n| n != id);
+    match error {
+        Some(err) => {
+            fail(snap, id, err);
+        }
+        None => {
+            mark_node_success(snap, id, json!({ "items": results, "count": count }));
+            if let Some(st) = snap.node_states.get_mut(id) {
+                st.progress = None;
+            }
+            snap.status = S_RUNNING.to_string();
+        }
+    }
 }
 
 /// Unified node-failure dispatch (C1.4 strategies). `err` is a structured
@@ -1396,6 +1729,139 @@ mod tests {
                 || err["message"].as_str().unwrap().contains("不确定"),
             "{err}"
         );
+    }
+
+    /// Counting video submit exec: per-instance counter (parallel tests must
+    /// not share state — media-nodes/iteration-video 测试纪律)。
+    struct CountingVideoExec {
+        calls: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    }
+    #[async_trait]
+    impl NodeExecutor for CountingVideoExec {
+        async fn exec(
+            &self,
+            _node: &GraphNode,
+            _input: Value,
+            _pool: &Pool,
+        ) -> AppResult<ExecOutcome> {
+            let n = self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+            Ok(ExecOutcome {
+                output: json!({
+                    "phase": "submitted",
+                    "task_id": format!("task-{n}"),
+                    "model": "vid",
+                    "deadline_unix": 4102444800_i64,
+                }),
+                usage: None,
+                latency_ms: None,
+            })
+        }
+    }
+
+    fn counting_exec() -> (
+        CountingVideoExec,
+        std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    ) {
+        let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        (
+            CountingVideoExec {
+                calls: calls.clone(),
+            },
+            calls,
+        )
+    }
+
+    fn video_iteration_graph() -> Graph {
+        graph_of(def(
+            json!([
+                node("start", "start", json!({})),
+                node(
+                    "it",
+                    "iteration",
+                    json!({
+                        "items": {"literal": [{"scene": "s1"}, {"scene": "s2"}]},
+                        "body": {
+                            "nodes": [
+                                {"id": "bstart", "data": {"type": "start", "config": {}}},
+                                {"id": "bv", "data": {"type": "video", "config": {"model": "vid", "prompt": "p"}}}
+                            ],
+                            "edges": [
+                                {"source": "bstart", "sourceHandle": "out", "target": "bv"}
+                            ]
+                        }
+                    })
+                ),
+                node(
+                    "e",
+                    "end",
+                    json!({"outputs": [{"key": "items", "value": {"ref": ["it", "items"]}}]}),
+                )
+            ]),
+            json!([edge("start", "out", "it"), edge("it", "out", "e")]),
+        ))
+    }
+
+    #[tokio::test]
+    async fn video_iteration_parks_with_pending_tasks() {
+        let g = video_iteration_graph();
+        let mut snap = Snapshot::new();
+        let (exec, _calls) = counting_exec();
+        run(&g, &mut snap, &exec).await.unwrap();
+        assert_eq!(snap.status, S_WAITING);
+        assert_eq!(snap.waiting_nodes, vec!["it".to_string()]);
+        let progress = snap.node_states["it"].progress.as_ref().unwrap();
+        let pending = progress["pending"].as_array().unwrap();
+        assert_eq!(pending.len(), 2, "两镜头均已提交");
+        assert_eq!(pending[0]["phase"], "submitted");
+        assert_eq!(pending[0]["task_id"], "task-1");
+        assert_eq!(pending[1]["task_id"], "task-2");
+    }
+
+    #[tokio::test]
+    async fn video_iteration_replay_skips_submitted_items() {
+        let g = video_iteration_graph();
+        let mut snap = Snapshot::new();
+        let (exec, calls) = counting_exec();
+        run(&g, &mut snap, &exec).await.unwrap();
+        let calls_before = calls.load(std::sync::atomic::Ordering::SeqCst);
+        // 重放：已提交的 item 不重提 [iteration-video.md §2.3 幂等]。
+        run(&g, &mut snap, &exec).await.unwrap();
+        assert_eq!(snap.status, S_WAITING);
+        let calls_after = calls.load(std::sync::atomic::Ordering::SeqCst);
+        assert_eq!(calls_before, calls_after, "重放不得重提已提交任务");
+    }
+
+    #[tokio::test]
+    async fn video_iteration_aggregate_completion_continues_downstream() {
+        let g = video_iteration_graph();
+        let mut snap = Snapshot::new();
+        let (exec, _calls) = counting_exec();
+        run(&g, &mut snap, &exec).await.unwrap();
+        assert_eq!(snap.status, S_WAITING);
+
+        // 聚合器：全部终态 → 完成节点（items 数组 + 计数）→ 快照回 running。
+        let results = json!([
+            {"video": {"key": "k1", "url": "u1"}, "task_id": "task-1", "status": "completed"},
+            {"video": {"key": "k2", "url": "u2"}, "task_id": "task-2", "status": "completed"}
+        ]);
+        complete_suspended_iteration(&mut snap, "it", results, 2, None);
+        assert_eq!(snap.status, S_RUNNING);
+
+        // 快照回 running 后续跑下游：end 收集 items。
+        run(&g, &mut snap, &exec).await.unwrap();
+        assert_eq!(snap.status, S_SUCCESS);
+        assert_eq!(snap.outputs.unwrap()["items"][0]["status"], "completed");
+    }
+
+    #[tokio::test]
+    async fn video_iteration_abort_verdict_fails_node() {
+        let g = video_iteration_graph();
+        let mut snap = Snapshot::new();
+        let (exec, _calls) = counting_exec();
+        run(&g, &mut snap, &exec).await.unwrap();
+        let error = json!({"message": "存在失败镜头", "failed": [{"index": 1}]});
+        complete_suspended_iteration(&mut snap, "it", json!([]), 2, Some(error));
+        assert_eq!(snap.status, S_FAILED);
     }
 
     #[tokio::test]

@@ -12,6 +12,7 @@ use crate::errors::app_error::{AppError, AppResult};
 use crate::integration::IntegrationPlane;
 use crate::plugins::PluginManager;
 use crate::types::snowflake_id::SnowflakeId;
+use serde_json::{Value, json};
 use std::sync::Arc;
 
 use super::exec::FlowsExec;
@@ -294,7 +295,14 @@ pub async fn run_definition_latest(
         storage: None,
         instance_id: Some(instance_id),
     };
-    engine::run_persisted(&graph, &mut snap, &exec, &persist).await?;
+    engine::run_persisted(
+        &graph,
+        &mut snap,
+        &exec,
+        &persist,
+        engine::VideoInBody::Park,
+    )
+    .await?;
     record_node_runs(pool, instance_id, &graph, &snap).await?;
 
     if snap.status == S_WAITING {
@@ -386,7 +394,7 @@ pub async fn execute_instance(
         seen: std::sync::Mutex::new(std::collections::HashMap::new()),
         bus: super::events::bus(),
     };
-    engine::run_persisted(&graph, &mut snap, exec, &persist).await?;
+    engine::run_persisted(&graph, &mut snap, exec, &persist, engine::VideoInBody::Park).await?;
 
     record_node_runs(pool, instance_id, &graph, &snap).await?;
 
@@ -645,12 +653,297 @@ async fn park_instance(
                 );
             }
         }
+        super::nodes::T_ITERATION => {
+            // Video-body iteration (iteration-video.md §2.3): no deadline on
+            // the claim — per-item deadlines gate via the poll hub; the
+            // aggregator completes when every item is terminal.
+            model::set_instance_waiting(pool, instance_id, "iteration", None).await?;
+            model::ensure_flow_resume_open(pool, instance_id, node_id, "iteration", None).await?;
+        }
         other => {
             return Err(AppError::Internal(anyhow::anyhow!(
                 "park: 节点 {node_id} 类型 {other} 无等待语义"
             )));
         }
     }
+    Ok(())
+}
+
+/// Sweep parked video-body iterations (iteration-video.md §2.4): for each
+/// waiting instance whose head is an iteration node with in-flight tasks,
+/// query every task; when ALL items are terminal, complete (skip verdict /
+/// all-completed) or fail (abort verdict) the node via
+/// [`complete_suspended_iteration`]. Returns the number of nodes completed.
+///
+/// # Errors
+///
+/// Propagates DB/load errors; per-instance failures are logged and skipped.
+#[allow(clippy::too_many_arguments)]
+pub async fn sweep_video_iterations(
+    pool: &crate::db::Pool,
+    router: Arc<crate::llm::service::LlmRouter>,
+    plane: Option<Arc<IntegrationPlane>>,
+    plugins: Option<Arc<PluginManager>>,
+) -> AppResult<u64> {
+    let instances = model::find_waiting_by_kind(pool, "iteration").await?;
+    let mut completed = 0_u64;
+    for inst in instances {
+        let tenant = inst.tenant_id.clone();
+        let res = aggregate_one(pool, &router, &tenant, &inst).await;
+        let Some((node_id, results, node_error)) = res.ok().flatten() else {
+            continue;
+        };
+        match complete_suspended_iteration(
+            pool,
+            router.clone(),
+            plane.clone(),
+            plugins.clone(),
+            inst.id,
+            &node_id,
+            results,
+            node_error,
+        )
+        .await
+        {
+            Ok(()) => completed += 1,
+            Err(AppError::Conflict(_)) => {}
+            Err(e) => tracing::warn!("iteration aggregate resume failed, {}: {e}", inst.id),
+        }
+    }
+    Ok(completed)
+}
+
+/// Inspect one parked video-body iteration. `None` = still in flight.
+#[allow(clippy::type_complexity)]
+async fn aggregate_one(
+    pool: &crate::db::Pool,
+    router: &Arc<crate::llm::service::LlmRouter>,
+    tenant: &str,
+    inst: &model::FlowInstance,
+) -> AppResult<Option<(String, Value, Option<Value>)>> {
+    let graph = load_graph_for_instance(pool, inst).await?;
+    let Some(value) = model::find_snapshot(pool, inst.id).await? else {
+        return Ok(None);
+    };
+    let snap: engine::Snapshot = serde_json::from_value(value)
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("snapshot parse: {e}")))?;
+    let Some(node_id) = snap.waiting_nodes.first() else {
+        return Ok(None);
+    };
+    let Some(node) = graph.nodes.get(node_id) else {
+        return Ok(None);
+    };
+    if node.data.kind != super::nodes::T_ITERATION {
+        return Ok(None);
+    }
+    let Some(progress) = snap
+        .node_states
+        .get(node_id)
+        .and_then(|st| st.progress.clone())
+    else {
+        return Ok(None);
+    };
+    let Some(results) = progress.get("results").and_then(Value::as_array).cloned() else {
+        return Ok(None);
+    };
+    let pending = progress
+        .get("pending")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let errors = progress.get("errors").cloned().unwrap_or(Value::Null);
+    if pending.is_empty() {
+        return Ok(None);
+    }
+
+    // Query every in-flight task; terminal ones fill the results slot.
+    let mut items: Vec<Value> = vec![Value::Null; results.len()];
+    // Submit-time errors are terminal.
+    if let Some(map) = errors.as_object() {
+        for (idx, err) in map {
+            if let Ok(i) = idx.parse::<usize>() {
+                items[i] = json!({"status": "failed", "index": i, "error": err});
+            }
+        }
+    }
+    let now = crate::utils::tz::now_utc().timestamp();
+    let mut all_terminal = true;
+    for p in &pending {
+        let item = p.get("item").and_then(Value::as_u64).unwrap_or(u64::MAX) as usize;
+        if p.get("phase").and_then(Value::as_str) != Some("submitted") || item >= items.len() {
+            continue;
+        }
+        // Already terminal from a previous partial pass.
+        if !items[item].is_null() {
+            continue;
+        }
+        let task_id = p.get("task_id").and_then(Value::as_str).unwrap_or_default();
+        let model = p
+            .get("model")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+        let deadline = p
+            .get("deadline_unix")
+            .and_then(Value::as_i64)
+            .unwrap_or(i64::MAX);
+        let call = router.call(tenant, crate::llm::models::log::LogSource::Flow);
+        match call.clone().video_query(&model, task_id).await {
+            Ok(task) => {
+                use raisfast_agent::provider::VideoStatus;
+                match task.status {
+                    VideoStatus::Completed => {
+                        // 拉取成片字节 → 转存 storage（唯一资产出口）。
+                        let bytes = call.clone().video_content(&model, task_id).await?;
+                        let storage = super::exec::shared_storage().ok_or_else(|| {
+                            AppError::Internal(anyhow::anyhow!("storage unavailable"))
+                        })?;
+                        let key = format!("gen/flows/{}/{}/video-{task_id}.mp4", inst.id, node_id);
+                        storage.put(&key, &bytes, "video/mp4").await?;
+                        let url = storage
+                            .url(&key)
+                            .await
+                            .unwrap_or_else(|_| format!("/{key}"));
+                        items[item] = json!({
+                            "video": {"key": key, "url": url},
+                            "task_id": task_id,
+                            "status": "completed",
+                        });
+                    }
+                    VideoStatus::Failed => {
+                        items[item] = json!({
+                            "task_id": task_id, "status": "failed",
+                            "error": task.error.unwrap_or_else(|| "upstream failed".into()),
+                        });
+                    }
+                    _ => {
+                        if now > deadline {
+                            items[item] = json!({
+                                "task_id": task_id, "status": "timeout",
+                            });
+                        } else {
+                            all_terminal = false;
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                if now > deadline {
+                    items[item] = json!({"task_id": task_id, "status": "timeout"});
+                } else {
+                    tracing::warn!(
+                        "iteration video query failed, {}/{} task {task_id}: {e}",
+                        inst.id,
+                        node_id
+                    );
+                    all_terminal = false;
+                }
+            }
+        }
+    }
+    if !all_terminal {
+        return Ok(None);
+    }
+    // Any non-completed item → verdict per on_item_error.
+    let failed: Vec<Value> = items
+        .iter()
+        .filter(|i| i.get("status").and_then(Value::as_str) != Some("completed"))
+        .cloned()
+        .collect();
+    let skip_mode = node
+        .data
+        .config
+        .get("on_item_error")
+        .and_then(Value::as_str)
+        == Some("skip");
+    let node_error = if failed.is_empty() || skip_mode {
+        None
+    } else {
+        Some(json!({
+            "message": "iteration: 批量视频存在失败项（abort）",
+            "failed": failed,
+        }))
+    };
+    Ok(Some((node_id.clone(), Value::Array(items), node_error)))
+}
+
+/// Complete a parked video-body iteration node (iteration-video.md §2.4):
+/// claim (409 idempotent) → mark success/failure with per-item results →
+/// continue downstream execution. The wait-poll hub calls this when every
+/// in-flight item task has reached a terminal state.
+#[allow(clippy::too_many_arguments)]
+pub async fn complete_suspended_iteration(
+    pool: &crate::db::Pool,
+    router: Arc<crate::llm::service::LlmRouter>,
+    plane: Option<Arc<IntegrationPlane>>,
+    plugins: Option<Arc<PluginManager>>,
+    instance_id: SnowflakeId,
+    node_id: &str,
+    results: Value,
+    node_error: Option<Value>,
+) -> AppResult<()> {
+    let inst = model::find_instance_by_id(pool, instance_id).await?;
+    if inst.status != "waiting" {
+        return Err(AppError::BadRequest(format!(
+            "实例状态不是 waiting: {}",
+            inst.status
+        )));
+    }
+    // Claim first — single serializer vs racing sweeps (A.3/§3).
+    let claimed = model::claim_flow_resume(
+        pool,
+        instance_id,
+        node_id,
+        &serde_json::json!({"action": "iteration.aggregate"}),
+        None,
+    )
+    .await?;
+    if !claimed {
+        return Err(AppError::Conflict("该迭代节点已被聚合完成".into()));
+    }
+
+    let Some(value) = model::find_snapshot(pool, instance_id).await? else {
+        return Err(AppError::BadRequest("实例无快照".into()));
+    };
+    let mut snap: engine::Snapshot = serde_json::from_value(value)
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("snapshot parse: {e}")))?;
+
+    let count = results.as_array().map(|a| a.len()).unwrap_or(0);
+    let error = node_error;
+    engine::complete_suspended_iteration(&mut snap, node_id, results, count, error.clone());
+
+    let persist = DbPersist {
+        pool: pool.clone(),
+        instance_id,
+    };
+    persist.persist(&snap).await?;
+
+    match &error {
+        Some(err) => {
+            model::finalize_instance(pool, instance_id, "failed", false, None, Some(err)).await?;
+        }
+        None => {
+            let exec = FlowsExec {
+                plane,
+                plugins,
+                router: router.clone(),
+                tenant_id: Some(inst.tenant_id.clone()),
+                docparse: docparse_runtime(&inst.tenant_id),
+                storage: None,
+                instance_id: Some(instance_id),
+            };
+            execute_instance(pool, instance_id, &exec).await?;
+        }
+    }
+    super::events::emit(
+        instance_id,
+        super::events::EV_ITERATION_COMPLETED,
+        serde_json::json!({
+            "node_id": node_id,
+            "resume_kind": "iteration",
+            "failed": error.is_some(),
+        }),
+    );
     Ok(())
 }
 
@@ -719,6 +1012,13 @@ pub async fn resume_instance(
                 )));
             }
             await_cfg = Some(cfg);
+        }
+        super::nodes::T_ITERATION => {
+            // Video-body iteration (iteration-video.md §2.4): completion is
+            // aggregator-only (poll_infra); manual/API resume is rejected.
+            return Err(AppError::BadRequest(
+                "resume: iteration 节点由轮询聚合器完成，不支持手动 resume".into(),
+            ));
         }
         kind if super::poll_infra::is_pollable(kind) => {
             // Poller vocabulary only (poll_infra.rs convention). Poll-backed
