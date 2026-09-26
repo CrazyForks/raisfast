@@ -203,10 +203,14 @@ impl NodeExecutor for FlowsExec {
                 let storage = self.media_storage()?;
                 super::nodes::image::run_image(&runtime, &storage, node, pool).await
             }
-            nodes::T_RENDER => {
+            nodes::T_RENDER_IMAGE => {
+                let storage = self.media_storage()?;
+                super::nodes::render::image::run_render_image(&storage, node, pool).await
+            }
+            nodes::T_RENDER_VIDEO => {
                 // 渲染无 LLM 参与——只需要 storage。
                 let storage = self.media_storage()?;
-                super::nodes::render::run_render(&storage, node, pool).await
+                super::nodes::render::video::run_render_video(&storage, node, pool).await
             }
             nodes::T_MUSIC => {
                 let runtime = self.llm_runtime();
