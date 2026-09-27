@@ -131,7 +131,7 @@ async fn probe_channel(row: &LlmChannel) -> ProbeOutcome {
     // is warranted (real-use-case driven).
     if matches!(
         row.provider.as_str(),
-        "elevenlabs" | "kling" | "replicate" | "seedance" | "minimax"
+        "elevenlabs" | "kling" | "replicate" | "seedance" | "minimax" | "wan" | "vidu"
     ) {
         return ProbeOutcome::Skip;
     }

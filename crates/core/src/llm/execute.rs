@@ -233,6 +233,24 @@ impl LlmRouter {
                     ep.param_override.clone(),
                     ep.header_override.clone(),
                 )) as Arc<dyn ModelProvider>,
+                "kling" => Arc::new(crate::llm::providers::KlingProvider::new(
+                    ep.base_url.clone(),
+                    Some(ep.api_key.clone()),
+                    ep.param_override.clone(),
+                    ep.header_override.clone(),
+                )) as Arc<dyn ModelProvider>,
+                "vidu" => Arc::new(crate::llm::providers::ViduProvider::new(
+                    ep.base_url.clone(),
+                    Some(ep.api_key.clone()),
+                    ep.param_override.clone(),
+                    ep.header_override.clone(),
+                )) as Arc<dyn ModelProvider>,
+                "wan" => Arc::new(crate::llm::providers::WanProvider::new(
+                    ep.base_url.clone(),
+                    Some(ep.api_key.clone()),
+                    ep.param_override.clone(),
+                    ep.header_override.clone(),
+                )) as Arc<dyn ModelProvider>,
                 _ => Arc::new(raisfast_agent::provider::openai::OpenAiCompatProvider::new(
                     ep.base_url.clone(),
                     Some(ep.api_key.clone()),

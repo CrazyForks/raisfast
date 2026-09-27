@@ -85,6 +85,18 @@ const PRESETS: &[ProviderPreset] = &[
         requires_auth: true,
     },
     ProviderPreset {
+        key: "wan",
+        display_name: "Alibaba Wan (通义万相, video)",
+        default_base_url: "https://dashscope.aliyuncs.com",
+        requires_auth: true,
+    },
+    ProviderPreset {
+        key: "vidu",
+        display_name: "Vidu (生数, video)",
+        default_base_url: "https://api.vidu.cn",
+        requires_auth: true,
+    },
+    ProviderPreset {
         key: "elevenlabs",
         display_name: "ElevenLabs (TTS)",
         default_base_url: "https://api.elevenlabs.io/v1",
