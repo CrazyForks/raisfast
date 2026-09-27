@@ -76,6 +76,45 @@ pub struct ImageRequest {
     pub n: u32,
     /// Wire size string, e.g. `1024x1024` (None = provider default).
     pub size: Option<String>,
+    /// Optional reference images (character consistency / image editing):
+    /// first ref → OpenAI wire `image` param (data-URL or https URL).
+    /// Empty = pure text-to-image.
+    pub input_references: Vec<ImageInputRef>,
+}
+
+/// One reference image attached to an [`ImageRequest`] — same shape as
+/// [`VideoInputRef`](super::VideoInputRef) (url XOR b64+mime).
+#[derive(Debug, Clone)]
+pub struct ImageInputRef {
+    pub url: Option<String>,
+    pub b64_json: Option<String>,
+    pub mime: Option<String>,
+}
+
+impl ImageInputRef {
+    #[must_use]
+    pub fn from_url(url: impl Into<String>) -> Self {
+        Self {
+            url: Some(url.into()),
+            b64_json: None,
+            mime: None,
+        }
+    }
+
+    /// Wire string: the URL, or a data-URL synthesized from the payload.
+    #[must_use]
+    pub fn to_wire_string(&self) -> Option<String> {
+        if let Some(url) = &self.url {
+            return Some(url.clone());
+        }
+        self.b64_json.as_ref().map(|b64| {
+            // RFC 2397: data:[<mime>][;base64],<data>
+            format!(
+                "data:{};base64,{b64}",
+                self.mime.as_deref().unwrap_or("image/png")
+            )
+        })
+    }
 }
 
 /// One generated image — exactly one of the fields is set.

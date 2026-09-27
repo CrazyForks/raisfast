@@ -38,6 +38,12 @@ pub struct ImageConfig {
     #[serde(default)]
     #[cfg_attr(feature = "export-types", ts(type = "number"))]
     pub timeout_ms: Option<i64>,
+    /// 参考图（角色一致性）— ValueExpr → 字符串（storage key/https URL）/
+    /// 字符串数组 / `{key|url}` 对象数组（如 Character CT 定妆照）。
+    /// https 直传；storage key 内联为 base64。
+    #[serde(default)]
+    #[cfg_attr(feature = "export-types", ts(type = "unknown"))]
+    pub input_images: Option<Value>,
 }
 
 /// Config validation (media-nodes.md §2.1 bounds).
@@ -96,6 +102,73 @@ fn base64_decode(s: &str) -> Result<Vec<u8>, base64::DecodeError> {
     base64::engine::general_purpose::STANDARD.decode(s.trim())
 }
 
+/// Normalize resolved `input_images` into wire refs — same rules as video
+/// (media/iteration-video 参考)：string / string[] / `{key|url}`[] → https
+/// URL 直传，storage key 内联 base64。
+async fn resolve_input_refs(
+    expr: &Value,
+    pool: &Pool,
+    storage: &Arc<dyn Storage>,
+) -> AppResult<Vec<raisfast_agent::provider::ImageInputRef>> {
+    let resolved = crate::flows::engine::resolve(expr, pool)?;
+    let mut raw: Vec<String> = Vec::new();
+    match resolved {
+        Value::String(s) => raw.push(s),
+        Value::Object(o) => {
+            // 单对象引用：{key|url}（如 Character CT 定妆照字段直出）。
+            if let Some(k) = o.get("key").and_then(Value::as_str) {
+                raw.push(k.to_string());
+            } else if let Some(u) = o.get("url").and_then(Value::as_str) {
+                raw.push(u.to_string());
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                match item {
+                    Value::String(s) => raw.push(s.clone()),
+                    Value::Object(o) => {
+                        if let Some(k) = o.get("key").and_then(Value::as_str) {
+                            raw.push(k.to_string());
+                        } else if let Some(u) = o.get("url").and_then(Value::as_str) {
+                            raw.push(u.to_string());
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        Value::Null => {}
+        other => {
+            return Err(AppError::BadRequest(format!(
+                "image: input_images 解析结果须为字符串/数组（got {other:?}）"
+            )));
+        }
+    }
+    let mut refs = Vec::with_capacity(raw.len());
+    for r in raw {
+        let r = r.trim().to_string();
+        if r.is_empty() {
+            continue;
+        }
+        if r.starts_with("https://") || r.starts_with("http://") {
+            refs.push(raisfast_agent::provider::ImageInputRef::from_url(r));
+        } else {
+            let bytes = storage.get(&r).await.map_err(|e| {
+                AppError::BadRequest(format!("image: input_images 读取 {r} 失败: {e}"))
+            })?;
+            let (_ext, mime) = super::sniff_image(&bytes);
+            use base64::Engine as _;
+            let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+            refs.push(raisfast_agent::provider::ImageInputRef {
+                url: None,
+                b64_json: Some(b64),
+                mime: Some(mime.to_string()),
+            });
+        }
+    }
+    Ok(refs)
+}
+
 /// Execute the `image` node against the variable pool.
 ///
 /// # Errors
@@ -117,10 +190,16 @@ pub async fn run_image(
     let call = runtime
         .router
         .call(&runtime.tenant, crate::llm::models::log::LogSource::Flow);
+    let input_references = if let Some(expr) = &cfg.input_images {
+        resolve_input_refs(expr, pool, storage).await?
+    } else {
+        Vec::new()
+    };
     let request = ImageRequest {
         prompt,
         n,
         size: cfg.size.clone(),
+        input_references,
     };
     let images = tokio::time::timeout(
         std::time::Duration::from_millis(timeout_ms),
@@ -377,9 +456,54 @@ mod tests {
         assert!(matches!(err, AppError::BadRequest(_)), "{err}");
     }
 
+    #[tokio::test]
+    async fn input_images_resolved_from_character_ref() {
+        // Character 定妆照（storage key）→ 内联 b64 [角色一致性主链路]。
+        let (router, storage) = image_runtime();
+        let runtime = LlmRuntime {
+            router,
+            tenant: "default".to_owned(),
+            caller: None,
+        };
+        let png = [0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];
+        let key = "characters/hero.png";
+        crate::storage::Storage::put(storage.as_ref(), key, &png, "image/png")
+            .await
+            .unwrap();
+
+        let node = image_node(json!({
+            "model": "img-model",
+            "prompt": "同款角色，雨夜街头",
+            "input_images": {"ref": ["character", "portrait"]}
+        }));
+        let mut pool = Pool::new();
+        pool.entry("character".into()).or_default().insert(
+            "portrait".into(),
+            json!({"key": key, "url": format!("http://localhost/{key}")}),
+        );
+
+        let out = run_image(
+            &runtime,
+            &(storage.clone() as Arc<dyn Storage>),
+            &node,
+            &pool,
+        )
+        .await
+        .unwrap();
+        assert_eq!(out.output["n"], 2);
+    }
+
     #[test]
     fn image_config_validation() {
         assert!(super::validate(&json!({"prompt": "a cat"})).is_ok());
+        assert!(
+            super::validate(&json!({"prompt": "x", "input_images": {"ref": ["c", "portrait"]}}))
+                .is_ok(),
+            "input_images 合法"
+        );
+        // 形态错误（非 ValueExpr 键）由运行时 resolve 报错——与全局 ValueExpr
+        // 校验语义一致（validate_value_expr 对未知键宽容）。
+        let _ = &super::validate;
         assert!(
             super::validate(&json!({"prompt": "  "})).is_err(),
             "空 prompt"

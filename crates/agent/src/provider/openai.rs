@@ -237,6 +237,16 @@ impl ModelProvider for OpenAiCompatProvider {
         if let Some(size) = &request.size {
             body["size"] = Value::String(size.clone());
         }
+        // Reference images (character consistency / edits): first ref rides
+        // the OpenAI wire `image` param (data-URL or https URL) — aggregators
+        // map it to vendor-native fields (Seedream refs, Kling edit image).
+        if let Some(first) = request
+            .input_references
+            .first()
+            .and_then(|r| r.to_wire_string())
+        {
+            body["image"] = Value::String(first);
+        }
         let text = self.send_json_to(IMAGES_ENDPOINT, &body).await?;
         let parsed: OpenAiImagesResponse = serde_json::from_str(&text)
             .map_err(|e| ProviderError::Parse(format!("{e}: {text}")))?;
