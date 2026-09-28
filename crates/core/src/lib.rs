@@ -453,6 +453,7 @@ pub async fn build_app_state(
     let services = svc_builder.build();
 
     let llm_router = crate::llm::service::LlmRouter::new(pool.clone()).await;
+    llm_router.init_provider_extensions(config).await;
 
     let kb_runtime = match crate::kb::build_kb_runtime(config, llm_router.clone()) {
         Ok(rt) => rt,

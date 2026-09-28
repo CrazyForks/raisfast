@@ -125,3 +125,9 @@ pub fn registry() -> &'static [ProviderPreset] {
 pub fn find(key: &str) -> Option<&'static ProviderPreset> {
     PRESETS.iter().find(|p| p.key == key)
 }
+
+/// 全部内置 provider key（provider 扩展注册时的冲突清单——扩展与内置同名
+/// 拒绝注册，内置优先）。
+pub fn builtin_provider_keys() -> Vec<String> {
+    PRESETS.iter().map(|p| p.key.to_string()).collect()
+}

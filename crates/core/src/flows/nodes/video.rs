@@ -234,6 +234,7 @@ pub async fn run_video_submit(
             "model": cfg.model,
             "status": status_wire(task.status),
             "deadline_unix": deadline_unix,
+            "task_data": task.data,
         }),
         usage: Some(json!({ "task": task.id })),
         latency_ms: Some(started.elapsed().as_millis() as i64),
@@ -250,11 +251,15 @@ pub(crate) async fn fetch_and_store(
     node_id: &str,
     model: &str,
     task_id: &str,
+    task_data: Option<&Value>,
 ) -> AppResult<Value> {
     let call = runtime
         .router
         .call(&runtime.tenant, crate::llm::models::log::LogSource::Flow);
-    let bytes = call.clone().video_content(model, task_id).await?;
+    let bytes = call
+        .clone()
+        .video_content(model, task_id, task_data)
+        .await?;
     if bytes.is_empty() {
         return Err(AppError::Internal(anyhow::anyhow!(
             "video: 上游返回空视频 (task {task_id})"
@@ -419,6 +424,7 @@ impl super::super::poll_infra::WaitPoller for VideoPoller {
             .and_then(|v| v.as_str())
             .unwrap_or_default()
             .to_string();
+        let task_data = ctx.info.get("task_data").cloned().filter(|v| !v.is_null());
         let runtime = LlmRuntime {
             router: ctx.router.clone(),
             tenant: ctx.tenant.to_owned(),
@@ -427,7 +433,9 @@ impl super::super::poll_infra::WaitPoller for VideoPoller {
         let call = ctx
             .router
             .call(ctx.tenant, crate::llm::models::log::LogSource::Flow);
-        let task = call.video_query(&model, task_id).await?;
+        let task = call
+            .video_query(&model, task_id, task_data.as_ref())
+            .await?;
         use raisfast_agent::provider::VideoStatus;
         match task.status {
             VideoStatus::Completed => {
@@ -438,6 +446,7 @@ impl super::super::poll_infra::WaitPoller for VideoPoller {
                     ctx.node_id,
                     &model,
                     task_id,
+                    task_data.as_ref(),
                 )
                 .await?;
                 Ok(Some(super::ResumeEnvelope {
@@ -545,6 +554,7 @@ mod tests {
                 status: VideoStatus::Queued,
                 progress: None,
                 error: None,
+                data: None,
             };
             self.tasks.lock().unwrap().push(task.clone());
             Ok(task)

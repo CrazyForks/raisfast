@@ -210,22 +210,34 @@ impl ModelProvider for ReplicateProvider {
             status: Self::status_from_wire(&parsed),
             progress: None,
             error: Self::prediction_error(&parsed),
+            data: None,
         })
     }
 
     /// 轮询 prediction。
-    async fn video_query(&self, task_id: &str, _model: &str) -> Result<VideoTask, ProviderError> {
+    async fn video_query(
+        &self,
+        task_id: &str,
+        _model: &str,
+        _task_data: Option<&serde_json::Value>,
+    ) -> Result<VideoTask, ProviderError> {
         let parsed = self.get_prediction(task_id).await?;
         Ok(VideoTask {
             id: task_id.to_string(),
             status: Self::status_from_wire(&parsed),
             progress: None,
             error: Self::prediction_error(&parsed),
+            data: None,
         })
     }
 
     /// 拉取成片：`output` 的首个媒体 URL 直接下载（调用方及时转存）。
-    async fn video_content(&self, task_id: &str, _model: &str) -> Result<Vec<u8>, ProviderError> {
+    async fn video_content(
+        &self,
+        task_id: &str,
+        _model: &str,
+        _task_data: Option<&serde_json::Value>,
+    ) -> Result<Vec<u8>, ProviderError> {
         let parsed = self.get_prediction(task_id).await?;
         let Some(url) = Self::output_url(&parsed) else {
             return Err(ProviderError::Parse(format!(
@@ -392,9 +404,9 @@ mod tests {
             .await;
 
         let p = provider(server.uri());
-        let ok = p.video_query("pred-ok", "m").await.unwrap();
+        let ok = p.video_query("pred-ok", "m", None).await.unwrap();
         assert_eq!(ok.status, VideoStatus::Completed);
-        let bad = p.video_query("pred-bad", "m").await.unwrap();
+        let bad = p.video_query("pred-bad", "m", None).await.unwrap();
         assert_eq!(bad.status, VideoStatus::Failed);
         assert_eq!(bad.error.as_deref(), Some("gpu oom"));
     }
@@ -413,7 +425,7 @@ mod tests {
 
         let p = provider(server.uri());
         // Port 1 refuses — asserts query→download wiring, not bytes.
-        let err = p.video_content("pred-1", "m").await.unwrap_err();
+        let err = p.video_content("pred-1", "m", None).await.unwrap_err();
         assert!(
             matches!(
                 err,

@@ -7,6 +7,7 @@ pub mod openai;
 // self-contained transports (URL + key is all they need).
 
 use async_trait::async_trait;
+use serde_json::Value;
 
 use crate::messages::{ChatMessage, TokenUsage, ToolCall};
 use crate::tool::ToolSpec;
@@ -244,6 +245,10 @@ pub struct VideoTask {
     pub progress: Option<i32>,
     /// Failure reason when `status == Failed`.
     pub error: Option<String>,
+    /// 提交期状态回传（provider 扩展 taskData，§provider-plugins 4.2）：
+    /// submit 时由 provider/扩展产出，调用方持久化，query 时原样回传——
+    /// 双路径任务查询等提交期知识的通用载体。原生 provider 恒 None。
+    pub data: Option<Value>,
 }
 
 pub use crate::errors::ProviderError;
@@ -362,13 +367,26 @@ pub trait ModelProvider: Send + Sync {
         Err(self.unsupported_message("video generation"))
     }
 
-    /// Poll an async video task (`GET /videos/{id}`).
-    async fn video_query(&self, _task_id: &str, _model: &str) -> Result<VideoTask, ProviderError> {
+    /// Poll an async video task (`GET /videos/{id}`). `task_data` is the
+    /// opaque blob the provider returned from `video_submit` (`VideoTask::
+    /// data`), round-tripped by the caller — carries submit-time knowledge
+    /// (e.g. kling's endpoint action).
+    async fn video_query(
+        &self,
+        _task_id: &str,
+        _model: &str,
+        _task_data: Option<&serde_json::Value>,
+    ) -> Result<VideoTask, ProviderError> {
         Err(self.unsupported_message("video generation"))
     }
 
     /// Fetch completed video bytes (`GET /videos/{id}/content`).
-    async fn video_content(&self, _task_id: &str, _model: &str) -> Result<Vec<u8>, ProviderError> {
+    async fn video_content(
+        &self,
+        _task_id: &str,
+        _model: &str,
+        _task_data: Option<&serde_json::Value>,
+    ) -> Result<Vec<u8>, ProviderError> {
         Err(self.unsupported_message("video generation"))
     }
 }

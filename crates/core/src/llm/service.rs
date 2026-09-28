@@ -260,6 +260,9 @@ pub struct LlmRouter {
     latencies: DashMap<(String, String), Arc<std::sync::Mutex<LatencyStat>>>,
     pub(crate) providers:
         DashMap<(SnowflakeId, usize), Arc<dyn raisfast_agent::provider::ModelProvider>>,
+    /// provider 扩展注册表（provider-plugins.md §5.5；仅 rquickjs feature）。
+    #[cfg(feature = "rquickjs")]
+    pub(crate) provider_ext: std::sync::Arc<crate::llm::providers::ext::ProviderExtRegistry>,
 }
 
 impl LlmRouter {
@@ -287,7 +290,52 @@ impl LlmRouter {
             user_inflight: DashMap::new(),
             latencies: DashMap::new(),
             providers: DashMap::new(),
+            #[cfg(feature = "rquickjs")]
+            provider_ext: std::sync::Arc::new(
+                crate::llm::providers::ext::ProviderExtRegistry::new(
+                    crate::llm::registry::builtin_provider_keys(),
+                ),
+            ),
         }
+    }
+
+    /// 启动时扫描 provider 扩展目录并注册（失败仅告警，不阻断启动）。
+    #[cfg(feature = "rquickjs")]
+    pub async fn init_provider_extensions(&self, config: &crate::config::app::AppConfig) {
+        self.provider_ext
+            .configure_dir(config.llm_provider_ext_dir.as_str());
+        self.provider_ext
+            .set_max_seconds(config.llm_video_max_seconds);
+        match self.provider_ext.reload().await {
+            Ok(report) => {
+                if report.loaded > 0 {
+                    tracing::info!(loaded = report.loaded, "provider extensions loaded");
+                }
+                for e in &report.errors {
+                    tracing::warn!("provider extension: {e}");
+                }
+            }
+            Err(e) => tracing::warn!("provider extensions reload failed: {e}"),
+        }
+    }
+
+    /// 管理端下拉合并用：列出已注册扩展的只读快照。
+    #[cfg(feature = "rquickjs")]
+    pub fn list_provider_extensions(
+        &self,
+    ) -> Vec<std::sync::Arc<crate::llm::providers::ext::ProviderExt>> {
+        self.provider_ext.list()
+    }
+
+    /// admin reload 端点后端：重扫扩展目录，返回报告。
+    #[cfg(feature = "rquickjs")]
+    pub async fn reload_provider_extensions(
+        &self,
+    ) -> AppResult<crate::llm::providers::ext::ReloadReport> {
+        self.provider_ext
+            .reload()
+            .await
+            .map_err(|e| AppError::Internal(anyhow::anyhow!(e.to_string())))
     }
 
     /// Test constructor: preloaded cache, no DB (persistence disabled).

@@ -788,13 +788,21 @@ async fn aggregate_one(
             .and_then(Value::as_i64)
             .unwrap_or(i64::MAX);
         let call = router.call(tenant, crate::llm::models::log::LogSource::Flow);
-        match call.clone().video_query(&model, task_id).await {
+        let task_data = p.get("task_data").cloned().filter(|v| !v.is_null());
+        match call
+            .clone()
+            .video_query(&model, task_id, task_data.as_ref())
+            .await
+        {
             Ok(task) => {
                 use raisfast_agent::provider::VideoStatus;
                 match task.status {
                     VideoStatus::Completed => {
                         // 拉取成片字节 → 转存 storage（唯一资产出口）。
-                        let bytes = call.clone().video_content(&model, task_id).await?;
+                        let bytes = call
+                            .clone()
+                            .video_content(&model, task_id, task_data.as_ref())
+                            .await?;
                         let storage = super::exec::shared_storage().ok_or_else(|| {
                             AppError::Internal(anyhow::anyhow!("storage unavailable"))
                         })?;

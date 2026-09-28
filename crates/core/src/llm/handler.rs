@@ -37,6 +37,18 @@ pub fn routes(
         "admin/llm/providers",
         "admin"
     );
+    #[cfg(feature = "rquickjs")]
+    let r = reg_route!(
+        r,
+        registry,
+        restful,
+        "/admin/llm/providers/reload",
+        post,
+        reload_provider_extensions,
+        "system",
+        "admin/llm/providers",
+        "admin"
+    );
     let r = reg_route!(
         r,
         registry,
@@ -714,12 +726,47 @@ async fn reload(router: &LlmRouter, id: SnowflakeId) {
 )]
 pub async fn list_providers(
     auth: AuthUser,
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
 ) -> AppResult<ApiResponse<serde_json::Value>> {
     auth.ensure_admin()?;
-    Ok(ApiResponse::success(
-        json!({ "providers": crate::llm::registry::registry() }),
-    ))
+    let mut providers: Vec<serde_json::Value> = crate::llm::registry::registry()
+        .iter()
+        .map(|p| serde_json::to_value(p).unwrap_or(serde_json::Value::Null))
+        .collect();
+    // provider 扩展并入下拉（§5.6：内置表 + 扩展注册表合并）
+    #[cfg(feature = "rquickjs")]
+    for ext in state.llm_router.list_provider_extensions() {
+        providers.push(json!({
+            "key": ext.key,
+            "display_name": format!("{} (extension)", ext.name),
+            "default_base_url": "",
+            "requires_auth": true,
+            "models": ext.models,
+            "description": ext.description,
+        }));
+    }
+    Ok(ApiResponse::success(json!({ "providers": providers })))
+}
+
+/// POST /admin/llm/providers/reload — 重扫扩展目录并热更新注册表。
+#[cfg(feature = "rquickjs")]
+#[utoipa::path(post, path = "/api/v1/admin/llm/providers/reload", tag = "llm",
+    security(("bearer_auth" = [])),
+    responses((status = 200, description = "Provider extensions reloaded"))
+)]
+pub async fn reload_provider_extensions(
+    auth: AuthUser,
+    State(state): State<AppState>,
+) -> AppResult<ApiResponse<serde_json::Value>> {
+    auth.ensure_admin()?;
+    let report = state.llm_router.reload_provider_extensions().await?;
+    for e in &report.errors {
+        tracing::warn!("provider extension reload: {e}");
+    }
+    Ok(ApiResponse::success(json!({
+        "loaded": report.loaded,
+        "errors": report.errors,
+    })))
 }
 
 // ---------- channels ----------

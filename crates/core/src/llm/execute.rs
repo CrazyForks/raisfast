@@ -165,12 +165,18 @@ impl ModelProvider for SideEffectGuard {
         &self,
         task_id: &str,
         model: &str,
+        task_data: Option<&serde_json::Value>,
     ) -> Result<raisfast_agent::provider::VideoTask, ProviderError> {
-        self.inner.video_query(task_id, model).await
+        self.inner.video_query(task_id, model, task_data).await
     }
 
-    async fn video_content(&self, task_id: &str, model: &str) -> Result<Vec<u8>, ProviderError> {
-        self.inner.video_content(task_id, model).await
+    async fn video_content(
+        &self,
+        task_id: &str,
+        model: &str,
+        task_data: Option<&serde_json::Value>,
+    ) -> Result<Vec<u8>, ProviderError> {
+        self.inner.video_content(task_id, model, task_data).await
     }
 }
 
@@ -202,59 +208,51 @@ impl LlmRouter {
         let entry = self
             .providers
             .entry((ep.channel_id, ep.key_index))
-            .or_insert_with(|| match ep.provider.as_str() {
-                "anthropic" => Arc::new(crate::llm::providers::AnthropicProvider::new(
-                    ep.base_url.clone(),
-                    Some(ep.api_key.clone()),
-                    ep.param_override.clone(),
-                    ep.header_override.clone(),
-                )) as Arc<dyn ModelProvider>,
-                "seedance" => Arc::new(crate::llm::providers::SeedanceProvider::new(
-                    ep.base_url.clone(),
-                    Some(ep.api_key.clone()),
-                    ep.param_override.clone(),
-                    ep.header_override.clone(),
-                )) as Arc<dyn ModelProvider>,
-                "minimax" => Arc::new(crate::llm::providers::MiniMaxProvider::new(
-                    ep.base_url.clone(),
-                    Some(ep.api_key.clone()),
-                    ep.param_override.clone(),
-                    ep.header_override.clone(),
-                )) as Arc<dyn ModelProvider>,
-                "replicate" => Arc::new(crate::llm::providers::ReplicateProvider::new(
-                    ep.base_url.clone(),
-                    Some(ep.api_key.clone()),
-                    ep.param_override.clone(),
-                    ep.header_override.clone(),
-                )) as Arc<dyn ModelProvider>,
-                "elevenlabs" => Arc::new(crate::llm::providers::ElevenLabsProvider::new(
-                    ep.base_url.clone(),
-                    Some(ep.api_key.clone()),
-                    ep.param_override.clone(),
-                    ep.header_override.clone(),
-                )) as Arc<dyn ModelProvider>,
-                "kling" => Arc::new(crate::llm::providers::KlingProvider::new(
-                    ep.base_url.clone(),
-                    Some(ep.api_key.clone()),
-                    ep.param_override.clone(),
-                    ep.header_override.clone(),
-                )) as Arc<dyn ModelProvider>,
-                "vidu" => Arc::new(crate::llm::providers::ViduProvider::new(
-                    ep.base_url.clone(),
-                    Some(ep.api_key.clone()),
-                    ep.param_override.clone(),
-                    ep.header_override.clone(),
-                )) as Arc<dyn ModelProvider>,
-                "wan" => Arc::new(crate::llm::providers::WanProvider::new(
-                    ep.base_url.clone(),
-                    Some(ep.api_key.clone()),
-                    ep.param_override.clone(),
-                    ep.header_override.clone(),
-                )) as Arc<dyn ModelProvider>,
-                _ => Arc::new(raisfast_agent::provider::openai::OpenAiCompatProvider::new(
-                    ep.base_url.clone(),
-                    Some(ep.api_key.clone()),
-                )) as Arc<dyn ModelProvider>,
+            .or_insert_with(|| {
+                // provider 扩展（provider-plugins.md §5.5）：内置 match 未命中
+                // → 扩展注册表 → OpenAI-compat 兜底（顺序钉死）。
+                #[cfg(feature = "rquickjs")]
+                if let Some(ext) = self.provider_ext.get(ep.provider.as_str()) {
+                    return std::sync::Arc::new(crate::llm::providers::plugin::PluginProvider::new(
+                        self.provider_ext.clone(),
+                        ext.key.clone(),
+                        ep.base_url.clone(),
+                        Some(ep.api_key.clone()),
+                        ep.param_override.clone(),
+                        ep.header_override.clone(),
+                    ))
+                        as std::sync::Arc<dyn raisfast_agent::provider::ModelProvider>;
+                }
+                match ep.provider.as_str() {
+                    "anthropic" => Arc::new(crate::llm::providers::AnthropicProvider::new(
+                        ep.base_url.clone(),
+                        Some(ep.api_key.clone()),
+                        ep.param_override.clone(),
+                        ep.header_override.clone(),
+                    )) as Arc<dyn ModelProvider>,
+                    "minimax" => Arc::new(crate::llm::providers::MiniMaxProvider::new(
+                        ep.base_url.clone(),
+                        Some(ep.api_key.clone()),
+                        ep.param_override.clone(),
+                        ep.header_override.clone(),
+                    )) as Arc<dyn ModelProvider>,
+                    "replicate" => Arc::new(crate::llm::providers::ReplicateProvider::new(
+                        ep.base_url.clone(),
+                        Some(ep.api_key.clone()),
+                        ep.param_override.clone(),
+                        ep.header_override.clone(),
+                    )) as Arc<dyn ModelProvider>,
+                    "elevenlabs" => Arc::new(crate::llm::providers::ElevenLabsProvider::new(
+                        ep.base_url.clone(),
+                        Some(ep.api_key.clone()),
+                        ep.param_override.clone(),
+                        ep.header_override.clone(),
+                    )) as Arc<dyn ModelProvider>,
+                    _ => Arc::new(raisfast_agent::provider::openai::OpenAiCompatProvider::new(
+                        ep.base_url.clone(),
+                        Some(ep.api_key.clone()),
+                    )) as Arc<dyn ModelProvider>,
+                }
             })
             .clone();
         Ok(entry)
@@ -1044,13 +1042,14 @@ impl LlmCall<'_> {
         self,
         model: &str,
         task_id: &str,
+        task_data: Option<&serde_json::Value>,
     ) -> AppResult<raisfast_agent::provider::VideoTask> {
         let (model, _) = self
             .prepare(Some(model), "", "video", &[LlmModelType::Video])
             .await?;
         self.router
             .execute(&self.ctx(), &model, self.source, None, |p, ep| async move {
-                p.video_query(task_id, &ep.upstream_model)
+                p.video_query(task_id, &ep.upstream_model, task_data)
                     .await
                     .map_err(ExecError::Upstream)
             })
@@ -1058,13 +1057,18 @@ impl LlmCall<'_> {
     }
 
     /// 拉取已完成视频内容。
-    pub async fn video_content(self, model: &str, task_id: &str) -> AppResult<Vec<u8>> {
+    pub async fn video_content(
+        self,
+        model: &str,
+        task_id: &str,
+        task_data: Option<&serde_json::Value>,
+    ) -> AppResult<Vec<u8>> {
         let (model, _) = self
             .prepare(Some(model), "", "video", &[LlmModelType::Video])
             .await?;
         self.router
             .execute(&self.ctx(), &model, self.source, None, |p, ep| async move {
-                p.video_content(task_id, &ep.upstream_model)
+                p.video_content(task_id, &ep.upstream_model, task_data)
                     .await
                     .map_err(ExecError::Upstream)
             })

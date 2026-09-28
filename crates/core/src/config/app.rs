@@ -73,6 +73,12 @@ pub struct AppConfig {
     pub plugin_dir: Option<String>,
     #[serde(default)]
     pub plugin_hot_reload: bool,
+    /// Provider 扩展目录（llm provider extensions；空目录 = 无扩展）。
+    #[serde(default = "default_llm_provider_ext_dir")]
+    pub llm_provider_ext_dir: String,
+    /// host 侧 seconds 全局上限（仅约束 provider 扩展路径）。
+    #[serde(default = "default_llm_video_max_seconds")]
+    pub llm_video_max_seconds: i64,
     #[serde(default = "default_plugin_max_memory")]
     pub plugin_max_memory_mb: u32,
     #[serde(default = "default_plugin_timeout")]
@@ -1313,6 +1319,14 @@ fn default_plugin_dir() -> Option<String> {
     Some("./extensions/plugins".into())
 }
 
+fn default_llm_provider_ext_dir() -> String {
+    "./extensions/llm_providers".into()
+}
+
+fn default_llm_video_max_seconds() -> i64 {
+    600
+}
+
 fn default_timezone() -> String {
     "UTC".into()
 }
@@ -1632,6 +1646,14 @@ impl AppConfig {
                 .ok()
                 .filter(|s| !s.is_empty())
                 .or_else(default_plugin_dir),
+            llm_provider_ext_dir: env::var("LLM_PROVIDER_DIR")
+                .ok()
+                .filter(|s| !s.is_empty())
+                .unwrap_or_else(default_llm_provider_ext_dir),
+            llm_video_max_seconds: env::var("LLM_VIDEO_MAX_SECONDS")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or_else(default_llm_video_max_seconds),
             plugin_hot_reload: env::var("PLUGIN_HOT_RELOAD")
                 .ok()
                 .and_then(|v| v.parse().ok())
@@ -1958,6 +1980,8 @@ impl AppConfig {
             tls_cert_path: None,
             tls_key_path: None,
             plugin_dir: None,
+            llm_provider_ext_dir: "./extensions/llm_providers".into(),
+            llm_video_max_seconds: 600,
             plugin_hot_reload: false,
             plugin_max_memory_mb: default_plugin_max_memory(),
             plugin_default_timeout_ms: default_plugin_timeout(),

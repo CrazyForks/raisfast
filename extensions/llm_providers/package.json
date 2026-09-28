@@ -1,0 +1,9 @@
+{
+  "name": "@raisfast/llm-providers",
+  "private": true,
+  "type": "module",
+  "description": "Provider extensions: one self-contained .js file per vendor (provider-plugins.md \u00a74).",
+  "scripts": {
+    "test": "node --test test/*.test.mjs"
+  }
+}

@@ -350,7 +350,12 @@ impl ModelProvider for OpenAiCompatProvider {
         Ok(parsed.into_task())
     }
 
-    async fn video_query(&self, task_id: &str, _model: &str) -> Result<VideoTask, ProviderError> {
+    async fn video_query(
+        &self,
+        task_id: &str,
+        _model: &str,
+        _task_data: Option<&serde_json::Value>,
+    ) -> Result<VideoTask, ProviderError> {
         let text = self
             .send_get_to(&format!("{VIDEOS_ENDPOINT}/{task_id}"))
             .await?;
@@ -359,7 +364,12 @@ impl ModelProvider for OpenAiCompatProvider {
         Ok(parsed.into_task())
     }
 
-    async fn video_content(&self, task_id: &str, _model: &str) -> Result<Vec<u8>, ProviderError> {
+    async fn video_content(
+        &self,
+        task_id: &str,
+        _model: &str,
+        _task_data: Option<&serde_json::Value>,
+    ) -> Result<Vec<u8>, ProviderError> {
         let url = format!(
             "{}/{}/{}/content",
             self.base_url.trim_end_matches('/'),
@@ -535,6 +545,7 @@ impl OpenAiVideoTask {
             status: VideoStatus::from_wire(&self.status),
             progress: self.progress,
             error,
+            data: None,
         }
     }
 }

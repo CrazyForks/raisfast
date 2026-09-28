@@ -138,6 +138,13 @@ test-integration: _link-cache
 test-chat-plugin:
     npm test --prefix extensions/plugins/chat
 
+# Run provider extension contract tests (extensions/llm_providers/test/):
+# fixture request/response pairs per vendor, pure functions, no kernel/DB.
+# See dev-docs/llm/provider-plugins.md §9 — vendor protocol changes are
+# regression-tested here in seconds, zero Rust rebuild.
+test-llm-providers:
+    npm test --prefix extensions/llm_providers
+
 # ── Database ──────────────────────────────────────────────────────
 
 # Create database (if needed) and load schema

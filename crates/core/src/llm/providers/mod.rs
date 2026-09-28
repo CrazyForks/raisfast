@@ -11,21 +11,21 @@
 
 pub mod anthropic;
 pub mod elevenlabs;
-pub mod kling;
+#[cfg(feature = "rquickjs")]
+pub mod ext;
 pub mod minimax;
+#[cfg(feature = "rquickjs")]
+pub mod plugin;
 pub mod replicate;
-pub mod seedance;
-pub mod vidu;
-pub mod wan;
+#[cfg(feature = "rquickjs")]
+pub mod runtime;
 
 pub use anthropic::AnthropicProvider;
 pub use elevenlabs::ElevenLabsProvider;
-pub use kling::KlingProvider;
+#[cfg(feature = "rquickjs")]
+pub use ext::{ProviderExt, ProviderExtRegistry, ReloadReport};
 pub use minimax::MiniMaxProvider;
 pub use replicate::ReplicateProvider;
-pub use seedance::SeedanceProvider;
-pub use vidu::ViduProvider;
-pub use wan::WanProvider;
 
 /// Map a `WxH` size string to the nearest aspect-ratio enum label shared by
 /// video providers (Kling/Replicate input vocab): `16:9` / `1:1` / `9:16`.

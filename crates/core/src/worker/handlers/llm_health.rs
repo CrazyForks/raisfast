@@ -135,6 +135,11 @@ async fn probe_channel(row: &LlmChannel) -> ProbeOutcome {
     ) {
         return ProbeOutcome::Skip;
     }
+    // provider 扩展渠道（provider-plugins.md）：无 chat 面，探活跳过
+    //（判定规则：不在内置 preset 清单内的 key 一律跳过）。
+    if crate::llm::registry::find(row.provider.as_str()).is_none() {
+        return ProbeOutcome::Skip;
+    }
     let client = crate::llm::relay::shared_client();
     // Probe in the channel's own protocol (§7.5, mirrors the manual
     // `test_channel`): anthropic-native channels get a `/v1/messages` ping,

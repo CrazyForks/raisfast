@@ -699,12 +699,18 @@ impl ModelProvider for MiniMaxProvider {
             status: self.status_from_wire(&parsed, is_h3(model)),
             progress: None,
             error: None,
+            data: None,
         })
     }
 
     /// 轮询任务：H3 `GET /v2/query/video_generation/{id}`；
     /// V1 `GET /v1/query/video_generation?task_id=…`。
-    async fn video_query(&self, task_id: &str, model: &str) -> Result<VideoTask, ProviderError> {
+    async fn video_query(
+        &self,
+        task_id: &str,
+        model: &str,
+        _task_data: Option<&serde_json::Value>,
+    ) -> Result<VideoTask, ProviderError> {
         let parsed = if is_h3(model) {
             self.get_json(&format!(
                 "/v2/query/video_generation/{}",
@@ -743,12 +749,18 @@ impl ModelProvider for MiniMaxProvider {
             status: self.status_from_wire(&parsed, is_h3(model)),
             progress: None,
             error,
+            data: None,
         })
     }
 
     /// 拉取成片：H3 = `task.content.url` 公网 CDN 直下；V1 = `file_id` →
     /// `GET /v1/files/download?file_id=…`（带鉴权）。
-    async fn video_content(&self, task_id: &str, model: &str) -> Result<Vec<u8>, ProviderError> {
+    async fn video_content(
+        &self,
+        task_id: &str,
+        model: &str,
+        _task_data: Option<&serde_json::Value>,
+    ) -> Result<Vec<u8>, ProviderError> {
         let h3 = is_h3(model);
         let parsed = if h3 {
             self.get_json(&format!(
@@ -1137,9 +1149,12 @@ mod tests {
             .await;
 
         let p = provider(server.uri());
-        let task = p.video_query("t-1", "MiniMax-H3").await.unwrap();
+        let task = p.video_query("t-1", "MiniMax-H3", None).await.unwrap();
         assert_eq!(task.status, VideoStatus::Completed);
-        let err = p.video_content("t-1", "MiniMax-H3").await.unwrap_err();
+        let err = p
+            .video_content("t-1", "MiniMax-H3", None)
+            .await
+            .unwrap_err();
         assert!(
             matches!(
                 err,
@@ -1173,7 +1188,10 @@ mod tests {
             .await;
 
         let p = provider(server.uri());
-        let bytes = p.video_content("t-3", "MiniMax-Hailuo-02").await.unwrap();
+        let bytes = p
+            .video_content("t-3", "MiniMax-Hailuo-02", None)
+            .await
+            .unwrap();
         assert_eq!(&bytes[..4], b"MP4-");
     }
 }
