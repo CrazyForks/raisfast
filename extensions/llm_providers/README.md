@@ -57,7 +57,7 @@ export function parseTaskResult(ctx, response) {
 | `utils.base64 / base64URL / base64URLDecode` | 编码 |
 | `utils.uuid()` | nonce |
 
-参考实现：`cogvideo.js`（最简）、`wan.js`（模型矩阵 + kind 路由）、`kling.js`（JWT + taskData 双路径）、`openai-image.js`（image 协议）。
+参考实现：`cogvideo.js`（最简）、`wan.js`（模型矩阵 + kind 路由）、`kling.js`（JWT + taskData 双路径）、`wavespeed.js`（模型路由在 URL 路径的网关）、`openai-image.js`（image 协议）。
 
 ## 开发循环
 
