@@ -44,6 +44,18 @@ test("size omitted when absent (provider default)", () => {
   assert.equal(spec.body.size, undefined);
 });
 
+test("first reference rides the image param (图生图/角色一致性)", () => {
+  const spec = buildImageRequest(
+    CTX({ request: { prompt: "同款角色新场景", inputReferences: [{ url: "https://img.test/hero.png" }] } }),
+  );
+  assert.equal(spec.body.image, "https://img.test/hero.png");
+
+  const b64 = buildImageRequest(
+    CTX({ request: { prompt: "x", inputReferences: [{ b64Json: "QUJD", mime: "image/jpeg" }] } }),
+  );
+  assert.equal(b64.body.image, "data:image/jpeg;base64,QUJD");
+});
+
 test("empty apiKey omits Authorization header (local gateways)", () => {
   const spec = buildImageRequest(CTX({ apiKey: null }));
   assert.equal(spec.headers.Authorization, undefined);

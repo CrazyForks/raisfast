@@ -84,7 +84,7 @@ just test-llm-providers     # node --test，秒级
 | chat（非流式） | buildChatRequest / parseChatResponse | —（待厂商） |
 | speech | buildSpeechRequest / parseSpeechResponse（返回 audioBase64 或 audioHex） | —（待厂商） |
 | music | buildMusicRequest / parseMusicResponse | —（待厂商） |
-| image | buildImageRequest / parseImageResponse | openai-image.js |
+| image | buildImageRequest / parseImageResponse（首参考图 → `image` 参数，图生图） | openai-image.js |
 
 二进制响应约定：上游返回 audio/*、image/*、octet-stream 时宿主把 body 以 base64
 放入 `response.body64`，扩展解析后返回 `{audioBase64}`（宿主解码为字节）。

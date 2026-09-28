@@ -10,6 +10,14 @@
 // - 同步生成可能需要数十秒（meta.timeout_ms 给足 300s）；
 // - 自定义 host（本地网关/中转）需编辑 meta.http 白名单。
 
+// 参考图 → data-URL 或原 URL（[照抄本仓 VideoInputRef::to_wire_string]）。
+function toWireImage(ref) {
+  if (!ref) return undefined;
+  if (ref.url) return ref.url;
+  if (ref.b64Json) return `data:${ref.mime || "image/png"};base64,${ref.b64Json}`;
+  return undefined;
+}
+
 export const meta = {
   key: "openai-image", // llm_channels.provider 的匹配键
   name: "OpenAI 兼容文生图",
@@ -24,6 +32,9 @@ export const meta = {
 
 // 生成：POST /images/generations。apiKey 为空时不带 Authorization 头
 // [照抄 MPT：本地 ComfyUI/SD 网关通常不需要鉴权]。
+// 参考图（图生图/角色一致性）：首个 ref 走 OpenAI wire `image` 参数
+// [照抄原生 agent OpenAiCompatProvider.generate_image——聚合器映射到
+// 厂商原生字段（Seedream refs、Kling edit image）]。
 export function buildImageRequest(ctx) {
   const prompt = String(ctx.request.prompt ?? "");
   if (!prompt.trim()) throw new Error("openai-image: prompt must not be empty");
@@ -34,6 +45,8 @@ export function buildImageRequest(ctx) {
     n: Number(ctx.request.n ?? 1) || 1,
   };
   if (ctx.request.size) body.size = String(ctx.request.size);
+  const ref = toWireImage((ctx.request.inputReferences || [])[0]);
+  if (ref) body.image = ref;
 
   const headers = { "Content-Type": "application/json" };
   if (ctx.apiKey) headers.Authorization = "Bearer " + ctx.apiKey;
