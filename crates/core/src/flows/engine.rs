@@ -319,6 +319,7 @@ pub async fn run_persisted(
             | nodes::T_IMAGE
             | nodes::T_SPEECH
             | nodes::T_MUSIC
+            | nodes::T_MATERIAL
             | nodes::T_RENDER_VIDEO
             | nodes::T_RENDER_IMAGE
             | nodes::T_HTTP
@@ -343,6 +344,8 @@ pub async fn run_persisted(
                         | nodes::T_IMAGE
                         | nodes::T_SPEECH
                         | nodes::T_MUSIC
+                        | nodes::T_MATERIAL
+                        | nodes::T_PUBLISH
                         | nodes::T_RENDER_VIDEO
                         | nodes::T_RENDER_IMAGE
                         | nodes::T_VIDEO

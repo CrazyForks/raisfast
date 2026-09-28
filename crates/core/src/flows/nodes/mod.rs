@@ -959,7 +959,7 @@ pub fn validate_node(kind: &str, _version: i64, config: &Value) -> AppResult<()>
         T_PUBLISH => publish::validate(config)?,
         other => {
             return Err(AppError::BadRequest(format!(
-                "node type '{other}' not supported (start|end|script|egress|branch|await|transform|chat|image|speech|video|music|render_video|render_image|http|ct|iteration|docparse)"
+                "node type '{other}' not supported (start|end|script|egress|branch|await|transform|chat|image|speech|video|music|material|publish|render_video|render_image|http|ct|iteration|docparse)"
             )));
         }
     }
