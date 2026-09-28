@@ -22,11 +22,14 @@ export const meta = {
     "MiniMax-H3",
     "MiniMax-Hailuo-02",
     "MiniMax-Hailuo-2.3",
+    "speech-2.8-hd",
     "speech-02-hd",
     "music-01",
   ],
   description: "海螺 Chat/语音/音乐/视频（V1/V2 双代协议；TTS/音乐需 GroupId）",
-  http: ["api.minimaxi.com/*"],
+  // global（api.minimax.io）与 CN（api.minimaxi.com）双 host——
+  // TTS speech-2.8-hd 走 global [照抄 MPT voice.py MINIMAX_TTS_GLOBAL/CN_URL]。
+  http: ["api.minimaxi.com/*", "api.minimax.io/*"],
   timeout_ms: 30000,
 };
 
