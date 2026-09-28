@@ -7,7 +7,25 @@
 
 use serde_json::Value;
 
-use super::{MaterialCandidate, matches_orientation};
+use super::{MaterialCandidate, matches_orientation, urlencode};
+
+pub const NAME: &str = "pexels";
+
+/// GET /v1/videos/search?query&per_page&orientation，Authorization 直携裸 key。
+pub fn build_url(
+    api_key: &str,
+    query: &str,
+    orientation: &str,
+    per_page: u32,
+) -> (String, Vec<(&'static str, String)>) {
+    (
+        format!(
+            "https://api.pexels.com/v1/videos/search?query={}&per_page={per_page}&orientation={orientation}",
+            urlencode(query),
+        ),
+        vec![("Authorization", api_key.to_string())],
+    )
+}
 
 pub fn parse_response(
     body: &Value,
@@ -118,5 +136,18 @@ mod tests {
         let out = parse_response(&body, 0, "landscape");
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].url, "https://cdn.pexels.com/land.mp4");
+    }
+
+    #[test]
+    fn build_url_carries_query_params_and_bearerless_auth() {
+        let (url, headers) = build_url("pk-1", "一只猫", "portrait", 20);
+        assert!(url.contains("query=%E4%B8%80%E5%8F%AA%E7%8C%AB"));
+        assert!(url.contains("orientation=portrait"));
+        assert!(url.contains("per_page=20"));
+        assert!(
+            headers
+                .iter()
+                .any(|(k, v)| *k == "Authorization" && v == "pk-1")
+        );
     }
 }

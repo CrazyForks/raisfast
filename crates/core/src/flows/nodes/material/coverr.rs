@@ -7,9 +7,41 @@
 
 use serde_json::Value;
 
-use super::MaterialCandidate;
+use super::{MaterialCandidate, urlencode};
 
-pub fn parse_response(body: &Value, orientation: &str) -> Vec<MaterialCandidate> {
+pub const NAME: &str = "coverr";
+
+/// GET /videos?query&page_size&urls=true&sort=popular[&filter=is_vertical]，
+/// Authorization: Bearer。
+pub fn build_url(
+    api_key: &str,
+    query: &str,
+    orientation: &str,
+    per_page: u32,
+) -> (String, Vec<(&'static str, String)>) {
+    // 服务端方向筛选直接返回目标素材，避免先取热门再本地过滤导致竖屏
+    // 候选为空 [照抄 MPT]；方形无对应布尔条件，靠本地宽高复核。
+    let filter = match orientation {
+        "portrait" => "&filter=is_vertical:true",
+        "landscape" => "&filter=is_vertical:false",
+        _ => "",
+    };
+    (
+        format!(
+            "https://api.coverr.co/videos?query={}&page_size={per_page}&urls=true&sort=popular{filter}",
+            urlencode(query),
+        ),
+        vec![("Authorization", format!("Bearer {api_key}"))],
+    )
+}
+
+pub fn parse_response(
+    body: &Value,
+    _min_duration: u32,
+    orientation: &str,
+) -> Vec<MaterialCandidate> {
+    // min_duration 忽略 [照抄 MPT：coverr 不做时长过滤]。
+    let _ = _min_duration;
     let mut out = Vec::new();
     let Some(hits) = body.get("hits").and_then(Value::as_array) else {
         return out;
@@ -91,7 +123,7 @@ mod tests {
                   "canonical_url": "https://coverr.co/v/c1", "creator": "vid" }
             ]
         });
-        let out = parse_response(&body, "portrait");
+        let out = parse_response(&body, 0, "portrait");
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].url, "https://coverr.co/d/c1.mp4");
         assert_eq!(out[0].duration, 12, "duration 字符串形态");
@@ -106,10 +138,10 @@ mod tests {
                   "urls": { "mp4_download": "https://coverr.co/d/c2.mp4" } }
             ]
         });
-        assert!(parse_response(&landscape, "portrait").is_empty());
-        assert_eq!(parse_response(&landscape, "landscape").len(), 1);
+        assert!(parse_response(&landscape, 0, "portrait").is_empty());
+        assert_eq!(parse_response(&landscape, 0, "landscape").len(), 1);
         // square 无服务端筛选，本地也不做方向校验 → 放行
-        assert_eq!(parse_response(&landscape, "square").len(), 1);
+        assert_eq!(parse_response(&landscape, 0, "square").len(), 1);
     }
 
     #[test]
@@ -119,6 +151,20 @@ mod tests {
                 { "id": "c3", "duration": 10, "urls": {} }
             ]
         });
-        assert!(parse_response(&body, "portrait").is_empty());
+        assert!(parse_response(&body, 0, "portrait").is_empty());
+    }
+
+    #[test]
+    fn build_url_sets_bearer_and_vertical_filter() {
+        let (url, headers) = build_url("cv-1", "城市", "portrait", 20);
+        assert!(url.contains("query="));
+        assert!(url.contains("urls=true"));
+        assert!(url.contains("filter=is_vertical:true"));
+        assert!(
+            headers
+                .iter()
+                .any(|(k, v)| *k == "Authorization" && v == "Bearer cv-1"),
+            "{headers:?}"
+        );
     }
 }
