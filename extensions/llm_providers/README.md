@@ -57,7 +57,7 @@ export function parseTaskResult(ctx, response) {
 | `utils.base64 / base64URL / base64URLDecode` | 编码 |
 | `utils.uuid()` | nonce |
 
-参考实现：`cogvideo.js`（最简）、`wan.js`（模型矩阵 + kind 路由）、`kling.js`（JWT + taskData 双路径）。
+参考实现：`cogvideo.js`（最简）、`wan.js`（模型矩阵 + kind 路由）、`kling.js`（JWT + taskData 双路径）、`openai-image.js`（image 协议）。
 
 ## 开发循环
 
@@ -76,8 +76,23 @@ just test-llm-providers     # node --test，秒级
 - [ ] 付费档位硬校验写在扩展里（时长/分辨率组合）；host 侧另有 seconds 上限兜底
 - [ ] key 格式约定写进 description（如可灵的 `access_key:secret_key`）
 
+## 模态（meta.protocols 声明式）
+
+| 协议 | 函数对 | 示例 |
+|---|---|---|
+| video | buildSubmitRequest / parseSubmitResponse / buildQueryRequest / parseTaskResult | 全部现有扩展 |
+| chat（非流式） | buildChatRequest / parseChatResponse | —（待厂商） |
+| speech | buildSpeechRequest / parseSpeechResponse（返回 audioBase64 或 audioHex） | —（待厂商） |
+| music | buildMusicRequest / parseMusicResponse | —（待厂商） |
+| image | buildImageRequest / parseImageResponse | openai-image.js |
+
+二进制响应约定：上游返回 audio/*、image/*、octet-stream 时宿主把 body 以 base64
+放入 `response.body64`，扩展解析后返回 `{audioBase64}`（宿主解码为字节）。
+
 ## 限制（契约 v1）
 
 - 仅 GET/POST + JSON body（multipart 上传类厂商暂不支持）
-- 仅非流式；无 crypto 之外的宿主计算原语（非对称签名厂商走原生）
-- 成片下载由宿主直连（不走本清单、不带扩展 headers）
+- 仅非流式（chat 流式需要常驻实例模型，见设计文档多模态章节）
+- 无 crypto 之外的宿主计算原语（非对称签名厂商走原生）
+- 成片下载由宿主直连（不走本清单）；需要鉴权头时 parseTaskResult 返回
+  `downloadHeaders`（minimax V1 file_id 先例）
