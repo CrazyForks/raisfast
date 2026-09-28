@@ -193,6 +193,11 @@ impl NodeExecutor for FlowsExec {
         match node.data.kind.as_str() {
             nodes::T_SCRIPT => self.run_script(node, input).await,
             nodes::T_HTTP => super::nodes::http::run_http(node, pool).await,
+            nodes::T_MATERIAL => super::nodes::material::run_material_search(node, pool).await,
+            nodes::T_PUBLISH => {
+                let storage = self.media_storage()?;
+                super::nodes::publish::run_publish(node, &storage, pool).await
+            }
             nodes::T_CT => super::nodes::ct::run_ct(node, pool, self.tenant_id.as_deref()).await,
             nodes::T_CHAT => {
                 let runtime = self.llm_runtime();

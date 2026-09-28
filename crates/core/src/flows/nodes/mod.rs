@@ -15,7 +15,9 @@ pub mod ct;
 pub mod docparse;
 pub mod http;
 pub mod image;
+pub mod material;
 pub mod music;
+pub mod publish;
 pub mod render;
 pub mod speech;
 pub mod video;
@@ -107,6 +109,8 @@ pub const T_LLM_LEGACY: &str = "llm";
 pub const T_IMAGE: &str = "image";
 pub const T_SPEECH: &str = "speech";
 pub const T_MUSIC: &str = "music";
+pub const T_MATERIAL: &str = "material";
+pub const T_PUBLISH: &str = "publish";
 pub const T_RENDER_VIDEO: &str = "render_video";
 pub const T_RENDER_IMAGE: &str = "render_image";
 pub const T_VIDEO: &str = "video";
@@ -494,6 +498,8 @@ pub fn declared_output_fields(kind: &str, config: &Value) -> Vec<String> {
             "latency_ms".into(),
         ],
         T_IMAGE => vec!["images".into(), "model".into(), "n".into()],
+        crate::flows::nodes::T_MATERIAL => vec!["videos".into(), "count".into()],
+        T_PUBLISH => vec!["posted".into(), "requestId".into(), "platforms".into()],
         T_SPEECH => vec![
             "audio".into(),
             "chars".into(),
@@ -949,6 +955,8 @@ pub fn validate_node(kind: &str, _version: i64, config: &Value) -> AppResult<()>
         T_RENDER_VIDEO => render::video::validate(config)?,
         T_RENDER_IMAGE => render::image::validate(config)?,
         T_VIDEO => video::validate(config)?,
+        T_MATERIAL => material::validate(config)?,
+        T_PUBLISH => publish::validate(config)?,
         other => {
             return Err(AppError::BadRequest(format!(
                 "node type '{other}' not supported (start|end|script|egress|branch|await|transform|chat|image|speech|video|music|render_video|render_image|http|ct|iteration|docparse)"
