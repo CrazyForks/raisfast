@@ -60,6 +60,7 @@ crate::export_types!(
     nodes::RenderVideoConfig,
     nodes::SpeechConfig,
     nodes::VideoConfig,
+    nodes::TranscribeConfig,
     nodes::HttpConfig,
     nodes::HttpKeyValue,
     nodes::CtConfig,

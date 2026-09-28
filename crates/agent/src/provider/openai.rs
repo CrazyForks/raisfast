@@ -276,6 +276,10 @@ impl ModelProvider for OpenAiCompatProvider {
             .map_err(|e| ProviderError::Config(e.to_string()))?;
         let mut form = reqwest::multipart::Form::new()
             .text("model", model.to_owned())
+            // verbose_json: segments[] (timed) ride along for SRT generation;
+            // servers that ignore the field just return `{"text": ...}` and
+            // the segments default to empty.
+            .text("response_format", "verbose_json")
             .part("file", part);
         if let Some(language) = &audio.language {
             form = form.text("language", language.clone());
@@ -298,7 +302,19 @@ impl ModelProvider for OpenAiCompatProvider {
         }
         let parsed: OpenAiTranscriptionResponse = serde_json::from_str(&text)
             .map_err(|e| ProviderError::Parse(format!("{e}: {text}")))?;
-        Ok(Transcription { text: parsed.text })
+        Ok(Transcription {
+            text: parsed.text,
+            segments: parsed
+                .segments
+                .into_iter()
+                .map(|s| super::TranscriptSegment {
+                    id: s.id,
+                    start: s.start,
+                    end: s.end,
+                    text: s.text,
+                })
+                .collect(),
+        })
     }
 
     async fn speech(&self, text: &str, voice: &str, model: &str) -> Result<Vec<u8>, ProviderError> {
@@ -515,6 +531,20 @@ struct OpenAiImageData {
 
 #[derive(Debug, Deserialize)]
 struct OpenAiTranscriptionResponse {
+    #[serde(default)]
+    text: String,
+    #[serde(default)]
+    segments: Vec<OpenAiTranscriptionSegment>,
+}
+
+#[derive(Debug, Deserialize)]
+struct OpenAiTranscriptionSegment {
+    #[serde(default)]
+    id: i64,
+    #[serde(default)]
+    start: f64,
+    #[serde(default)]
+    end: f64,
     #[serde(default)]
     text: String,
 }
@@ -977,5 +1007,39 @@ mod vision_tests {
         let parts = wire["content"].as_array().expect("parts array");
         assert_eq!(parts.len(), 1, "no empty text part when content is none");
         assert_eq!(parts[0]["type"], json!("image_url"));
+    }
+}
+
+#[cfg(test)]
+mod transcription_tests {
+    use super::*;
+
+    #[test]
+    fn verbose_json_segments_are_parsed() {
+        let body = json!({
+            "task": "transcribe",
+            "language": "zh",
+            "duration": 6.08,
+            "text": " 你好世界。 这是第二段。",
+            "segments": [
+                {"id": 0, "start": 0.0, "end": 2.5, "text": " 你好世界。"},
+                {"id": 1, "start": 2.5, "end": 6.08, "text": " 这是第二段。"}
+            ]
+        });
+        let parsed: OpenAiTranscriptionResponse = serde_json::from_value(body).unwrap();
+        assert_eq!(parsed.text, " 你好世界。 这是第二段。");
+        assert_eq!(parsed.segments.len(), 2);
+        assert_eq!(parsed.segments[1].start, 2.5);
+        assert_eq!(parsed.segments[1].end, 6.08);
+        assert_eq!(parsed.segments[1].text, " 这是第二段。");
+    }
+
+    #[test]
+    fn plain_text_response_defaults_to_no_segments() {
+        // Servers that ignore `response_format=verbose_json` still decode.
+        let parsed: OpenAiTranscriptionResponse =
+            serde_json::from_value(json!({"text": "只有文本"})).unwrap();
+        assert_eq!(parsed.text, "只有文本");
+        assert!(parsed.segments.is_empty());
     }
 }

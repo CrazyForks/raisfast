@@ -1616,6 +1616,9 @@ async fn audio_stt(
         crate::llm::models::model::LlmPriceMode::PerCall => {
             billing::settle_quota(&info.pricing, &RelayUsage::default(), group_ratio)
         }
+        crate::llm::models::model::LlmPriceMode::PerSecond => {
+            billing::flat_unit_quota(info.pricing.input_price, est_secs, group_ratio)
+        }
         _ => billing::flat_token_quota(info.pricing.input_price, est_secs, group_ratio),
     };
     let charge = match billing::pre_consume(&state.pool, &token, &tenant, estimate).await {

@@ -227,6 +227,11 @@ impl NodeExecutor for FlowsExec {
                 let storage = self.media_storage()?;
                 super::nodes::speech::run_speech(&runtime, &storage, node, pool).await
             }
+            nodes::T_TRANSCRIBE => {
+                let runtime = self.llm_runtime();
+                let storage = self.media_storage()?;
+                super::nodes::transcribe::run_transcribe(&runtime, &storage, node, pool).await
+            }
             nodes::T_VIDEO => {
                 // Submit segment only — the engine parks the run afterwards;
                 // completion is driven by the wait-poll hub (poll_infra.rs).

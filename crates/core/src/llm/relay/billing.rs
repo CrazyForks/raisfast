@@ -338,6 +338,27 @@ pub fn estimate_precharge(
         LlmPriceMode::PerCall => {
             Quota::from_usd_ceil(pricing.call_price.unwrap_or(0.0) * group_ratio)
         }
+        LlmPriceMode::PerSecond => {
+            // Per-unit duration pricing (pricing.md §3.1 [自造]): prices are
+            // direct USD per unit — no /1M divisor. Video keeps the
+            // submit-time fixed hold (per-request fee + per-second); other
+            // duration types (asr/music) precharge outside this fn (STT
+            // upload) or hold one input unit (flows settle re-derives from
+            // real usage).
+            if model_type == LlmModelType::Video {
+                let seconds = body
+                    .get("seconds")
+                    .and_then(|v| {
+                        v.as_i64()
+                            .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
+                    })
+                    .filter(|v| *v > 0)
+                    .unwrap_or(12);
+                let usd = pricing.input_price + seconds as f64 * pricing.output_price;
+                return Quota::from_usd_ceil(usd * group_ratio);
+            }
+            Quota::from_usd_ceil(pricing.input_price * group_ratio)
+        }
         LlmPriceMode::Token => {
             if model_type == LlmModelType::Image {
                 // Images are billed per generated image (completion side):
@@ -398,10 +419,16 @@ pub fn estimate_precharge(
 }
 
 /// Billable USD for the normalized usage, before any group/cost multiplier
-/// (pricing.md §3.1). `PerCall` returns the flat call price.
+/// (pricing.md §3.1). `PerCall` returns the flat call price. `PerSecond`
+/// treats prices as direct USD per unit: prompt side = per-request fee
+/// (video) or per-second (asr), completion side = per-second (video).
 fn usage_usd(pricing: &Pricing, usage: &RelayUsage) -> f64 {
     match pricing.price_mode {
         LlmPriceMode::PerCall => pricing.call_price.unwrap_or(0.0),
+        LlmPriceMode::PerSecond => {
+            usage.prompt_tokens as f64 * pricing.input_price
+                + usage.completion_tokens as f64 * pricing.output_price
+        }
         LlmPriceMode::Token => {
             let base =
                 (usage.prompt_tokens - usage.cache_read_tokens - usage.cache_write_tokens).max(0);
@@ -503,6 +530,12 @@ fn input_texts(input: &serde_json::Value) -> Vec<&str> {
 /// audio paths where the billable unit is seconds/chars, not a JSON body).
 pub(crate) fn flat_token_quota(price_per_m: f64, units: i64, group_ratio: f64) -> Quota {
     Quota::from_usd_ceil(units as f64 * price_per_m / 1_000_000.0 * group_ratio)
+}
+
+/// Flat per-unit quota helper for `per_second` pricing: `units × price ×
+/// group_ratio` — prices are direct USD per unit, no /1M divisor.
+pub(crate) fn flat_unit_quota(price_per_unit: f64, units: i64, group_ratio: f64) -> Quota {
+    Quota::from_usd_ceil(units as f64 * price_per_unit * group_ratio)
 }
 
 /// Rough audio duration fallback (seconds) from uploaded file size when the
@@ -913,5 +946,80 @@ mod tests {
         let p = pricing(1.0, 100.0);
         let u = usage(0, 1_000_000);
         assert_eq!(settle_quota(&p, &u, 1.0), Quota(100_000_000));
+    }
+
+    // ── per_second ([自造] pricing.md §3.1): direct USD per unit ──
+
+    fn per_second_pricing(input: f64, output: f64) -> Pricing {
+        Pricing {
+            price_mode: LlmPriceMode::PerSecond,
+            input_price: input,
+            output_price: output,
+            cache_read_price: None,
+            cache_write_price: None,
+            call_price: None,
+        }
+    }
+
+    #[test]
+    fn per_second_video_bills_per_request_and_second() {
+        // $0.10/request + $0.50/s × 12s = $6.10 → 6_100_000 quota.
+        let p = per_second_pricing(0.10, 0.50);
+        let u = usage(1, 12);
+        assert_eq!(settle_quota(&p, &u, 1.0), Quota(6_100_000));
+        // Group ratio multiplies, ceil protects undercharge.
+        assert_eq!(settle_quota(&p, &u, 1.5), Quota(9_150_000));
+    }
+
+    #[test]
+    fn per_second_asr_bills_input_side_seconds() {
+        // $0.006/s × 30s = $0.18 (asr rides the prompt side).
+        let p = per_second_pricing(0.006, 0.0);
+        assert_eq!(settle_quota(&p, &usage(30, 0), 1.0), Quota(180_000));
+    }
+
+    #[test]
+    fn per_second_ignores_cache_fields() {
+        // Cache is a token-mode concept — per_second bills the raw sides.
+        let p = per_second_pricing(0.10, 0.50);
+        let u = RelayUsage {
+            prompt_tokens: 2,
+            completion_tokens: 10,
+            cache_read_tokens: 1,
+            cache_write_tokens: 1,
+        };
+        assert_eq!(settle_quota(&p, &u, 1.0), Quota(5_200_000));
+    }
+
+    #[test]
+    fn per_second_video_precharge_equals_settle() {
+        let p = per_second_pricing(0.10, 0.50);
+        let body = serde_json::json!({"model": "v", "seconds": "10"});
+        let pre = estimate_precharge(&p, LlmModelType::Video, &body, 1.0, None);
+        // 0.10 + 10×0.50 = $5.10 → 5_100_000; hold == settle (fixed at submit).
+        assert_eq!(pre, Quota(5_100_000));
+        assert_eq!(pre, settle_quota(&p, &usage(1, 10), 1.0));
+        // Absent seconds → 12 default, same as the token-mode video branch.
+        assert_eq!(
+            estimate_precharge(&p, LlmModelType::Video, &serde_json::json!({}), 1.0, None),
+            Quota(6_100_000)
+        );
+    }
+
+    #[test]
+    fn per_second_non_video_holds_one_input_unit() {
+        // asr/music precharge outside estimate_precharge (upload path / flows
+        // settle) — the generic branch is a minimal one-unit hold.
+        let p = per_second_pricing(0.006, 0.0);
+        assert_eq!(
+            estimate_precharge(&p, LlmModelType::Asr, &serde_json::json!({}), 1.0, None),
+            Quota(6_000)
+        );
+    }
+
+    #[test]
+    fn flat_unit_quota_has_no_per_million_divisor() {
+        assert_eq!(flat_unit_quota(0.006, 30, 1.0), Quota(180_000));
+        assert_eq!(flat_unit_quota(0.50, 12, 1.5), Quota(9_000_000));
     }
 }

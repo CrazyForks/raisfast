@@ -139,6 +139,19 @@ pub struct AudioInput<'a> {
 #[derive(Debug, Clone)]
 pub struct Transcription {
     pub text: String,
+    /// Timed segments (verbose_json `segments[]` semantics) — the raw
+    /// material for SRT subtitle generation. Empty when the upstream only
+    /// returns plain text (or ignores `response_format`).
+    pub segments: Vec<TranscriptSegment>,
+}
+
+/// One timed segment of a [`Transcription`] (seconds relative to clip start).
+#[derive(Debug, Clone)]
+pub struct TranscriptSegment {
+    pub id: i64,
+    pub start: f64,
+    pub end: f64,
+    pub text: String,
 }
 
 /// An async video-generation task (OpenAI Videos API semantics: submit

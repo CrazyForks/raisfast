@@ -20,6 +20,7 @@ pub mod music;
 pub mod publish;
 pub mod render;
 pub mod speech;
+pub mod transcribe;
 pub mod video;
 
 pub use chat::{ChatConfig, ChatMessage};
@@ -30,6 +31,7 @@ pub use image::ImageConfig;
 pub use music::MusicConfig;
 pub use render::RenderVideoConfig;
 pub use speech::SpeechConfig;
+pub use transcribe::TranscribeConfig;
 pub use video::{DEFAULT_VIDEO_DEADLINE_SECS, VideoConfig};
 
 use serde::{Deserialize, Serialize};
@@ -118,6 +120,7 @@ pub const T_HTTP: &str = "http";
 pub const T_CT: &str = "ct";
 pub const T_ITERATION: &str = "iteration";
 pub const T_DOCPARSE: &str = "docparse";
+pub const T_TRANSCRIBE: &str = "transcribe";
 
 #[cfg_attr(feature = "export-types", derive(ts_rs::TS))]
 #[derive(Debug, Clone, Deserialize)]
@@ -504,6 +507,14 @@ pub fn declared_output_fields(kind: &str, config: &Value) -> Vec<String> {
             "audio".into(),
             "chars".into(),
             "voice".into(),
+            "model".into(),
+        ],
+        T_MUSIC => vec!["audio".into(), "model".into()],
+        T_TRANSCRIBE => vec![
+            "text".into(),
+            "segments".into(),
+            "srt".into(),
+            "duration".into(),
             "model".into(),
         ],
         T_AWAIT => vec!["resume".into()],
@@ -951,6 +962,7 @@ pub fn validate_node(kind: &str, _version: i64, config: &Value) -> AppResult<()>
         T_DOCPARSE => docparse::validate(config)?,
         T_IMAGE => image::validate(config)?,
         T_SPEECH => speech::validate(config)?,
+        T_TRANSCRIBE => transcribe::validate(config)?,
         T_MUSIC => music::validate(config)?,
         T_RENDER_VIDEO => render::video::validate(config)?,
         T_RENDER_IMAGE => render::image::validate(config)?,
@@ -959,7 +971,7 @@ pub fn validate_node(kind: &str, _version: i64, config: &Value) -> AppResult<()>
         T_PUBLISH => publish::validate(config)?,
         other => {
             return Err(AppError::BadRequest(format!(
-                "node type '{other}' not supported (start|end|script|egress|branch|await|transform|chat|image|speech|video|music|material|publish|render_video|render_image|http|ct|iteration|docparse)"
+                "node type '{other}' not supported (start|end|script|egress|branch|await|transform|chat|image|speech|video|music|material|publish|render_video|render_image|transcribe|http|ct|iteration|docparse)"
             )));
         }
     }
@@ -986,6 +998,7 @@ pub enum NodeKind {
     Music,
     RenderVideo,
     RenderImage,
+    Transcribe,
     Http,
     Ct,
     Iteration,
@@ -1013,6 +1026,7 @@ pub enum NodeConfigVariant {
     Music(MusicConfig),
     RenderVideo(RenderVideoConfig),
     RenderImage(crate::flows::nodes::render::image::RenderImageConfig),
+    Transcribe(TranscribeConfig),
     Http(HttpConfig),
     Ct(CtConfig),
     Iteration(IterationConfig),

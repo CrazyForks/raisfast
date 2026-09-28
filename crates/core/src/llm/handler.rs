@@ -1136,6 +1136,19 @@ impl ModelReq {
         let price_mode = LlmPriceMode::from_str(&self.price_mode).map_err(|_| {
             AppError::BadRequest(format!("invalid price_mode: {}", self.price_mode))
         })?;
+        // per_second guardrail (pricing.md §3.1 [自造]): unit prices are only
+        // meaningful for duration-billed types — a chat model priced "per
+        // token-unit" would settle 1M× over.
+        if price_mode == LlmPriceMode::PerSecond
+            && !matches!(
+                model_type,
+                LlmModelType::Asr | LlmModelType::Video | LlmModelType::Music
+            )
+        {
+            return Err(AppError::BadRequest(
+                "price_mode 'per_second' 仅用于按时长计费的模型类型 (asr|video|music)".into(),
+            ));
+        }
         let status = LlmModelStatus::from_str(&self.status)
             .map_err(|_| AppError::BadRequest(format!("invalid status: {}", self.status)))?;
         Ok(ModelChanges {

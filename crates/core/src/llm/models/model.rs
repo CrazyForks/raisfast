@@ -25,10 +25,15 @@ define_enum!(
     }
 );
 
+// `PerSecond` ([自造], pricing.md §3.1): per-unit duration pricing — prices
+// are direct USD per unit (no /1M divisor): video `$X/request + $Y/second`,
+// asr `$Y/second`. Restricted to the duration-billed types
+// (asr|video|music) at model-save time.
 define_enum!(
     LlmPriceMode {
         Token = "token",
         PerCall = "per_call",
+        PerSecond = "per_second",
     }
 );
 

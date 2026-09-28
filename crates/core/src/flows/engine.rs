@@ -318,8 +318,10 @@ pub async fn run_persisted(
             | nodes::T_CHAT
             | nodes::T_IMAGE
             | nodes::T_SPEECH
+            | nodes::T_TRANSCRIBE
             | nodes::T_MUSIC
             | nodes::T_MATERIAL
+            | nodes::T_PUBLISH
             | nodes::T_RENDER_VIDEO
             | nodes::T_RENDER_IMAGE
             | nodes::T_HTTP
@@ -343,6 +345,7 @@ pub async fn run_persisted(
                     nodes::T_CHAT
                         | nodes::T_IMAGE
                         | nodes::T_SPEECH
+                        | nodes::T_TRANSCRIBE
                         | nodes::T_MUSIC
                         | nodes::T_MATERIAL
                         | nodes::T_PUBLISH
@@ -1335,13 +1338,18 @@ fn resume_completed(
         nodes::T_SCRIPT
         | nodes::T_EGRESS
         | nodes::T_CHAT
+        | nodes::T_IMAGE
+        | nodes::T_SPEECH
+        | nodes::T_MUSIC
+        | nodes::T_MATERIAL
+        | nodes::T_PUBLISH
         | nodes::T_HTTP
         | nodes::T_CT
         | nodes::T_ITERATION
         | nodes::T_DOCPARSE
-        | nodes::T_MUSIC
         | nodes::T_RENDER_VIDEO
         | nodes::T_RENDER_IMAGE
+        | nodes::T_TRANSCRIBE
         | nodes::T_VIDEO => {
             // Same verdict fan-out as the live path: a succeeded exec node
             // skips its error_out edges (they were Skipped in the prior pass).
@@ -1635,6 +1643,36 @@ mod tests {
         assert_eq!(snap.status, S_SUCCESS);
         assert_eq!(snap.outputs.unwrap()["answer"], "hi");
         assert_eq!(snap.node_states["end"].status, N_SUCCESS);
+    }
+
+    /// Regression: every executor-backed node kind must be dispatched by the
+    /// engine's live-path arm — an unlisted kind hits the `other` catch-all
+    /// and fails as "unsupported node type" before the executor ever runs
+    /// (T_PUBLISH was missing this way).
+    #[tokio::test]
+    async fn publish_node_reaches_executor() {
+        let g = graph_of(def(
+            json!([
+                node("start", "start", json!({})),
+                // enabled omitted → defaults false → publish short-circuits
+                // with {posted:false} without any upstream call.
+                node(
+                    "pub",
+                    "publish",
+                    json!({"api_key": "k", "user": "u", "platforms": ["tiktok"], "title": "t", "video": {"key": "v.mp4"}})
+                ),
+                node("end", "end", json!({}))
+            ]),
+            json!([edge("start", "out", "pub"), edge("pub", "out", "end")]),
+        ));
+        let mut snap = Snapshot::new();
+        run(&g, &mut snap, &StubExec).await.unwrap();
+        assert_eq!(snap.status, S_SUCCESS, "{:?}", snap.node_states["pub"]);
+        let st = &snap.node_states["pub"];
+        assert_eq!(st.status, N_SUCCESS);
+        // StubExec's output proves the executor ran (pre-fix the node failed
+        // in the engine's catch-all before exec was ever called).
+        assert_eq!(st.output.as_ref().unwrap()["stub"], true);
     }
 
     /// Executor that mimics the video submit segment.

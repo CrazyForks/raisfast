@@ -2,8 +2,8 @@
 //! llm foundation facade (`LlmRouter::call().speech()`): routing, key pool,
 //! failover, per-character billing and the `Tts` model-type gate all live in
 //! the kernel. The audio bytes are persisted to storage and referenced by
-//! `{key, url}`. ASR (transcribe) is deliberately not a node yet — a real
-//! use case (e.g. subtitle alignment) triggers it (roadmap discipline).
+//! `{key, url}`. Typical pairing: downstream `transcribe` node turns the
+//! audio into timed subtitles for render.
 
 use std::sync::Arc;
 use std::time::Instant;
