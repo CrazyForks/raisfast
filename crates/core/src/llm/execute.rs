@@ -230,12 +230,6 @@ impl LlmRouter {
                         ep.param_override.clone(),
                         ep.header_override.clone(),
                     )) as Arc<dyn ModelProvider>,
-                    "minimax" => Arc::new(crate::llm::providers::MiniMaxProvider::new(
-                        ep.base_url.clone(),
-                        Some(ep.api_key.clone()),
-                        ep.param_override.clone(),
-                        ep.header_override.clone(),
-                    )) as Arc<dyn ModelProvider>,
                     "replicate" => Arc::new(crate::llm::providers::ReplicateProvider::new(
                         ep.base_url.clone(),
                         Some(ep.api_key.clone()),

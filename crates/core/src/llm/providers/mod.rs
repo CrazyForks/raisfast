@@ -13,7 +13,6 @@ pub mod anthropic;
 pub mod elevenlabs;
 #[cfg(feature = "rquickjs")]
 pub mod ext;
-pub mod minimax;
 #[cfg(feature = "rquickjs")]
 pub mod plugin;
 pub mod replicate;
@@ -24,7 +23,6 @@ pub use anthropic::AnthropicProvider;
 pub use elevenlabs::ElevenLabsProvider;
 #[cfg(feature = "rquickjs")]
 pub use ext::{ProviderExt, ProviderExtRegistry, ReloadReport};
-pub use minimax::MiniMaxProvider;
 pub use replicate::ReplicateProvider;
 
 /// Map a `WxH` size string to the nearest aspect-ratio enum label shared by

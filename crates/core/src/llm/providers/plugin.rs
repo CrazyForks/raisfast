@@ -21,8 +21,10 @@ use std::time::Duration;
 use async_trait::async_trait;
 use serde_json::{Value, json};
 
+use raisfast_agent::messages::{TokenUsage, ToolCall};
 use raisfast_agent::provider::{
-    ChatRequest, ChatResponse, ModelProvider, ProviderError, VideoRequest, VideoStatus, VideoTask,
+    ChatRequest, ChatResponse, GeneratedImage, ImageRequest, ModelProvider, MusicRequest,
+    ProviderError, VideoRequest, VideoStatus, VideoTask,
 };
 
 use super::ext::{ProviderExt, ProviderExtRegistry};
@@ -40,6 +42,83 @@ pub struct PluginProvider {
     api_key: Option<String>,
     param_override: Option<Value>,
     header_override: Option<Value>,
+}
+
+fn decode_audio_for(key: &str, out: &Value) -> Result<Vec<u8>, ProviderError> {
+    if let Some(b64) = out.get("audioBase64").and_then(Value::as_str) {
+        use base64::Engine as _;
+        return base64::engine::general_purpose::STANDARD
+            .decode(b64.as_bytes())
+            .map_err(|e| {
+                ProviderError::Parse(format!("provider extension {key}: audioBase64: {e}"))
+            });
+    }
+    if let Some(hex_str) = out.get("audioHex").and_then(Value::as_str) {
+        return hex::decode(hex_str)
+            .map_err(|e| ProviderError::Parse(format!("provider extension {key}: audioHex: {e}")));
+    }
+    Err(ProviderError::Parse(format!(
+        "provider extension {key}: parse returned no audio (audioBase64/audioHex)"
+    )))
+}
+
+fn map_chat_response(_key: &str, out: &Value) -> ChatResponse {
+    let text = out.get("text").and_then(Value::as_str).map(str::to_string);
+    let tool_calls = out
+        .get("toolCalls")
+        .and_then(Value::as_array)
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|tc| {
+                    Some(ToolCall {
+                        id: tc
+                            .get("id")
+                            .and_then(Value::as_str)
+                            .unwrap_or_default()
+                            .to_string(),
+                        name: tc.get("name").and_then(Value::as_str)?.to_string(),
+                        arguments: match tc.get("arguments") {
+                            Some(Value::String(s)) => s.clone(),
+                            Some(other) => other.to_string(),
+                            None => String::new(),
+                        },
+                    })
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let usage = out
+        .get("usage")
+        .filter(|v| !v.is_null())
+        .map(|u| TokenUsage {
+            input_tokens: u.get("inputTokens").and_then(Value::as_u64),
+            output_tokens: u.get("outputTokens").and_then(Value::as_u64),
+            cache_read: u.get("cacheRead").and_then(Value::as_u64),
+            cache_write: u.get("cacheWrite").and_then(Value::as_u64),
+        });
+    ChatResponse {
+        text,
+        tool_calls,
+        usage,
+    }
+}
+
+fn map_images(key: &str, out: &Value) -> Result<Vec<GeneratedImage>, ProviderError> {
+    let images = out.get("images").and_then(Value::as_array).ok_or_else(|| {
+        ProviderError::Parse(format!(
+            "provider extension {key}: parseImageResponse returned no images array"
+        ))
+    })?;
+    Ok(images
+        .iter()
+        .map(|img| GeneratedImage {
+            b64_json: img
+                .get("b64Json")
+                .and_then(Value::as_str)
+                .map(str::to_string),
+            url: img.get("url").and_then(Value::as_str).map(str::to_string),
+        })
+        .collect())
 }
 
 impl PluginProvider {
@@ -76,6 +155,19 @@ impl PluginProvider {
             )));
         }
         Ok(ext)
+    }
+
+    /// 模态门禁：meta.protocols 未声明的模态 → Config（内核跳过该渠道
+    /// 该模态，与原生 provider 缺省行为一致）。
+    fn ensure_protocol(&self, ext: &ProviderExt, proto: &str) -> Result<(), ProviderError> {
+        if ext.protocols.iter().any(|p| p == proto) {
+            Ok(())
+        } else {
+            Err(ProviderError::Config(format!(
+                "provider extension {} does not declare protocol {}",
+                self.key, proto
+            )))
+        }
     }
 
     /// ctx 组装（§4.3）。apiKey 缺失注入空串——无 key 渠道在上游鉴权处
@@ -214,6 +306,25 @@ impl PluginProvider {
             .await
             .map_err(|e| ProviderError::Transport(e.to_string()))?;
         let status = resp.status().as_u16();
+        // 二进制响应（音频/图像）→ base64 进 body64，JS 不碰原始字节。
+        let ctype = resp
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or_default()
+            .to_ascii_lowercase();
+        if ctype.starts_with("audio/")
+            || ctype.starts_with("image/")
+            || ctype.starts_with("application/octet-stream")
+        {
+            use base64::Engine as _;
+            let bytes = resp
+                .bytes()
+                .await
+                .map_err(|e| ProviderError::Transport(e.to_string()))?;
+            let body64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+            return Ok(json!({ "status": status, "body": Value::Null, "body64": body64 }));
+        }
         let text = resp
             .text()
             .await
@@ -251,6 +362,7 @@ impl PluginProvider {
         task_data: Option<&Value>,
     ) -> Result<(VideoTask, Option<String>), ProviderError> {
         let ext = self.ext_available()?;
+        self.ensure_protocol(&ext, "video")?;
         let ctx = self.build_ctx(model, None, Some(task_id), task_data);
         let spec = self
             .runner_call(&ext, "buildQueryRequest", &ctx, None)
@@ -317,6 +429,20 @@ impl PluginProvider {
     }
 }
 
+impl PluginProvider {
+    /// 环境字段 + 模态 request 的通用 ctx 组装。
+    fn modality_ctx(&self, model: &str, request: Value) -> Value {
+        json!({
+            "provider": self.key,
+            "baseUrl": self.base_url,
+            "apiKey": self.api_key.clone().unwrap_or_default(),
+            "model": model,
+            "paramOverride": self.param_override.clone().unwrap_or(Value::Null),
+            "request": request,
+        })
+    }
+}
+
 #[async_trait]
 impl ModelProvider for PluginProvider {
     fn name(&self) -> &str {
@@ -324,17 +450,6 @@ impl ModelProvider for PluginProvider {
     }
 
     /// 扩展无 chat 面 → Config，内核跳过该渠道的其他模态。
-    async fn chat(
-        &self,
-        _request: &ChatRequest<'_>,
-        _model: &str,
-    ) -> Result<ChatResponse, ProviderError> {
-        Err(ProviderError::Config(format!(
-            "provider extension {} does not support chat",
-            self.key
-        )))
-    }
-
     /// 提交：buildSubmitRequest → host 代发 → parseSubmitResponse。
     async fn video_submit(
         &self,
@@ -342,6 +457,7 @@ impl ModelProvider for PluginProvider {
         model: &str,
     ) -> Result<VideoTask, ProviderError> {
         let ext = self.ext_available()?;
+        self.ensure_protocol(&ext, "video")?;
 
         // host 侧通用 seconds 上限（§5.4，仅扩展路径——原生 provider 有
         // 自己的付费档位硬校验）。
@@ -442,6 +558,128 @@ impl ModelProvider for PluginProvider {
             .await
             .map_err(|e| ProviderError::Transport(e.to_string()))?;
         Ok(bytes.to_vec())
+    }
+
+    // ── 多模态面（chat 非流式 / speech / music / image）─────────────
+    //
+    // 每模态一对 build/parse 纯函数；二进制音频响应经 body64（base64）
+    // 或扩展返回的 audioHex 解码；chat 无流式（trait 默认 chat_stream =
+    // 非流式重放）。原生 minimax chat 本就非流式 → 全对等迁移可达。
+
+    async fn chat(
+        &self,
+        request: &ChatRequest<'_>,
+        model: &str,
+    ) -> Result<ChatResponse, ProviderError> {
+        let ext = self.ext_available()?;
+        self.ensure_protocol(&ext, "chat")?;
+
+        let tools = request.tools.map(|ts| {
+            Value::Array(
+                ts.iter()
+                    .map(|t| {
+                        json!({
+                            "name": t.name,
+                            "description": t.description,
+                            "parameters": t.parameters,
+                            "category": t.category,
+                        })
+                    })
+                    .collect(),
+            )
+        });
+        let ctx = self.modality_ctx(
+            model,
+            json!({
+                "messages": serde_json::to_value(request.messages)
+                    .map_err(|e| ProviderError::Parse(e.to_string()))?,
+                "tools": tools,
+                "temperature": request.temperature,
+                "maxTokens": request.max_tokens,
+                "stop": request.stop,
+            }),
+        );
+        let spec = self
+            .runner_call(&ext, "buildChatRequest", &ctx, None)
+            .await?;
+        let resp = self.send_spec(&ext, &spec).await?;
+        if let Some(e) = self.non_2xx_error(&resp) {
+            return Err(e);
+        }
+        let out = self
+            .runner_call(&ext, "parseChatResponse", &ctx, Some(&resp))
+            .await?;
+        Ok(map_chat_response(&self.key, &out))
+    }
+
+    async fn speech(&self, text: &str, voice: &str, model: &str) -> Result<Vec<u8>, ProviderError> {
+        let ext = self.ext_available()?;
+        self.ensure_protocol(&ext, "speech")?;
+        let ctx = self.modality_ctx(model, json!({ "text": text, "voice": voice }));
+        let spec = self
+            .runner_call(&ext, "buildSpeechRequest", &ctx, None)
+            .await?;
+        let resp = self.send_spec(&ext, &spec).await?;
+        if let Some(e) = self.non_2xx_error(&resp) {
+            return Err(e);
+        }
+        let out = self
+            .runner_call(&ext, "parseSpeechResponse", &ctx, Some(&resp))
+            .await?;
+        decode_audio_for(&self.key, &out)
+    }
+
+    async fn music(&self, request: &MusicRequest, model: &str) -> Result<Vec<u8>, ProviderError> {
+        let ext = self.ext_available()?;
+        self.ensure_protocol(&ext, "music")?;
+        let ctx = self.modality_ctx(
+            model,
+            json!({ "prompt": request.prompt, "lyrics": request.lyrics }),
+        );
+        let spec = self
+            .runner_call(&ext, "buildMusicRequest", &ctx, None)
+            .await?;
+        let resp = self.send_spec(&ext, &spec).await?;
+        if let Some(e) = self.non_2xx_error(&resp) {
+            return Err(e);
+        }
+        let out = self
+            .runner_call(&ext, "parseMusicResponse", &ctx, Some(&resp))
+            .await?;
+        decode_audio_for(&self.key, &out)
+    }
+
+    async fn generate_image(
+        &self,
+        request: &ImageRequest,
+        model: &str,
+    ) -> Result<Vec<GeneratedImage>, ProviderError> {
+        let ext = self.ext_available()?;
+        self.ensure_protocol(&ext, "image")?;
+        let ctx = self.modality_ctx(
+            model,
+            json!({
+                "prompt": request.prompt,
+                "n": request.n,
+                "size": request.size,
+                "inputReferences": request.input_references.iter().map(|r| json!({
+                    "url": r.url,
+                    "b64Json": r.b64_json,
+                    "mime": r.mime,
+                })).collect::<Vec<_>>(),
+            }),
+        );
+        let spec = self
+            .runner_call(&ext, "buildImageRequest", &ctx, None)
+            .await?;
+        let resp = self.send_spec(&ext, &spec).await?;
+        if let Some(e) = self.non_2xx_error(&resp) {
+            return Err(e);
+        }
+        let out = self
+            .runner_call(&ext, "parseImageResponse", &ctx, Some(&resp))
+            .await?;
+        map_images(&self.key, &out)
     }
 }
 
@@ -669,5 +907,178 @@ export function parseTaskResult(ctx, r) { return { status: "in_progress" }; }
             "https://img.example/a.png"
         );
         let _ = ext;
+    }
+}
+
+#[cfg(test)]
+mod multimodal_tests {
+    use super::*;
+
+    const DEMO_HOST: &str = "api.mm.example";
+
+    fn mm_src() -> String {
+        // __HOST__ 占位符在装配时替换为白名单 host
+        r#"
+export const meta = { key: "demo", name: "Demo", version: "0.1.0", contract: 1,
+    protocols: ["chat", "speech"], http: ["__HOST__/*"], timeout_ms: 30000 };
+export function buildChatRequest(ctx) {
+    return { url: ctx.baseUrl + "/chat", method: "POST",
+        headers: { Authorization: "Bearer " + ctx.apiKey },
+        body: { model: ctx.model, messages: ctx.request.messages,
+                temperature: ctx.request.temperature } };
+}
+export function parseChatResponse(ctx, response) {
+    const u = response.body.usage || {};
+    return { text: response.body.reply,
+             toolCalls: (response.body.tool_calls || []).map((t) => ({ id: t.id, name: t.name, arguments: t.args })),
+             usage: Object.keys(u).length === 0 ? null : { inputTokens: u.in, outputTokens: u.out } };
+}
+export function buildSpeechRequest(ctx) {
+    return { url: ctx.baseUrl + "/speak", method: "POST",
+        headers: { Authorization: "Bearer " + ctx.apiKey },
+        body: { text: ctx.request.text, voice: ctx.request.voice } };
+}
+export function parseSpeechResponse(ctx, response) {
+    return response.body64 ? { audioBase64: response.body64 } : { audioHex: response.body.hex };
+}
+"#
+        .replace("__HOST__", DEMO_HOST)
+    }
+
+    async fn mm_registry() -> Arc<ProviderExtRegistry> {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("demo.js"), mm_src()).unwrap();
+        let reg = Arc::new(ProviderExtRegistry::new(vec![]));
+        reg.configure_dir(tmp.path());
+        reg.reload().await.unwrap();
+        std::mem::forget(tmp);
+        reg
+    }
+
+    fn mm_provider(reg: Arc<ProviderExtRegistry>) -> PluginProvider {
+        PluginProvider::new(
+            reg,
+            "demo",
+            format!("https://{DEMO_HOST}"),
+            Some("mm-key".to_string()),
+            None,
+            None,
+        )
+    }
+
+    /// 接线证明：build 成功 + send 尝试（不可达 DNS → Transport）。
+    #[tokio::test]
+    async fn chat_build_and_send_wiring_reaches_transport() {
+        let p = mm_provider(mm_registry().await);
+        let req = ChatRequest {
+            messages: &[],
+            tools: None,
+            temperature: Some(0.7),
+            max_tokens: Some(256),
+            stop: None,
+        };
+        let err = p.chat(&req, "demo-chat").await.unwrap_err();
+        assert!(matches!(err, ProviderError::Transport(_)), "{err:?}");
+    }
+
+    #[tokio::test]
+    async fn speech_wiring_reaches_transport() {
+        let p = mm_provider(mm_registry().await);
+        let err = p
+            .speech("你好世界", "female", "speech-01")
+            .await
+            .unwrap_err();
+        assert!(matches!(err, ProviderError::Transport(_)), "{err:?}");
+    }
+
+    #[test]
+    fn map_chat_response_maps_text_usage_and_tool_calls() {
+        let out = json!({
+            "text": "你好",
+            "usage": { "inputTokens": 12, "outputTokens": 3 },
+            "toolCalls": [ { "id": "c1", "name": "weather", "arguments": "{\"city\":\"杭州\"}" } ]
+        });
+        let resp = map_chat_response("demo", &out);
+        assert_eq!(resp.text.as_deref(), Some("你好"));
+        assert_eq!(resp.tool_calls.len(), 1);
+        assert_eq!(resp.tool_calls[0].name, "weather");
+        assert_eq!(resp.tool_calls[0].arguments, "{\"city\":\"杭州\"}");
+        let usage = resp.usage.unwrap();
+        assert_eq!(usage.input_tokens, Some(12));
+        assert_eq!(usage.output_tokens, Some(3));
+    }
+
+    #[test]
+    fn map_chat_response_null_usage_is_none() {
+        // JS 侧空 usage 产出 null（Object.keys === 0 → null）
+        let resp = map_chat_response("demo", &json!({ "text": "x", "usage": null }));
+        assert!(resp.usage.is_none());
+        assert_eq!(resp.text.as_deref(), Some("x"));
+    }
+
+    #[test]
+    fn decode_audio_supports_base64_and_hex() {
+        let b64 = decode_audio_for("demo", &json!({ "audioBase64": "SUQz" })).unwrap();
+        assert_eq!(b64, b"ID3");
+        let hexd = decode_audio_for("demo", &json!({ "audioHex": "494433" })).unwrap();
+        assert_eq!(hexd, b"ID3");
+        assert!(decode_audio_for("demo", &json!({})).is_err());
+    }
+
+    #[tokio::test]
+    async fn undeclared_modality_is_config_error() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            tmp.path().join("videoonly.js"),
+            r#"
+export const meta = { key: "demo", version: "0.1.0", contract: 1, protocols: ["video"], http: ["__HOST__/*"], timeout_ms: 30000 };
+export function buildSubmitRequest(ctx) { return { url: ctx.baseUrl + "/s", body: {} }; }
+export function parseSubmitResponse(ctx, r) { return { taskId: "t" }; }
+export function buildQueryRequest(ctx) { return { url: ctx.baseUrl + "/q" }; }
+export function parseTaskResult(ctx, r) { return { status: "in_progress" }; }
+"#
+            .replace("__HOST__", DEMO_HOST),
+        )
+        .unwrap();
+        let reg = Arc::new(ProviderExtRegistry::new(vec![]));
+        reg.configure_dir(tmp.path());
+        reg.reload().await.unwrap();
+        std::mem::forget(tmp);
+
+        let p = mm_provider(reg);
+        let req = ChatRequest {
+            messages: &[],
+            tools: None,
+            temperature: None,
+            max_tokens: None,
+            stop: None,
+        };
+        let err = p.chat(&req, "m").await.unwrap_err();
+        assert!(
+            matches!(err, ProviderError::Config(ref m) if m.contains("does not declare protocol chat")),
+            "{err:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn missing_chat_exports_reject_at_scan() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            tmp.path().join("bad.js"),
+            r#"
+export const meta = { key: "demo", version: "0.1.0", contract: 1, protocols: ["chat"], http: ["x.example/*"], timeout_ms: 100 };
+export function parseChatResponse(ctx, r) { return {}; }
+"#,
+        )
+        .unwrap();
+        let reg = Arc::new(ProviderExtRegistry::new(vec![]));
+        reg.configure_dir(tmp.path());
+        let report = reg.reload().await.unwrap();
+        assert_eq!(report.loaded, 0);
+        assert!(
+            report.errors.iter().any(|e| e.contains("buildChatRequest")),
+            "{:?}",
+            report.errors
+        );
     }
 }

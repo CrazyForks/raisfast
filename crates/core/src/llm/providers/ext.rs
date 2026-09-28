@@ -17,12 +17,20 @@ use super::runtime::{ProviderRunner, RunnerError};
 
 /// 当前内核支持的扩展契约版本（meta.contract 不匹配 → 拒绝注册）。
 pub const SUPPORTED_CONTRACT: u32 = 1;
-/// 契约要求的四个导出函数（§4.2）。
+/// 契约要求的四个导出函数（§4.2，video 模态）。
 pub const CONTRACT_FUNCS: [&str; 4] = [
     "buildSubmitRequest",
     "parseSubmitResponse",
     "buildQueryRequest",
     "parseTaskResult",
+];
+/// 支持的协议清单及各协议要求的导出函数（多模态扩展，按声明校验）。
+pub const PROTOCOL_FUNCS: &[(&str, &[&str])] = &[
+    ("video", &CONTRACT_FUNCS),
+    ("chat", &["buildChatRequest", "parseChatResponse"]),
+    ("speech", &["buildSpeechRequest", "parseSpeechResponse"]),
+    ("music", &["buildMusicRequest", "parseMusicResponse"]),
+    ("image", &["buildImageRequest", "parseImageResponse"]),
 ];
 /// 连续错误自动禁用阈值 [照抄本仓 PluginManager AUTO_DISABLE_THRESHOLD 模式]。
 const AUTO_DISABLE_THRESHOLD: u32 = 3;
@@ -228,11 +236,6 @@ impl ProviderExtRegistry {
             .to_string();
         let err = |msg: &str| format!("{key_hint}: {msg}");
 
-        self.runner
-            .validate(&key_hint, &code, &CONTRACT_FUNCS, DEFAULT_TIMEOUT_MS)
-            .await
-            .map_err(|e| err(&runner_message(e)))?;
-
         let meta = self
             .runner
             .read_meta(&key_hint, &code, DEFAULT_TIMEOUT_MS)
@@ -261,7 +264,22 @@ impl ProviderExtRegistry {
                     .map(str::to_string)
                     .collect()
             })
-            .unwrap_or_default();
+            .unwrap_or_else(|| vec!["video".to_string()]);
+        if protocols.is_empty() {
+            return Err(err("meta.protocols must not be empty"));
+        }
+        // 按声明收集必需导出函数；未知协议 → 拒绝（fail-fast）。
+        let mut required: Vec<&str> = Vec::new();
+        for proto in &protocols {
+            let Some((_, funcs)) = PROTOCOL_FUNCS.iter().find(|(k, _)| k == proto) else {
+                return Err(err(&format!("unsupported protocol {proto:?}")));
+            };
+            required.extend(funcs.iter().copied());
+        }
+        self.runner
+            .validate(&key_hint, &code, &required, DEFAULT_TIMEOUT_MS)
+            .await
+            .map_err(|e| err(&runner_message(e)))?;
 
         Ok(ProviderExt {
             key,
