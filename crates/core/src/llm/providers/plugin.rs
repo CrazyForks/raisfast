@@ -251,6 +251,33 @@ impl PluginProvider {
     /// host 代发（§5.3）：GET/POST only、白名单逐请求校验、status 透传、
     /// 超时随扩展 meta。日志纪律：headers 永不落日志（key 可能在其中）。
     async fn send_spec(&self, ext: &ProviderExt, spec: &Value) -> Result<Value, ProviderError> {
+        // Transport 错误（连接被边缘重置/中途断开）→ 换一次性新客户端重试
+        // 一次（[自造-务实] 2026-09 MiniMax 冒烟：大响应体读取中途被断，
+        // curl/裸客户端同请求成功——共享池复用坏连接所致）。
+        match self.send_with(&self.http, ext, spec).await {
+            Ok(resp) => Ok(resp),
+            Err(ProviderError::Transport(e)) => {
+                tracing::warn!(
+                    provider = %self.key,
+                    err = %e,
+                    "provider request via shared client failed; retrying with a fresh client"
+                );
+                let fresh = reqwest::Client::builder()
+                    .timeout(Duration::from_secs(120))
+                    .build()
+                    .map_err(|err| ProviderError::Config(err.to_string()))?;
+                self.send_with(&fresh, ext, spec).await
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    async fn send_with(
+        &self,
+        client: &reqwest::Client,
+        ext: &ProviderExt,
+        spec: &Value,
+    ) -> Result<Value, ProviderError> {
         let url = spec.get("url").and_then(Value::as_str).ok_or_else(|| {
             ProviderError::Config(format!(
                 "provider extension {}: spec.url is required",
@@ -276,8 +303,8 @@ impl PluginProvider {
         }
 
         let mut req = match method {
-            "GET" => self.http.get(url),
-            _ => self.http.post(url),
+            "GET" => client.get(url),
+            _ => client.post(url),
         };
         if let Some(headers) = spec.get("headers").and_then(Value::as_object) {
             for (name, value) in headers {
@@ -526,6 +553,11 @@ impl ModelProvider for PluginProvider {
     }
 
     /// 成片：host 直接下载 parseTaskResult 给出的 url（不过 JS）。
+    ///
+    /// 下载用一次性客户端 + transport 重试（[自造-务实] 2026-09 MiniMax
+    /// CDN 冒烟教训）：共享 client 的长连接池可能被 CDN 边缘节点重置——
+    /// 复用坏连接会持续 "error sending request"（curl/裸客户端同 URL 秒
+    /// 下成功）。成片下载低频（每个成品一次），隔离连接池收益大于复用。
     async fn video_content(
         &self,
         task_id: &str,
@@ -539,13 +571,33 @@ impl ModelProvider for PluginProvider {
                 self.key
             )));
         };
-        let resp = self
-            .http
-            .get(&url)
-            .timeout(Duration::from_secs(300))
-            .send()
-            .await
-            .map_err(|e| ProviderError::Transport(e.to_string()))?;
+        let download = |client: reqwest::Client| {
+            let url = url.clone();
+            async move {
+                client
+                    .get(&url)
+                    .timeout(Duration::from_secs(300))
+                    .send()
+                    .await
+            }
+        };
+        let resp = match download(self.http.clone()).await {
+            Ok(resp) => resp,
+            Err(shared_err) => {
+                tracing::warn!(
+                    provider = %self.key,
+                    err = %shared_err,
+                    "provider video download via shared client failed; retrying with a fresh client"
+                );
+                let fresh = reqwest::Client::builder()
+                    .timeout(Duration::from_secs(300))
+                    .build()
+                    .map_err(|e| ProviderError::Config(e.to_string()))?;
+                download(fresh)
+                    .await
+                    .map_err(|e| ProviderError::Transport(e.to_string()))?
+            }
+        };
         let status = resp.status().as_u16();
         if !(200..300).contains(&status) {
             return Err(ProviderError::Http {

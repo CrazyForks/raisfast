@@ -175,6 +175,24 @@ pub fn spawn(
                     Err(e) => tracing::error!("wait-poll '{}' sweep error: {e}", poller.kind()),
                 }
             }
+
+            // Video-body iteration aggregation (iteration-video.md §2.4)：
+            // 提交期 park 的 iteration 由这里周期收割（[自造-修复] 2026-09
+            // 冒烟实锤：本函数曾无任何调用方，多分镜实例永远 waiting）。
+            match super::run::sweep_video_iterations(
+                &pool,
+                router.clone(),
+                plane.clone(),
+                plugins.clone(),
+            )
+            .await
+            {
+                Ok(n) if n > 0 => {
+                    tracing::info!("video iteration sweep completed {n} instance(s)")
+                }
+                Ok(_) => {}
+                Err(e) => tracing::error!("video iteration sweep error: {e}"),
+            }
         }
     });
 }
@@ -304,6 +322,43 @@ pub fn install_hook_infra(pool: crate::db::Pool, base_url: String) {
     let _ = HOOK_INFRA.set((pool, base_url.trim_end_matches('/').to_string()));
 }
 
+/// Heuristic: can a vendor's servers reach this base_url? Loopback /
+/// link-local / RFC1918 hosts cannot — hooks are pointless there (see the
+/// guard in [`provision_callback`]). Hostnames are assumed public.
+fn publicly_reachable(base_url: &str) -> bool {
+    let Some(after_scheme) = base_url.split("://").nth(1) else {
+        return false; // 无 scheme — 无法判定的输入按不可达处理（fail-safe）
+    };
+    let host = after_scheme
+        .split(['/', '?'])
+        .next()
+        .unwrap_or("");
+    let host = host.split('@').next_back().unwrap_or(host);
+    // Bracketed IPv6 literal `[::1]:9898` → `::1`; otherwise strip :port.
+    let host = if let Some(rest) = host.strip_prefix('[') {
+        rest.split(']').next().unwrap_or(rest)
+    } else {
+        host.split(':').next().unwrap_or(host)
+    };
+    let h = host.to_ascii_lowercase();
+    !matches!(
+        h.as_str(),
+        "localhost" | "127.0.0.1" | "::1" | "0.0.0.0" | "169.254.0.1"
+    ) && !h.starts_with("127.")
+        && !h.starts_with("192.168.")
+        && !h.starts_with("10.")
+        && !h.starts_with("169.254.")
+        && !h.starts_with("fc")
+        && !h.starts_with("fd")
+        // 172.16.0.0/12
+        && !h.split('.').next().is_some_and(|first| {
+            first == "172"
+                && h.split('.').nth(1)
+                    .and_then(|o| o.parse::<u16>().ok())
+                    .is_some_and(|o| (16..=31).contains(&o))
+        })
+}
+
 /// Mint a hook capability for a parked-to-be task: idempotently open the
 /// claim row and attach the callback credential (sha256 only — machine
 /// callbacks never need the display copy). Returns the capability URL, or
@@ -316,6 +371,13 @@ pub async fn provision_callback(
     let Some((pool, base_url)) = HOOK_INFRA.get() else {
         return Ok(None);
     };
+    // 回调可达性守卫（[自造] 2026-09 MiniMax V2 冒烟教训）：loopback/内网
+    // base_url 厂商服务器永远够不着——MiniMax V2 会主动 challenge 验证回调
+    // 地址，不可达直接拒单（fail to check callback url）。此时跳过 hook，
+    // 走 poll-only（30s 轮询聚合），功能等价只是慢半拍。
+    if !publicly_reachable(base_url) {
+        return Ok(None);
+    }
     super::model::ensure_flow_resume_open(pool, instance_id, node_id, kind, None).await?;
     let Some(row) = super::model::find_open_flow_resume(pool, instance_id, node_id).await? else {
         return Ok(None);
@@ -370,6 +432,34 @@ mod tests {
     #[test]
     fn unknown_kind_is_not_pollable() {
         assert!(!is_pollable("definitely-not-registered"));
+    }
+
+    /// 回调可达性守卫（[自造]）：loopback/内网不可作为厂商回调 base。
+    #[test]
+    fn publicly_reachable_heuristic() {
+        // 不可达：loopback / 内网 / 非法
+        for bad in [
+            "http://localhost:9898",
+            "http://127.0.0.1:9898",
+            "http://192.168.1.10:9898",
+            "http://10.0.0.2",
+            "http://172.16.5.4",
+            "http://172.31.255.255",
+            "https://[::1]:9898",
+            "not-a-url",
+            "",
+        ] {
+            assert!(!publicly_reachable(bad), "{bad} 应判为不可达");
+        }
+        // 可达：公网域名 / 公网 IP
+        for good in [
+            "https://api.example.com",
+            "https://myapp.fly.dev",
+            "http://203.0.113.7:9898",
+            "https://172.32.0.1",
+        ] {
+            assert!(publicly_reachable(good), "{good} 应判为可达");
+        }
     }
 
     /// Deadline gate is pure data: past deadline with any submitted info

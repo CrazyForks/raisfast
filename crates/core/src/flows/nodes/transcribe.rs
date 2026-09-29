@@ -62,7 +62,7 @@ pub(super) fn validate(config: &Value) -> AppResult<()> {
 }
 
 /// Format seconds as SRT timestamp `HH:MM:SS,mmm`.
-fn fmt_srt_ts(secs: f64) -> String {
+pub(crate) fn fmt_srt_ts(secs: f64) -> String {
     let total_ms = (secs.max(0.0) * 1000.0).round() as i64;
     format!(
         "{:02}:{:02}:{:02},{:03}",

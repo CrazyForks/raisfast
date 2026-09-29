@@ -108,6 +108,21 @@ pub async fn run_render_video(
             }
             None => None,
         };
+        // 字幕文本（subtitles_text）：已知旁白 → 按句切分 + 字数占比均分
+        // 时长生成 SRT（[自造]；ASR 精确对齐走 subtitles + transcribe）。
+        let subtitles = match subtitles {
+            Some(f) => Some(f),
+            None => match &cfg.common.subtitles_text {
+                Some(expr) => {
+                    let resolved = crate::flows::engine::resolve(expr, pool)?;
+                    let text = resolved.as_str().ok_or_else(|| {
+                        AppError::BadRequest("render: subtitles_text 须解析为字符串".into())
+                    })?;
+                    Some(super::write_text_srt(&work_dir, text, duration)?)
+                }
+                None => None,
+            },
+        };
         let final_file = super::finalize(
             &work_dir,
             &combined,

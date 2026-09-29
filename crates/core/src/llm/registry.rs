@@ -126,8 +126,39 @@ pub fn find(key: &str) -> Option<&'static ProviderPreset> {
     PRESETS.iter().find(|p| p.key == key)
 }
 
-/// 全部内置 provider key（provider 扩展注册时的冲突清单——扩展与内置同名
-/// 拒绝注册，内置优先）。
+/// 内置（Rust 原生）provider key（provider 扩展注册时的冲突清单——扩展与
+/// 内置同名拒绝注册，内置优先）。
+///
+/// 同步义务（回归防线，2026-09 kling/minimax 迁移教训）：此清单必须与
+/// `LlmExec::provider_for`（execute.rs）的原生 match 臂一一对应——只列
+/// **真正有 Rust 实现**的 key。kling/minimax/vidu 等已迁移为 JS 扩展
+/// （extensions/llm_providers/），若留在本清单会拒收扩展、让渠道静默落到
+/// OpenAI-compat 兜底打错端点；OpenAI-compat 系 preset（openai/deepseek/
+/// gemini/…）保留在此也无害（无同名扩展），但为清晰起见只列原生三件套。
 pub fn builtin_provider_keys() -> Vec<String> {
-    PRESETS.iter().map(|p| p.key.to_string()).collect()
+    ["anthropic", "replicate", "elevenlabs"]
+        .iter()
+        .map(|s| s.to_string())
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 回归钉死：视频线 provider 已全部迁移为 JS 扩展，不得出现在内置
+    /// 保留清单——否则扩展被拒、渠道落到 openai-compat 兜底打错端点。
+    #[test]
+    fn migrated_video_providers_are_not_builtin() {
+        let builtin = builtin_provider_keys();
+        for key in ["kling", "minimax", "vidu", "seedance", "wan", "muapi", "ofox", "wavespeed", "cogvideo", "openai-image"] {
+            assert!(
+                !builtin.iter().any(|k| k == key),
+                "provider '{key}' has a JS extension; it must not be builtin-reserved",
+            );
+        }
+        for key in ["anthropic", "replicate", "elevenlabs"] {
+            assert!(builtin.iter().any(|k| k == key), "native '{key}' missing");
+        }
+    }
 }

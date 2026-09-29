@@ -13,20 +13,22 @@
 export const meta = {
   key: "minimax", // llm_channels.provider 的匹配键
   name: "MiniMax (海螺)",
-  version: "1.0.0",
+  version: "1.1.0",
   contract: 1,
   protocols: ["chat", "speech", "music", "video"],
   // 建议模型清单（UX 预填；权威源 = llm_models 目录）。
   models: [
     "MiniMax-Text-01",
     "MiniMax-H3",
+    "MiniMax-H3-Max",
     "MiniMax-Hailuo-02",
     "MiniMax-Hailuo-2.3",
     "speech-2.8-hd",
     "speech-02-hd",
     "music-01",
   ],
-  description: "海螺 Chat/语音/音乐/视频（V1/V2 双代协议；TTS/音乐需 GroupId）",
+  description:
+    "海螺 Chat/语音/音乐/视频。视频 V2（/v2，H3 与 H3-Max 共用 content[] 协议）；V1 仅存量 Hailuo-02/2.3；TTS/音乐需 GroupId",
   // global（api.minimax.io）与 CN（api.minimaxi.com）双 host——
   // TTS speech-2.8-hd 走 global [照抄 MPT voice.py MINIMAX_TTS_GLOBAL/CN_URL]。
   http: ["api.minimaxi.com/*", "api.minimax.io/*"],
@@ -34,13 +36,20 @@ export const meta = {
 };
 
 const H3_MODEL = "MiniMax-H3";
-const H3_MIN_DURATION = 4;
-const H3_MAX_DURATION = 15;
+const H3_MAX_MODEL = "MiniMax-H3-Max";
+// V2 协议模型（/v2/video_generation，content[] 多模态输入）[照抄官方 OpenAPI
+// video-generation-v2-create：H3 768P/2K、4-15s；H3-Max 快速版 480P/768P
+// （不支持 2K）、5-15s，extra.prompt_expansion_mode 可选]。
+const V2_MODELS = [H3_MODEL, H3_MAX_MODEL];
 const H3_DEFAULT_DURATION = 5;
 const H3_RATIOS = ["adaptive", "21:9", "16:9", "4:3", "1:1", "3:4", "9:16"];
 
-function isH3(model) {
-  return model === H3_MODEL;
+function isV2(model) {
+  return V2_MODELS.includes(model);
+}
+
+function v2MinDuration(model) {
+  return model === H3_MAX_MODEL ? 5 : 4;
 }
 
 function isModernHailuo(model) {
@@ -59,28 +68,42 @@ function splitKey(apiKey) {
   return [raw.slice(0, i).trim(), raw.slice(i + 1).trim() || null];
 }
 
-// ── H3 (V2) 参数 helpers [照抄 plugin h3Duration/h3Resolution/h3Ratio] ──
+// ── V2 参数 helpers [照抄 plugin h3Duration/h3Resolution/h3Ratio + 官方
+// OpenAPI 模型差异：H3-Max 时长 5-15、分辨率 480P/768P 无 2K] ─────────
 
-function h3Duration(seconds) {
+function h3Duration(seconds, model) {
   const raw = String(seconds ?? "").trim();
   if (raw === "") return H3_DEFAULT_DURATION;
   const n = Number(raw);
-  if (!Number.isInteger(n) || n < H3_MIN_DURATION || n > H3_MAX_DURATION) {
+  const min = v2MinDuration(model);
+  if (!Number.isInteger(n) || n < min || n > 15) {
     throw new Error(
-      `${H3_MODEL} duration must be an integer between ${H3_MIN_DURATION} and ${H3_MAX_DURATION} seconds`,
+      `${model} duration must be an integer between ${min} and 15 seconds`,
     );
   }
   return n;
 }
 
-function h3Resolution(size, paramOverride) {
+function h3VideoResolution(ctx) {
+  const model = ctx.model;
   const raw =
-    String(size ?? "").trim().toUpperCase() ||
-    String((paramOverride || {}).resolution ?? "").trim().toUpperCase();
+    String(ctx.request.size ?? "").trim().toUpperCase() ||
+    String((ctx.paramOverride || {}).resolution ?? "").trim().toUpperCase();
   if (raw === "") return "768P";
-  if (raw.includes("2K")) return "2K";
+  if (raw.includes("2K")) {
+    if (model === H3_MAX_MODEL) {
+      throw new Error(`${H3_MAX_MODEL} does not support 2K (480P/768P only)`);
+    }
+    return "2K";
+  }
   if (raw.includes("768")) return "768P";
-  throw new Error(`${H3_MODEL} resolution must be 768P or 2K`);
+  if (raw.includes("480")) {
+    if (model !== H3_MAX_MODEL) {
+      throw new Error(`${model} does not support 480P (768P/2K only)`);
+    }
+    return "480P";
+  }
+  throw new Error(`${model} resolution must be 480P/768P${model === H3_MAX_MODEL ? "" : "/2K"}`);
 }
 
 function h3Ratio(paramOverride, hasVisual) {
@@ -233,11 +256,8 @@ function audioEnvelope(ctx, response) {
 
 export function buildSpeechRequest(ctx) {
   const [key, group] = splitKey(ctx.apiKey);
-  if (!group) {
-    throw new Error(
-      "minimax: TTS requires key format `api_key:group_id` (GroupId is mandatory on t2a_v2)",
-    );
-  }
+  // GroupId [自造-放宽 2026-09]：CN 老 API 强制；全球新版（api.minimax.io，
+  // 官方 OpenAPI）已无此参数——缺省直通，给了才追加 query。
   const body = {
     model: ctx.model,
     text: ctx.request.text,
@@ -248,7 +268,7 @@ export function buildSpeechRequest(ctx) {
     Object.assign(body, ctx.paramOverride);
   }
   return {
-    url: ctx.baseUrl + "/v1/t2a_v2?GroupId=" + encodeURIComponent(group),
+    url: ctx.baseUrl + "/v1/t2a_v2" + (group ? "?GroupId=" + encodeURIComponent(group) : ""),
     method: "POST",
     headers: { Authorization: "Bearer " + key },
     body,
@@ -261,11 +281,8 @@ export function parseSpeechResponse(ctx, response) {
 
 export function buildMusicRequest(ctx) {
   const [key, group] = splitKey(ctx.apiKey);
-  if (!group) {
-    throw new Error(
-      "minimax: music requires key format `api_key:group_id` (GroupId is mandatory on music_generation)",
-    );
-  }
+  // GroupId [自造-放宽]：同 speech——全球新版缺省直通（music API 官方已停
+  // 售新用户，存量兼容保留）。
   const body = {
     model: ctx.model,
     prompt: ctx.request.prompt,
@@ -277,7 +294,7 @@ export function buildMusicRequest(ctx) {
     Object.assign(body, ctx.paramOverride);
   }
   return {
-    url: ctx.baseUrl + "/v1/music_generation?GroupId=" + encodeURIComponent(group),
+    url: ctx.baseUrl + "/v1/music_generation" + (group ? "?GroupId=" + encodeURIComponent(group) : ""),
     method: "POST",
     headers: { Authorization: "Bearer " + key },
     body,
@@ -290,25 +307,14 @@ export function parseMusicResponse(ctx, response) {
 
 // ── video（V1/V2 双代协议）──────────────────────────────────────────
 
-// [照抄原生 h3_resolution] —— size 或 paramOverride.resolution，2K/768P。
-function h3VideoResolution(ctx) {
-  const raw =
-    String(ctx.request.size ?? "").trim().toUpperCase() ||
-    String((ctx.paramOverride || {}).resolution ?? "").trim().toUpperCase();
-  if (raw === "") return "768P";
-  if (raw.includes("2K")) return "2K";
-  if (raw.includes("768")) return "768P";
-  throw new Error(`${H3_MODEL} resolution must be 768P or 2K`);
-}
-
 function h3VideoRatio(ctx, hasVisual) {
   const ratio =
     String((ctx.paramOverride || {}).ratio ?? "").trim() || (hasVisual ? "adaptive" : "16:9");
   if (!H3_RATIOS.includes(ratio)) {
-    throw new Error(`${H3_MODEL} ratio must be one of ${H3_RATIOS.join(", ")}`);
+    throw new Error(`${ctx.model} ratio must be one of ${H3_RATIOS.join(", ")}`);
   }
   if (ratio === "adaptive" && !hasVisual) {
-    throw new Error(`${H3_MODEL} ratio adaptive requires an image or video input`);
+    throw new Error(`${ctx.model} ratio adaptive requires an image or video input`);
   }
   return ratio;
 }
@@ -332,8 +338,8 @@ export function buildSubmitRequest(ctx) {
   const overrides = ctx.paramOverride && typeof ctx.paramOverride === "object" ? ctx.paramOverride : {};
   let url;
   let body;
-  if (isH3(ctx.model)) {
-    const duration = h3Duration(ctx.request.seconds);
+  if (isV2(ctx.model)) {
+    const duration = h3Duration(ctx.request.seconds, ctx.model);
     const resolution = h3VideoResolution(ctx);
     const content = [{ type: "text", text: prompt }];
     for (const wire of refs) {
@@ -368,12 +374,12 @@ export function parseSubmitResponse(ctx, response) {
   checkEnvelope(body);
   const taskId = String(body.task_id ?? "");
   if (!taskId) throw new Error("minimax: submit response without task_id");
-  return { taskId, status: videoStatus(body, isH3(ctx.model)) };
+  return { taskId, status: videoStatus(body, isV2(ctx.model)) };
 }
 
 // 轮询：H3 GET /v2/query/video_generation/{id}；V1 GET /v1/query?task_id=。
 export function buildQueryRequest(ctx) {
-  if (isH3(ctx.model)) {
+  if (isV2(ctx.model)) {
     return {
       url: ctx.baseUrl + "/v2/query/video_generation/" + encodeURIComponent(ctx.taskId),
       method: "GET",
@@ -392,7 +398,7 @@ export function buildQueryRequest(ctx) {
 export function parseTaskResult(ctx, response) {
   const body = response.body || {};
   checkEnvelope(body);
-  const h3 = isH3(ctx.model);
+  const h3 = isV2(ctx.model);
   const status = videoStatus(body, h3);
   const failedReason = () => {
     if (h3) {

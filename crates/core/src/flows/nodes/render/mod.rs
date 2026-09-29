@@ -46,6 +46,12 @@ pub struct RenderCommon {
     #[serde(default)]
     #[cfg_attr(feature = "export-types", ts(type = "unknown"))]
     pub subtitles: Option<Value>,
+    /// 字幕文本 — ValueExpr → 纯文本（如上游 chat 的旁白）。与 `subtitles`
+    /// 二选一：按标点切句、字数占比均分视频时长生成 SRT 后烧录（[自造]
+    /// 2026-09，TTS 旁白已知文本场景；ASR 精确对齐走 transcribe + `subtitles`）。
+    #[serde(default)]
+    #[cfg_attr(feature = "export-types", ts(type = "unknown"))]
+    pub subtitles_text: Option<Value>,
     /// 画布比例（默认 9:16）。
     #[serde(default)]
     pub aspect: Option<String>,
@@ -77,6 +83,14 @@ impl RenderCommon {
         }
         if let Some(subs) = &self.subtitles {
             super::validate_value_expr("render.subtitles", subs)?;
+        }
+        if let Some(txt) = &self.subtitles_text {
+            super::validate_value_expr("render.subtitles_text", txt)?;
+        }
+        if self.subtitles.is_some() && self.subtitles_text.is_some() {
+            return Err(AppError::BadRequest(
+                "render: subtitles 与 subtitles_text 二选一".into(),
+            ));
         }
         if let Some(a) = &self.aspect
             && !ASPECTS.contains(&a.as_str())
@@ -310,6 +324,10 @@ pub(crate) fn resolve_timeline(expr: &Value, pool: &Pool) -> AppResult<Vec<Value
     let resolved = crate::flows::engine::resolve(expr, pool)?;
     match resolved {
         Value::Array(items) => Ok(items),
+        // 单片段宽容（[自造-易用] 2026-09）：单视频 flow 的上游产出是
+        // `{video: {key,url}}` 对象（video 节点 resume 语义），自动包装成
+        // 单元素时间线——最常见形态不必强求脚本节点拼数组。
+        Value::Object(ref o) if o.get("video").is_some() => Ok(vec![resolved]),
         other => Err(AppError::BadRequest(format!(
             "render: timeline 解析结果须为数组（got {}）",
             match other {
@@ -498,6 +516,12 @@ pub(crate) async fn finalize(
     if subtitles.is_some() {
         args.push("-map");
         args.push("[v]");
+    } else {
+        // 恒显式携带视频流（[自造-修复] 2026-09 冒烟实锤）：无字幕分支若只
+        // map [a]，输出没有视频流——(a) "视频合成"产物缺画面；(b) 无限循环
+        // BGM 下 -shortest 没有有限流可参照，ffmpeg 永不结束。
+        args.push("-map");
+        args.push("0:v");
     }
     if narration.is_some() || has_bgm {
         args.push("-map");
@@ -506,6 +530,12 @@ pub(crate) async fn finalize(
         // 无叠加但有源音轨：透传。
         args.push("-map");
         args.push("0:a?");
+    }
+    if has_bgm {
+        // -stream_loop -1 无限循环输入必须配 -shortest（[自造-修复]
+        // 2026-09 冒烟实锤）：否则输出无限长、ffmpeg 永不结束——以视频流
+        // 时长为准截断。
+        args.push("-shortest");
     }
     args.push("-c:v");
     args.push("libx264");
@@ -533,3 +563,69 @@ pub(crate) fn new_work_dir(run_id: &str) -> AppResult<PathBuf> {
 pub(crate) fn cleanup_work_dir(work_dir: &Path) {
     let _ = std::fs::remove_dir_all(work_dir);
 }
+
+pub(crate) fn write_text_srt(work_dir: &std::path::Path, text: &str, duration: f64) -> AppResult<String> {
+    let cues: Vec<String> = text
+        .split([',', '，', '.', '。', '!', '！', '?', '？', ';', '；', '\n'])
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_owned)
+        .collect();
+    if cues.is_empty() {
+        return Err(AppError::BadRequest("render: subtitles_text 为空文本".into()));
+    }
+    let total: f64 = cues.iter().map(|c| c.chars().count() as f64).sum();
+    let mut t = 0.0_f64;
+    let mut srt = String::new();
+    let n = cues.len();
+    for (i, cue) in cues.iter().enumerate() {
+        let chars = cue.chars().count() as f64;
+        let d = if i + 1 == n {
+            (duration - t).max(0.3) // 末句吃满剩余时长（浮点余量兜底）
+        } else {
+            duration * chars / total
+        };
+        srt.push_str(&(i + 1).to_string());
+        srt.push('\n');
+        srt.push_str(&super::transcribe::fmt_srt_ts(t));
+        srt.push_str(" --> ");
+        srt.push_str(&super::transcribe::fmt_srt_ts(t + d));
+        srt.push('\n');
+        srt.push_str(cue);
+        srt.push_str("\n\n");
+        t += d;
+    }
+    let path = work_dir.join("sub.srt");
+    std::fs::write(&path, srt)
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("render: 写字幕: {e}")))?;
+    Ok("sub.srt".into())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn resolve_timeline_accepts_array_and_single_video_object() {
+        let pool = crate::flows::engine::Pool::new();
+        // 数组形态（多片段）
+        let arr = json!({"literal": [{"video": {"key": "a.mp4"}}, {"video": {"key": "b.mp4"}}]});
+        let got = resolve_timeline(&arr, &pool).unwrap();
+        assert_eq!(got.len(), 2);
+        // 单片段宽容：video 节点 resume 是对象，自动包装
+        let single = json!({"ref": ["video_1", "resume"]});
+        let mut pool = crate::flows::engine::Pool::new();
+        pool.entry("video_1".into()).or_default().insert(
+            "resume".into(),
+            json!({"video": {"key": "gen/x.mp4"}, "task_id": "t1", "status": "completed"}),
+        );
+        let got = resolve_timeline(&single, &pool).unwrap();
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0]["video"]["key"], "gen/x.mp4");
+        // 无 video 键的对象仍是错误
+        let bad = json!({"literal": {"foo": 1}});
+        assert!(resolve_timeline(&bad, &pool).is_err());
+    }
+}
+

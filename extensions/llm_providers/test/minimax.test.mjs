@@ -108,14 +108,15 @@ test("chat base_resp reject throws", () => {
 
 // ── speech / music（GroupId 强制；hex 音频）────────────────────────
 
-test("speech requires GroupId in key", () => {
-  assert.throws(
-    () => buildSpeechRequest(CTX({ apiKey: "mm-key" }, {}), ),
-    /GroupId is mandatory/,
+test("speech without GroupId passes through (global v2 API)", () => {
+  const spec = buildSpeechRequest(
+    CTX({ apiKey: "mm-key", request: { text: "你好世界", voice: "female" } }),
   );
+  assert.equal(spec.url, "https://api.test/v1/t2a_v2", "无 GroupId 不追加 query");
+  assert.equal(spec.headers.Authorization, "Bearer mm-key");
 });
 
-test("speech posts t2a_v2 with GroupId and audio_setting", () => {
+test("speech with GroupId still appends the query (CN compat)", () => {
   const spec = buildSpeechRequest(
     CTX({ apiKey: "mm-key:group-1", request: { text: "你好世界", voice: "female" } }),
   );
@@ -134,13 +135,11 @@ test("parseSpeechResponse extracts hex audio", () => {
   assert.equal(out.audioHex, "494433");
 });
 
-test("music requires GroupId and posts prompt/lyrics", () => {
-  assert.throws(
-    () => buildMusicRequest(CTX({ apiKey: "mm-key" })),
-    /GroupId is mandatory/,
-  );
+test("music GroupId optional; prompt/lyrics posted", () => {
+  const bare = buildMusicRequest(CTX({ apiKey: "mm-key" }));
+  assert.equal(bare.url, "https://api.test/v1/music_generation", "无 GroupId 直通");
   const spec = buildMusicRequest(
-    CTX({ apiKey: "k:g1" }, {}),
+    CTX({ apiKey: "k:g1" }),
   );
   assert.equal(spec.url, "https://api.test/v1/music_generation?GroupId=g1");
   assert.equal(spec.body.prompt, "夜景城市");
@@ -173,6 +172,54 @@ test("H3 duration out of range is rejected", () => {
     () => buildSubmitRequest(CTX({ model: "MiniMax-H3", request: { prompt: "x", seconds: "20" } })),
     /duration must be an integer between 4 and 15/,
   );
+});
+
+// ── H3-Max（V2 快速版：480P/768P 无 2K、时长 5-15）[照抄官方 OpenAPI] ──
+
+test("H3-Max rides the same V2 endpoint with model-aware params", () => {
+  const spec = buildSubmitRequest(
+    CTX({ model: "MiniMax-H3-Max", request: { prompt: "夜景城市", seconds: "5" } }),
+  );
+  assert.equal(spec.url, "https://api.test/v2/video_generation");
+  assert.equal(spec.body.model, "MiniMax-H3-Max");
+  assert.equal(spec.body.duration, 5);
+  assert.equal(spec.body.resolution, "768P", "缺省 768P");
+  assert.equal(spec.body.ratio, "16:9", "纯文生 → 16:9");
+});
+
+test("H3-Max duration 4 is rejected (min 5)", () => {
+  assert.throws(
+    () => buildSubmitRequest(CTX({ model: "MiniMax-H3-Max", request: { prompt: "x", seconds: "4" } })),
+    /MiniMax-H3-Max duration must be an integer between 5 and 15/,
+  );
+});
+
+test("H3-Max 2K is rejected; 480P accepted; 480P on H3 rejected", () => {
+  assert.throws(
+    () =>
+      buildSubmitRequest(
+        CTX({ model: "MiniMax-H3-Max", request: { prompt: "x", size: "2k" } }),
+      ),
+    /does not support 2K/,
+  );
+  const ok480 = buildSubmitRequest(
+    CTX({ model: "MiniMax-H3-Max", request: { prompt: "x", size: "480p" } }),
+  );
+  assert.equal(ok480.body.resolution, "480P");
+  assert.throws(
+    () => buildSubmitRequest(CTX({ model: "MiniMax-H3", request: { prompt: "x", size: "480p" } })),
+    /does not support 480P/,
+  );
+});
+
+test("H3-Max i2v carries first_frame in content", () => {
+  const spec = buildSubmitRequest(
+    CTX({
+      model: "MiniMax-H3-Max",
+      request: { prompt: "同款镜头", inputReferences: [ref("a")] },
+    }),
+  );
+  assert.equal(spec.body.content[1].role, "first_frame");
 });
 
 test("H3 adaptive ratio without visual is rejected", () => {
@@ -276,5 +323,6 @@ test("meta declares four-modal contract v1", () => {
   assert.ok(meta.http.includes("api.minimaxi.com/*"));
   assert.ok(meta.timeout_ms >= 30000);
   assert.ok(meta.models.includes("MiniMax-H3"));
+  assert.ok(meta.models.includes("MiniMax-H3-Max"), "V2 快速版新模型");
   assert.ok(meta.description.length > 0);
 });

@@ -103,7 +103,110 @@ test("param_override merges into body top-level last", () => {
 });
 
 test("bad key format throws with clear message", () => {
-  assert.throws(() => buildSubmitRequest(CTX({ apiKey: "no-separator" })), /access_key:secret_key/);
+  assert.throws(() => buildSubmitRequest(CTX({ apiKey: ":sk-only" })), /access_key:secret_key/);
+  assert.throws(() => buildSubmitRequest(CTX({ apiKey: "ak-only:" })), /access_key:secret_key/);
+  assert.throws(() => buildSubmitRequest(CTX({ apiKey: "" })), /access_key:secret_key/);
+});
+
+test("single-segment api key passes through as bearer (dev-platform keys)", () => {
+  // klingai.com/dev/api-key 新版单段 API Key：原样 Bearer，不签 JWT。
+  const spec = buildSubmitRequest(CTX({ apiKey: "api-key-kling-abc123" }));
+  assert.equal(spec.headers.Authorization, "Bearer api-key-kling-abc123");
+  const query = buildQueryRequest(CTX({ apiKey: "api-key-kling-abc123", taskId: "t-1" }));
+  assert.equal(query.headers.Authorization, "Bearer api-key-kling-abc123");
+});
+
+// ── 新版协议（dev 平台单段 API Key → api-beijing.klingai.com）─────────
+// [照抄 https://klingai.com/document-api/api/video/3-0-omni/*.md]
+
+const NEW_CTX = (overrides = {}) =>
+  CTX({
+    apiKey: "api-key-kling-abc123",
+    baseUrl: "https://api-beijing.klingai.com",
+    model: "kling-3.0",
+    ...overrides,
+  });
+
+test("new-api t2v posts to /text-to-video/{model} with settings.duration int", () => {
+  const spec = buildSubmitRequest(NEW_CTX());
+  assert.equal(spec.url, "https://api-beijing.klingai.com/text-to-video/kling-3.0");
+  assert.equal(spec.headers.Authorization, "Bearer api-key-kling-abc123");
+  assert.equal(spec.body.prompt, "夜景城市");
+  assert.equal(spec.body.settings.duration, 5, "seconds 字符串 → int");
+  assert.equal(spec.body.settings.aspect_ratio, undefined, "size 未给不出 aspect");
+  assert.equal(spec.body.model_name, undefined, "旧版字段不出现");
+});
+
+test("new-api aspect from size and callback into options", () => {
+  const spec = buildSubmitRequest(
+    NEW_CTX({ request: { prompt: "x", size: "1080x1920", callbackUrl: "https://hook.test/cb" } }),
+  );
+  assert.equal(spec.body.settings.aspect_ratio, "9:16");
+  assert.equal(spec.body.options.callback_url, "https://hook.test/cb");
+});
+
+test("new-api i2v routes image-to-video with contents prompt+first_frame", () => {
+  const spec = buildSubmitRequest(
+    NEW_CTX({ request: { prompt: "同款镜头", inputReferences: [ref("a")] } }),
+  );
+  assert.equal(spec.url, "https://api-beijing.klingai.com/image-to-video/kling-3.0");
+  assert.deepEqual(spec.body.contents[0], { type: "prompt", text: "同款镜头" });
+  assert.deepEqual(spec.body.contents[1], {
+    type: "first_frame",
+    url: "https://cdn.example.com/a.png",
+  });
+});
+
+test("new-api param_override merges last", () => {
+  const spec = buildSubmitRequest(NEW_CTX({ paramOverride: { settings: { resolution: "1080p" } } }));
+  assert.equal(spec.body.settings.resolution, "1080p");
+});
+
+test("new-api submit parses data.id and status mapping", () => {
+  const out = parseSubmitResponse(NEW_CTX(), {
+    status: 200,
+    body: { code: 0, data: { id: "n-1", status: "submitted" } },
+  });
+  assert.equal(out.taskId, "n-1");
+  assert.equal(out.status, "queued");
+  const done = parseSubmitResponse(NEW_CTX(), {
+    status: 200,
+    body: { code: 0, data: { id: "n-2", status: "succeeded" } },
+  });
+  assert.equal(done.status, "completed");
+});
+
+test("new-api query uses unified /tasks?task_ids=", () => {
+  const q = buildQueryRequest(NEW_CTX({ taskId: "n-9" }));
+  assert.equal(q.url, "https://api-beijing.klingai.com/tasks?task_ids=n-9");
+  assert.equal(q.method, "GET");
+});
+
+test("new-api task result extracts video url from outputs[]", () => {
+  const ok = parseTaskResult(NEW_CTX({ taskId: "n-1" }), {
+    status: 200,
+    body: {
+      code: 0,
+      data: [
+        { id: "n-1", status: "succeeded", outputs: [{ type: "video", url: "https://cdn.kling.ai/n1.mp4" }] },
+      ],
+    },
+  });
+  assert.equal(ok.status, "completed");
+  assert.equal(ok.url, "https://cdn.kling.ai/n1.mp4");
+
+  const failed = parseTaskResult(NEW_CTX({ taskId: "n-2" }), {
+    status: 200,
+    body: { code: 0, data: [{ id: "n-2", status: "failed", message: "content risk" }] },
+  });
+  assert.equal(failed.status, "failed");
+  assert.equal(failed.error, "content risk");
+
+  const running = parseTaskResult(NEW_CTX({ taskId: "n-3" }), {
+    status: 200,
+    body: { code: 0, data: [{ id: "n-3", status: "processing" }] },
+  });
+  assert.equal(running.status, "in_progress");
 });
 
 // ── 提交响应解析 ─────────────────────────────────────────────────
@@ -182,6 +285,7 @@ test("meta declares video contract v1 with allowlist", () => {
   assert.equal(meta.key, "kling");
   assert.equal(meta.contract, 1);
   assert.deepEqual(meta.protocols, ["video"]);
+  assert.ok(meta.http.includes("api-beijing.klingai.com/*"), "新版 dev 平台端点");
   assert.ok(meta.http.includes("api.klingai.com/*"));
   assert.ok(meta.timeout_ms >= 30000);
 });
